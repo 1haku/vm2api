@@ -294,11 +294,15 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   }
   const n = normalizeOauth(cred)
   if (!n.access_token && !n.refresh_token) return null
-  const scopes = Array.isArray(cred.scopes)
+  let scopes = Array.isArray(cred.scopes)
     ? cred.scopes.filter(Boolean)
     : String(n.scope || cred.scope || '')
         .split(/\s+/)
         .filter(Boolean)
+  if (mode === 'setup-token') {
+    scopes = scopes.map((s) => (s === 'inference' ? 'user:inference' : s))
+    if (!scopes.includes('user:inference')) scopes = ['user:inference']
+  }
   const expiresAtMs = expiresAtToMs(n.expires_at) || null
   const oauth = {
     accessToken: n.access_token || '',
@@ -402,6 +406,7 @@ export function persistOauthToVm(vmPath, cred, { acceptLiveGrant = false } = {})
   const rotated =
     !!(nextExp && prevExp && nextExp > prevExp + 2000) ||
     !!(n._token_version && prev._token_version && Number(n._token_version) > Number(prev._token_version))
+  const mode = credentialModeFromOauth({ ...cred, mode: cred?.mode || cred?.type || prev.mode })
   vm.claude = stripCredentialSecrets({ ...prev })
   if (n.access_token || cred.has_access || cred.has_api_key || cred.api_key) vm.claude.has_access = true
   if (n.refresh_token || cred.has_refresh) vm.claude.has_refresh = true
@@ -409,9 +414,12 @@ export function persistOauthToVm(vmPath, cred, { acceptLiveGrant = false } = {})
   if (n.email) vm.claude.email = n.email
   if (n.account_uuid) vm.claude.account_uuid = n.account_uuid
   if (n.org_uuid) vm.claude.org_uuid = n.org_uuid
-  if (n.scope) vm.claude.scope = n.scope
+  if (n.scope) {
+    vm.claude.scope = mode === 'setup-token' && n.scope === 'inference' ? 'user:inference' : n.scope
+  } else if (mode === 'setup-token') {
+    vm.claude.scope = 'user:inference'
+  }
   if (n.source) vm.claude.source = n.source
-  const mode = credentialModeFromOauth({ ...cred, mode: cred?.mode || cred?.type || vm.claude.mode })
   vm.claude.mode = mode
   vm.claude.auth_scheme = resolveAuthScheme({
     mode,

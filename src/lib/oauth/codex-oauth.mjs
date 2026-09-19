@@ -107,7 +107,7 @@ function buildDesktopAuthUrl({ state, codeChallenge, installationId }) {
 export function generateCodexAuthUrl({ vmId, proxyUrl, installationId } = {}) {
   sweepExpired()
   if (!vmId) throw fail('vm_required', 'vm_id required (先创建虚拟机)')
-  if (!proxyUrl) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，请先分配代理再生成授权链接')
+  if (proxyUrl == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，请先分配代理再生成授权链接')
   const state = b64url(crypto.randomBytes(32))
   const codeVerifier = b64url(crypto.randomBytes(32))
   const codeChallenge = b64url(crypto.createHash('sha256').update(codeVerifier).digest())
@@ -117,7 +117,7 @@ export function generateCodexAuthUrl({ vmId, proxyUrl, installationId } = {}) {
   sessions.set(sessionId, {
     state,
     codeVerifier,
-    proxyUrl: String(proxyUrl),
+    proxyUrl: proxyUrl === '' ? '' : String(proxyUrl),
     vmId: String(vmId),
     installationId: install,
     createdAt,
@@ -146,8 +146,8 @@ export async function exchangeCodexAuthCode({ sessionId, code, proxyUrl, vmId, f
   if (parsed.state && parsed.state !== session.state) {
     throw fail('state_mismatch', '回调 state 与授权会话不匹配')
   }
-  const px = proxyUrl || session.proxyUrl
-  if (!px) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
+  const px = proxyUrl ?? session.proxyUrl
+  if (px == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
   const tok = await exchangeCodexAuthorizationCode({
     code: parsed.code,
     codeVerifier: session.codeVerifier,

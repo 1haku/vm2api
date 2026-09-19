@@ -305,6 +305,21 @@ test('readWorkerCredentialFile infers setup-token from inference-only scopes', (
   assert.equal(cred.scope, 'user:inference')
 })
 
+test('writeWorkerCredentialFile maps setup-token inference scope to user:inference', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-scope-'))
+  writeWorkerCredentialFile(home, {
+    type: 'setup-token',
+    access_token: 'sk-ant-oat01-SCOPE',
+    scope: 'inference',
+  })
+  const cred = readWorkerCredentialFile(home)
+  assert.equal(cred.type, 'setup-token')
+  assert.equal(cred.scope, 'user:inference')
+  const raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
+  assert.deepEqual(raw.claudeAiOauth.scopes, ['user:inference'])
+  fs.rmSync(home, { recursive: true, force: true })
+})
+
 test('writeWorkerCredentialFile stores claudeAiOauth and reads back', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-write-'))
   writeWorkerCredentialFile(home, {

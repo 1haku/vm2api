@@ -15,11 +15,22 @@ import { isApiKeyMode } from './credential-mode.mjs'
 export const CLAUDE_OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 export const CLAUDE_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 
-function socksUrl({ vm, proxyPool, proxyUrl } = {}) {
-  if (proxyUrl) return String(proxyUrl).replace(/^socks5:\/\//i, 'socks5h://')
+function hopProxy({ vm, proxyPool, proxyUrl } = {}) {
+  if (proxyUrl) {
+    return { ok: true, proxyUrl: String(proxyUrl).replace(/^socks5:\/\//i, 'socks5h://'), direct: false }
+  }
   const resolved = resolveImportProxy({ vm, proxyPool })
-  if (resolved.ok && resolved.proxyUrl) return String(resolved.proxyUrl).replace(/^socks5:\/\//i, 'socks5h://')
-  return boundProxyUrl(vm?.proxy) || ''
+  if (resolved.ok && resolved.direct) return { ok: true, proxyUrl: '', direct: true }
+  if (resolved.ok && resolved.proxyUrl) {
+    return {
+      ok: true,
+      proxyUrl: String(resolved.proxyUrl).replace(/^socks5:\/\//i, 'socks5h://'),
+      direct: false,
+    }
+  }
+  const bound = boundProxyUrl(vm?.proxy) || ''
+  if (bound) return { ok: true, proxyUrl: bound, direct: false }
+  return { ok: false, proxyUrl: '', direct: false }
 }
 
 async function postRefresh({ refreshToken, proxyUrl, fetchImpl }) {
@@ -101,12 +112,16 @@ export async function refreshSlotCredentialIfNeeded({
   if (!force && !needsRefresh(cred.expires_at, now, REFRESH_SKEW_MS)) {
     return { ok: true, refreshed: false, refresh_class: 'already_fresh', credential: cred }
   }
-  const px = socksUrl({ vm, proxyPool, proxyUrl })
-  if (!px) {
+  const hop = hopProxy({ vm, proxyPool, proxyUrl })
+  if (!hop.ok) {
     return { ok: false, error: { code: 'proxy_required', message: 'slot SOCKS5 is required for token refresh' } }
   }
   try {
-    const next = await postRefresh({ refreshToken: refresh, proxyUrl: px, fetchImpl })
+    const next = await postRefresh({
+      refreshToken: refresh,
+      proxyUrl: hop.direct ? '' : hop.proxyUrl,
+      fetchImpl,
+    })
     const merged = {
       ...cred,
       access_token: next.access_token,

@@ -5,7 +5,7 @@
  * and never send tokens to the console.
  */
 import { expiresAtToMs, mirrorWorkerCredentialsToVm, readSlotCredentialIdentity } from '../oauth/oauth-credentials.mjs'
-import { workerHealth } from '../transport/go-worker-client.mjs'
+import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { vmJsonPath } from '../vm/execution-context.mjs'
 import { slotExec } from '../vm/slot-runtime.mjs'
 import { CREDENTIAL_REFRESH_FAIL } from '../pool/availability.mjs'
@@ -107,7 +107,7 @@ export async function collectLivePanelCredentials(
     const file = readSlotCredentialIdentity(exec.homeDir)
     let health = null
     try {
-      health = await workerHealth(exec, { timeoutMs })
+      health = await rustKernelHealth(exec, { timeoutMs })
     } catch (error) {
       health = { ok: false, code: 'worker_unavailable', error: String(error.message || error) }
     }

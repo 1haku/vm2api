@@ -7,7 +7,7 @@ import { listVms, getVm } from './vm-registry.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
 import { reloadSlotReady, slotExec } from './slot-runtime.mjs'
 import { collectSlotIdentity } from './guest-identity.mjs'
-import { workerHealth } from '../transport/go-worker-client.mjs'
+import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
 
 const ACTIONS = new Set(['collect', 'reload', 'roll'])
 
@@ -23,7 +23,7 @@ export function isWorkerProcessUp(health) {
   return health.ok === true
 }
 
-export async function waitWorkerReady(exec, { timeoutMs = 15000, healthFn = workerHealth } = {}) {
+export async function waitWorkerReady(exec, { timeoutMs = 15000, healthFn = rustKernelHealth } = {}) {
   const started = Date.now()
   let last = { ok: false, error: 'worker_not_ready' }
   while (Date.now() - started < timeoutMs) {
@@ -63,7 +63,7 @@ export async function updateOneSlot(
     routing = {},
     reloadFn = reloadSlotReady,
     collectFn = collectSlotIdentity,
-    healthFn = workerHealth,
+    healthFn = rustKernelHealth,
     readyTimeoutMs = 15000,
   } = {},
 ) {

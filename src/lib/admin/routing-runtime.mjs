@@ -23,7 +23,7 @@ import { normalizeLoggingConfig } from './request-log.mjs'
 import { markVmRefreshError } from '../oauth/oauth-credentials.mjs'
 import { shouldMarkMissingRefresh } from '../pool/schedule-eligibility.mjs'
 import { normalizeCodexRouting } from '../protocol/codex-route.mjs'
-import { workerHealth } from '../transport/go-worker-client.mjs'
+import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
 
 export function createRoutingRuntime(ctx) {
   const getRouting = () => (typeof ctx.getRoutingConfig === 'function' ? ctx.getRoutingConfig() : ctx.routingConfig)
@@ -319,7 +319,7 @@ export function createRoutingRuntime(ctx) {
       stickyRouter: ctx.stickyRouter,
       accountQuota: ctx.accountQuota,
       runtimeRepo,
-      workerHealth,
+      workerHealth: rustKernelHealth,
       config: poolSchedulerConfig(),
     })
     setPool(poolScheduler)
