@@ -441,7 +441,7 @@ export function createPanelHandler(ctx) {
     const vmId = id || getActiveVmId(cfg.paths.project)
     const exec = workerExecForVm(vmId)
     if (!exec) return { ok: false, vm_id: vmId, error: 'vm_not_found' }
-    const health = await workerHealth(exec)
+    const health = await rustKernelHealth(exec)
     return {
       ok: !!health.ok,
       vm_id: vmId,

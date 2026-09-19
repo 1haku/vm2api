@@ -59,3 +59,21 @@ test('reports proxy_required when nothing is bound', () => {
   assert.equal(resolved.ok, false)
   assert.equal(resolved.reason, 'proxy_required')
 })
+
+test('local egress is a bound exit without a SOCKS URL', () => {
+  const resolved = resolveImportProxy({
+    vm: {
+      id: 'vm-01',
+      proxy: { id: 'px-local', host: 'local', port: 0, scheme: 'local', url: null },
+    },
+    proxyPool: {
+      snapshot: () => ({
+        proxies: [{ id: 'px-local', host: 'local', port: 0, scheme: 'local', enabled: true, status: 'ok' }],
+      }),
+      getProxyForVm: () => ({ id: 'px-local', url: '', host: 'local', port: 0, scheme: 'local' }),
+    },
+  })
+  assert.equal(resolved.ok, true)
+  assert.equal(resolved.direct, true)
+  assert.equal(resolved.proxyUrl, '')
+})

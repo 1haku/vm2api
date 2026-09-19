@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 本地出口绑槽后允许导入 / host hop（空 SOCKS URL 视为直连，不再报未绑定）
+- 调度与面板健康检查打 rust `kernel.sock`，不再探不存在的 `worker.sock`
+- Setup Token 写入凭证时把 `inference` 规范成 `user:inference`
+
 ## 1.2.5 — 2026-09-20
 
 仓内预编译 linux amd64 二进制，clone / compose 即可部署，不必在服务器上编 kernel 与 wrap CLI。

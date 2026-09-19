@@ -1,7 +1,8 @@
 /**
  * Browser OAuth-link import.
  * CAI (sub2api) and official Claude Code share PKCE + paste-code,
- * then exchange via the slot SOCKS5. Never dials Anthropic without a proxy.
+ * then exchange via the slot SOCKS5, or the control-plane default route
+ * when the slot is bound to local egress (`proxyUrl` empty string).
  */
 import crypto from 'node:crypto'
 import { exchangeTokenViaCookieAuth } from './cookie-auth.mjs'
@@ -121,7 +122,7 @@ export function buildAuthorizationURL(state, codeChallenge, scope = SCOPE_OAUTH,
 export function generateAuthUrl({ vmId, proxyUrl, flavor } = {}) {
   sweepExpired()
   if (!vmId) throw fail('vm_required', 'vm_id required (先创建虚拟机)')
-  if (!proxyUrl) {
+  if (proxyUrl == null) {
     throw fail('proxy_required', '虚拟机未绑定 SOCKS5，请先分配代理再生成授权链接')
   }
   const spec = oauthFlavorSpec(flavor)
@@ -138,7 +139,7 @@ export function generateAuthUrl({ vmId, proxyUrl, flavor } = {}) {
     redirectUri: spec.redirectUri,
     tokenUrls: spec.tokenUrls.slice(),
     source: spec.source,
-    proxyUrl: String(proxyUrl),
+    proxyUrl: proxyUrl === '' ? '' : String(proxyUrl),
     vmId: String(vmId),
     createdAt,
   })
@@ -159,8 +160,8 @@ function parseAuthCode(fullCode) {
 }
 
 async function exchangeCodeForToken(authCode, codeVerifier, state, proxyUrl, session) {
-  const px = normalizeSocks(proxyUrl)
-  if (!px) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
+  const px = proxyUrl === '' ? '' : normalizeSocks(proxyUrl)
+  if (px == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
   return exchangeTokenViaCookieAuth({
     code: authCode,
     codeVerifier,
@@ -183,8 +184,8 @@ export async function exchangeAuthCode({ sessionId, code, proxyUrl, vmId } = {})
   }
   const parsed = parseAuthCode(code)
   if (!parsed.code) throw fail('code_required', '请粘贴授权码')
-  const px = proxyUrl || session.proxyUrl
-  if (!px) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
+  const px = proxyUrl ?? session.proxyUrl
+  if (px == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
 
   if (process.env.KIN_FAKE_SESSION_OAUTH === '1' || process.env.KIN_FAKE_SESSION_OAUTH === 'true') {
     sessions.delete(sessionId)
