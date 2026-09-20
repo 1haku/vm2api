@@ -218,6 +218,22 @@ test('billingStats aggregates official cost per account and today', () => {
   assert.equal(models[0].input_tokens, 1_000_000)
 })
 
+test('finish prices OpenAI usage with top-level cached_tokens', () => {
+  const store = tmpStore('normal')
+  const ctx = store.start(
+    { method: 'POST', headers: {}, socket: {} },
+    { protocol: 'openai.chat', pathName: '/v1/chat/completions' },
+  )
+  const sum = store.finish(ctx, {
+    status: 200,
+    protocol: 'openai.chat',
+    model: 'gpt-5.5',
+    upstream_model: 'gpt-5.5',
+    usage: { input_tokens: 1_000_000, output_tokens: 0, cached_tokens: 200_000 },
+  })
+  assert.equal(sum.cache_read_tokens, 200_000)
+})
+
 test('finish prices OpenAI-shaped usage from third-party clients', () => {
   const store = tmpStore('normal')
   const ctx = store.start(

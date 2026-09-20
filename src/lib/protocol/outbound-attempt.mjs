@@ -27,6 +27,7 @@ import {
   CRS_OFFICIAL_CLI_SYSTEM,
   CRS_COMPACT_IDENTITY,
 } from '../identity/crs-persona.mjs'
+import { sealClaudeCodeCch } from '../identity/cch.mjs'
 import {
   CRS_OFFICIAL_AGENT_PROMPT,
   CRS_AGENT_EXPANSION,
@@ -278,6 +279,6 @@ export function prepareOutboundEnvelope({
     delete headers.Authorization
   }
   if (stream) headers.accept = 'text/event-stream'
-  const body = sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || '')
+  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''))
   return { body, headers, toolNames: prepared.toolNames }
 }

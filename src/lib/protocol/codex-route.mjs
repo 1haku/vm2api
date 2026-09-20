@@ -2,8 +2,10 @@
  * Codex hop routing. Claude traffic never reads this object.
  */
 import { isCodexVm } from '../vm/vm-kind.mjs'
+import { DEFAULT_CODEX_ROTATE, normalizeCodexRotate } from './codex-rotate.mjs'
 
 export { isCodexVm, normalizeVmKind } from '../vm/vm-kind.mjs'
+export { DEFAULT_CODEX_ROTATE, normalizeCodexRotate } from './codex-rotate.mjs'
 
 export const CODEX_PROTOCOLS = Object.freeze(['openai.responses', 'openai.chat', 'openai.completions'])
 
@@ -25,6 +27,9 @@ export const DEFAULT_CODEX_ROUTING = Object.freeze({
     openai_compatible: 'allow',
     claude_code: 'reject',
     unknown: 'allow',
+  },
+  plugin: {
+    rotate: { ...DEFAULT_CODEX_ROTATE },
   },
 })
 
@@ -48,6 +53,9 @@ export function normalizeCodexRouting(raw = {}) {
       anthropic_to_codex: raw.convert?.anthropic_to_codex === true,
     },
     clients,
+    plugin: {
+      rotate: normalizeCodexRotate(raw.plugin?.rotate),
+    },
   }
 }
 

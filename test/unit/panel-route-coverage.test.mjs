@@ -146,3 +146,11 @@ test('ACL schedule POSTs still have handlers', () => {
   assert.match(serverSrc, /clearVmCooldown/)
   assert.match(serverSrc, /\/schedulable\$/)
 })
+
+test('settings save imports public routing notify helpers', () => {
+  const routes = fs.readFileSync(path.join(root, 'src/lib/admin/panel-routes.mjs'), 'utf8')
+  assert.match(
+    routes,
+    /import\s*\{[^}]*publicNotifyConfig[^}]*publicRoutingNotify[^}]*\}\s*from\s*['"]\.\/notify\.mjs['"]/,
+  )
+})

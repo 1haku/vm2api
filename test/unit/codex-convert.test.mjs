@@ -30,14 +30,33 @@ test('strips client identity fields', () => {
 test('chat converts to responses input', () => {
   const body = chatToCodexResponses({
     model: 'gpt-5.4',
-    messages: [{ role: 'user', content: 'hi' }],
+    messages: [
+      { role: 'system', content: 'be brief' },
+      { role: 'user', content: 'hi' },
+    ],
     tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }],
+    prompt_cache_key: 'conversation-42',
   })
   assert.equal(body.model, 'gpt-5.4')
   assert.equal(body.store, false)
-  assert.equal(body.input[0].role, 'user')
-  assert.equal(body.input[0].content[0].text, 'hi')
+  assert.equal(body.prompt_cache_key, 'conversation-42')
+  assert.equal(body.input[0].role, 'developer')
+  assert.equal(body.input[0].content[0].text, 'be brief')
+  assert.equal(body.input[1].role, 'user')
+  assert.equal(body.input[1].content[0].text, 'hi')
   assert.equal(body.tools[0].name, 'lookup')
+})
+
+test('native responses system role becomes developer', () => {
+  const converted = toCodexResponses('openai.responses', {
+    model: 'gpt-5.5',
+    input: [{ type: 'message', role: 'system', content: [{ type: 'input_text', text: 'rules' }] }],
+    prompt_cache_key: 'session-1',
+    prompt_cache_retention: '24h',
+  })
+  assert.equal(converted.body.input[0].role, 'developer')
+  assert.equal(converted.body.prompt_cache_key, 'session-1')
+  assert.equal(converted.body.prompt_cache_retention, undefined)
 })
 
 test('native responses string input becomes Codex list', () => {
@@ -88,11 +107,13 @@ test('responses SSE maps to chat chunks', () => {
   assert.match(delta, /chat.completion.chunk/)
   assert.match(delta, /Hi/)
   const done = responsesSseToChatChunk(
-    'data: {"type":"response.completed","response":{"usage":{"input_tokens":41,"output_tokens":12}}}',
+    'data: {"type":"response.completed","response":{"usage":{"input_tokens":41,"output_tokens":12,"input_tokens_details":{"cached_tokens":8,"cache_write_tokens":3}}}}',
   )
   assert.match(done, /\[DONE\]/)
   assert.match(done, /"prompt_tokens":41/)
   assert.match(done, /"completion_tokens":12/)
+  assert.match(done, /"cached_tokens":8/)
+  assert.match(done, /"cache_creation_tokens":3/)
 })
 
 test('responses SSE maps to Anthropic message events', () => {

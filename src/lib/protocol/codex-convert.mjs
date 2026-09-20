@@ -1,7 +1,13 @@
 /**
  * Convert OpenAI Chat/Completions (and optional Anthropic) bodies to Codex Responses.
  * Native openai.responses bodies pass through after identity strip.
+ * Request/usage shapes follow codex-proxy-rs (system→developer, extract_usage).
  */
+import {
+  extractOpenaiUsage,
+  openaiAnthropicUsageFromExtract,
+  openaiChatUsageFromExtract,
+} from './openai-usage.mjs'
 
 const IDENTITY_KEYS = [
   'base_url',
@@ -41,14 +47,14 @@ function textParts(content) {
 }
 
 function chatMessageToInput(message) {
-  const role = message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user'
   const text = textParts(message.content)
-  if (role === 'system') {
-    return { type: 'message', role: 'user', content: [{ type: 'input_text', text: `System:\n${text}` }] }
+  if (message.role === 'system') {
+    return { type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }
   }
+  const role = message.role === 'assistant' ? 'assistant' : 'user'
   return {
     type: 'message',
-    role: role === 'assistant' ? 'assistant' : 'user',
+    role,
     content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
   }
 }
@@ -92,17 +98,20 @@ export function chatToCodexResponses(body = {}) {
   if (body.max_tokens || body.max_completion_tokens) {
     out.max_output_tokens = body.max_tokens || body.max_completion_tokens
   }
+  if (body.prompt_cache_key) out.prompt_cache_key = body.prompt_cache_key
   return out
 }
 
 export function completionsToCodexResponses(body = {}) {
   const prompt = Array.isArray(body.prompt) ? body.prompt.join('\n') : String(body.prompt || '')
-  return {
+  const out = {
     model: body.model,
     input: codexTextInput(prompt),
     stream: body.stream !== false,
     store: false,
   }
+  if (body.prompt_cache_key) out.prompt_cache_key = body.prompt_cache_key
+  return out
 }
 
 /** Official Codex Responses user turn. ChatGPT Codex rejects string `input`. */
@@ -133,6 +142,7 @@ function stripUnsupportedCodexFields(body = {}) {
   delete next.max_output_tokens
   delete next.max_tokens
   delete next.temperature
+  delete next.prompt_cache_retention
   const effort = normalizeCodexReasoningEffort(next.reasoning?.effort || next.reasoning_effort)
   delete next.reasoning_effort
   if (effort) {
@@ -142,6 +152,14 @@ function stripUnsupportedCodexFields(body = {}) {
     }
   } else {
     delete next.reasoning
+  }
+  if (Array.isArray(next.input)) {
+    next.input = next.input.map((item) => {
+      if (item && typeof item === 'object' && item.type === 'message' && item.role === 'system') {
+        return { ...item, role: 'developer' }
+      }
+      return item
+    })
   }
   return next
 }
@@ -212,7 +230,7 @@ export function responsesSseToChatChunk(line, id = 'codex') {
     })}\n\n`
   }
   if (type === 'response.completed' || type === 'response.done') {
-    const usage = openaiChatUsage(event.response?.usage || event.usage)
+    const usage = openaiChatUsageFromExtract(extractOpenaiUsage(event.response?.usage || event.usage))
     return `data: ${JSON.stringify({
       id,
       object: 'chat.completion.chunk',
@@ -221,16 +239,6 @@ export function responsesSseToChatChunk(line, id = 'codex') {
     })}\n\ndata: [DONE]\n\n`
   }
   return null
-}
-
-function openaiChatUsage(usage) {
-  if (!usage || typeof usage !== 'object') return null
-  const prompt = Number(usage.input_tokens ?? usage.prompt_tokens)
-  const completion = Number(usage.output_tokens ?? usage.completion_tokens)
-  if (!Number.isFinite(prompt) && !Number.isFinite(completion)) return null
-  const p = Number.isFinite(prompt) ? prompt : 0
-  const c = Number.isFinite(completion) ? completion : 0
-  return { prompt_tokens: p, completion_tokens: c, total_tokens: p + c }
 }
 
 function parseSseData(line) {
@@ -326,13 +334,12 @@ export function responsesSseToAnthropicEvents(line, state = createAnthropicSseSt
   }
   if (type === 'response.completed' || type === 'response.done' || parsed.done) {
     ensureStart()
-    const usage = event.response?.usage || event.usage || {}
-    const output = Number(usage.output_tokens ?? usage.completion_tokens) || 0
+    const mapped = openaiAnthropicUsageFromExtract(extractOpenaiUsage(event.response?.usage || event.usage))
     frames.push(anthropicEvent('content_block_stop', { index: 0 }))
     frames.push(
       anthropicEvent('message_delta', {
         delta: { stop_reason: 'end_turn' },
-        usage: { output_tokens: output },
+        usage: mapped,
       }),
     )
     frames.push(anthropicEvent('message_stop', {}))
@@ -374,9 +381,7 @@ export function assembleCodexBodyFromSse(chunks = [], fallback = {}) {
 
 export function codexBodyToAnthropicMessage(body = {}, model = '') {
   const resp = body?.response && typeof body.response === 'object' ? body.response : body
-  const usage = resp?.usage || body?.usage || {}
-  const input = Number(usage.input_tokens ?? usage.prompt_tokens) || 0
-  const output = Number(usage.output_tokens ?? usage.completion_tokens) || 0
+  const usage = openaiAnthropicUsageFromExtract(extractOpenaiUsage(resp?.usage || body?.usage || {}))
   return {
     id: resp?.id || 'msg_codex',
     type: 'message',
@@ -384,6 +389,6 @@ export function codexBodyToAnthropicMessage(body = {}, model = '') {
     model: resp?.model || model || 'gpt',
     content: [{ type: 'text', text: outputTextFromCodex(resp) }],
     stop_reason: 'end_turn',
-    usage: { input_tokens: input, output_tokens: output },
+    usage,
   }
 }

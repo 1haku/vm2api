@@ -30,6 +30,7 @@ import { AboutPane } from '@/features/settings/about-pane'
 import { BackupPane } from '@/features/settings/backup-pane'
 import { CacheBreakpointsPane } from '@/features/settings/cache-breakpoints-pane'
 import { CredentialWeightPane } from '@/features/settings/credential-weight-pane'
+import { GptPane } from '@/features/settings/gpt-pane'
 import { HealthPane } from '@/features/settings/health-pane'
 import { KernelRoutingPane } from '@/features/settings/kernel-routing-pane'
 import { LogsPane } from '@/features/settings/logs-pane'
@@ -339,6 +340,13 @@ export function SettingsPage() {
               ) : null}
               {tab === 'protocol' ? (
                 <>
+                  <GptPane
+                    value={
+                      (draft.codex as Record<string, unknown> | undefined) ||
+                      {}
+                    }
+                    onChange={(next) => setDraft({ ...draft, codex: next })}
+                  />
                   <KernelRoutingPane
                     value={inference}
                     onChange={(next) => setDraft({ ...draft, inference: next })}
