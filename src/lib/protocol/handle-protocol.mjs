@@ -58,7 +58,9 @@ import {
   validateRequestBody,
   mapModelError,
   isClientCancelledResult,
-  isAssistantMessageBody,
+  isIncompleteAssistantMessage,
+  finalizeAssembledAssistantHop,
+  incompleteAssistantClientError,
   ErrorType,
   ErrorCode,
 } from '../core/errors.mjs'
@@ -133,9 +135,7 @@ export function createHandleProtocol(deps) {
   }
 
   function acceptAssistantHop(result) {
-    if (result?.ok) return result
-    if (!isAssistantMessageBody(result?.body)) return result
-    return { ...result, ok: true }
+    return finalizeAssembledAssistantHop(result)
   }
 
   function applyDistillGuard({ req, inbound, body, fp, logBag, requestId, res }) {
@@ -225,7 +225,6 @@ export function createHandleProtocol(deps) {
     signal,
     deliveryMode,
     toolNames = {},
-    onCommit,
     want1m = false,
     routing = {},
     noGoFallback = false,
@@ -241,7 +240,6 @@ export function createHandleProtocol(deps) {
       signal,
       deliveryMode,
       want1m,
-      onCommit,
       routing,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
@@ -825,7 +823,6 @@ export function createHandleProtocol(deps) {
               signal,
               deliveryMode: attemptDelivery,
               toolNames: attemptMeta?.toolNames || {},
-              onCommit,
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
@@ -984,8 +981,9 @@ export function createHandleProtocol(deps) {
       return res.end()
     }
 
-    if (!result?.ok) {
-      const mapped = mapProtocolClientError(result, logBag, 'upstream_error')
+    if (!result?.ok || isIncompleteAssistantMessage(result)) {
+      const failed = isIncompleteAssistantMessage(result) ? incompleteAssistantClientError(result) : result
+      const mapped = mapProtocolClientError(failed, logBag, failed?.body?.error?.code || 'upstream_error')
       if (mapped.body?.error?.code !== 'client_cancelled') stats.errors++
       return json(res, mapped.status, mapped.body)
     }

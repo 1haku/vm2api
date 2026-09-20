@@ -5,6 +5,9 @@ import {
   rewritePoolErrorForClient,
   isPoolCapacityError,
   isAssistantMessageBody,
+  isCompleteAssistantMessage,
+  isIncompleteAssistantMessage,
+  finalizeAssembledAssistantHop,
   CLIENT_POOL_BUSY_MESSAGE,
 } from '../../src/lib/core/errors.mjs'
 
@@ -63,6 +66,48 @@ test('successful Messages payload is not classified as Upstream error: message',
   const mapped = mapUpstreamError(200, body)
   assert.doesNotMatch(String(mapped.body.error.message), /Upstream error: message/)
   assert.notEqual(mapped.body.error.details?.upstream_type, 'message')
+})
+
+test('thinking-only assistant is an envelope but not a complete message', () => {
+  const thinkingOnly = {
+    ok: true,
+    terminalState: 'verified',
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 'sig' }],
+      stop_reason: null,
+    },
+  }
+  assert.equal(isAssistantMessageBody(thinkingOnly.body), true)
+  assert.equal(isCompleteAssistantMessage(thinkingOnly), false)
+  assert.equal(isIncompleteAssistantMessage(thinkingOnly), true)
+  const finalized = finalizeAssembledAssistantHop(thinkingOnly)
+  assert.equal(finalized.ok, false)
+  assert.equal(finalized.committed, false)
+  assert.equal(finalized.terminalState, 'incomplete')
+})
+
+test('text plus stop_reason is a complete assistant hop', () => {
+  const complete = {
+    ok: false,
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+    },
+  }
+  assert.equal(isCompleteAssistantMessage(complete), true)
+  assert.equal(finalizeAssembledAssistantHop(complete).ok, true)
+})
+
+test('incomplete_response maps to HTTP 502', () => {
+  const mapped = mapUpstreamError(502, {
+    error: { type: 'api_error', code: 'incomplete_response', message: 'Assistant hop ended without visible output or stop_reason' },
+  })
+  assert.equal(mapped.status, 502)
+  assert.equal(mapped.body.error.code, 'incomplete_response')
 })
 
 test('isPoolCapacityError covers internal empty-pool codes', () => {
