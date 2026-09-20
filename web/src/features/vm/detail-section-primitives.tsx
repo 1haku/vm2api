@@ -5,6 +5,7 @@ import {
   fableCap,
   fableCardInfo,
   fmtReset,
+  fmtResetClock,
   resetCountdown,
   statusColorForPct,
 } from '@/lib/fable-status'
@@ -84,6 +85,20 @@ export function Meter({
       ) : null}
     </div>
   )
+}
+
+export function quotaWindowHint(
+  usedPct: number,
+  resetAt: unknown,
+  now: number
+): string {
+  const remain = Math.max(0, Math.min(100, 100 - (Number(usedPct) || 0)))
+  const bits = [`剩余 ${remain.toFixed(0)}%`]
+  const clock = fmtResetClock(resetAt)
+  const cd = resetCountdown(resetAt, now)
+  if (clock) bits.push(`重置 ${clock}`)
+  if (cd) bits.push(cd)
+  return bits.join(' · ')
 }
 
 /** 重置时刻：绝对时间 + 分钟精度倒计时。后端给的是秒级 epoch 串，

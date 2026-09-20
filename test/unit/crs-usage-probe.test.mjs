@@ -189,6 +189,7 @@ test('usage hop is skipped while 429 backoff is live', () => {
   const live = { usage_rate_limited_until: '2026-08-25T14:15:00.000Z' }
   assert.equal(shouldHopOfficialUsage(live, { now }), false)
   assert.equal(shouldHopOfficialUsage(live, { now, hop: false }), false)
+  assert.equal(shouldHopOfficialUsage(live, { now, force: true }), true)
   assert.equal(shouldHopOfficialUsage({}, { now, hop: false }), false)
   assert.equal(shouldHopOfficialUsage({}, { now }), true)
   assert.equal(shouldHopOfficialUsage({ usage_rate_limited_until: '2026-08-25T13:59:00.000Z' }, { now }), true)

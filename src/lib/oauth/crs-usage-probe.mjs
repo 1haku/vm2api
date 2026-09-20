@@ -60,11 +60,11 @@ function windowOf(w, scale = 'percent') {
   if (!w || typeof w !== 'object') return null
   const utilization =
     scale === 'header' ? normLegacyMixed(w.utilization ?? w.percent) : normUsagePercent(w.utilization ?? w.percent)
-  if (utilization == null && !w.resets_at && !w.resetsAt && !w.status) return null
+  if (utilization == null && !w.resets_at && !w.resetsAt && !w.reset && !w.reset_at && !w.status) return null
   return {
     utilization,
     utilization_pct: utilization == null ? null : Math.round(utilization * 1000) / 10,
-    resets_at: w.resets_at || w.resetsAt || null,
+    resets_at: w.resets_at || w.resetsAt || w.reset || w.reset_at || null,
     status: w.status || statusFromUtilization(utilization),
   }
 }
@@ -244,9 +244,10 @@ export function usageProbeBackoffRemainingMs(unified = {}, now = Date.now()) {
   return 0
 }
 
-/** List/batch never hop. Single hop still waits out the 429 window. */
-export function shouldHopOfficialUsage(unified = {}, { now = Date.now(), hop = true } = {}) {
+/** Interval/list ticks pass hop=false. Manual 额度探测 pass hop=true; force skips 429 backoff. */
+export function shouldHopOfficialUsage(unified = {}, { now = Date.now(), hop = true, force = false } = {}) {
   if (hop === false) return false
+  if (force) return true
   return usageProbeBackoffRemainingMs(unified, now) <= 0
 }
 
