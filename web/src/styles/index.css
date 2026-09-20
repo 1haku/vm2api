@@ -131,6 +131,17 @@
   box-shadow: inset 0 0.5px 1px oklch(0 0 0 / 22%);
 }
 
+/* 满档标尺的 45° 斜纹。「封顶」是状态不是程度：只靠红色在灰度截图与色觉
+   差异下会和 warn 混成一档，纹理让它独立成立。条纹用前景色低 alpha，
+   跟着明暗主题走，不写死黑白。 */
+@utility meter-capped {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 3px,
+    oklch(1 0 0 / 28%) 3px 5px
+  );
+}
+
 @utility faded-bottom {
   @apply after:pointer-events-none after:absolute after:inset-s-0 after:bottom-0 after:hidden after:h-32 after:w-full after:rounded-b-2xl after:bg-[linear-gradient(180deg,transparent_10%,var(--background)_70%)] md:after:block;
 }
