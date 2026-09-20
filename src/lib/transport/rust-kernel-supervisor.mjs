@@ -6,7 +6,13 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { rustKernelHealth, rustKernelPaths, rustKernelProcessUp, rustKernelReachable } from './rust-kernel-client.mjs'
+import {
+  rustKernelHealth,
+  rustKernelPaths,
+  rustKernelProcessUp,
+  rustKernelReachable,
+  rustKernelBusy,
+} from './rust-kernel-client.mjs'
 import { OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { setVmSchedulable } from '../vm/vm-registry.mjs'
 import { resolveCliSystemLayout } from '../vm/slot-engine.mjs'
@@ -283,11 +289,13 @@ export const WRAP_IDLE_RECYCLE_MS = 8 * 60 * 1000
 const wrapRecycleAt = new Map()
 const wrapRecyclePending = new Map()
 const wrapLastHopAt = new Map()
+const wrapInflight = new Map()
 
 export function resetWrapRecycleState() {
   wrapRecycleAt.clear()
   wrapRecyclePending.clear()
   wrapLastHopAt.clear()
+  wrapInflight.clear()
 }
 
 function wrapVmId(exec) {
@@ -297,6 +305,27 @@ function wrapVmId(exec) {
 export function noteWrapHop(exec, now = Date.now()) {
   const id = wrapVmId(exec)
   if (id) wrapLastHopAt.set(id, now)
+}
+
+export function beginWrapHop(exec, now = Date.now()) {
+  const id = wrapVmId(exec)
+  if (!id) return
+  wrapInflight.set(id, (wrapInflight.get(id) || 0) + 1)
+  wrapLastHopAt.set(id, now)
+}
+
+export function endWrapHop(exec, now = Date.now()) {
+  const id = wrapVmId(exec)
+  if (!id) return
+  const n = (wrapInflight.get(id) || 1) - 1
+  if (n <= 0) wrapInflight.delete(id)
+  else wrapInflight.set(id, n)
+  wrapLastHopAt.set(id, now)
+}
+
+export function wrapHopInflight(exec) {
+  const id = wrapVmId(exec)
+  return id ? wrapInflight.get(id) || 0 : 0
 }
 
 export function wrapIdleMs(exec, now = Date.now()) {
@@ -370,10 +399,11 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec }) {
   if (!paths.socketPath) return { ok: false, reason: 'socket_missing' }
   const existing = await rustKernelHealth(exec, { timeoutMs: 800 })
   if (!startCurrent(control)) return { ok: false, reason: 'start_cancelled' }
-  const staleWrap = wrapNewerThanKernel(exec)
-  const staleTicket = credentialsNewerThanKernel(exec)
-  const slotMismatch =
-    !!paths.configPath && Number(readExistingKernelConfig(paths.configPath).slots_per_worker) !== WRAP_SLOT_MAX
+  const occupied = rustKernelBusy(existing) || wrapHopInflight(exec) > 0
+  if (occupied && !staleWrap && !staleTicket && !slotMismatch) {
+    const reconcile = await reconcileCliHopRuntime(exec, { runDockerExec })
+    return { ok: true, reason: 'busy', health: existing, reconcile }
+  }
   if (rustKernelReachable(existing) && !staleWrap && !staleTicket && !slotMismatch) {
     const reconcile = await reconcileCliHopRuntime(exec, { runDockerExec })
     return { ok: true, reason: 'already_up', health: existing, reconcile }
@@ -382,7 +412,7 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec }) {
   syncKernelSlotCount(paths.configPath)
   const container = slotContainerName(exec)
   if (!container) return { ok: false, reason: 'container_missing' }
-  const wedged = rustKernelProcessUp(existing) && !rustKernelReachable(existing)
+  const wedged = rustKernelProcessUp(existing) && !rustKernelReachable(existing) && !occupied
   const pid1Kernel = await containerKernelIsPid1(container, runDockerExec)
   const waitMs = staleWrap || staleTicket || slotMismatch ? 0 : bootWaitMs(timeoutMs, { pid1Kernel, wedged })
   if (waitMs > 0) {

@@ -2,7 +2,7 @@
  * Host watchdog for rust PID-1 slots. Restarts the container via
  * ensureRustKernel; never falls back to kin-worker hop.
  */
-import { rustKernelHealth, rustKernelReachable, rustKernelPaths } from './rust-kernel-client.mjs'
+import { rustKernelHealth, rustKernelReachable, rustKernelBusy, rustKernelPaths } from './rust-kernel-client.mjs'
 import { ensureRustKernel, readExistingKernelConfig, WRAP_SLOT_MAX } from './rust-kernel-supervisor.mjs'
 import { normalizeInferenceEngine } from '../vm/slot-engine.mjs'
 
@@ -69,6 +69,7 @@ export function createKernelWatchdog({
           homeDir: typeof homeDirFor === 'function' ? homeDirFor(vm) : null,
         }
         const current = await health(exec, { timeoutMs: 800 })
+        if (rustKernelBusy(current)) continue
         if (rustKernelReachable(current) && !kernelSlotMismatch(exec)) continue
         await ensure(exec, { timeoutMs: config.timeout_ms })
       }

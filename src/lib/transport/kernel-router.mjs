@@ -10,6 +10,7 @@ import {
   callRustKernel,
   rustKernelHealth,
   rustKernelReachable,
+  rustKernelBusy,
   isNeedsRefreshResult,
 } from './rust-kernel-client.mjs'
 import {
@@ -18,6 +19,9 @@ import {
   scheduleWrapRecycle,
   awaitWrapRecycle,
   noteWrapHop,
+  beginWrapHop,
+  endWrapHop,
+  wrapHopInflight,
   credentialsNewerThanKernel,
 } from './rust-kernel-supervisor.mjs'
 
@@ -157,8 +161,12 @@ async function prepareRust(exec, { ensure, routing } = {}) {
     return { ok: true, reason: 'health_cache', health: cached.health }
   }
   const health = await rustKernelHealth(exec, { timeoutMs: 800 })
-  if (rustKernelReachable(health)) {
-    const ready = { ok: true, reason: 'already_up', health }
+  if (rustKernelReachable(health) || rustKernelBusy(health) || wrapHopInflight(exec) > 0) {
+    const ready = {
+      ok: true,
+      reason: rustKernelReachable(health) ? 'already_up' : 'busy',
+      health,
+    }
     rememberRustHealth(exec, ready)
     return ready
   }
@@ -191,36 +199,40 @@ async function runHop({ mode, opts }) {
       wanted_engine: 'rust',
       engine_reason: decision.reason,
     }
-  }
   const send = mode === 'stream' ? streamRustKernel : callRustKernel
-  let result = await send(opts)
-  noteWrapHop(opts.exec)
-  if (result.transportError === true && result.committed !== true) {
-    result = await send(opts)
-    result = { ...result, rust_transport_retried: true }
+  beginWrapHop(opts.exec)
+  try {
+    let result = await send(opts)
     noteWrapHop(opts.exec)
-  }
-  if (isNeedsRefreshResult(result)) {
-    const ensure = opts.ensureCredential || ensureWorkerCredential
-    const ensured = await ensure(opts.exec, { force: true })
-    if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
-    else {
-      const recycle = opts.recycleWrap || scheduleWrapRecycle
-      recycle(opts.exec)
-      await awaitWrapRecycle(opts.exec)
+    if (result.transportError === true && result.committed !== true) {
       result = await send(opts)
-      result = { ...result, credential_retried: true }
+      result = { ...result, rust_transport_retried: true }
       noteWrapHop(opts.exec)
     }
-  }
-  if (result.terminalState === 'incomplete' || (result.committed && result.transportError)) {
-    clearRustHealthCache(cacheKey(opts.exec))
-  }
-  return {
-    ...result,
-    engine,
-    wanted_engine: decision.wanted,
-    engine_reason: reason,
+    if (isNeedsRefreshResult(result)) {
+      const ensure = opts.ensureCredential || ensureWorkerCredential
+      const ensured = await ensure(opts.exec, { force: true })
+      if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
+      else {
+        const recycle = opts.recycleWrap || scheduleWrapRecycle
+        recycle(opts.exec)
+        await awaitWrapRecycle(opts.exec)
+        result = await send(opts)
+        result = { ...result, credential_retried: true }
+        noteWrapHop(opts.exec)
+      }
+    }
+    if (result.terminalState === 'incomplete' || (result.committed && result.transportError)) {
+      clearRustHealthCache(cacheKey(opts.exec))
+    }
+    return {
+      ...result,
+      engine,
+      wanted_engine: decision.wanted,
+      engine_reason: reason,
+    }
+  } finally {
+    endWrapHop(opts.exec)
   }
 }
 
