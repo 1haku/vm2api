@@ -402,7 +402,7 @@ export async function buildVmDetail({
     requestLog,
   })
   const gpt = isCodexVm(vm)
-  const inferenceEngine = gpt ? null : summary.resolved_inference_engine || 'go'
+  const inferenceEngine = gpt ? null : summary.resolved_inference_engine || 'rust'
   let goHealth = null
   let rustHealth = null
   let codexHealth = null
@@ -422,18 +422,11 @@ export async function buildVmDetail({
       if (gpt) {
         codexHealth = failed
       } else {
-        goHealth = failed
         rustHealth = failed
       }
     }
   }
-  const activeEngine = gpt
-    ? null
-    : inferenceEngine === 'rust' && rustHealth?.reachable
-      ? 'rust'
-      : goHealth?.reachable
-        ? 'go'
-        : null
+  const activeEngine = gpt ? null : rustHealth?.reachable ? 'rust' : null
   return ok({
     vm: summary,
     proxy: summary.proxy || null,

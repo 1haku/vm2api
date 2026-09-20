@@ -43,7 +43,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 二进制在仓内 `bin/`，Compose 会拷到挂载目录。`bin/kin-*` 必须 **755**。缺槽位系统镜像时会编 `kin-os/ubuntu:24.04`。
 
-升级到 **v1.2.5** 见下面「已部署机升级到 1.2.5」。控制面重启 + wrap-cli sync，不要 `docker rm` 槽。
+升级到 **v1.2.6** 见下面「已部署机升级到 1.2.6」。只重启控制面，不要 `docker rm` 槽。
 
 Docker Desktop / WSL 下 `curl 127.0.0.1:8787` 可能失败：
 
@@ -79,6 +79,22 @@ location / {
 ## 本机 Node（备选）
 
 仓内已有 `bin/kin-*`。还要 `npm ci`、`pnpm -C web install --frozen-lockfile && npm run build:web`，以及占位 `vms/active.json`。单元：[deploy/vm2api.service](deploy/vm2api.service)。细节见 [BUILD.md](BUILD.md)。
+
+## 已部署机升级到 1.2.6
+
+1.2.6 只动**控制面 Node + web**（本地出口导入、kernel 探活、Setup Token 额度）。不必换槽内 kin-kernel / wrap CLI，也不要 `docker rm` 槽。
+
+```bash
+cd /opt/vm2api
+git fetch --tags
+git checkout v1.2.6
+docker compose up -d --build
+curl -sS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+本机 systemd：`git checkout v1.2.6` → `npm ci` → `pnpm -C web install --frozen-lockfile && npm run build:web` → `systemctl restart vm2api` **一次**。
+
+当前不在 1.2.5 的机器：若 wrap CLI 还是 `cli-dist`，先按下面「已部署机升级到 1.2.5」做 `wrap-cli/sync`，再 `git checkout v1.2.6` 重启控制面。
 
 ## 已部署机升级到 1.2.5
 
