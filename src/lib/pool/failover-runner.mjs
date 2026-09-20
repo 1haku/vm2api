@@ -1,4 +1,5 @@
 import { classifyUpstreamResult, repairAnthropicRequest, shouldContinue } from './upstream-error-policy.mjs'
+import { isCompleteAssistantMessage } from '../core/errors.mjs'
 import { hasRefreshPresence } from '../oauth/oauth-credentials.mjs'
 import { resolveOfficialCcInference } from '../vm/slot-engine.mjs'
 
@@ -22,7 +23,7 @@ function usageOf(result) {
 }
 
 function verifiedSuccess(result) {
-  return !!result?.ok && result?.terminalState === 'verified'
+  return !!result?.ok && result?.terminalState === 'verified' && isCompleteAssistantMessage(result)
 }
 
 function uniqueStickyKeys(stickyKey, stickyKeys) {
@@ -138,7 +139,9 @@ function preferLastResult(lastResult, lastPolicy, fallback, extras = {}) {
 function canRetrySameAccount(policy, used, config, hopMs) {
   const maxRetries = Number(config.max_same_account_retries ?? 0)
   const maxHopMs = Number(config.same_account_retry_max_hop_ms ?? 10_000)
-  return !!policy?.retrySameAccount && used < maxRetries && hopMs < maxHopMs
+  if (!policy?.retrySameAccount || used >= maxRetries) return false
+  if (policy.reason === 'incomplete_assistant') return true
+  return hopMs < maxHopMs
 }
 
 function applyCooldown(scheduler, selected, policy, model, stickyRouter = null, { diagnosticPin = false } = {}) {

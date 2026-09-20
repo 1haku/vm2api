@@ -56,6 +56,7 @@ function success(text = 'ok') {
       id: 'msg_1',
       role: 'assistant',
       content: [{ type: 'text', text }],
+      stop_reason: 'end_turn',
       usage: { input_tokens: 1, output_tokens: 1 },
     },
   }
@@ -383,6 +384,43 @@ test('cli-hop rust slot repairs signature 400 even when signature_repair is off'
   assert.equal(result.ok, true)
   assert.equal(result.attemptCount, 2)
   assert.equal(calls, 2)
+})
+
+test('thinking-only hop retries same account and returns the later text', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const runner = new FailoverRunner({
+    scheduler,
+    config: { same_account_retry_delay_ms: 0 },
+  })
+  let calls = 0
+  const result = await runner.run({
+    requestId: 'req-thinking-only',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    callAttempt: () => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          committed: false,
+          terminalState: 'verified',
+          body: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'thinking', thinking: 'draft', signature: 'sig' }],
+            stop_reason: null,
+          },
+        }
+      }
+      return success('full answer')
+    },
+  })
+  assert.equal(calls, 2)
+  assert.equal(result.ok, true)
+  assert.equal(result.finalState, 'verified')
+  assert.equal(result.body.content[0].text, 'full answer')
+  assert.equal(result.body.stop_reason, 'end_turn')
 })
 
 test('fast 502 retries the same account once without cooldown', async () => {

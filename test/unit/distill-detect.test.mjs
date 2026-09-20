@@ -210,3 +210,12 @@ test('handleProtocol intercepts distill before credential hop, refusal guard aft
   assert.ok(refusal > distill)
   assert.ok(api > refusal)
 })
+
+test('assemble path does not forward onCommit to the kernel hop', () => {
+  const src = fs.readFileSync(path.join(root, 'src/lib/protocol/handle-protocol.mjs'), 'utf8')
+  const start = src.indexOf('async function streamAndAssembleClaudeMessage')
+  const end = src.indexOf('async function handleProtocol')
+  assert.ok(start > 0 && end > start)
+  const chunk = src.slice(start, end)
+  assert.equal(chunk.includes('onCommit'), false)
+})

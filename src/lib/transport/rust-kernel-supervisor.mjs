@@ -399,6 +399,10 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec }) {
   if (!paths.socketPath) return { ok: false, reason: 'socket_missing' }
   const existing = await rustKernelHealth(exec, { timeoutMs: 800 })
   if (!startCurrent(control)) return { ok: false, reason: 'start_cancelled' }
+  const staleWrap = wrapNewerThanKernel(exec)
+  const staleTicket = credentialsNewerThanKernel(exec)
+  const slotMismatch =
+    !!paths.configPath && Number(readExistingKernelConfig(paths.configPath).slots_per_worker) !== WRAP_SLOT_MAX
   const occupied = rustKernelBusy(existing) || wrapHopInflight(exec) > 0
   if (occupied && !staleWrap && !staleTicket && !slotMismatch) {
     const reconcile = await reconcileCliHopRuntime(exec, { runDockerExec })
