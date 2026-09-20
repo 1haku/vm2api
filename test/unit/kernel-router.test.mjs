@@ -10,6 +10,7 @@ import {
   dispatchCallInference,
   rustHealthTtlMs,
   rustSlotWaitMs,
+  resolveHopSlotWaitMs,
   rustShouldWaitForSlot,
   waitForReadySlot,
   clearRustHealthCache,
@@ -74,6 +75,21 @@ test('waitForReadySlot times out instead of hopping into a full kernel', async (
   const result = await waitForReadySlot({ vmId: 'vm-missing-slot' }, 250, 50)
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'slot_busy')
+})
+
+test('hop slot wait uses remaining wait-plan budget instead of a second 30s', () => {
+  assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 0 }), 0)
+  assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 5000 }), 5000)
+  assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 45_000, routing: { inference: { slot_wait_ms: 8000 } } }), 8000)
+  assert.equal(resolveHopSlotWaitMs({}), 30_000)
+})
+
+test('waitForReadySlot with zero budget does an immediate check only', async () => {
+  const started = Date.now()
+  const result = await waitForReadySlot({ vmId: 'vm-zero-budget' }, 0, 50)
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'slot_busy')
+  assert.ok(Date.now() - started < 80)
 })
 
 test('rust health cache hits within TTL and misses when disabled', () => {

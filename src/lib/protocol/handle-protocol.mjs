@@ -241,6 +241,7 @@ export function createHandleProtocol(deps) {
       deliveryMode,
       want1m,
       routing,
+      slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
       onEvent: async (line) => {
@@ -859,6 +860,7 @@ export function createHandleProtocol(deps) {
               deliveryMode: attemptDelivery,
               want1m,
               routing: getRouting(),
+              slotWaitMs: candidate.slotWaitMs,
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
               onCommit: () => {

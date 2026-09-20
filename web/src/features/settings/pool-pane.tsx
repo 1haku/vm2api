@@ -22,6 +22,10 @@ export function PoolPane(props: PoolPaneProps) {
     <Card>
       <CardHeader>
         <CardTitle>账号池</CardTitle>
+        <p className='text-xs text-muted-foreground'>
+          调度三态：开 / 受限 /
+          关。操作员开关只拨开或关；额度、429、冷却写成受限，窗口到了自动恢复，不会拨成调度关。
+        </p>
       </CardHeader>
       <CardContent className='divide-y'>
         <SettingRow label='策略'>
@@ -61,6 +65,76 @@ export function PoolPane(props: PoolPaneProps) {
               onFailoverChange({
                 ...failover,
                 max_total_attempts: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='每账号等待人数'
+          desc='max_waiters_per_account，默认 32'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={1}
+            value={Number(pool.max_waiters_per_account ?? 32)}
+            onChange={(event) =>
+              onPoolChange({
+                ...pool,
+                max_waiters_per_account: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='粘性等待超时'
+          desc='毫秒，范围 1000–120000，默认 45000'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={1000}
+            max={120000}
+            value={Number(pool.sticky_wait_timeout_ms ?? 45000)}
+            onChange={(event) =>
+              onPoolChange({
+                ...pool,
+                sticky_wait_timeout_ms: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='回退等待超时'
+          desc='毫秒，范围 1000–120000，默认 30000'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={1000}
+            max={120000}
+            value={Number(pool.fallback_wait_timeout_ms ?? 30000)}
+            onChange={(event) =>
+              onPoolChange({
+                ...pool,
+                fallback_wait_timeout_ms: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='总重试时限'
+          desc='毫秒，整请求 failover 上限，默认 120000'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={1000}
+            value={Number(failover.total_retry_deadline_ms ?? 120000)}
+            onChange={(event) =>
+              onFailoverChange({
+                ...failover,
+                total_retry_deadline_ms: Number(event.target.value),
               })
             }
           />

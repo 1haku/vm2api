@@ -90,7 +90,7 @@ test('429 and usage_limit_reached fail over; committed hops do not', () => {
   assert.equal(isCodexFailoverError({ ok: false, status: 502, body: { error: { code: 'upstream_transport' } } }), false)
 })
 
-test('spent 5h window evaluates to 调度关', () => {
+test('spent 5h window evaluates to restriction, not 调度关', () => {
   const now = Date.parse('2026-09-17T00:00:00.000Z')
   const ev = evaluateCodexQuotaSchedule(
     gpt('vm-x', {
@@ -102,11 +102,12 @@ test('spent 5h window evaluates to 调度关', () => {
     }),
     now,
   )
-  assert.equal(ev.action, 'disable')
+  assert.equal(ev.action, 'restrict')
   assert.equal(ev.reason, 'quota_5h_header')
+  assert.equal(ev.until, now + 60_000)
 })
 
-test('open window restores only quota 调度关', () => {
+test('open window restores leftover quota-off and keeps operator 调度关', () => {
   const now = Date.parse('2026-09-17T00:00:00.000Z')
   const restore = evaluateCodexQuotaSchedule(
     gpt('vm-x', {

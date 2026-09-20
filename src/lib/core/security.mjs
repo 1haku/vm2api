@@ -237,7 +237,9 @@ export function extractPanelToken(req) {
 
 /** Cookie Secure follows the request (or PUBLIC_SCHEME). Default HTTP, not HTTPS. */
 export function panelCookieSecure(req, env = process.env) {
-  const scheme = String(env.PUBLIC_SCHEME || '').trim().toLowerCase()
+  const scheme = String(env.PUBLIC_SCHEME || '')
+    .trim()
+    .toLowerCase()
   if (scheme === 'https') return true
   if (scheme === 'http') return false
   const xf = String(req?.headers?.['x-forwarded-proto'] || '')

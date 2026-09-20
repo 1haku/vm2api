@@ -28,7 +28,7 @@ import {
   accountStatus,
   claudeTier,
   poolStatus,
-  vmCooldownTitle,
+  restrictionCopy,
   vmRunning,
 } from '@/lib/vm-status'
 import { cacheHitPct } from '@/lib/vm-usage'
@@ -66,7 +66,10 @@ import {
   vmQueryOptions,
   vmSeedQueryOptions,
 } from '@/features/vm/queries'
-import { SchedulableSwitch } from '@/features/vm/schedulable-switch'
+import {
+  SchedulableSwitch,
+  vmSchedulableProps,
+} from '@/features/vm/schedulable-switch'
 import { SeedPolicyCard } from '@/features/vm/seed-policy-card'
 import type { TestChatResult } from '@/features/vm/test-chat-types'
 
@@ -293,17 +296,14 @@ export function VmDetailPage() {
                 <StatusMark tone={poolStatus(vm)} variant='pill' />
               </span>
             </TooltipTrigger>
-            <TooltipContent>{vmCooldownTitle(vm)}</TooltipContent>
+            <TooltipContent>{restrictionCopy(vm)}</TooltipContent>
           </Tooltip>
           <span className='text-sm text-muted-foreground'>
             {vmRunning(vm) ? '运行' : '停止'}
           </span>
           <div className='flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm text-muted-foreground'>
             调度
-            <SchedulableSwitch
-              vmId={id}
-              schedulable={vm.schedulable !== false}
-            />
+            <SchedulableSwitch {...vmSchedulableProps(vm)} />
           </div>
           <div className='ms-auto flex flex-wrap gap-2'>
             {vmRunning(vm) ? (
