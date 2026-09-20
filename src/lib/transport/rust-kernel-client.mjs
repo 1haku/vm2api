@@ -70,6 +70,14 @@ export function rustKernelCliReady(health) {
   return Number.isFinite(n) && n > 0
 }
 
+/** Process is up and CLI is alive; idle slots=0 means busy, not dead. */
+export function rustKernelBusy(health) {
+  if (!rustKernelProcessUp(health)) return false
+  if (rustKernelCliReady(health)) return false
+  const pid = finiteNumber(health?.cli_pid)
+  return pid != null && pid > 0
+}
+
 export function rustKernelReachable(health) {
   return rustKernelProcessUp(health) && rustKernelCliReady(health)
 }
