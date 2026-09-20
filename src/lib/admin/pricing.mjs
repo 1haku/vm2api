@@ -6,6 +6,7 @@
  * that went through the gateway, not Claude Code included-quota or extra-usage.
  */
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { extractOpenaiUsage } from '../protocol/openai-usage.mjs'
 import { OPENAI_PRICING_SOURCE, resolveOpenaiOfficialRates } from './openai-pricing.mjs'
 
 export const PRICING_SOURCE = 'anthropic-official-2026-08'
@@ -98,11 +99,21 @@ function n(v) {
  */
 export function normalizeUsage(usage = {}) {
   if (!usage || typeof usage !== 'object') return {}
+  const extracted = extractOpenaiUsage(usage)
   const details = usage.input_tokens_details || usage.prompt_tokens_details || {}
-  const input = usage.input_tokens ?? usage.tokens_in ?? usage.prompt_tokens
-  const output = usage.output_tokens ?? usage.tokens_out ?? usage.completion_tokens
-  const cacheRead = usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? details.cached_tokens
-  const cacheCreate = usage.cache_creation_tokens ?? usage.cache_creation_input_tokens ?? details.cache_creation_tokens
+  const input = usage.input_tokens ?? usage.tokens_in ?? usage.prompt_tokens ?? extracted?.input_tokens
+  const output = usage.output_tokens ?? usage.tokens_out ?? usage.completion_tokens ?? extracted?.output_tokens
+  const cacheRead =
+    usage.cache_read_tokens ??
+    usage.cache_read_input_tokens ??
+    details.cached_tokens ??
+    extracted?.cached_tokens
+  const cacheCreate =
+    usage.cache_creation_tokens ??
+    usage.cache_creation_input_tokens ??
+    details.cache_creation_tokens ??
+    details.cache_write_tokens ??
+    extracted?.cache_write_tokens
   return {
     ...usage,
     input_tokens: input,
