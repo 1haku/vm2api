@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-09-20
+
+- 官方 Claude Code init 同时读取并保留 `~/.claude.json` 与 `CLAUDE_CONFIG_DIR/.claude.json`，不再在身份同步后删除 CLI 生成文件
+- routing 配置缺失或损坏时启动显式失败；VM 创建/启动响应不再返回账号、指纹、代理凭据及宿主运行时标识
+- 确认发布 kernel 在 `tool_use` 终止帧送达后归还 native slot，连续工具调用可独立恢复
 
 ## 1.2.22 — 2026-09-20
 

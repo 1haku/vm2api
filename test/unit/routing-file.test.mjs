@@ -51,11 +51,24 @@ test('readRoutingConfigFile reads src/config and ignores project/config', () => 
   }
 })
 
-test('readRoutingConfigFile returns {} when the file is missing', () => {
+test('readRoutingConfigFile fails when the file is missing', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-missing-'))
   try {
     withEnv('KIN_ROUTING_FILE', '', () => {
-      assert.deepEqual(readRoutingConfigFile(root), {})
+      assert.throws(() => readRoutingConfigFile(root), /Routing config .*not found/)
+    })
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readRoutingConfigFile identifies invalid JSON', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-invalid-'))
+  try {
+    fs.mkdirSync(path.join(root, 'src', 'config'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'src', 'config', 'routing.json'), '{invalid')
+    withEnv('KIN_ROUTING_FILE', '', () => {
+      assert.throws(() => readRoutingConfigFile(root), /Routing config .*invalid JSON/)
     })
   } finally {
     fs.rmSync(root, { recursive: true, force: true })

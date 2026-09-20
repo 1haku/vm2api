@@ -271,12 +271,24 @@ export function createRoutingRuntime(ctx) {
   }
 
   function loadRoutingConfig() {
+    let raw
     try {
-      const doc = JSON.parse(fs.readFileSync(ctx.routingConfigPath, 'utf8'))
+      raw = fs.readFileSync(ctx.routingConfigPath, 'utf8')
+    } catch (error) {
+      if (error?.code === 'ENOENT')
+        throw new Error(`Routing config '${ctx.routingConfigPath}' not found`, { cause: error })
+      throw new Error(`Routing config '${ctx.routingConfigPath}' unreadable: ${error?.message || error}`, {
+        cause: error,
+      })
+    }
+    try {
+      const doc = JSON.parse(raw)
       doc.codex = normalizeCodexRouting(doc.codex)
       return doc
-    } catch {
-      return { codex: normalizeCodexRouting() }
+    } catch (error) {
+      throw new Error(`Routing config '${ctx.routingConfigPath}' has invalid JSON: ${error?.message || error}`, {
+        cause: error,
+      })
     }
   }
 

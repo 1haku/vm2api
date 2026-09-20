@@ -1,8 +1,4 @@
-/**
- * Official Claude Code init (~/.claude.json userID / machineID) is the
- * only device identity. Slot-generated UUIDs and leftover
- * ~/.claude/.claude.json never win once official IDs exist.
- */
+/** Official CLI IDs come from CLAUDE_CONFIG_DIR when configured; slot-generated UUIDs never replace them. */
 import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
@@ -11,11 +7,18 @@ export const OFFICIAL_IDENTITY_SOURCE = 'official-cc-init'
 
 const STALE_FP_KEYS = Object.freeze(['machineID', 'userID', 'machineId', 'userId'])
 
+function readClaudeIdentityDocument(homeDir) {
+  for (const file of [path.join(homeDir, '.claude.json'), path.join(homeDir, '.claude', '.claude.json')]) {
+    try {
+      const doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+      if (doc?.machineID && doc?.userID) return doc
+    } catch {}
+  }
+  return {}
+}
+
 export function readOfficialCcIdentity(homeDir) {
-  let doc = {}
-  try {
-    doc = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude.json'), 'utf8'))
-  } catch {}
+  const doc = readClaudeIdentityDocument(homeDir)
   const account = doc.oauthAccount && typeof doc.oauthAccount === 'object' ? doc.oauthAccount : {}
   const billing = account.billingType || account.subscriptionType || account.seatTier || null
   return {
@@ -51,21 +54,23 @@ export function reconcileFingerprint(prev = {}, official = {}) {
 }
 
 export function discardLeftoverClaudeJson(homeDir) {
-  const leftover = path.join(homeDir, '.claude', '.claude.json')
-  if (!fs.existsSync(leftover)) return { removed: false, conflict: false }
-  let leftoverDoc = {}
+  const nested = path.join(homeDir, '.claude', '.claude.json')
+  if (!fs.existsSync(nested)) return { removed: false, conflict: false }
+  let doc = {}
+  let canonical = {}
   try {
-    leftoverDoc = JSON.parse(fs.readFileSync(leftover, 'utf8'))
+    doc = JSON.parse(fs.readFileSync(nested, 'utf8'))
   } catch {}
-  const official = readOfficialCcIdentity(homeDir)
-  const conflict = !!(
-    (leftoverDoc.machineID && leftoverDoc.machineID !== official.machine_id) ||
-    (leftoverDoc.userID && leftoverDoc.userID !== official.user_id)
-  )
   try {
-    fs.rmSync(leftover, { force: true })
+    canonical = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude.json'), 'utf8'))
   } catch {}
-  return { removed: true, conflict }
+  return {
+    removed: false,
+    conflict: !!(
+      (canonical.machineID && doc.machineID && canonical.machineID !== doc.machineID) ||
+      (canonical.userID && doc.userID && canonical.userID !== doc.userID)
+    ),
+  }
 }
 
 export function applyOfficialFingerprintToVm(vmPath, homeDir) {

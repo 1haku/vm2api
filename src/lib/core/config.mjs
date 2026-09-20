@@ -18,10 +18,18 @@ export function routingConfigFile(projectRoot = PROJECT) {
 }
 
 export function readRoutingConfigFile(projectRoot = PROJECT) {
+  const file = routingConfigFile(projectRoot)
+  let raw
   try {
-    return JSON.parse(fs.readFileSync(routingConfigFile(projectRoot), 'utf8'))
-  } catch {
-    return {}
+    raw = fs.readFileSync(file, 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`Routing config '${file}' not found`, { cause: error })
+    throw new Error(`Routing config '${file}' unreadable: ${error?.message || error}`, { cause: error })
+  }
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`Routing config '${file}' has invalid JSON: ${error?.message || error}`, { cause: error })
   }
 }
 

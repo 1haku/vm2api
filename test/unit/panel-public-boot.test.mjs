@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { publicAllocatedProxy, publicRuntimeView, publicSlotBoot } from '../../src/lib/admin/panel-api.mjs'
+import {
+  publicAllocatedProxy,
+  publicRuntimeView,
+  publicSlotBoot,
+  publicVmBootView,
+} from '../../src/lib/admin/panel-api.mjs'
 
 test('publicAllocatedProxy uses publicProxy and drops credentials', () => {
   const bound = {
@@ -77,9 +82,43 @@ test('publicSlotBoot and publicRuntimeView drop host infrastructure', () => {
   })
   assert.deepEqual(runtime, {
     type: 'docker',
-    container: 'kin-01',
     worker: 'rust',
     egress: 'explicit-socks5',
   })
   assert.equal(publicRuntimeView('docker-container'), 'docker-container')
+})
+
+test('publicVmBootView exposes state without account or infrastructure identifiers', () => {
+  const view = publicVmBootView({
+    id: 'vm-01',
+    name: 'primary',
+    status: 'running',
+    platform: 'anthropic',
+    family: 'claude',
+    inference_engine: 'rust',
+    persona_preset: 'official_full',
+    schedulable: true,
+    schedule_disabled_reason: null,
+    email: 'owner@example.com',
+    account_uuid: 'account-secret',
+    org_uuid: 'org-secret',
+    proxy: { id: 'px-1', url: 'socks5://secret' },
+    fingerprint: { device_id: 'device-secret' },
+    runtime: { container: 'kin-01', ip: '10.0.0.2', pid: 42 },
+    ip: '10.0.0.2',
+    pid: 42,
+    container: 'kin-01',
+  })
+  assert.deepEqual(view, {
+    id: 'vm-01',
+    name: 'primary',
+    status: 'running',
+    platform: 'anthropic',
+    family: 'claude',
+    inference_engine: 'rust',
+    persona_preset: 'official_full',
+    schedulable: true,
+    schedule_disabled_reason: null,
+  })
+  assert.doesNotMatch(JSON.stringify(view), /owner@example|secret|kin-01|10\.0\.0\.2/)
 })

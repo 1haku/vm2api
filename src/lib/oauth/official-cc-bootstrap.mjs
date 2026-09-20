@@ -689,15 +689,21 @@ export function writeOfficialCcStatus(homeDir, status) {
 }
 
 export function summarizeOfficialCcHome(homeDir) {
+  const identity = readOfficialCcIdentity(homeDir)
   let doc = {}
-  try {
-    doc = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude.json'), 'utf8'))
-  } catch {}
-  const account = doc.oauthAccount && typeof doc.oauthAccount === 'object' ? doc.oauthAccount : {}
+  for (const file of [path.join(homeDir, '.claude', '.claude.json'), path.join(homeDir, '.claude.json')]) {
+    try {
+      const candidate = JSON.parse(fs.readFileSync(file, 'utf8'))
+      if (candidate?.machineID && candidate?.userID) {
+        doc = candidate
+        break
+      }
+    } catch {}
+  }
   return {
-    has_oauth_account: !!(account.accountUuid || account.uuid || account.email),
-    has_user_id: !!doc.userID,
-    has_machine_id: !!doc.machineID,
+    has_oauth_account: !!identity.account_uuid,
+    has_user_id: !!identity.user_id,
+    has_machine_id: !!identity.machine_id,
     has_completed_onboarding: !!doc.hasCompletedOnboarding,
     has_claude_bin: fs.existsSync(officialCcBin(homeDir)),
   }

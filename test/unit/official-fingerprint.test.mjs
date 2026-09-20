@@ -7,6 +7,7 @@ import {
   reconcileFingerprint,
   applyOfficialFingerprintToVm,
   discardLeftoverClaudeJson,
+  readOfficialCcIdentity,
   OFFICIAL_IDENTITY_SOURCE,
 } from '../../src/lib/identity/official-fingerprint.mjs'
 
@@ -26,7 +27,7 @@ test('official machineID replaces slot-generated device_id', () => {
   assert.equal(next.session_id, 'sess')
 })
 
-test('applyOfficialFingerprintToVm writes vm.json and drops leftover claude.json', () => {
+test('applyOfficialFingerprintToVm keeps both Claude identity files', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-fp-'))
   const home = path.join(root, 'cli-home')
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
@@ -65,16 +66,35 @@ test('applyOfficialFingerprintToVm writes vm.json and drops leftover claude.json
   const result = applyOfficialFingerprintToVm(vmPath, home)
   assert.equal(result.wrote, true)
   assert.equal(result.replaced_device, true)
-  assert.equal(result.leftover.removed, true)
+  assert.equal(result.leftover.removed, false)
   assert.equal(result.leftover.conflict, true)
   const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
   assert.equal(vm.fingerprint.device_id, machine)
   assert.equal(vm.fingerprint.official_user_id, user)
   assert.equal(vm.fingerprint.identity_source, OFFICIAL_IDENTITY_SOURCE)
-  assert.equal(fs.existsSync(path.join(home, '.claude', '.claude.json')), false)
+  assert.equal(fs.existsSync(path.join(home, '.claude', '.claude.json')), true)
   const ident = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'kin-identity.json'), 'utf8'))
   assert.equal(ident.device_id, machine)
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('init reads CLAUDE_CONFIG_DIR identity without deleting its source', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-fp-nested-'))
+  const home = path.join(root, 'cli-home')
+  const nested = path.join(home, '.claude', '.claude.json')
+  const vmPath = path.join(root, 'vm-01.json')
+  try {
+    fs.mkdirSync(path.dirname(nested), { recursive: true })
+    fs.writeFileSync(nested, JSON.stringify({ machineID: 'official-machine', userID: 'official-user' }))
+    fs.writeFileSync(vmPath, JSON.stringify({ id: 'vm-01', fingerprint: { device_id: 'slot-machine' } }))
+    const applied = applyOfficialFingerprintToVm(vmPath, home)
+    assert.equal(applied.official, true)
+    assert.equal(readOfficialCcIdentity(home).machine_id, 'official-machine')
+    assert.equal(JSON.parse(fs.readFileSync(vmPath, 'utf8')).fingerprint.device_id, 'official-machine')
+    assert.equal(JSON.parse(fs.readFileSync(nested, 'utf8')).userID, 'official-user')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('discardLeftoverClaudeJson is a no-op when missing', () => {
