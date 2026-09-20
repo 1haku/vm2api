@@ -40,6 +40,17 @@
 
 生产就用这条。仓库必须在 **`/opt/vm2api`**（容器内外路径一致）。
 
+**一键安装 / 更新**（保留 `.env` / `vms/` / `data/`，不 `docker rm` 槽）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
+# 以后更新
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+sudo bash /opt/vm2api/deploy/install.sh check
+```
+
+管理台 **设置 → 关于** 会对照 GitHub Release，并给出同一条命令。
+
 **运行形态（不是一个父容器里一堆子进程）：**
 
 - Compose **只起 1 个** `vm2api` 控制面（面板、`/v1`、调度）

@@ -2,7 +2,7 @@
 
 基址 `/api/panel`。需要**面板登录会话**或 Master `VM2API_API_KEY`。协议密钥不能调面板。信封 `{ ok, data }` / `{ ok: false, error }`。调用方应从 `data` 取业务体。
 
-登录：`POST /api/panel/login` `{ username, password }` → token + Cookie `kin_panel_token`（7 天，HttpOnly）。`POST /api/panel/logout` 撤销。`GET /api/panel/me` → `{ user, role, views, capabilities }`。
+登录：`POST /api/panel/login` `{ username, password }` → token + Cookie `kin_panel_token`（7 天，HttpOnly）。`POST /api/panel/logout` 撤销。`GET /api/panel/me` → `{ user, role, views, capabilities, version }`。
 
 `/admin/*` 仅 master / admin 角色。恢复备份期间协议口 503。
 
@@ -97,6 +97,16 @@
 `usage_cache.hit_rate = (success_hits + error_hits) / requests`；`reuse_rate` 再加 `singleflight_joins`。零请求时均为 `null`。`error_hits` 是负缓存命中，不代表业务成功；累计计数随进程或缓存实例重建归零。
 
 该端点只做观测；禁止 SQL 控制台、表浏览、配置修改、checkpoint、VACUUM、`PRAGMA optimize`、完整性检查及业务大表全表计数。
+
+## 版本 / 更新（仅 admin）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/version` | 当前 `VERSION`、GitHub 最新 Release、是否可更新、一键命令、比当前新的 changelog。GitHub 失败时 `source_error` 有值，不 5xx |
+| GET | `/changelog` | 本地 `CHANGELOG.md` 解析结果 `{ current, entries }` |
+| POST | `/update` | `{ confirm?: true, version?: "vX.Y.Z" }`。`confirm` 缺省只返回命令。`confirm: true` 且已挂 `docker.sock` 时 202 拉起宿主机升级助手；否则 `409 host_upgrade_required`，`data.command` 是同一条 curl。升级会重建控制面，请求可能中断 |
+
+一键脚本：`curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade`。保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。
 
 ## 模型策略
 

@@ -4,6 +4,7 @@ import {
   BellRing,
   Fingerprint,
   Gauge,
+  Info,
   Layers,
   ListChecks,
   Magnet,
@@ -27,6 +28,7 @@ export const SETTINGS_TABS = [
   ['telemetry', '遥测'],
   ['socks5', 'SOCKS5'],
   ['backup', '备份'],
+  ['about', '关于'],
 ] as const
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number][0]
@@ -69,6 +71,7 @@ export const SETTINGS_NAV_GROUPS: {
       { id: 'notify', icon: BellRing },
       { id: 'logs', icon: ScrollText },
       { id: 'backup', icon: Archive },
+      { id: 'about', icon: Info },
     ],
   },
 ]
