@@ -76,3 +76,32 @@ test('host usage refuses apikey and models requires SOCKS', async () => {
   assert.equal(models.body.error.code, 'proxy_required')
   fs.rmSync(home, { recursive: true, force: true })
 })
+
+test('host models on local egress hops without SOCKS agent', async () => {
+  const home = tempHome()
+  writeWorkerCredentialFile(home, {
+    type: 'setup-token',
+    access_token: 'sk-ant-oat01-live',
+    scopes: ['user:inference'],
+  })
+  let seen = null
+  const fetchImpl = async (url, opts) => {
+    seen = { url, agent: opts.agent }
+    return {
+      ok: true,
+      status: 200,
+      headers: { forEach: () => {} },
+      text: async () => JSON.stringify({ data: [] }),
+    }
+  }
+  const hop = await hostModels(
+    {
+      homeDir: home,
+      vm: { id: 'vm-01', proxy: { id: 'px-local', host: 'local', port: 0, scheme: 'local' } },
+    },
+    { fetchImpl },
+  )
+  assert.equal(hop.ok, true)
+  assert.equal(seen.agent, undefined)
+  fs.rmSync(home, { recursive: true, force: true })
+})

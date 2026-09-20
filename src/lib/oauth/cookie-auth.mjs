@@ -206,8 +206,9 @@ export async function exchangeTokenViaCookieAuth({
   redirectUri = null,
   tokenUrls = null,
 } = {}) {
-  const px = normalizeSocks(proxyUrl)
-  if (!px) {
+  const direct = proxyUrl === ''
+  const px = direct ? '' : normalizeSocks(proxyUrl)
+  if (!direct && !px) {
     const err = new Error('slot SOCKS5 is required for token exchange')
     err.code = 'proxy_required'
     throw err
@@ -216,7 +217,7 @@ export async function exchangeTokenViaCookieAuth({
   return spawnCookieHelper(
     {
       IMPORT_MODE: 'token_exchange',
-      PROXY_URL: px,
+      ...(px ? { PROXY_URL: px } : {}),
       AUTH_CODE: String(code || ''),
       CODE_VERIFIER: String(codeVerifier || ''),
       OAUTH_STATE: String(state || ''),
@@ -254,14 +255,15 @@ export async function sessionKeyToOAuth(sessionKey, { scope = 'full', proxyUrl =
   if (process.env.KIN_FAKE_SESSION_OAUTH === '1' || process.env.KIN_FAKE_SESSION_OAUTH === 'true') {
     return fakeOauth(scope)
   }
-  const px = normalizeSocks(proxyUrl)
-  if (!px) {
+  const direct = proxyUrl === ''
+  const px = direct ? '' : normalizeSocks(proxyUrl)
+  if (!direct && !px) {
     const err = new Error('slot SOCKS5 is required for sessionKey import')
     err.code = 'proxy_required'
     throw err
   }
   try {
-    const cred = await spawnCookieHelper({ SCOPE: scope, PROXY_URL: px }, sk)
+    const cred = await spawnCookieHelper({ SCOPE: scope, ...(px ? { PROXY_URL: px } : {}) }, sk)
     console.log('[import]', cred.source || 'cookie-auth', 'socks5h', redact(cred.access_token || ''))
     return cred
   } catch (e) {
