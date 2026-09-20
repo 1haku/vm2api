@@ -122,6 +122,7 @@ import { withVmLock, atomicWriteJson } from '../vm/vm-file.mjs'
 import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
+import { readLocalVersion, loadChangelog, buildUpdateStatus, startHostUpgrade } from './release.mjs'
 import { removeVmFromDb } from '../vm/vm-db-sync.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
 import { reloadActiveVm } from '../core/config.mjs'
@@ -616,7 +617,9 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'GET' && p === '/api/panel/me') {
         const me = mePayload(req)
-        return json(res, 200, { ok: true, ...me, data: me })
+        const version = readLocalVersion(cfg?.paths?.project)
+        const payload = { ...me, version }
+        return json(res, 200, { ok: true, ...payload, data: payload })
       }
       const gate = authorizePanelRoute(req.method, p, panelIdentity(req).role)
       if (!gate.ok) {
@@ -648,6 +651,31 @@ export function createPanelHandler(ctx) {
           usageCache: getUsageCache(),
         })
         return json(res, 200, panel.ok(snapshot))
+      }
+      if (req.method === 'GET' && p === '/api/panel/version') {
+        const status = await buildUpdateStatus({ projectRoot: cfg?.paths?.project })
+        return json(res, 200, panel.ok(status))
+      }
+      if (req.method === 'GET' && p === '/api/panel/changelog') {
+        const current = readLocalVersion(cfg?.paths?.project)
+        const entries = loadChangelog(cfg?.paths?.project)
+        return json(res, 200, panel.ok({ current, current_tag: `v${current}`, entries }))
+      }
+      if (req.method === 'POST' && p === '/api/panel/update') {
+        const body = await readBody(req, 8192).catch(() => ({}))
+        const result = await startHostUpgrade({
+          projectRoot: cfg?.paths?.project,
+          confirm: body?.confirm === true,
+          version: body?.version,
+        })
+        if (result.error) {
+          return json(res, result.status, {
+            ok: false,
+            error: result.error,
+            data: result.data || null,
+          })
+        }
+        return json(res, result.status, panel.ok(result.data))
       }
       if (p === '/api/panel/users' || /^\/api\/panel\/users\/[^/]+$/.test(p)) {
         return json(res, 404, {

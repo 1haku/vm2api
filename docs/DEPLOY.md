@@ -30,6 +30,24 @@ VM2API_DB_SECRET='再一串'
 
 ## 安装
 
+**一键（推荐）：**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
+```
+
+脚本会 clone 到 `/opt/vm2api`、生成 `.env`（`chmod 600`）、`docker compose up -d --build`。打印出的 `VM2API_ADMIN_PASSWORD` 请立刻记下来。以后：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+sudo bash /opt/vm2api/deploy/install.sh check
+sudo bash /opt/vm2api/deploy/install.sh changelog
+```
+
+保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.7`。若 changelog 提到 `wrap-cli/sync`，加 `--sync-wrap`。
+
+**手动：**
+
 ```bash
 git clone https://github.com/dofastted/vm2api.git /opt/vm2api
 cd /opt/vm2api
@@ -43,7 +61,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 二进制在仓内 `bin/`，Compose 会拷到挂载目录。`bin/kin-*` 必须 **755**。缺槽位系统镜像时会编 `kin-os/ubuntu:24.04`。
 
-升级到 **v1.2.6** 见下面「已部署机升级到 1.2.6」。只重启控制面，不要 `docker rm` 槽。
+升级到 **v1.2.7** 见下面「已部署机升级到 1.2.7」。只重启控制面，不要 `docker rm` 槽。
 
 Docker Desktop / WSL 下 `curl 127.0.0.1:8787` 可能失败：
 
@@ -79,6 +97,50 @@ location / {
 ## 本机 Node（备选）
 
 仓内已有 `bin/kin-*`。还要 `npm ci`、`pnpm -C web install --frozen-lockfile && npm run build:web`，以及占位 `vms/active.json`。单元：[deploy/vm2api.service](deploy/vm2api.service)。细节见 [BUILD.md](BUILD.md)。
+
+## 一键安装 / 更新
+
+`deploy/install.sh` 对齐 sub2api / CLIProxyAPI：查 GitHub 最新 Release → checkout tag → 重建控制面。不碰 `.env`、`vms/`、`data/`，不 `docker rm` 槽。
+
+```bash
+# 安装
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
+
+# 更新到最新 Release
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+
+# 指定 tag
+sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.7
+
+# 只检查
+sudo bash /opt/vm2api/deploy/install.sh check
+```
+
+面板：`GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`（`{ confirm: true }` 才会在已挂 `docker.sock` 的机器上拉起升级助手）。容器里没有宿主机 git 仓时返回 `409 host_upgrade_required`，响应里带同一条 curl 命令。
+
+## 已部署机升级到 1.2.7
+
+1.2.7 只动**控制面 Node + web**（版本检查、一键安装/更新、面板「关于」）。不必换槽内 kin-kernel / wrap CLI，也不要 `docker rm` 槽。
+
+推荐：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+```
+
+手动：
+
+```bash
+cd /opt/vm2api
+git fetch --tags
+git checkout v1.2.7
+docker compose up -d --build
+curl -sS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+本机 systemd：`git checkout v1.2.7` → `npm ci` → `pnpm -C web install --frozen-lockfile && npm run build:web` → `systemctl restart vm2api` **一次**。
+
+管理台 **设置 → 关于** 也可复制命令或（已挂 docker.sock 时）从面板发起。
 
 ## 已部署机升级到 1.2.6
 

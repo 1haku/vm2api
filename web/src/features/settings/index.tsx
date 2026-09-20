@@ -26,6 +26,7 @@ import { PageHeader } from '@/components/page-header'
 import { QueryGate } from '@/components/query-gate'
 import { SettingRow } from '@/components/setting-row'
 import { dashboardQueryOptions } from '@/features/overview/queries'
+import { AboutPane } from '@/features/settings/about-pane'
 import { BackupPane } from '@/features/settings/backup-pane'
 import { CacheBreakpointsPane } from '@/features/settings/cache-breakpoints-pane'
 import { CredentialWeightPane } from '@/features/settings/credential-weight-pane'
@@ -159,7 +160,11 @@ export function SettingsPage() {
   const logging = (draft.logging as Record<string, unknown> | undefined) || {}
   const inference =
     (draft.inference as Record<string, unknown> | undefined) || {}
-  const hideSave = tab === 'socks5' || tab === 'telemetry' || tab === 'backup'
+  const hideSave =
+    tab === 'socks5' ||
+    tab === 'telemetry' ||
+    tab === 'backup' ||
+    tab === 'about'
   // 两个 tab 都写 compatibility，而 persona_templates 是在协议页编辑的：
   // 只拦协议页的话，用户可以带着畸形模板切到白名单页保存，照样吃后端 400。
   const blocked =
@@ -385,6 +390,7 @@ export function SettingsPage() {
               {tab === 'telemetry' ? <TelemetryPane /> : null}
               {tab === 'socks5' ? <Socks5Pane /> : null}
               {tab === 'backup' ? <BackupPane /> : null}
+              {tab === 'about' ? <AboutPane /> : null}
             </div>
           </QueryGate>
         </div>
