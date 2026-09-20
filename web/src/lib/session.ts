@@ -38,13 +38,13 @@ export function sessionToken(): string {
 }
 
 export function hasSession(): boolean {
-  return Boolean(sessionToken() || storedUser())
+  return Boolean(sessionToken())
 }
 
 export function setSession(token: string, user?: string) {
   clearClientCookie(COOKIE)
   clearClientCookie('kin_console_token')
-  if (token && apiBase()) localStorage.setItem(LS_TOKEN, token)
+  if (token) localStorage.setItem(LS_TOKEN, token)
   else localStorage.removeItem(LS_TOKEN)
   if (user) localStorage.setItem(LS_USER, user)
 }

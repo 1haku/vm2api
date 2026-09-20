@@ -58,5 +58,62 @@ elif [ -f /opt/vm2api/docker/kin-os/build.mjs ]; then
   node /opt/vm2api/docker/kin-os/build.mjs ubuntu
 fi
 
+env_get_file() {
+  name="$1"
+  file="$2"
+  [ -f "$file" ] || return 0
+  grep -E "^${name}=" "$file" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d "'" | tr -d '"' | tr -d '\r'
+}
+
+env_upsert_if_empty() {
+  name="$1"
+  value="$2"
+  file="$3"
+  [ -n "$file" ] || return 0
+  if [ -f "$file" ]; then
+    current="$(env_get_file "$name" "$file")"
+    if [ -n "$current" ]; then
+      return 0
+    fi
+    if grep -qE "^${name}=" "$file"; then
+      sed -i "s|^${name}=.*|${name}=${value}|" "$file"
+    else
+      printf '%s=%s\n' "$name" "$value" >>"$file"
+    fi
+  fi
+}
+
+rand_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  fi
+}
+
+ENVF="${ROOT}/.env"
+if [ -z "${VM2API_ADMIN_USER:-}" ]; then
+  VM2API_ADMIN_USER=admin
+  export VM2API_ADMIN_USER
+  env_upsert_if_empty VM2API_ADMIN_USER admin "$ENVF"
+fi
+if [ -z "${VM2API_ADMIN_PASSWORD:-}" ]; then
+  VM2API_ADMIN_PASSWORD=123456
+  export VM2API_ADMIN_PASSWORD
+  env_upsert_if_empty VM2API_ADMIN_PASSWORD 123456 "$ENVF"
+  echo "vm2api: VM2API_ADMIN_PASSWORD was empty; using default admin / 123456 (change after login)." >&2
+fi
+if [ -z "${VM2API_API_KEY:-}" ] && [ -z "${KIN_API_KEY:-}" ]; then
+  VM2API_API_KEY="$(rand_hex)"
+  export VM2API_API_KEY
+  env_upsert_if_empty VM2API_API_KEY "$VM2API_API_KEY" "$ENVF"
+  echo "vm2api: generated VM2API_API_KEY (empty in env)." >&2
+fi
+if [ -z "${VM2API_DB_SECRET:-}" ] && [ -z "${KIN_DB_SECRET:-}" ]; then
+  VM2API_DB_SECRET="$(rand_hex)"
+  export VM2API_DB_SECRET
+  env_upsert_if_empty VM2API_DB_SECRET "$VM2API_DB_SECRET" "$ENVF"
+fi
+
 cd /opt/vm2api
 exec node src/server.mjs

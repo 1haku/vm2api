@@ -235,6 +235,21 @@ export function extractPanelToken(req) {
   return ''
 }
 
+/** Cookie Secure follows the request (or PUBLIC_SCHEME). Default HTTP, not HTTPS. */
+export function panelCookieSecure(req, env = process.env) {
+  const scheme = String(env.PUBLIC_SCHEME || '').trim().toLowerCase()
+  if (scheme === 'https') return true
+  if (scheme === 'http') return false
+  const xf = String(req?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+  if (xf === 'https') return true
+  if (xf === 'http') return false
+  if (req?.socket?.encrypted) return true
+  return false
+}
+
 /** Build Set-Cookie for panel session (7d) */
 export function panelSessionCookie(token, { secure = true, maxAgeSec = 7 * 24 * 3600 } = {}) {
   const parts = [

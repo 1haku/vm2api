@@ -24,17 +24,33 @@ function installBrowser(hostname: string) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('panel session storage', () => {
-  it('uses the HttpOnly server cookie on same-origin deployments', () => {
+  it('stores the bearer token even on same-origin deployments', () => {
     const values = installBrowser('ccmax20.cc')
 
     setSession('secret-token', 'admin')
 
-    expect(values.get(LS_TOKEN)).toBeUndefined()
+    expect(values.get(LS_TOKEN)).toBe('secret-token')
     expect(values.get(LS_USER)).toBe('admin')
     expect(hasSession()).toBe(true)
   })
 
-  it('keeps the bearer fallback only for a separate API origin', () => {
+  it('stores the bearer token when apiBase is empty (HTTP IP install)', () => {
+    const values = installBrowser('172.99.137.29')
+
+    setSession('secret-token', 'admin')
+
+    expect(values.get(LS_TOKEN)).toBe('secret-token')
+    expect(hasSession()).toBe(true)
+  })
+
+  it('does not treat a leftover username as a session', () => {
+    const values = installBrowser('172.99.137.29')
+    values.set(LS_USER, 'admin')
+
+    expect(hasSession()).toBe(false)
+  })
+
+  it('keeps the bearer fallback for a separate API origin', () => {
     const values = installBrowser('localhost')
     setApiBase('https://ccmax20.cc')
 

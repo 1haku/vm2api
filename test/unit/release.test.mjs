@@ -209,6 +209,8 @@ test('startHostUpgrade with confirm spawns a detached docker helper', async () =
     assert.equal(spawned[0].opts.detached, true)
     assert.ok(spawned[0].args.includes('vm2api-upgrade'))
     assert.ok(spawned[0].args.includes('docker:27-cli'))
+    const script = spawned[0].args[spawned[0].args.indexOf('sh') + 2] || spawned[0].args.join(' ')
+    assert.match(String(script), /!CHANGELOG\.md/)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
     clearReleaseCache()
