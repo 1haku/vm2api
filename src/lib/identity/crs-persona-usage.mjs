@@ -404,6 +404,9 @@ function wipeOfficialCache(out) {
   if (out.prompt_tokens_details && typeof out.prompt_tokens_details === 'object') {
     out.prompt_tokens_details = { ...out.prompt_tokens_details, cached_tokens: 0, cache_creation_tokens: 0 }
   }
+  if (out.input_tokens_details && typeof out.input_tokens_details === 'object') {
+    out.input_tokens_details = { ...out.input_tokens_details, cached_tokens: 0, cache_write_tokens: 0 }
+  }
 }
 
 export function hidePersonaUsage(usage, hideTokens = 0, cacheTtl = '5m') {

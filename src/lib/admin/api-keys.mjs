@@ -471,11 +471,12 @@ export class ApiKeyStore {
     // key quota/windows track actual (group-rated) spend, sub2api-style
     const rate = Number.isFinite(Number(rateMultiplier)) ? Number(rateMultiplier) : 1
     cost *= rate
+    const normalized = normalizeUsage(usage)
     const rec = this.repo.recordUsage(id, {
-      tokens_in: Number(usage.input_tokens) || Number(usage.tokens_in) || 0,
-      tokens_out: Number(usage.output_tokens) || Number(usage.tokens_out) || 0,
-      cache_read_tokens: Number(usage.cache_read_input_tokens ?? usage.cache_read_tokens) || 0,
-      cache_creation_tokens: Number(usage.cache_creation_input_tokens ?? usage.cache_creation_tokens) || 0,
+      tokens_in: Number(normalized.input_tokens) || Number(normalized.tokens_in) || 0,
+      tokens_out: Number(normalized.output_tokens) || Number(normalized.tokens_out) || 0,
+      cache_read_tokens: Number(normalized.cache_read_input_tokens ?? normalized.cache_read_tokens) || 0,
+      cache_creation_tokens: Number(normalized.cache_creation_input_tokens ?? normalized.cache_creation_tokens) || 0,
       cost,
     })
     // sub2api: the billing write flips the key when the USD quota runs out

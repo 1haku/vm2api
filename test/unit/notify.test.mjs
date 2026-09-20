@@ -4,6 +4,7 @@ import {
   normalizeNotifyConfig,
   mergeNotifyConfig,
   publicNotifyConfig,
+  publicRoutingNotify,
   summarizePoolAvailability,
   detectPoolNotifyEvents,
   formatNotifyMessage,
@@ -51,6 +52,22 @@ test('merge keeps secrets when the panel sends empty or mask', () => {
   assert.equal(pub.email.pass_set, true)
   assert.equal(pub.telegram.bot_token, '')
   assert.equal(pub.telegram.bot_token_set, true)
+})
+
+test('publicRoutingNotify redacts notify secrets and keeps routing fields', () => {
+  const pub = publicRoutingNotify({
+    concurrency: 4,
+    notify: {
+      enabled: true,
+      email: { enabled: true, host: 'smtp.example', to: 'a@x.com', pass: 'old-pass' },
+      telegram: { enabled: true, bot_token: '123:secret', chat_id: '9' },
+    },
+  })
+  assert.equal(pub.concurrency, 4)
+  assert.equal(pub.notify.email.pass, '')
+  assert.equal(pub.notify.email.pass_set, true)
+  assert.equal(pub.notify.telegram.bot_token, '')
+  assert.equal(pub.notify.telegram.bot_token_set, true)
 })
 
 test('summarize matches overview usable口径', () => {

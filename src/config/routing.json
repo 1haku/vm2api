@@ -193,6 +193,16 @@
       "openai_compatible": "allow",
       "claude_code": "reject",
       "unknown": "allow"
+    },
+    "plugin": {
+      "rotate": {
+        "enabled": false,
+        "inject_state": true,
+        "auto_collect": true,
+        "state_lengths": [292, 332],
+        "state_ttl_seconds": 3600,
+        "probe_model": "gpt-6-astra"
+      }
     }
   }
 }
