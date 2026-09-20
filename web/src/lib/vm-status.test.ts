@@ -269,7 +269,11 @@ describe('claudeTier follows usage Fable presence', () => {
         reason: 'quota_5h_header',
       },
     })
-    expect(poolStatus(vm)).toMatchObject({ key: 'quota', text: '5h 限制', cls: 'warn' })
+    expect(poolStatus(vm)).toMatchObject({
+      key: 'quota',
+      text: '5h 限制',
+      cls: 'warn',
+    })
     expect(accountStatus(vm)).toMatchObject({ key: 'quota', cls: 'warn' })
   })
 
@@ -284,7 +288,11 @@ describe('claudeTier follows usage Fable presence', () => {
         reason: 'quota_5h_header',
       },
     })
-    expect(poolStatus(vm)).toMatchObject({ key: 'quota', text: '5h 限制', cls: 'warn' })
+    expect(poolStatus(vm)).toMatchObject({
+      key: 'quota',
+      text: '5h 限制',
+      cls: 'warn',
+    })
     expect(poolStatus(vm).text).not.toBe('调度关')
     expect(accountStatus(vm).cls).not.toBe('off')
     expect(accountStatus(vm).text).not.toBe('调度关')

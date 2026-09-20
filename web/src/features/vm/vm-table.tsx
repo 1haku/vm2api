@@ -348,9 +348,11 @@ export type VmSortKey = 'name' | 'today' | 'cache' | 'remain' | 'status'
  * cool / quota 是受限，不与在池同级。
  */
 function statusRank(vm: Vm): number {
-  return { pool: 0, restricted: 1, off: 2, none: 3, bad: 4, revoke: 5 }[
-    fleetGroup(vm)
-  ] ?? 6
+  return (
+    { pool: 0, restricted: 1, off: 2, none: 3, bad: 4, revoke: 5 }[
+      fleetGroup(vm)
+    ] ?? 6
+  )
 }
 
 /**

@@ -23,7 +23,8 @@ export function PoolPane(props: PoolPaneProps) {
       <CardHeader>
         <CardTitle>账号池</CardTitle>
         <p className='text-xs text-muted-foreground'>
-          调度三态：开 / 受限 / 关。操作员开关只拨开或关；额度、429、冷却写成受限，窗口到了自动恢复，不会拨成调度关。
+          调度三态：开 / 受限 /
+          关。操作员开关只拨开或关；额度、429、冷却写成受限，窗口到了自动恢复，不会拨成调度关。
         </p>
       </CardHeader>
       <CardContent className='divide-y'>
@@ -68,7 +69,10 @@ export function PoolPane(props: PoolPaneProps) {
             }
           />
         </SettingRow>
-        <SettingRow label='每账号等待人数' desc='max_waiters_per_account，默认 32'>
+        <SettingRow
+          label='每账号等待人数'
+          desc='max_waiters_per_account，默认 32'
+        >
           <Input
             className='w-24'
             type='number'
@@ -82,7 +86,10 @@ export function PoolPane(props: PoolPaneProps) {
             }
           />
         </SettingRow>
-        <SettingRow label='粘性等待超时' desc='毫秒，范围 1000–120000，默认 45000'>
+        <SettingRow
+          label='粘性等待超时'
+          desc='毫秒，范围 1000–120000，默认 45000'
+        >
           <Input
             className='w-24'
             type='number'
@@ -97,7 +104,10 @@ export function PoolPane(props: PoolPaneProps) {
             }
           />
         </SettingRow>
-        <SettingRow label='回退等待超时' desc='毫秒，范围 1000–120000，默认 30000'>
+        <SettingRow
+          label='回退等待超时'
+          desc='毫秒，范围 1000–120000，默认 30000'
+        >
           <Input
             className='w-24'
             type='number'
@@ -112,7 +122,10 @@ export function PoolPane(props: PoolPaneProps) {
             }
           />
         </SettingRow>
-        <SettingRow label='总重试时限' desc='毫秒，整请求 failover 上限，默认 120000'>
+        <SettingRow
+          label='总重试时限'
+          desc='毫秒，整请求 failover 上限，默认 120000'
+        >
           <Input
             className='w-24'
             type='number'
