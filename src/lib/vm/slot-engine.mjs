@@ -140,14 +140,10 @@ export function personaModeFromPreset(preset) {
   return null
 }
 
-/** Wrap CLI layout. ccmax (no persona_inject) stays zero; fkcodex rewrite → identity. */
+/** Wrap CLI layout follows the resolved persona preset. zero stays zero; official / custom → identity. */
 export function resolveCliSystemLayout(vm, routing = {}) {
-  const slot = normalizeSlotPersonaPreset(vm?.persona_preset, { inherit: true })
-  if (slot === 'zero') return 'zero'
-  const inject = String(routing?.compatibility?.persona_inject ?? '')
-    .trim()
-    .toLowerCase()
-  if (!inject || inject === 'none' || inject === 'off' || inject === 'false' || inject === 'zero') return 'zero'
+  const preset = resolveSlotPersonaPreset(vm, routing)
+  if (preset === 'zero') return 'zero'
   return 'identity'
 }
 

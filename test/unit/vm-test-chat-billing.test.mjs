@@ -220,5 +220,5 @@ test('runVmTestChat reports cli-hop when slot engine is rust', async (t) => {
   assert.equal(calls[0].headers['user-agent'], 'kin-console-test/1.0')
   assert.equal(calls[0].body.system, undefined)
   assert.ok(result.log.some((l) => /cli-hop wrap/.test(l.message)))
-  assert.ok(result.log.some((l) => /cli-hop 0注入|cli-hop 透传入站/.test(l.message)))
+  assert.ok(result.log.some((l) => /cli-hop CLI 官方提示词/.test(l.message)))
 })

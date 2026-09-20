@@ -1856,7 +1856,7 @@ export function createPanelHandler(ctx) {
                 vm: summarizeVm(vm),
                 destroyed: gone.action,
                 recreated: true,
-                runtime: boot,
+                runtime: panel.publicSlotBoot(boot),
               }),
             )
           }
@@ -1872,7 +1872,7 @@ export function createPanelHandler(ctx) {
               vm: summarizeVm(getVm(cfg.paths.project, id) || vm),
               destroyed: gone.action,
               recreated: true,
-              boot,
+              boot: panel.publicSlotBoot(boot),
             }),
           )
         })
@@ -2198,7 +2198,7 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             vm: summarizeVm(saved),
-            allocated_proxy: allocated,
+            allocated_proxy: panel.publicAllocatedProxy(proxyPool, allocated),
             ...(startError ? { start_error: startError } : {}),
           }),
         )
@@ -2235,10 +2235,10 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             vm: summarizeVm(vm),
-            allocated_proxy: bound,
-            runtime: vm.runtime || GATEWAY_CAPABILITIES.runtime,
+            allocated_proxy: panel.publicAllocatedProxy(proxyPool, bound),
+            runtime: panel.publicRuntimeView(vm.runtime) || GATEWAY_CAPABILITIES.runtime,
             kernel: GATEWAY_CAPABILITIES.kernel,
-            boot,
+            boot: panel.publicSlotBoot(boot),
           }),
         )
       }
@@ -2260,9 +2260,9 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             vm: summarizeVm(vm),
-            runtime: vm.runtime || GATEWAY_CAPABILITIES.runtime,
+            runtime: panel.publicRuntimeView(vm.runtime) || GATEWAY_CAPABILITIES.runtime,
             kernel: GATEWAY_CAPABILITIES.kernel,
-            halt,
+            halt: panel.publicSlotBoot(halt),
           }),
         )
       }

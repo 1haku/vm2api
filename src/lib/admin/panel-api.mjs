@@ -68,6 +68,61 @@ export function ok(data, meta) {
   return out
 }
 
+/** Start/create `allocated_proxy` must never carry SOCKS credentials. */
+export function publicAllocatedProxy(proxyPool, bound) {
+  if (!bound) return null
+  const raw = bound.id && proxyPool?.state?.proxies?.find((p) => p.id === bound.id)
+  if (raw && typeof proxyPool.publicProxy === 'function') return proxyPool.publicProxy(raw)
+  return {
+    id: bound.id || null,
+    host: bound.host || null,
+    port: bound.port || null,
+    has_auth: !!(bound.username || bound.password || bound.has_auth),
+    status: bound.status ?? null,
+    enabled: bound.enabled ?? null,
+    scheme: bound.scheme || (bound.kind === 'local' ? 'local' : 'socks5'),
+    kind: bound.kind || bound.scheme || 'socks5',
+  }
+}
+
+/** Drop host paths, container ids, IPs, and PIDs from slot boot/halt payloads. */
+export function publicSlotBoot(boot) {
+  if (!boot || typeof boot !== 'object') return boot
+  const rust = boot.rust
+  const out = {
+    ok: boot.ok,
+    action: boot.action,
+    engine: boot.engine,
+    rust_ok: boot.rust_ok,
+  }
+  if (boot.code) out.code = boot.code
+  if (boot.error) out.error = boot.error
+  if (boot.skipped != null) out.skipped = boot.skipped
+  if (boot.reason) out.reason = boot.reason
+  if (rust && typeof rust === 'object') {
+    out.rust = {
+      ok: rust.ok,
+      skipped: rust.skipped,
+      reason: rust.reason,
+      engine: rust.engine,
+      code: rust.code,
+      error: rust.error,
+    }
+  }
+  return out
+}
+
+export function publicRuntimeView(runtime) {
+  if (runtime == null || typeof runtime === 'string') return runtime
+  if (typeof runtime !== 'object') return runtime
+  return {
+    type: runtime.type || null,
+    container: runtime.container || null,
+    worker: runtime.worker || null,
+    egress: runtime.egress || null,
+  }
+}
+
 /** Clear runtime cooldown, leftover /usage 429 flag, and sticky pins for a slot. */
 export function clearVmCooldown({ cfg, accountQuota, stickyRouter = null, poolScheduler = null, id } = {}) {
   const vm = getVm(cfg?.paths?.project, id)

@@ -520,7 +520,7 @@ test('writeKernelConfig cli-hop writes local_cli without secrets', () => {
   assert.equal(doc.claude_bin, '/home/kincli/.kin/cli-node')
   assert.equal(doc.https_proxy, undefined)
   assert.equal(doc.slots_per_worker, WRAP_SLOT_MAX)
-  assert.equal(doc.system_layout, 'zero')
+  assert.equal(doc.system_layout, 'identity')
   assert.equal(doc.cli_version, OFFICIAL_CLI_VERSION)
   assert.equal(doc.timezone, 'America/New_York')
   assert.equal(doc.proxy_url, '')
@@ -538,6 +538,18 @@ test('writeKernelConfig uses identity layout when persona_inject is rewrite', ()
       token: 'tok',
       routing: { compatibility: { persona_inject: 'rewrite', persona_preset: 'official_full' } },
     },
+  )
+  const doc = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+  assert.equal(doc.system_layout, 'identity')
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('writeKernelConfig uses identity when official_full has no persona_inject', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-preset-identity-'))
+  const written = writeKernelConfig(
+    root,
+    { id: 'vm-05', inference_engine: 'rust' },
+    { token: 'tok', routing: { compatibility: { persona_preset: 'official_full' } } },
   )
   const doc = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
   assert.equal(doc.system_layout, 'identity')
