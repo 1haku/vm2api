@@ -11,11 +11,22 @@ import { refreshSlotCredentialIfNeeded } from './host-token-refresh.mjs'
 
 export const CLAUDE_API_BASE = 'https://api.anthropic.com'
 
-function socksUrl({ vm, proxyPool, proxyUrl } = {}) {
-  if (proxyUrl) return String(proxyUrl).replace(/^socks5:\/\//i, 'socks5h://')
+function hopProxy({ vm, proxyPool, proxyUrl } = {}) {
+  if (proxyUrl) {
+    return { ok: true, proxyUrl: String(proxyUrl).replace(/^socks5:\/\//i, 'socks5h://'), direct: false }
+  }
   const resolved = resolveImportProxy({ vm, proxyPool })
-  if (resolved.ok && resolved.proxyUrl) return String(resolved.proxyUrl).replace(/^socks5:\/\//i, 'socks5h://')
-  return boundProxyUrl(vm?.proxy) || ''
+  if (resolved.ok && resolved.direct) return { ok: true, proxyUrl: '', direct: true }
+  if (resolved.ok && resolved.proxyUrl) {
+    return {
+      ok: true,
+      proxyUrl: String(resolved.proxyUrl).replace(/^socks5:\/\//i, 'socks5h://'),
+      direct: false,
+    }
+  }
+  const bound = boundProxyUrl(vm?.proxy) || ''
+  if (bound) return { ok: true, proxyUrl: bound, direct: false }
+  return { ok: false, proxyUrl: '', direct: false }
 }
 
 function headersToObject(headers) {
@@ -84,8 +95,8 @@ export async function hostAnthropicRequest({
       headers: {},
     }
   }
-  const px = socksUrl({ vm, proxyPool, proxyUrl })
-  if (!px) {
+  const hop = hopProxy({ vm, proxyPool, proxyUrl })
+  if (!hop.ok) {
     return {
       ok: false,
       status: 400,
@@ -95,7 +106,7 @@ export async function hostAnthropicRequest({
   }
   const { default: fetch } = await import('node-fetch')
   const { SocksProxyAgent } = await import('socks-proxy-agent')
-  const agent = new SocksProxyAgent(px)
+  const agent = hop.direct || !hop.proxyUrl ? undefined : new SocksProxyAgent(hop.proxyUrl)
   const impl = fetchImpl || fetch
   const hdr = {
     accept: 'application/json',

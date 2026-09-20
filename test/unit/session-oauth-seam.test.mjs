@@ -51,6 +51,20 @@ test('sessionKeyToOAuth requires SOCKS5', async () => {
   )
 })
 
+test('sessionKeyToOAuth on local egress hops without PROXY_URL', async () => {
+  const bin = writeHelper(`#!/bin/sh
+if [ -n "$PROXY_URL" ]; then echo fail >&2; exit 2; fi
+echo '{"access_token":"sk-ant-oat01-direct","source":"direct"}'
+`)
+  process.env.KIN_COOKIE_AUTH_BIN = bin
+  try {
+    const cred = await sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', { proxyUrl: '' })
+    assert.equal(cred.access_token, 'sk-ant-oat01-direct')
+  } finally {
+    delete process.env.KIN_COOKIE_AUTH_BIN
+  }
+})
+
 test('sessionKeyToOAuth reads JSON from helper stdout', async () => {
   const bin = writeHelper(`#!/bin/sh
 echo '{"access_token":"sk-ant-oat01-helper","refresh_token":"sk-ant-ort01-helper","source":"test-helper"}'
@@ -94,6 +108,24 @@ echo '{"access_token":"sk-ant-oat01-ex","refresh_token":"rt"}'
       proxyUrl: 'socks5h://127.0.0.1:1',
     })
     assert.equal(tok.access_token, 'sk-ant-oat01-ex')
+  } finally {
+    delete process.env.KIN_COOKIE_AUTH_BIN
+  }
+})
+
+test('exchangeTokenViaCookieAuth allows empty proxyUrl as direct', async () => {
+  const bin = writeHelper(`#!/bin/sh
+if [ -n "$PROXY_URL" ]; then echo fail >&2; exit 2; fi
+echo '{"access_token":"sk-ant-oat01-direct","refresh_token":"rt"}'
+`)
+  process.env.KIN_COOKIE_AUTH_BIN = bin
+  try {
+    const tok = await exchangeTokenViaCookieAuth({
+      code: 'abc',
+      codeVerifier: 'ver',
+      proxyUrl: '',
+    })
+    assert.equal(tok.access_token, 'sk-ant-oat01-direct')
   } finally {
     delete process.env.KIN_COOKIE_AUTH_BIN
   }

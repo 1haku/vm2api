@@ -1059,6 +1059,9 @@ function proxyConfigured(v, hit) {
 function canImportCredential(v, hit) {
   if (hit) return !!(hit.enabled && hit.status !== 'dead' && hit.status !== 'fail')
   const base = v.proxy || {}
+  const scheme = String(base.scheme || base.kind || '').toLowerCase()
+  const host = String(base.host || '').toLowerCase()
+  if (base.id === 'px-local' || scheme === 'local' || host === 'local') return true
   return !!(base.url || (base.host && base.port) || v.proxy_id)
 }
 
@@ -1074,7 +1077,7 @@ function mergeVmProxy(v, poolSnap) {
       id: hit?.id || base.id || v.proxy_id || null,
       host: hit?.host || base.host || null,
       port: hit?.port || base.port || null,
-      scheme: base.scheme || 'socks5',
+      scheme: hit?.scheme || base.scheme || (hit?.id === 'px-local' || base.id === 'px-local' ? 'local' : 'socks5'),
       has_auth: hit?.has_auth ?? !!(base.url && /\/\/[^/@]+@/.test(base.url)),
       status: hit?.status ?? null,
       enabled: hit?.enabled ?? null,
