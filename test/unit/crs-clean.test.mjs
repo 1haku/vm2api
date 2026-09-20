@@ -111,7 +111,7 @@ test('sanitize remaps unknown Anthropic roles to user (sub2api admin→user)', (
     max_tokens: 1024,
     messages: [{ role: 'admin', content: 'x' }],
   })
-  assert.deepEqual(out.messages, [{ role: 'user', content: 'x' }])
+  assert.deepEqual(out.messages, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }])
 })
 
 test('sanitize keeps mid-conversation role:system after a user turn', () => {
@@ -147,10 +147,14 @@ test('sanitize lifts system/developer turns and merges consecutive users', () =>
       { role: 'assistant', content: 'ok' },
     ],
   })
-  assert.equal(out.system, 'base\n\nextra rule\n\ndev note')
+  assert.deepEqual(out.system, [
+    { type: 'text', text: 'base' },
+    { type: 'text', text: 'extra rule' },
+    { type: 'text', text: 'dev note' },
+  ])
   assert.deepEqual(out.messages, [
-    { role: 'user', content: 'one\ntwo' },
-    { role: 'assistant', content: 'ok' },
+    { role: 'user', content: [{ type: 'text', text: 'one\ntwo' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
   ])
 })
 
@@ -164,9 +168,9 @@ test('sanitize drops empty content and prefixes assistant-first history', () => 
     ],
   })
   assert.equal(out.messages[0].role, 'user')
-  assert.equal(out.messages[0].content, '.')
+  assert.deepEqual(out.messages[0].content, [{ type: 'text', text: '.' }])
   assert.equal(out.messages[1].role, 'assistant')
-  assert.equal(out.messages[1].content, 'hello')
+  assert.deepEqual(out.messages[1].content, [{ type: 'text', text: 'hello' }])
 })
 
 test('strict passthrough keeps invalid roles for official wire', () => {
@@ -189,7 +193,7 @@ test('toClaudeMessages anthropic passthrough remaps admin role', () => {
   })
   assert.equal(mode, 'passthrough')
   assert.equal(claude.messages[0].role, 'user')
-  assert.equal(claude.messages[0].content, 'x')
+  assert.deepEqual(claude.messages[0].content, [{ type: 'text', text: 'x' }])
 })
 
 test('officialMessagesBody remaps admin before the worker hop', () => {
@@ -231,8 +235,8 @@ test('OpenAI chat unofficial rewrite is official 4-block plus caller --system ap
   assert.equal(cleaned.system.length, 5)
   assert.equal(cleaned.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(cleaned.system[4].text, 'you are a linter')
-  assert.match(String(cleaned.messages[0].content), /MANDATORY constraints for this turn/)
-  assert.ok(String(cleaned.messages[0].content).includes('hi'))
+  assert.match(JSON.stringify(cleaned.messages[0].content), /MANDATORY constraints for this turn/)
+  assert.ok(JSON.stringify(cleaned.messages[0].content).includes('hi'))
 })
 
 test('empty unofficial system without tools still writes official 4 blocks', () => {
@@ -307,7 +311,7 @@ test('openai.completions prompt converts to Claude user message', () => {
     stop: ['\n'],
   })
   assert.equal(claude.messages[0].role, 'user')
-  assert.match(String(claude.messages[0].content), /Complete this: hello/)
+  assert.match(JSON.stringify(claude.messages[0].content), /Complete this: hello/)
   assert.deepEqual(claude.stop_sequences, ['\n'])
   const back = fromClaudeToOpenAICompletions(
     {

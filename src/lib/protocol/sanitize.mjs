@@ -145,6 +145,39 @@ export function stripIllegalBodyContentFields(body) {
   return body
 }
 
+/** Hang cache_control on a text block. Bare strings have nowhere to put it. */
+export function promoteContentToBlocks(content) {
+  if (content == null) return content
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : []
+  if (!Array.isArray(content)) return content
+  return content.map((part) => (typeof part === 'string' ? { type: 'text', text: part } : part))
+}
+
+export function promoteSystemToBlocks(system) {
+  if (system == null || system === '') return system
+  if (typeof system === 'string') return [{ type: 'text', text: system }]
+  if (!Array.isArray(system)) return system
+  return system.map((block) => (typeof block === 'string' ? { type: 'text', text: block } : block))
+}
+
+/**
+ * OpenAI chat / completions / responses collapse to strings; Anthropic keeps
+ * blocks. Kernel restamp and applyCacheBreakpoints only hang markers on blocks,
+ * so every inbound protocol must leave this shape before persona / hop.
+ */
+export function canonicalizeClaudeMessagesShape(body) {
+  if (!body || typeof body !== 'object') return body
+  const out = { ...body }
+  if (out.system != null) out.system = promoteSystemToBlocks(out.system)
+  if (Array.isArray(out.messages)) {
+    out.messages = out.messages.map((message) => {
+      if (!message || typeof message !== 'object') return message
+      return { ...message, content: promoteContentToBlocks(message.content) }
+    })
+  }
+  return out
+}
+
 export function sanitizeAnthropicBody(body, { strictPassthrough = false } = {}) {
   if (!body || typeof body !== 'object') return body
   if (strictPassthrough) {
@@ -179,7 +212,7 @@ export function sanitizeAnthropicBody(body, { strictPassthrough = false } = {}) 
   if (!out.max_tokens) out.max_tokens = defaultMaxTokensForModel(out.model)
   if (out.tool_choice && !out.tools) delete out.tool_choice
   normalizeStop(out)
-  return out
+  return canonicalizeClaudeMessagesShape(out)
 }
 
 /**
@@ -295,13 +328,9 @@ function asContentBlocks(content) {
 function appendSystemParts(existing, parts) {
   const extra = parts.filter(Boolean)
   if (!extra.length) return existing
-  const joined = extra.join('\n\n')
-  if (existing == null || existing === '') return joined
-  if (typeof existing === 'string') return `${existing}\n\n${joined}`
-  if (Array.isArray(existing)) {
-    return [...existing, ...extra.map((text) => ({ type: 'text', text }))]
-  }
-  return existing
+  const blocks = extra.map((text) => ({ type: 'text', text }))
+  if (existing == null || existing === '') return blocks
+  return [...promoteSystemToBlocks(existing), ...blocks]
 }
 
 function normalizeStop(out) {
