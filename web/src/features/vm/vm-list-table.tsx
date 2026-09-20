@@ -2,13 +2,12 @@ import { useNavigate } from '@tanstack/react-router'
 import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
 import type { StatusTone } from '@/types/status'
-import { expiresAtToMs, fableState, fmtResetClock } from '@/lib/fable-status'
+import { expiresAtToMs, fmtResetClock } from '@/lib/fable-status'
 import { fmtNum, fmtUsd, remainPct, usedPctOf } from '@/lib/format'
 import { tierVisual } from '@/lib/tier-visual'
 import { cn } from '@/lib/utils'
 import { isCodexVm } from '@/lib/vm-kind'
 import {
-  claudeTier,
   fleetGroup,
   poolStatus,
   vmCooldown,
@@ -18,7 +17,6 @@ import {
 import { vmTodayStats, vmWeekOutcome, type VmWeekOutcome } from '@/lib/vm-usage'
 import { useNow } from '@/hooks/use-now'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import {
   Tooltip,
   TooltipContent,
@@ -37,24 +35,7 @@ import {
   useStatusBarShow,
   type StatusBarShow,
 } from '@/features/vm/status-bar-options'
-
-const RISK_BAR = (risk: number) =>
-  risk >= 100
-    ? 'bg-[color:var(--status-bad-solid)]'
-    : risk >= 85
-      ? 'bg-[color:var(--status-warn-solid)]'
-      : risk >= 70
-        ? 'bg-[color:var(--status-caution-solid)]'
-        : 'bg-[color:var(--status-ok-solid)]'
-
-const RISK_FG = (risk: number) =>
-  risk >= 100
-    ? 'text-[color:var(--status-bad)]'
-    : risk >= 85
-      ? 'text-[color:var(--status-warn)]'
-      : risk >= 70
-        ? 'text-[color:var(--status-caution)]'
-        : 'text-[color:var(--status-ok)]'
+import { fableRow, riskFg, UsageMeter } from '@/features/vm/usage-meter'
 
 const LIST_COL = {
   vm: 'min-w-[220px] flex-[1.25] pl-3',
@@ -73,11 +54,11 @@ const LIST_COL = {
 type DotTone = 'ok' | 'caution' | 'warn' | 'bad' | 'none'
 
 const DOT_BG: Record<DotTone, string> = {
-  ok: 'bg-[color:var(--status-ok-solid)]',
-  caution: 'bg-[color:var(--status-caution-solid)]',
-  warn: 'bg-[color:var(--status-warn-solid)]',
-  bad: 'bg-[color:var(--status-bad-solid)]',
-  none: 'bg-[color:var(--track)]',
+  ok: 'var(--status-ok-solid)',
+  caution: 'var(--status-caution-solid)',
+  warn: 'var(--status-warn-solid)',
+  bad: 'var(--status-bad-solid)',
+  none: 'transparent',
 }
 
 const DOT_FG: Record<DotTone, string> = {
@@ -86,17 +67,6 @@ const DOT_FG: Record<DotTone, string> = {
   warn: 'text-[color:var(--status-warn)]',
   bad: 'text-[color:var(--status-bad)]',
   none: 'text-muted-foreground',
-}
-
-function fableRow(
-  vm: Vm
-): { kind: 'bar'; pct: number } | { kind: 'note'; text: string } | null {
-  const tier = claudeTier(vm)
-  if (tier.key !== 'max') return null
-  const st = fableState(vm, tier.key)
-  if (st.usedPct != null) return { kind: 'bar', pct: st.usedPct }
-  if (st.tone.key === 'none') return null
-  return { kind: 'note', text: st.tone.text }
 }
 
 function utilDotTone(
@@ -198,15 +168,11 @@ function UsageTrack({
     <div className='min-w-0 space-y-1'>
       <div className='flex items-baseline justify-between gap-1 text-base text-muted-foreground'>
         <span className='truncate'>{label}</span>
-        <span className={cn('font-medium tabular-nums', RISK_FG(value))}>
+        <span className={cn('font-medium tabular-nums', riskFg(value))}>
           {value.toFixed(1)}%
         </span>
       </div>
-      <Progress
-        value={value > 0 ? Math.min(100, Math.max(1.5, value)) : 0}
-        className='h-1.5 track-recessed'
-        indicatorClassName={cn(RISK_BAR(value), 'rounded-full')}
-      />
+      <UsageMeter value={value} size='sm' ticks />
       {resetAt ? (
         <div className='font-mono text-sm text-muted-foreground tabular-nums'>
           {resetAt}
@@ -340,23 +306,24 @@ function StatusCell({
       ) : null}
       {show.bar ? (
         <div
-          className='flex items-center gap-1.5'
+          className='flex items-center gap-2'
           title={`${health.label}${health.rate != null ? ` ${health.rate.toFixed(1)}%` : ''}`}
         >
-          <div className='flex items-end gap-px' aria-hidden>
+          <div
+            className='flex h-2.5 min-w-0 flex-1 gap-px overflow-hidden rounded-full track-recessed'
+            aria-hidden
+          >
             {health.dots.map((dot, i) => (
               <span
                 key={i}
-                className={cn(
-                  'inline-block h-3 w-1.5 rounded-[1px]',
-                  DOT_BG[dot]
-                )}
+                className='h-full flex-1'
+                style={{ backgroundColor: DOT_BG[dot] }}
               />
             ))}
           </div>
           <span
             className={cn(
-              'text-base font-medium tabular-nums',
+              'shrink-0 text-base font-medium tabular-nums',
               health.rate == null
                 ? 'text-muted-foreground'
                 : health.label === '7D 成功率'
@@ -550,7 +517,10 @@ export function VmTable({
             <div
               key={vm.id}
               className={cn(
-                'group flex cursor-pointer items-start border-b border-border/40 py-3.5 text-base hover:bg-accent/40',
+                'group flex cursor-pointer items-start border-b border-border/40 py-3.5 text-base transition-colors duration-150',
+                // 等级色条只走行首 2px，不染整行底色：行是密集数字区，
+                // 底色一染，状态色（真正要被扫到的信号）就没对比空间了。
+                tierVisual(vm).row || 'hover:bg-accent/40',
                 muted && 'opacity-60'
               )}
               onClick={() => navigate({ to: '/vm/$id', params: { id: vm.id } })}
