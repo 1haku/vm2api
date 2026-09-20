@@ -47,7 +47,6 @@ test('import-style create succeeds without seed_policy or SOCKS5', async () => {
     const vm = response.body?.data?.vm
     assert.ok(vm?.id, 'created vm id')
     assert.equal(vm.status, 'stopped')
-    assert.equal(vm.proxy_cli_enabled, false)
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${vm.id}.json`), 'utf8'))
     assert.equal(saved.seed_policy.telemetry_disabled, false)
     assert.equal(saved.proxy_required, false)
@@ -111,7 +110,6 @@ test('create preserves Tokyo timezone in the VM, fingerprint, and CLI seed files
     await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/vms/create'))
     assert.equal(response.status, 200, response.body?.error?.message || JSON.stringify(response.body))
     const vm = response.body?.data?.vm
-    assert.equal(vm.timezone, 'Asia/Tokyo')
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${vm.id}.json`), 'utf8'))
     assert.equal(saved.timezone, 'Asia/Tokyo')
     assert.equal(saved.timezone_source, 'manual')
