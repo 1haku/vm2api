@@ -15,6 +15,11 @@ function clientEntry(codex: CodexBlock, key: string) {
   return clients[key] === 'allow' ? 'allow' : 'reject'
 }
 
+function rotatePlugin(codex: CodexBlock) {
+  const plugin = (codex.plugin as Record<string, Record<string, unknown>>) || {}
+  return plugin.rotate || {}
+}
+
 export function GptPane({
   value,
   onChange,
@@ -23,7 +28,16 @@ export function GptPane({
   onChange: (next: CodexBlock) => void
 }) {
   const convert = (value.convert as Record<string, unknown>) || {}
+  const rotate = rotatePlugin(value)
   const update = (patch: CodexBlock) => onChange({ ...value, ...patch })
+  const setRotate = (enabled: boolean) => {
+    update({
+      plugin: {
+        ...((value.plugin as object) || {}),
+        rotate: { ...rotate, enabled },
+      },
+    })
+  }
   const setProtocol = (key: string, enabled: boolean, mode: string) => {
     const protocols = {
       ...((value.protocols as object) || {}),
@@ -53,6 +67,15 @@ export function GptPane({
           <Switch
             checked={value.enabled !== false}
             onCheckedChange={(enabled) => update({ enabled })}
+          />
+        </SettingRow>
+        <SettingRow
+          label='Codex Rotate 插件'
+          desc='采集并注入 X-Codex-Turn-State（个人 292 / Team 332）。关闭后只转发。'
+        >
+          <Switch
+            checked={rotate.enabled === true}
+            onCheckedChange={setRotate}
           />
         </SettingRow>
         <SettingRow label='/v1/responses' desc='ChatGPT native。'>

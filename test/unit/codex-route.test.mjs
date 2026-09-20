@@ -20,6 +20,11 @@ test('disabled hop rejects every protocol', () => {
   assert.equal(isCodexProtocolAllowed('openai.responses', routing).code, 'codex_disabled')
 })
 
+test('plugin.rotate defaults off and can be enabled', () => {
+  assert.equal(normalizeCodexRouting().plugin.rotate.enabled, false)
+  assert.equal(normalizeCodexRouting({ plugin: { rotate: { enabled: true } } }).plugin.rotate.enabled, true)
+})
+
 test('codex vm filter ignores Claude slots', () => {
   const vms = [
     { id: 'vm-claude', inference_engine: 'rust' },
