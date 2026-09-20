@@ -484,7 +484,8 @@ unixTest('committed Rust stream transport failure is not replayed on Go', async 
   }
 })
 
-unixTest('sibling wrap hop blocks recycle after incomplete', async () => {
+unixTest('sibling wrap hop defers recycle until the last hop ends', async () => {
+  resetWrapRecycleState()
   const previous = process.env.KIN_KERNEL_BIN
   process.env.KIN_KERNEL_BIN = '/bin/true'
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-sibling-'))
@@ -518,9 +519,9 @@ unixTest('sibling wrap hop blocks recycle after incomplete', async () => {
     },
   }
   beginWrapHop(exec)
+  const recycled = []
   try {
-    const recycled = []
-    const result = await dispatchStreamInference({
+    await dispatchStreamInference({
       exec,
       body: { model: 'claude-haiku-4-5-20251001', messages: [{ role: 'user', content: 'hi' }] },
       routing: { inference: { engine: 'rust' } },
@@ -532,8 +533,11 @@ unixTest('sibling wrap hop blocks recycle after incomplete', async () => {
       timeoutMs: 3000,
     })
     assert.deepEqual(recycled, [])
+    endWrapHop(exec)
+    assert.deepEqual(recycled, ['vm-02'])
   } finally {
     endWrapHop(exec)
+    resetWrapRecycleState()
     await new Promise((resolve) => server.close(resolve))
     fs.rmSync(root, { recursive: true, force: true })
     if (previous == null) delete process.env.KIN_KERNEL_BIN

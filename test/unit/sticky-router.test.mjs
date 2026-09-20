@@ -215,6 +215,26 @@ test('extractPoolKey pins local-agent sub-agent to parent device family', () => 
   assert.deepEqual(r.collectPoolKeys(childReq, childBody), ['dev:aabbcc', 'child-sess'])
 })
 
+test('protocol aliases resolve one conversation to the same account', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const firstUser = [{ role: 'user', content: '同一段跨协议会话的首条消息' }]
+  const anthropic = {
+    metadata: { user_id: { session_id: 'anthropic-session' } },
+    messages: firstUser,
+  }
+  const openai = { messages: firstUser }
+  const req = { apiKeyRecord: { id: 'key_cross_protocol' }, headers: {} }
+
+  const primary = r.extractPoolKey(req, anthropic)
+  const aliases = r.collectPoolKeys(req, anthropic)
+  assert.match(primary, /^kkey_cross_protocol:ch:/)
+  assert.equal(aliases[1], 'kkey_cross_protocol:anthropic-session')
+  for (const key of aliases) r.bind(key, { accountId: 'acc-1', vmId: 'vm-01' })
+
+  assert.equal(r.extractPoolKey(req, openai), primary)
+  assert.equal(r.resolve(r.extractPoolKey(req, openai)).vmId, 'vm-01')
+})
+
 test('provisional bind does not increment hits', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
   r.bind('conv-p', { accountId: 'acc', vmId: 'vm-1' }, { countHit: false })

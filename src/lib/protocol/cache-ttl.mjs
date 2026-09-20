@@ -41,28 +41,39 @@ export function cacheTtlFromRoutingFile(filePath) {
   }
 }
 
-/** True when the caller already asked for a 1h breakpoint. */
-export function bodyRequestsHourCache(body) {
-  if (!body || typeof body !== 'object') return false
-  const hour = (control) => ephemeralCacheTtl(control) === '1h'
-  if (hour(body.cache_control)) return true
-  if (Array.isArray(body.tools) && body.tools.some((tool) => hour(tool?.cache_control))) return true
-  if (Array.isArray(body.system) && body.system.some((block) => hour(block?.cache_control))) return true
+/** Highest explicit inbound TTL. Mixed requests use 1h, then every marker is normalized to it. */
+export function bodyCacheTtl(body) {
+  if (!body || typeof body !== 'object') return null
+  const ttls = []
+  const collect = (control) => {
+    if (!control || typeof control !== 'object') return
+    const raw = String(control.ttl || '').trim()
+    if (raw) ttls.push(normalizeCacheTtl(raw))
+  }
+  collect(body.cache_control)
+  if (Array.isArray(body.tools)) for (const tool of body.tools) collect(tool?.cache_control)
+  if (Array.isArray(body.system)) for (const block of body.system) collect(block?.cache_control)
   if (Array.isArray(body.messages)) {
     for (const message of body.messages) {
       if (!Array.isArray(message?.content)) continue
-      if (message.content.some((block) => hour(block?.cache_control))) return true
+      for (const block of message.content) collect(block?.cache_control)
     }
   }
-  return false
+  if (ttls.includes('1h')) return '1h'
+  return ttls.includes('5m') ? '5m' : null
 }
 
-/** Header, then inbound 1h, then routing.json, then 1h. Official traffic owns its breakpoints. */
+export function bodyRequestsHourCache(body) {
+  return bodyCacheTtl(body) === '1h'
+}
+
+/** Request header/body override the console default. Official traffic owns its breakpoints. */
 export function resolveCacheTtl({ headers = {}, body, routing, routingFile, officialTraffic = false } = {}) {
   if (officialTraffic) return null
   const hdr = headers[CACHE_TTL_HEADER] || headers['X-Kin-Cache-Ttl']
   if (hdr != null && String(hdr).trim()) return normalizeCacheTtl(hdr)
-  if (bodyRequestsHourCache(body)) return '1h'
+  const requested = bodyCacheTtl(body)
+  if (requested) return requested
   if (routing) return cacheTtlFromRouting(routing)
   return cacheTtlFromRoutingFile(routingFile)
 }
@@ -255,41 +266,13 @@ function honorHourCacheTtlOrder(body) {
   return walkCacheNodes(body, fix)
 }
 
-/**
- * System is gateway-rebuilt: stamp the resolved ttl.
- * Tools/messages keep a caller ttl; fill only when missing.
- * Mixed 5m-then-1h upgrades the earlier 5m so a caller 1h is not wiped.
- */
+/** Rewrite every outbound cache breakpoint to this request's resolved TTL. */
 export function applyCacheTtlToBody(body, ttl = DEFAULT_CACHE_TTL) {
   const target = normalizeCacheTtl(ttl)
   if (!body || typeof body !== 'object') return body
-  const out = { ...body }
-  if (out.cache_control) out.cache_control = setEphemeralTtlUnlessPinned(out.cache_control, target)
-  if (Array.isArray(out.system)) {
-    out.system = out.system.map((block) =>
-      block?.cache_control ? { ...block, cache_control: setEphemeralTtl(block.cache_control, target) } : block,
-    )
-  }
-  if (Array.isArray(out.tools)) {
-    out.tools = out.tools.map((tool) =>
-      tool?.cache_control ? { ...tool, cache_control: setEphemeralTtlUnlessPinned(tool.cache_control, target) } : tool,
-    )
-  }
-  if (Array.isArray(out.messages)) {
-    out.messages = out.messages.map((message) => {
-      if (!Array.isArray(message?.content)) return message
-      return {
-        ...message,
-        content: message.content.map((block) =>
-          block?.cache_control
-            ? { ...block, cache_control: setEphemeralTtlUnlessPinned(block.cache_control, target) }
-            : block,
-        ),
-      }
-    })
-  }
-  const honorHour = target === '1h' || bodyRequestsHourCache(out)
-  return enforceCacheTtlOrder(out, { honorHour })
+  return walkCacheNodes(body, (node) =>
+    node?.cache_control ? { ...node, cache_control: setEphemeralTtl(node.cache_control, target) } : node,
+  )
 }
 
 export const MESSAGES_BREAKPOINT_MODES = Object.freeze(['off', 'fill', 'rewrite', 'cli-hop'])

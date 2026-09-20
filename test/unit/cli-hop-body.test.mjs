@@ -253,11 +253,11 @@ test('cli-hop rewrite wins over routing fill when inbound already stamped last u
     },
   )
   assert.equal(body.messages[0].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('cli-hop rewrite keeps 5m leftover so wrap tools 5m cannot 400', () => {
+test('cli-hop rewrite uses the resolved 1h TTL on its leftover marker', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -272,7 +272,7 @@ test('cli-hop rewrite keeps 5m leftover so wrap tools 5m cannot 400', () => {
     },
     { cacheTtl: '1h' },
   )
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
@@ -287,7 +287,7 @@ test('cli-hop rewrite keeps sub2api penultimate user after dropping CLI last-use
       { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
     ],
   })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[2].content[0].cache_control, undefined)
   assert.equal(body.messages[3].content[0].cache_control, undefined)
 })
@@ -307,7 +307,7 @@ test('unofficial cli-hop rewrite matches official penultimate-user leftover', ()
   const unofficial = prepareCliHopBody(inbound, { unofficial: true, cacheTtl: '1h' })
   const official = prepareCliHopBody(structuredClone(inbound), { unofficial: false, cacheTtl: '1h' })
   assert.equal(unofficial.messages[0].content[0].cache_control, undefined)
-  assert.deepEqual(unofficial.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(unofficial.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(unofficial.messages[4].content[0].cache_control, undefined)
   assert.deepEqual(
     unofficial.messages.map((message) => message.content?.[0]?.cache_control),
@@ -348,7 +348,7 @@ test('unofficial cli-hop rewrite leaves leftover mid-system unmarked', () => {
   )
   assert.equal(later.messages[1].role, 'system')
   assert.equal(later.messages.at(-1).role, 'user')
-  assert.deepEqual(later.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(later.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(later.messages[1].content[0].cache_control, undefined)
   assert.equal(later.messages.at(-1).content[0].cache_control, undefined)
   assert.equal(later.system[0].cache_control, undefined)

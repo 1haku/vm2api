@@ -236,17 +236,20 @@ export function classifyUpstreamResult(
   if (isSilentClaudeRefusal(result) && !result.committed) {
     return { scope: 'request', action: 'stop', reason: 'content_filter_refusal', cooldownUntil: null }
   }
-  if (isIncompleteAssistantMessage(result) && !result.committed) {
+  const completeAssistant = isCompleteAssistantMessage(result)
+  const malformedSuccess =
+    !completeAssistant &&
+    (result.ok === true || result.terminalState === 'verified') &&
+    Number(result.status || 200) >= 200 &&
+    Number(result.status || 200) < 300
+  if ((isIncompleteAssistantMessage(result) || malformedSuccess) && !result.committed) {
     return continueWithoutCooldown({
       scope: 'stream',
       reason: 'incomplete_assistant',
       retrySameAccount: true,
     })
   }
-  if (
-    !isIncompleteAssistantMessage(result) &&
-    (isCompleteAssistantMessage(result) || (result.ok && result.terminalState !== 'incomplete'))
-  ) {
+  if (completeAssistant) {
     return { scope: 'success', action: 'complete', cooldownUntil: null }
   }
   const status = Number(result.status) || 0
