@@ -31,10 +31,13 @@ export function openaiImagePartToClaude(part) {
   }
 }
 
-/** Convert OpenAI message content (string | array) to Claude content (string | blocks) */
+/** Convert OpenAI message content (string | array) to Claude content blocks. */
 export function openaiContentToClaudeContent(content) {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return String(content ?? '')
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : []
+  if (!Array.isArray(content)) {
+    const text = String(content ?? '')
+    return text ? [{ type: 'text', text }] : []
+  }
 
   const blocks = []
   for (const p of content) {
@@ -43,19 +46,18 @@ export function openaiContentToClaudeContent(content) {
       continue
     }
     if (p?.type === 'text' || p?.type === 'input_text') {
-      blocks.push({ type: 'text', text: p.text || '' })
+      const block = { type: 'text', text: p.text || '' }
+      if (p.cache_control) block.cache_control = p.cache_control
+      blocks.push(block)
       continue
     }
     if (p?.type === 'image_url') {
       const img = openaiImagePartToClaude(p)
-      if (img) blocks.push(img)
+      if (img) blocks.push(p.cache_control ? { ...img, cache_control: p.cache_control } : img)
       continue
     }
   }
 
-  // pure text → keep as string for simplicity
-  if (blocks.length === 1 && blocks[0].type === 'text') return blocks[0].text
-  if (!blocks.length) return ''
   return blocks
 }
 
