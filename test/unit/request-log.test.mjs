@@ -273,6 +273,22 @@ test('cache breakdown falls back to the default 1h bucket', () => {
   assert.equal(sum.model_mismatch, 0)
 })
 
+test('finish records washed Responses path over inbound chat path', () => {
+  const store = tmpStore('normal')
+  const ctx = store.start(
+    { method: 'POST', headers: {}, socket: {} },
+    { protocol: 'openai.chat', pathName: '/v1/chat/completions' },
+  )
+  const sum = store.finish(ctx, {
+    status: 200,
+    protocol: 'openai.responses',
+    path: '/v1/responses',
+    model: 'gpt-5.6-sol',
+  })
+  assert.equal(sum.path, '/v1/responses')
+  assert.equal(sum.protocol, 'openai.responses')
+})
+
 test('debug mode stores full redacted body', () => {
   const store = tmpStore('normal')
   const req = { method: 'POST', headers: { 'x-kin-debug': '1', authorization: 'Bearer sk-kin-abc' }, socket: {} }

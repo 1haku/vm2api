@@ -221,6 +221,72 @@ test('persistCodexUsage keeps switch on and clears restriction after the 5h wind
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('openai.chat GPT request is washed to Responses before the kernel hop', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-wash-'))
+  writeGptVm(root, 'vm-gpt-a')
+  let hopBody = null
+  const writes = []
+  const res = {
+    headersSent: false,
+    write(chunk) {
+      this.headersSent = true
+      writes.push(String(chunk))
+    },
+    end() {},
+  }
+  const logBag = {}
+  await handleCodexProtocol({
+    req: { headers: { 'user-agent': 'cursor' } },
+    res,
+    protocol: 'openai.chat',
+    ctx: {
+      path: '/v1/chat/completions',
+      body: {
+        model: 'gpt-5.6-sol',
+        messages: [
+          { role: 'system', content: 'be brief' },
+          { role: 'user', content: 'hello' },
+        ],
+        stream: true,
+        max_completion_tokens: 32,
+      },
+    },
+    inbound: { stream: true },
+    logBag,
+    stats: { errors: 0, requests: 0, by_route: {} },
+    json: (_res, status, body) => {
+      res.statusCode = status
+      res.body = body
+      return body
+    },
+    writeSSEHeaders() {
+      res.headersSent = true
+    },
+    routing: {},
+    projectRoot: root,
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async ({ body, envelope, onEvent }) => {
+        hopBody = envelope?.body || body
+        await onEvent('data: {"type":"response.output_text.delta","delta":"Hi"}')
+        await onEvent('data: {"type":"response.completed"}')
+        return { ok: true, status: 200, terminalState: 'verified' }
+      },
+    },
+  })
+  assert.ok(hopBody)
+  assert.equal(Array.isArray(hopBody.input), true)
+  assert.equal(hopBody.messages, undefined)
+  assert.equal(hopBody.input[0].role, 'developer')
+  assert.equal(logBag.protocol, 'openai.responses')
+  assert.equal(logBag.path, '/v1/responses')
+  assert.equal(logBag.hop_meta.inbound_path, '/v1/chat/completions')
+  assert.equal(logBag.hop_meta.inbound_protocol, 'openai.chat')
+  assert.match(writes.join(''), /chat\.completion\.chunk/)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 test('GPT on anthropic.messages converts and pins a GPT slot', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-anth-'))
   writeGptVm(root, 'vm-gpt-a')

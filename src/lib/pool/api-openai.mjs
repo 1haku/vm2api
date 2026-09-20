@@ -37,6 +37,45 @@ function contentToOpenAI(content) {
   return { text: texts.join('\n'), toolCalls, toolResults }
 }
 
+export function claudeToOpenAIResponsesRequest(claude = {}) {
+  const chat = claudeToOpenAIChatRequest(claude)
+  const input = (chat.messages || []).map((message) => {
+    const text = typeof message.content === 'string' ? message.content : ''
+    if (message.role === 'system') {
+      return { type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }
+    }
+    const role = message.role === 'assistant' ? 'assistant' : 'user'
+    return {
+      type: 'message',
+      role,
+      content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
+    }
+  })
+  const out = {
+    model: chat.model,
+    input,
+    stream: true,
+    store: false,
+  }
+  if (Array.isArray(chat.tools) && chat.tools.length) {
+    out.tools = chat.tools.map((tool) => {
+      if (tool?.type === 'function' && tool.function) {
+        return {
+          type: 'function',
+          name: tool.function.name,
+          description: tool.function.description || '',
+          parameters: tool.function.parameters || { type: 'object', properties: {} },
+        }
+      }
+      return tool
+    })
+  }
+  if (chat.max_tokens) out.max_output_tokens = chat.max_tokens
+  if (chat.temperature != null) out.temperature = chat.temperature
+  if (chat.top_p != null) out.top_p = chat.top_p
+  return out
+}
+
 export function claudeToOpenAIChatRequest(claude = {}) {
   const messages = []
   const system = flattenSystem(claude.system)

@@ -6,6 +6,7 @@ import {
   resolvePreset,
   messagesUrl,
   chatCompletionsUrl,
+  responsesUrl,
 } from '../../src/lib/pool/api-presets.mjs'
 
 test('official presets lock url; custom keeps typed url', () => {
@@ -41,4 +42,5 @@ test('merge keeps existing alias', () => {
 test('official outbound paths', () => {
   assert.equal(messagesUrl('https://api.anthropic.com/'), 'https://api.anthropic.com/v1/messages?beta=true')
   assert.equal(chatCompletionsUrl('https://api.openai.com'), 'https://api.openai.com/v1/chat/completions')
+  assert.equal(responsesUrl('https://api.openai.com/'), 'https://api.openai.com/v1/responses')
 })

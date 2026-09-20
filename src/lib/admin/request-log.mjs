@@ -340,7 +340,7 @@ export class RequestLogStore {
       ts: new Date().toISOString(),
       log_mode: ctx.mode,
       method: ctx.method,
-      path: ctx.path,
+      path: extra.path || ctx.path,
       protocol: extra.protocol || ctx.protocol || null,
       model: extra.model || null,
       stream: !!extra.stream,
