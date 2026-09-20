@@ -196,7 +196,11 @@ export function publicRelease(payload) {
   }
 }
 
-export async function fetchLatestRelease({ fetchImpl = globalThis.fetch, now = Date.now, cacheMs = DEFAULT_CACHE_MS } = {}) {
+export async function fetchLatestRelease({
+  fetchImpl = globalThis.fetch,
+  now = Date.now,
+  cacheMs = DEFAULT_CACHE_MS,
+} = {}) {
   const ts = now()
   if (releaseCache.value && ts - releaseCache.at < cacheMs) {
     return { release: releaseCache.value, error: null, cached: true }
@@ -240,12 +244,7 @@ export function clearReleaseCache() {
   releaseCache.error = null
 }
 
-export async function buildUpdateStatus({
-  projectRoot: root,
-  fetchImpl,
-  now,
-  cacheMs,
-} = {}) {
+export async function buildUpdateStatus({ projectRoot: root, fetchImpl, now, cacheMs } = {}) {
   const project = projectRoot(root)
   const current = readLocalVersion(project)
   const entries = loadChangelog(project)
