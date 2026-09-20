@@ -139,7 +139,10 @@ export function createHandleProtocol(deps) {
   }
 
   function applyDistillGuard({ req, inbound, body, fp, logBag, requestId, res }) {
-    const official = isOfficialClaudeCodeTraffic(req.headers, inbound) || isOfficialClaudeClient(fp.client_class)
+    const official =
+      isOfficialClaudeCodeTraffic(req.headers, inbound) ||
+      isOfficialClaudeClient(fp.client_class) ||
+      (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound))
     const zeroInject = isZeroInjectMode()
     const hit = detectDistill({ inbound, body, official, zeroInject }, cfg.distill)
     if (hit.action !== 'block') return false
