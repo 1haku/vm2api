@@ -46,10 +46,12 @@ test('vm engine overrides routing, empty inherits rust', () => {
   assert.equal(resolveInferenceEngine({ inference_engine: 'rust' }, { inference: { engine: 'go' } }), 'rust')
 })
 
-test('resolveCliSystemLayout is zero unless persona_inject is set', () => {
-  assert.equal(resolveCliSystemLayout({}, {}), 'zero')
-  assert.equal(resolveCliSystemLayout({}, { compatibility: { persona_preset: 'official_full' } }), 'zero')
+test('resolveCliSystemLayout follows persona_preset, not leftover inject-only', () => {
+  assert.equal(resolveCliSystemLayout({}, {}), 'identity')
+  assert.equal(resolveCliSystemLayout({}, { compatibility: { persona_preset: 'official_full' } }), 'identity')
+  assert.equal(resolveCliSystemLayout({}, { compatibility: { persona_preset: 'official' } }), 'identity')
   assert.equal(resolveCliSystemLayout({}, { compatibility: { persona_inject: 'rewrite' } }), 'identity')
+  assert.equal(resolveCliSystemLayout({}, { compatibility: { persona_preset: 'zero' } }), 'zero')
   assert.equal(
     resolveCliSystemLayout({ persona_preset: 'zero' }, { compatibility: { persona_inject: 'rewrite' } }),
     'zero',

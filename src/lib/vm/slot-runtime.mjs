@@ -69,13 +69,13 @@ export function destroySlot(vm) {
 }
 
 /** Reload guest worker so a new bind-mounted / virtiofs binary is picked up. Never docker rm. */
-export function reloadSlot(vm, projectRoot) {
+export function reloadSlot(vm, projectRoot, opts = {}) {
   if (runtimeKind(vm) === RUNTIME_KVM) return kvmRefuse('reload')
-  return reloadSlotWorker(vm, projectRoot)
+  return reloadSlotWorker(vm, projectRoot, opts)
 }
 
 export async function reloadSlotReady(vm, projectRoot, opts = {}) {
-  const boot = reloadSlot(vm, projectRoot)
+  const boot = reloadSlot(vm, projectRoot, opts)
   if (!boot?.ok) return boot
   return attachInferenceRuntime(boot, vm, projectRoot, opts)
 }

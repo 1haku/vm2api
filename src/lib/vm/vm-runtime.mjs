@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readRoutingConfigFile } from '../core/config.mjs'
 import { normalizeTimezone, US_TIMEZONES } from '../core/timezone.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
 import { buildWorkerTelemetry } from './worker-telemetry.mjs'
@@ -280,13 +281,13 @@ export function syncWorkerTelemetry(vm, projectRoot) {
  * Rewrite worker.json from the current vm proxy and bounce the process.
  * Never docker rm — killing a live worker mid-refresh can invalidate the grant.
  */
-export function reloadSlotWorker(vm, projectRoot) {
+export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
   const paths = workerPaths(projectRoot, vm.id)
   let worker
   try {
     if (vm.proxy_required !== false && !workerProxyUrl(vm)) throw new Error('slot SOCKS5 proxy is required')
-    worker = writeWorkerFiles(vm, projectRoot)
+    worker = writeWorkerFiles(vm, projectRoot, { routing })
   } catch (error) {
     if (!fs.existsSync(paths.config) || !fs.existsSync(paths.token)) {
       return { ok: false, error: String(error.message || error) }
@@ -295,9 +296,9 @@ export function reloadSlotWorker(vm, projectRoot) {
   }
   const name = containerName(vm.id)
   const existing = inspectContainer(name)
-  if (!existing) return startVmRuntime(vm, projectRoot, { recreate: false })
+  if (!existing) return startVmRuntime(vm, projectRoot, { recreate: false, routing })
   if (existing.running && !fs.existsSync(paths.socket)) {
-    return startVmRuntime(vm, projectRoot, { recreate: true })
+    return startVmRuntime(vm, projectRoot, { recreate: true, routing })
   }
   const cmd = existing.running ? ['docker', 'restart', name] : ['docker', 'start', name]
   const r = sh(cmd, { timeout: 60_000 })
@@ -307,14 +308,10 @@ export function reloadSlotWorker(vm, projectRoot) {
 }
 
 function readProjectRouting(projectRoot) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'config', 'routing.json'), 'utf8'))
-  } catch {
-    return {}
-  }
+  return readRoutingConfigFile(projectRoot)
 }
 
-function writeWorkerFiles(vm, projectRoot, { transparent } = {}) {
+function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
   const paths = workerPaths(projectRoot, vm.id)
   const uid = runtimeUidNum(vm)
   const gid = Number(GID)
@@ -359,16 +356,16 @@ function writeWorkerFiles(vm, projectRoot, { transparent } = {}) {
     if (oauthTokenUrl) workerConfig.oauth_token_url = oauthTokenUrl
   }
   fs.writeFileSync(paths.config, JSON.stringify(workerConfig, null, 2) + '\n', { mode: 0o600 })
-  const routing = readProjectRouting(projectRoot)
-  const allowed = assertCliHopAllowed(vm, routing)
+  const resolvedRouting = routing != null ? routing : readProjectRouting(projectRoot)
+  const allowed = assertCliHopAllowed(vm, resolvedRouting)
   if (!allowed.ok) throw new Error(allowed.error)
   const kernel = writeKernelConfig(projectRoot, vm, {
     token,
     proxyUrl,
     proxyRequired: vm.proxy_required !== false,
-    officialCcInference: resolveOfficialCcInference(vm, routing),
+    officialCcInference: resolveOfficialCcInference(vm, resolvedRouting),
     timezone: vm.timezone || '',
-    routing,
+    routing: resolvedRouting,
   })
   try {
     fs.chownSync(paths.runDir, uid, gid)
@@ -390,7 +387,7 @@ export function shouldReplaceSlotContainer({ existing, recreate = false, network
   return !!(wrongNet || wrongImg)
 }
 
-export function startVmRuntime(vm, projectRoot, { recreate = false } = {}) {
+export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = {}) {
   const name = containerName(vm.id)
   const slotName = displayName(vm.id)
   const host = String(vm.fingerprint?.hostname || '').trim() || slotName
@@ -432,7 +429,7 @@ export function startVmRuntime(vm, projectRoot, { recreate = false } = {}) {
 
   let worker
   try {
-    worker = writeWorkerFiles(vm, projectRoot, { transparent: true })
+    worker = writeWorkerFiles(vm, projectRoot, { transparent: true, routing })
   } catch (error) {
     return { ok: false, error: String(error.message || error) }
   }

@@ -10,7 +10,7 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadConfig, reloadActiveVm } from './lib/core/config.mjs'
+import { loadConfig, reloadActiveVm, routingConfigFile } from './lib/core/config.mjs'
 import {
   extractApiKey,
   timingSafeEqualStr,
@@ -145,7 +145,7 @@ if (vmSync.upserted || vmSync.rebuilt) {
 
 // --- P3 sticky + quota ---
 
-const routingConfigPath = process.env.KIN_ROUTING_FILE || path.join(cfg.paths.root, 'config', 'routing.json')
+const routingConfigPath = routingConfigFile(cfg.paths.project)
 let healthMonitor = null
 let credentialRefreshMonitor = null
 let kernelWatchdog = null

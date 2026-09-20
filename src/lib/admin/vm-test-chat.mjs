@@ -13,6 +13,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import path from 'node:path'
+import { readRoutingConfigFile } from '../core/config.mjs'
 import { getVm, vmHasClaudeCredential } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { summarizeCodexSlot, readCodexAccounts, upsertCodexAccount } from '../vm/codex-slot.mjs'
@@ -306,11 +307,7 @@ function looksLikeCodexUnauthorized(result) {
 }
 
 function loadRouting(projectRoot) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/config/routing.json'), 'utf8'))
-  } catch {
-    return {}
-  }
+  return readRoutingConfigFile(projectRoot)
 }
 
 export function buildVmTestInbound({
