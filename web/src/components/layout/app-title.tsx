@@ -27,7 +27,10 @@ export function AppTitle() {
               className='grid flex-1 text-start text-sm leading-tight'
             >
               <span className='truncate font-bold'>vm2api</span>
-              <BrandPlatforms className='mt-1' />
+              <span className='mt-0.5 text-[10px] font-medium tracking-wide text-sidebar-foreground/55 tabular-nums'>
+                v{__APP_VERSION__}
+              </span>
+              <BrandPlatforms className='mt-1.5' />
             </Link>
             <ToggleSidebar />
           </div>
