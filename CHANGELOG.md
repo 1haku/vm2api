@@ -2,9 +2,17 @@
 
 ## Unreleased
 
+## 1.2.6 — 2026-09-20
+
+控制面：本地出口导入、kernel 探活、Setup Token 额度。不必换槽内 kernel。
+
 - 本地出口绑槽后允许导入 / host hop（空 SOCKS URL 视为直连，不再报未绑定）
-- 调度与面板健康检查打 rust `kernel.sock`，不再探不存在的 `worker.sock`
+- 调度、面板 live credential、VM 详情健康检查打 rust `kernel.sock`，不再探不存在的 `worker.sock`
 - Setup Token 写入凭证时把 `inference` 规范成 `user:inference`
+- Setup Token Extra 5h/7d 进面板详情；手动额度探测真正 hop
+- 额度卡展示剩余百分比与重置时间
+
+已部署机升级：只更新控制面 Node（含 web）并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-126)。
 
 ## 1.2.5 — 2026-09-20
 
