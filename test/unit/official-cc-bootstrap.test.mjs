@@ -488,7 +488,7 @@ test('finalizeOfficialCcTelemetry reloads the engine-aware slot after writing id
   assert.equal(worker.telemetry.identity.user_id, user)
   assert.equal(worker.telemetry.identity.source, 'official-cc-init')
   assert.equal(fs.existsSync(path.join(runDir, 'telemetry.touch')), true)
-  assert.equal(fs.existsSync(path.join(home, '.claude', '.claude.json')), false)
+  assert.equal(fs.existsSync(path.join(home, '.claude', '.claude.json')), true)
   assert.equal(vm.fingerprint.official_machine_id, machine)
   assert.equal(vm.fingerprint.official_user_id, user)
   const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'))

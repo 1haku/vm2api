@@ -117,9 +117,24 @@ export function publicRuntimeView(runtime) {
   if (typeof runtime !== 'object') return runtime
   return {
     type: runtime.type || null,
-    container: runtime.container || null,
     worker: runtime.worker || null,
     egress: runtime.egress || null,
+  }
+}
+
+/** Start/create responses expose slot state, never account, proxy, fingerprint, or host runtime details. */
+export function publicVmBootView(vm) {
+  if (!vm || typeof vm !== 'object') return vm
+  return {
+    id: vm.id,
+    name: vm.name,
+    status: vm.status || 'unknown',
+    platform: vm.platform || null,
+    family: vm.family || null,
+    inference_engine: vm.inference_engine || null,
+    persona_preset: vm.persona_preset || null,
+    schedulable: vm.schedulable !== false,
+    schedule_disabled_reason: vm.schedule_disabled_reason || null,
   }
 }
 
@@ -300,13 +315,15 @@ export async function buildDashboard({
   const poolSnap = snapshotPool(proxyPool)
   const listed = listVms(cfg.paths.project)
   const liveById = await collectLivePanelCredentials(cfg.paths.project, listed)
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+  const vms = listed.map((v) =>
+    enrichVm(v, accountQuota, active, {
       routingConfig,
       pool,
       poolSnap,
       liveById,
       projectRoot: cfg.paths.project,
-    }))
+    }),
+  )
   const snap = accountQuota.snapshot()
   const accounts = snap.accounts || []
   const peak5 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['5h']?.utilization || 0)), 0)
@@ -422,13 +439,15 @@ export async function buildVmList({
   const poolSnap = snapshotPool(proxyPool)
   const listed = filterVmsForPanel(listVms(cfg.paths.project), { role, userId: ownerUserId })
   const liveById = await collectLivePanelCredentials(cfg.paths.project, listed)
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+  const vms = listed.map((v) =>
+    enrichVm(v, accountQuota, active, {
       routingConfig,
       pool,
       poolSnap,
       liveById,
       projectRoot: cfg.paths.project,
-    }))
+    }),
+  )
   return ok({ items: vms, active_vm: active, total: vms.length, proxy_pool: summarizeProxyPool(proxyPool) })
 }
 
@@ -951,13 +970,15 @@ export async function snapshotAccountPool({
   } catch {
     liveById = null
   }
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+  const vms = listed.map((v) =>
+    enrichVm(v, accountQuota, active, {
       routingConfig,
       pool,
       poolSnap,
       liveById,
       projectRoot: cfg.paths.project,
-    }))
+    }),
+  )
   const accounts = (() => {
     try {
       return accountQuota?.snapshot?.().accounts || []
@@ -1245,11 +1266,26 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     quota: mergedQuota,
     policy,
     sessionLimit,
-    cooldownUntil: runtime?.cooldown_until || v.claude?.temp_unschedulable_until || v.temp_unschedulable_until || v.cooldown_until || null,
-    cooldownReason: runtime?.cooldown_reason || v.claude?.temp_unschedulable_reason || v.temp_unschedulable_reason || v.cooldown_reason || null,
+    cooldownUntil:
+      runtime?.cooldown_until ||
+      v.claude?.temp_unschedulable_until ||
+      v.temp_unschedulable_until ||
+      v.cooldown_until ||
+      null,
+    cooldownReason:
+      runtime?.cooldown_reason ||
+      v.claude?.temp_unschedulable_reason ||
+      v.temp_unschedulable_reason ||
+      v.cooldown_reason ||
+      null,
   })
   const restrictionUntil =
-    runtime?.cooldown_until || v.claude?.temp_unschedulable_until || v.temp_unschedulable_until || v.cooldown_until || availability.until || null
+    runtime?.cooldown_until ||
+    v.claude?.temp_unschedulable_until ||
+    v.temp_unschedulable_until ||
+    v.cooldown_until ||
+    availability.until ||
+    null
   const restrictionReason =
     runtime?.cooldown_reason ||
     v.claude?.temp_unschedulable_reason ||

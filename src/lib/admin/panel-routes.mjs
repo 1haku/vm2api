@@ -2197,7 +2197,7 @@ export function createPanelHandler(ctx) {
           res,
           200,
           panel.ok({
-            vm: summarizeVm(saved),
+            vm: panel.publicVmBootView(summarizeVm(saved)),
             allocated_proxy: panel.publicAllocatedProxy(proxyPool, allocated),
             ...(startError ? { start_error: startError } : {}),
           }),
@@ -2234,7 +2234,7 @@ export function createPanelHandler(ctx) {
           res,
           200,
           panel.ok({
-            vm: summarizeVm(vm),
+            vm: panel.publicVmBootView(summarizeVm(vm)),
             allocated_proxy: panel.publicAllocatedProxy(proxyPool, bound),
             runtime: panel.publicRuntimeView(vm.runtime) || GATEWAY_CAPABILITIES.runtime,
             kernel: GATEWAY_CAPABILITIES.kernel,
