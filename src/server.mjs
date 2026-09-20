@@ -76,7 +76,7 @@ import {
   mirrorWorkerCredentialsToVm,
 } from './lib/oauth/oauth-credentials.mjs'
 import { normalizeCredentialMode } from './lib/oauth/credential-mode.mjs'
-import { workerHealth, ensureWorkerCredential } from './lib/transport/go-worker-client.mjs'
+import { ensureWorkerCredential } from './lib/transport/go-worker-client.mjs'
 import { stopAllRustKernels } from './lib/transport/rust-kernel-supervisor.mjs'
 import { createRespond } from './lib/http/respond.mjs'
 import { tryServeWebDist } from './lib/http/web-dist.mjs'

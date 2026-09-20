@@ -165,7 +165,7 @@ import {
 } from '../vm/wrap-cli-runtime.mjs'
 import { restartRustKernel, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
-import { workerHealth, countTokensViaWorker } from '../transport/go-worker-client.mjs'
+import { countTokensViaWorker } from '../transport/go-worker-client.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from '../protocol/claude-code-betas.mjs'
 import { rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
@@ -338,12 +338,8 @@ export function createPanelHandler(ctx) {
         },
       }
     }
-    const [go, rust] = await Promise.all([
-      workerHealth(exec, { timeoutMs: 600 }),
-      rustKernelHealth(exec, { timeoutMs: 600 }),
-    ])
+    const rust = await rustKernelHealth(exec, { timeoutMs: 600 })
     return {
-      go: toPublicKernelHealth(go, 'go'),
       rust: toPublicKernelHealth(rust, 'rust'),
     }
   }

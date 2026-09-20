@@ -1,18 +1,18 @@
 # OAuth 凭证生命周期
 
-每个 VM/槽位的 Go worker 是该账号的**唯一 refresh owner**。Node、`vm.json`、SQLite 只存脱敏元数据，不持有活票。
+活票只写在槽位 `credentials.json`。换票由控制面 host `RefreshIfNeeded` 经槽 SOCKS5 完成；`vm.json`、SQLite 只存脱敏元数据。Go `kin-worker` 不再做 hop / refresh。
 
 ```text
 sessionKey（默认 Setup Token）或 授权码
    │ 必须先有 VM + 槽位 SOCKS5（禁止 direct fallback）
    ▼
 bin/kin-cookie-auth（控制面 spawn；过程不在 Node）
-   │ POST /internal/credential/import
+   │ 写入槽 credentials.json
    ▼
-Go slot worker credentials.json   ← 活票只在这里
-   │ Refresher.Ensure（推理临期 或 面板显式 refresh）
+槽 ~/.claude/credentials.json   ← 活票只在这里
+   │ host RefreshIfNeeded（推理临期 或 面板显式 refresh）
    │ 无后台定时器；401 不强制换票
-   │ GET /v1/models 不再 hop，避免 401 烧 refresh
+   │ GET /v1/models 走 host SOCKS，避免 401 烧 refresh
    ▼
 https://platform.claude.com/v1/oauth/token
    │
@@ -32,11 +32,11 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 | 授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | 完整 OAuth 用。默认 CAI / sub2api。`{ flavor: "claude_code" }` 走官方 Claude Code 授权页。Setup Token 不走 CLI；`{ flavor: "setup_token" }` 只是 PKCE `user:inference`。服务端 PKCE，30min；无代理不能生成 URL。 |
 | 粘贴授权码 | `POST /api/panel/vms/:id/oauth/exchange-code` | 经槽 SOCKS5 换票，redirect / token URL 以服务端 session 为准，再 `commitImportedOauth` |
 
-换出的 access/refresh 只写入 worker。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。Claude 面板默认选 Setup Token + Cookie。
+换出的 access/refresh 只写入 credentials.json。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。Claude 面板默认选 Setup Token + Cookie。
 
 ## 刷新规则
 
-**只有 `Refresher.Ensure` 决定是否换票**，没有第二套定时器或 Node 侧 refresh 客户端。
+**只有 host `RefreshIfNeeded` 决定是否换票**，没有第二套定时器。Go worker 不再 Ensure。
 
 1. 推理（Messages / usage）或面板「刷新凭证」调用 Ensure。
 2. access 到期前 5 分钟进入刷新窗口；未进窗口则只读现票。新票未过期，导入后不强制 refresh。
@@ -53,10 +53,10 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 
 ## 网络不变量
 
-以下请求共用 worker 的同一个显式 SOCKS5 transport：
+以下请求共用该槽绑定的 SOCKS5（控制面 host 或 kernel 透明出口），不允许 VPS 直连 Anthropic：
 
-- `/v1/messages`（推理）
-- `/api/oauth/usage`（额度）
+- `/v1/messages`（Rust kernel cli-hop）
+- `/api/oauth/usage`（额度，host SOCKS）
 - `/v1/oauth/token`（refresh / 授权码）
 - 健康 / 额度探测
 - 遥测 sidecar 的 event_logging / eval（若开启）
@@ -91,7 +91,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 6. `~/.claude.json` 的 userID/machineID 写入槽位指纹；清 leftover `.claude/.claude.json`  
 7. `sync_telemetry`：写 `kin-identity.json` + `worker.json.telemetry`，reload 槽位拉 sidecar  
 
-换票成功（import / exchange-code）在 `enabled` 时**每次重新初装**（wipe → 物化官方登录文件 → hello），不因「已初装」跳过。推理永远走 Go worker。关 `enabled` 后换票不排队；`POST /api/panel/vms/:id/official-cc-bootstrap` 带 `{manual:true}` 仍可跑。
+换票成功（import / exchange-code）在 `enabled` 时**每次重新初装**（wipe → 物化官方登录文件 → hello），不因「已初装」跳过。推理走 Rust kernel cli-hop。关 `enabled` 后换票不排队；`POST /api/panel/vms/:id/official-cc-bootstrap` 带 `{manual:true}` 仍可跑。
 
 进度：`GET /api/panel/vms/:id/official-cc-bootstrap`。
 

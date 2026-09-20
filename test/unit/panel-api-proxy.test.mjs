@@ -173,6 +173,43 @@ test('vm detail exposes Go credential ownership and Rust kernel health', async (
   })
 })
 
+test('vm detail rust-only health does not fall back to go', async () => {
+  const project = tmpDir()
+  writeVm(project, {
+    id: 'vm-rust',
+    name: 'Rust slot',
+    status: 'running',
+    inference_engine: 'rust',
+    claude: {},
+    policy: {},
+  })
+  const rustOnly = await buildVmDetail({
+    cfg: { paths: { project }, rewrite: {}, base_url: '' },
+    accountQuota: fakeQuota(),
+    id: 'vm-rust',
+    routingConfig: { inference: { engine: 'rust' } },
+    kernelHealth: async () => ({
+      rust: { reachable: true, status: 200, worker_version: 'rust-0.1.0' },
+    }),
+  })
+  assert.equal(rustOnly.data.kernel.active_engine, 'rust')
+  assert.equal(rustOnly.data.kernel.go_health, null)
+  assert.equal(rustOnly.data.kernel.rust_health.reachable, true)
+
+  const rustDown = await buildVmDetail({
+    cfg: { paths: { project }, rewrite: {}, base_url: '' },
+    accountQuota: fakeQuota(),
+    id: 'vm-rust',
+    routingConfig: { inference: { engine: 'rust' } },
+    kernelHealth: async () => ({
+      go: { reachable: true, status: 200, worker_version: 'go-1.0.0' },
+      rust: { reachable: false, status: 0, error_code: 'worker_unavailable' },
+    }),
+  })
+  assert.equal(rustDown.data.kernel.active_engine, null)
+  assert.equal(rustDown.data.kernel.go_health.reachable, true)
+})
+
 test('GPT vm detail exposes codex_health and hides Claude kernel/official_cc', async () => {
   const project = tmpDir()
   writeVm(project, {
