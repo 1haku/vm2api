@@ -1139,10 +1139,14 @@ function syncActiveToPassive(acc, sampledAt) {
   for (const key of ['5h', '7d']) {
     const src = acc.unified.official?.[key] || acc.unified[key]
     const extra = acc.unified.headers[key]
-    if (!shouldCopyOfficialToExtra(src, extra, now)) continue
+    const officialReset = src?.reset || src?.resets_at || null
+    if (!shouldCopyOfficialToExtra(src, extra, now)) {
+      if (officialReset && extra && !extra.reset) writeHeaderWindow(acc, key, { reset: officialReset })
+      continue
+    }
     writeHeaderWindow(acc, key, {
       utilization: officialUtilToExtra(src.utilization),
-      reset: src.reset || src.resets_at || extra?.reset || null,
+      reset: officialReset || extra?.reset || null,
       status: src.status || null,
     })
   }

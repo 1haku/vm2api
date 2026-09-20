@@ -28,7 +28,12 @@ import { SlotIdentity } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { CodexKernelHealthFields } from '@/features/vm/codex-kernel-health-card'
 import { ConcRpmEditor } from '@/features/vm/conc-rpm-editor'
-import { Field, Meter, ResetAt } from '@/features/vm/detail-section-primitives'
+import {
+  Field,
+  Meter,
+  quotaWindowHint,
+  ResetAt,
+} from '@/features/vm/detail-section-primitives'
 import { KernelFeatTags } from '@/features/vm/kernel-feat-tags'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
 import { OpenaiQuotaPanel } from '@/features/vm/openai-quota-panel'
@@ -156,6 +161,8 @@ export function VmStatusBoard(props: Props) {
   const verdict = slotVerdict(vm, kernel, proxy)
   const proxyH = proxyHealthOf(vm, proxy)
   const fable = fableCardInfo(vm, tierKey, fableCap(dash.data))
+  const reset5 = acc.reset_5h ?? vm.reset_5h
+  const reset7 = acc.reset_7d ?? vm.reset_7d
   const telemetry = kernel?.telemetry
   const topology = kernel?.process_topology
   const rust = wrapHealthLabel(kernel?.rust_health)
@@ -234,16 +241,12 @@ export function VmStatusBoard(props: Props) {
                 <Meter
                   label='5 小时已用'
                   value={u5}
-                  hint={
-                    vm.reset_5h
-                      ? `重置 ${String(vm.status_5h || '')}`.trim()
-                      : undefined
-                  }
+                  hint={quotaWindowHint(u5, reset5, now)}
                 />
                 <Meter
                   label='7 天已用'
                   value={u7}
-                  hint={String(vm.status_7d || '')}
+                  hint={quotaWindowHint(u7, reset7, now)}
                 />
                 {fable.usedPct != null ? (
                   <Meter
@@ -325,10 +328,10 @@ export function VmStatusBoard(props: Props) {
             {isCodexVm(vm) ? null : (
               <>
                 <Field label='5h 重置' compact>
-                  <ResetAt value={vm.reset_5h} now={now} />
+                  <ResetAt value={reset5} now={now} />
                 </Field>
                 <Field label='7d 重置' compact>
-                  <ResetAt value={vm.reset_7d} now={now} />
+                  <ResetAt value={reset7} now={now} />
                 </Field>
               </>
             )}

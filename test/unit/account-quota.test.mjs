@@ -555,6 +555,26 @@ test('probe 5h rejected with no last_used stays a hard block until reset', () =>
   assert.equal(acc.unified['5h'].status, 'rejected')
 })
 
+test('official probe fills Extra reset when Extra has usage but no reset', () => {
+  const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  q.ingestHeaders('acc-no-reset', {
+    'anthropic-ratelimit-unified-5h-utilization': '0.44',
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+  })
+  assert.equal(q.repo.get('acc-no-reset').unified.headers['5h'].reset, null)
+  const reset = futureReset(4 * 3600_000)
+  q.ingestOAuthUsage('acc-no-reset', {
+    ok: true,
+    source: 'official-cc-usage',
+    five_hour: { utilization: 0.12, status: 'allowed', resets_at: reset },
+    seven_day: { utilization: 0.08, status: 'allowed', resets_at: futureReset(6 * 24 * 3600_000) },
+    probed_at: new Date().toISOString(),
+  })
+  const acc = q.repo.get('acc-no-reset')
+  assert.equal(acc.unified.headers['5h'].utilization, 0.44)
+  assert.equal(acc.unified.headers['5h'].reset, reset)
+})
+
 test('official leftover 100% does not overwrite live Extra allowed', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
