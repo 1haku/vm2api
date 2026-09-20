@@ -122,6 +122,24 @@ test('GPT-5.5 official standard: $5 / $30 per MTok', () => {
   assert.equal(c.total_cost, 35)
 })
 
+test('GPT-5.6-sol bills uncached input plus official cache_write_tokens', () => {
+  const c = calculateCost(
+    {
+      input_tokens: 100,
+      output_tokens: 5,
+      input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10 },
+    },
+    'gpt-5.6-sol',
+  )
+  assert.equal(c.known, true)
+  assert.equal(c.input_tokens, 70)
+  assert.equal(c.input_cost, 0.00035)
+  assert.equal(c.output_cost, 0.00015)
+  assert.equal(c.cache_read_cost, 0.00001)
+  assert.equal(c.cache_creation_cost, 0.0000625)
+  assert.equal(c.total_cost, 0.0005725)
+})
+
 test('GPT-5.6-sol bills uncached input plus official cache write', () => {
   const c = calculateCost(
     {
