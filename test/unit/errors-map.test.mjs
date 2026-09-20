@@ -104,7 +104,11 @@ test('text plus stop_reason is a complete assistant hop', () => {
 
 test('incomplete_response maps to HTTP 502', () => {
   const mapped = mapUpstreamError(502, {
-    error: { type: 'api_error', code: 'incomplete_response', message: 'Assistant hop ended without visible output or stop_reason' },
+    error: {
+      type: 'api_error',
+      code: 'incomplete_response',
+      message: 'Assistant hop ended without visible output or stop_reason',
+    },
   })
   assert.equal(mapped.status, 502)
   assert.equal(mapped.body.error.code, 'incomplete_response')

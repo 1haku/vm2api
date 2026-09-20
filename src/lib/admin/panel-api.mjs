@@ -16,6 +16,7 @@ import {
   vmHasClaudeCredential,
   persistAccountTier,
   isCodexVm,
+  setVmSchedulable,
 } from '../vm/vm-registry.mjs'
 import { resolveInferenceEngine, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
@@ -29,7 +30,12 @@ import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from '
 import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders } from '../pool/quota-window.mjs'
 import { resolveCredentialScheduleLevel } from '../pool/credential-weight.mjs'
-import { evaluateAccount, credStatusFromAvailability } from '../pool/availability.mjs'
+import {
+  evaluateAccount,
+  credStatusFromAvailability,
+  isLeftoverQuotaScheduleOff,
+  resolveScheduleState,
+} from '../pool/availability.mjs'
 import { isLeftoverGrantRevokeRuntime, viewRuntimeWithoutLeftoverRevoke } from '../pool/schedule-eligibility.mjs'
 import {
   isFableUnavailablePro,
@@ -239,7 +245,13 @@ export async function buildDashboard({
   const poolSnap = snapshotPool(proxyPool)
   const listed = listVms(cfg.paths.project)
   const liveById = await collectLivePanelCredentials(cfg.paths.project, listed)
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, { routingConfig, pool, poolSnap, liveById }))
+  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+      routingConfig,
+      pool,
+      poolSnap,
+      liveById,
+      projectRoot: cfg.paths.project,
+    }))
   const snap = accountQuota.snapshot()
   const accounts = snap.accounts || []
   const peak5 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['5h']?.utilization || 0)), 0)
@@ -355,7 +367,13 @@ export async function buildVmList({
   const poolSnap = snapshotPool(proxyPool)
   const listed = filterVmsForPanel(listVms(cfg.paths.project), { role, userId: ownerUserId })
   const liveById = await collectLivePanelCredentials(cfg.paths.project, listed)
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, { routingConfig, pool, poolSnap, liveById }))
+  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+      routingConfig,
+      pool,
+      poolSnap,
+      liveById,
+      projectRoot: cfg.paths.project,
+    }))
   return ok({ items: vms, active_vm: active, total: vms.length, proxy_pool: summarizeProxyPool(proxyPool) })
 }
 
@@ -385,7 +403,13 @@ export async function buildVmDetail({
   const poolSnap = snapshotPool(proxyPool)
   const listed = [summarizeVm(vm)]
   const liveById = await collectLivePanelCredentials(cfg.paths.project, listed, { cacheMs: 0 })
-  const summary = enrichVm(listed[0], accountQuota, active, { routingConfig, pool, poolSnap, liveById })
+  const summary = enrichVm(listed[0], accountQuota, active, {
+    routingConfig,
+    pool,
+    poolSnap,
+    liveById,
+    projectRoot: cfg.paths.project,
+  })
   const acc = findAccount(accountQuota, summary)
   const billing = (() => {
     try {
@@ -872,7 +896,13 @@ export async function snapshotAccountPool({
   } catch {
     liveById = null
   }
-  const vms = listed.map((v) => enrichVm(v, accountQuota, active, { routingConfig, pool, poolSnap, liveById }))
+  const vms = listed.map((v) => enrichVm(v, accountQuota, active, {
+      routingConfig,
+      pool,
+      poolSnap,
+      liveById,
+      projectRoot: cfg.paths.project,
+    }))
   const accounts = (() => {
     try {
       return accountQuota?.snapshot?.().accounts || []
@@ -1087,6 +1117,10 @@ function mergeVmProxy(v, poolSnap) {
 }
 
 function enrichVm(v, accountQuota, active, extras = {}) {
+  if (extras.projectRoot && isLeftoverQuotaScheduleOff(v)) {
+    setVmSchedulable(extras.projectRoot, v.id, true, null, { preserveStatus: true, source: 'force' })
+    v = { ...v, schedulable: true, schedule_disabled_reason: null }
+  }
   const acc = findAccount(accountQuota, v)
   const runtime = findRuntime(accountQuota, v)
   const liveCred = extras.liveById instanceof Map ? extras.liveById.get(v.id) : extras.liveById?.[v.id]
@@ -1156,8 +1190,25 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     quota: mergedQuota,
     policy,
     sessionLimit,
-    cooldownUntil: runtime?.cooldown_until || v.claude?.temp_unschedulable_until || v.cooldown_until || null,
-    cooldownReason: runtime?.cooldown_reason || v.claude?.temp_unschedulable_reason || v.cooldown_reason || null,
+    cooldownUntil: runtime?.cooldown_until || v.claude?.temp_unschedulable_until || v.temp_unschedulable_until || v.cooldown_until || null,
+    cooldownReason: runtime?.cooldown_reason || v.claude?.temp_unschedulable_reason || v.temp_unschedulable_reason || v.cooldown_reason || null,
+  })
+  const restrictionUntil =
+    runtime?.cooldown_until || v.claude?.temp_unschedulable_until || v.temp_unschedulable_until || v.cooldown_until || availability.until || null
+  const restrictionReason =
+    runtime?.cooldown_reason ||
+    v.claude?.temp_unschedulable_reason ||
+    v.temp_unschedulable_reason ||
+    v.cooldown_reason ||
+    availability.reason ||
+    null
+  const triad = resolveScheduleState({
+    schedulable: v.schedulable !== false,
+    scheduleManual: v.schedule_manual === true,
+    scheduleDisabledReason: v.schedule_disabled_reason || null,
+    availability,
+    restrictionUntil,
+    restrictionReason,
   })
   return {
     id: v.id,
@@ -1244,7 +1295,13 @@ function enrichVm(v, accountQuota, active, extras = {}) {
       : null,
     account_tier: tierKey,
     usage_has_fable: isCodex ? false : !!q.usage_has_fable,
+    availability,
     cred_status: credStatusFromAvailability(availability),
+    cooldown_until: Number(restrictionUntil) > Date.now() ? Number(restrictionUntil) : null,
+    cooldown_reason: Number(restrictionUntil) > Date.now() ? restrictionReason : null,
+    schedule_state: triad.schedule_state,
+    restriction_reason: triad.restriction_reason,
+    restriction_until: triad.restriction_until,
     refresh_error: v.refresh_error || v.claude?.refresh_error || runtime?.refresh_error || null,
     sessions,
     session_active: sessions.active,

@@ -127,6 +127,11 @@ export type Vm = {
   proxy?: VmProxySnap
   proxy_id?: string
   schedulable?: boolean
+  schedule_manual?: boolean
+  /** Operator switch vs quota/cooldown park. */
+  schedule_state?: 'on' | 'restricted' | 'off'
+  restriction_reason?: string | null
+  restriction_until?: number | null
   cooldown_until?: number
   cooldown_reason?: string
   utilization_5h?: number

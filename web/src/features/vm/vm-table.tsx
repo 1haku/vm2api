@@ -27,7 +27,10 @@ import {
 } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
-import { SchedulableSwitch } from '@/features/vm/schedulable-switch'
+import {
+  SchedulableSwitch,
+  vmSchedulableProps,
+} from '@/features/vm/schedulable-switch'
 
 /** 用量条统一朝一个方向：值越高越危险。四档对应状态轴，用 solid 变体
     （非文本图形，允许比文字版更亮更艳）。 */
@@ -328,10 +331,7 @@ function VmCard({
                 ) : null}
               </div>
             ) : null}
-            <SchedulableSwitch
-              vmId={vm.id}
-              schedulable={vm.schedulable !== false}
-            />
+            <SchedulableSwitch {...vmSchedulableProps(vm)} />
           </div>
         </div>
       </div>
@@ -344,11 +344,15 @@ export { VmTable } from './vm-list-table'
 export type VmSortKey = 'name' | 'today' | 'cache' | 'remain' | 'status'
 
 /**
- * 状态优先级：在池 → 关闭调用 → 未使用 → 无效凭证 → revoke。
- * cool / quota 与 pool 同级（都还在池里可被调度到），与 `fleetGroup` 的归并口径一致。
+ * 状态优先级：在池 → 受限 → 关闭调用 → 未使用 → 无效凭证 → revoke。
+ * cool / quota 是受限，不与在池同级。
  */
 function statusRank(vm: Vm): number {
-  return { pool: 0, off: 1, none: 2, bad: 3, revoke: 4 }[fleetGroup(vm)] ?? 5
+  return (
+    { pool: 0, restricted: 1, off: 2, none: 3, bad: 4, revoke: 5 }[
+      fleetGroup(vm)
+    ] ?? 6
+  )
 }
 
 /**

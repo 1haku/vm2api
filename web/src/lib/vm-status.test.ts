@@ -5,7 +5,12 @@ import {
   accountUsable,
   claudeTier,
   credentialStatus,
+  fleetCounts,
+  fleetGroup,
+  isRestrictedSchedule,
   poolStatus,
+  restrictionCopy,
+  scheduleStateLabel,
 } from './vm-status'
 
 function liveVm(over: Partial<Vm> = {}): Vm {
@@ -249,5 +254,165 @@ describe('claudeTier follows usage Fable presence', () => {
         })
       ).key
     ).toBe('pro')
+  })
+
+  it('does not paint quota restriction as 调度关', () => {
+    const vm = liveVm({
+      schedulable: true,
+      schedule_state: 'restricted',
+      restriction_reason: 'quota_5h_header',
+      restriction_until: Date.now() + 3600_000,
+      availability: {
+        key: 'quota',
+        usable: true,
+        text: '5h 限制',
+        reason: 'quota_5h_header',
+      },
+    })
+    expect(poolStatus(vm)).toMatchObject({
+      key: 'quota',
+      text: '5h 限制',
+      cls: 'warn',
+    })
+    expect(accountStatus(vm)).toMatchObject({ key: 'quota', cls: 'warn' })
+  })
+
+  it('paints leftover quota-off as restriction, not 调度关', () => {
+    const vm = liveVm({
+      schedulable: false,
+      schedule_disabled_reason: 'quota_5h_header',
+      availability: {
+        key: 'off',
+        usable: false,
+        text: '调度关',
+        reason: 'quota_5h_header',
+      },
+    })
+    expect(poolStatus(vm)).toMatchObject({
+      key: 'quota',
+      text: '5h 限制',
+      cls: 'warn',
+    })
+    expect(poolStatus(vm).text).not.toBe('调度关')
+    expect(accountStatus(vm).cls).not.toBe('off')
+    expect(accountStatus(vm).text).not.toBe('调度关')
+  })
+})
+
+describe('fleetGroup splits 受限 from 在池 and 关闭调用', () => {
+  it('returns restricted when poolStatus is cool or quota', () => {
+    const cool = liveVm({
+      schedule_state: 'restricted',
+      restriction_reason: 'rate_limited',
+      restriction_until: Date.now() + 300_000,
+      availability: { key: 'cool', usable: true, text: '冷却中' },
+    })
+    const quota = liveVm({
+      schedulable: true,
+      schedule_state: 'restricted',
+      restriction_reason: 'quota_5h_header',
+      restriction_until: Date.now() + 3600_000,
+      availability: {
+        key: 'quota',
+        usable: true,
+        text: '5h 限制',
+        reason: 'quota_5h_header',
+      },
+    })
+    expect(fleetGroup(cool)).toBe('restricted')
+    expect(fleetGroup(quota)).toBe('restricted')
+    expect(isRestrictedSchedule(quota)).toBe(true)
+    expect(scheduleStateLabel(quota)).toBe('受限')
+    expect(restrictionCopy(quota)).toBe('5h 限制')
+  })
+
+  it('does not count restricted into 在池', () => {
+    const pool = liveVm({ schedule_state: 'on', schedulable: true })
+    const restricted = liveVm({
+      schedulable: true,
+      schedule_state: 'restricted',
+      restriction_reason: 'quota_7d_safety',
+      availability: {
+        key: 'quota',
+        usable: true,
+        text: '7d 限制',
+        reason: 'quota_7d_safety',
+      },
+    })
+    const counts = fleetCounts([pool, restricted])
+    expect(fleetGroup(pool)).toBe('pool')
+    expect(counts.pool).toBe(1)
+    expect(counts.restricted).toBe(1)
+    expect(counts.off).toBe(0)
+  })
+
+  it('keeps 关闭调用 as operator off only', () => {
+    const off = liveVm({
+      schedulable: false,
+      schedule_state: 'off',
+      schedule_manual: true,
+      availability: {
+        key: 'off',
+        usable: false,
+        text: '调度关',
+        reason: 'disabled',
+      },
+    })
+    const leftoverQuota = liveVm({
+      schedulable: false,
+      schedule_disabled_reason: 'quota_5h_header',
+      availability: {
+        key: 'off',
+        usable: false,
+        text: '调度关',
+        reason: 'quota_5h_header',
+      },
+    })
+    expect(fleetGroup(off)).toBe('off')
+    expect(scheduleStateLabel(off)).toBe('关')
+    expect(fleetGroup(leftoverQuota)).toBe('restricted')
+    expect(scheduleStateLabel(leftoverQuota)).toBe('受限')
+    expect(fleetCounts([off, leftoverQuota])).toMatchObject({
+      off: 1,
+      restricted: 1,
+      pool: 0,
+    })
+  })
+
+  it('keeps 5h/7d warning in 在池, not 受限', () => {
+    const withAvailability = liveVm({
+      schedulable: true,
+      schedule_state: 'on',
+      near_limit: true,
+      utilization_5h: 0.86,
+      status_5h: 'allowed_warning',
+    })
+    const fallback5h = liveVm({
+      schedulable: true,
+      schedule_state: 'on',
+      near_limit: true,
+      utilization_5h: 0.86,
+      status_5h: 'allowed_warning',
+      availability: undefined,
+    })
+    const fallback7d = liveVm({
+      schedulable: true,
+      schedule_state: 'on',
+      utilization_7d: 0.9,
+      status_7d: 'allowed_warning',
+      availability: undefined,
+    })
+    expect(fleetGroup(withAvailability)).toBe('pool')
+    expect(isRestrictedSchedule(withAvailability)).toBe(false)
+    expect(poolStatus(fallback5h)).toMatchObject({
+      key: 'quota',
+      text: '5h 警告',
+    })
+    expect(fleetGroup(fallback5h)).toBe('pool')
+    expect(poolStatus(fallback7d)).toMatchObject({
+      key: 'quota',
+      text: '7d 警告',
+    })
+    expect(fleetGroup(fallback7d)).toBe('pool')
   })
 })

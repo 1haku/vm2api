@@ -6,8 +6,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson } from './vm-file.mjs'
-import { hasAccessPresence, hasCredentialPresence, hasRefreshPresence } from '../oauth/oauth-credentials.mjs'
+import {
+  hasAccessPresence,
+  hasCredentialPresence,
+  hasRefreshPresence,
+  clearVmQuotaRestriction,
+  markVmRestriction,
+} from '../oauth/oauth-credentials.mjs'
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
+import { isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
 import { manualScheduleLevelOf, parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { normalizeOwnerId, vmOriginOf } from '../admin/resource-owner.mjs'
 import { normalizeVmKind } from './vm-kind.mjs'
@@ -96,6 +103,8 @@ export function summarizeVm(vm, projectRoot = null) {
     schedulable: vm.schedulable !== false,
     schedule_manual: vm.schedule_manual === true,
     schedule_disabled_reason: vm.schedule_disabled_reason || null,
+    temp_unschedulable_until: vm.claude?.temp_unschedulable_until || vm.temp_unschedulable_until || null,
+    temp_unschedulable_reason: vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason || null,
     owner_user_id: normalizeOwnerId(vm.owner_user_id),
     origin: vmOriginOf(vm),
     proxy_id: vm.proxy?.id || null,
@@ -167,15 +176,50 @@ export function persistCodexUsage(projectRoot, vmId, { headers, extra, limitedUn
 }
 
 /**
- * Extra 5h/7d auto-toggle, same contract as PoolScheduler.syncQuotaSchedule.
+ * Extra 5h/7d restriction, same contract as PoolScheduler.syncQuotaSchedule.
+ * Never flips the operator switch. Leftover quota-off (not schedule_manual)
+ * is restored to on + restriction.
  */
 export function syncCodexQuotaSchedule(projectRoot, vm, { now = Date.now() } = {}) {
   if (!projectRoot || !vm?.id) return { action: 'keep', reason: null }
   const ev = evaluateCodexQuotaSchedule(vm, now)
-  if (ev.action === 'disable') {
-    setVmSchedulable(projectRoot, vm.id, false, ev.reason, { preserveStatus: true, source: 'force' })
-  } else if (ev.action === 'enable') {
+  const file = path.join(projectRoot, 'vms', `${vm.id}.json`)
+  const leftover = isLeftoverQuotaScheduleOff(vm)
+  if (ev.action === 'restrict' || ev.action === 'restore') {
+    const until = Number(ev.until) || now + 5 * 60_000
+    const next = markVmRestriction(file, { until, reason: ev.reason })
+    if (next) {
+      vm.claude = next.claude
+      vm.temp_unschedulable_until = next.temp_unschedulable_until
+      vm.temp_unschedulable_reason = next.temp_unschedulable_reason
+    }
+    if (leftover) {
+      setVmSchedulable(projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
+      vm.schedulable = true
+      vm.schedule_disabled_reason = null
+    }
+    return { ...ev, action: leftover ? 'restore' : 'restrict' }
+  }
+  if (ev.action === 'clear' || ev.action === 'enable') {
+    const next = clearVmQuotaRestriction(file)
+    if (next) {
+      vm.claude = next.claude
+      delete vm.temp_unschedulable_until
+      delete vm.temp_unschedulable_reason
+    }
+    if (leftover || ev.action === 'enable') {
+      setVmSchedulable(projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
+      vm.schedulable = true
+      vm.schedule_disabled_reason = null
+      return { ...ev, action: 'enable' }
+    }
+    return { ...ev, action: 'clear' }
+  }
+  if (leftover) {
     setVmSchedulable(projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
+    vm.schedulable = true
+    vm.schedule_disabled_reason = null
+    return { action: 'enable', reason: null }
   }
   return ev
 }
@@ -261,7 +305,7 @@ export function vmHasClaudeCredential(vm) {
  */
 export function isVmScheduleReady(vm, { allowMissingCredential = false } = {}) {
   if (!vm) return false
-  if (vm.schedulable === false) return false
+  if (vm.schedulable === false && !isLeftoverQuotaScheduleOff(vm)) return false
   if (!allowMissingCredential && !vmHasClaudeCredential(vm)) return false
   const status = String(vm.status || '').toLowerCase()
   if (HARD_UNAVAILABLE.has(status)) return false
