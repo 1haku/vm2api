@@ -60,6 +60,10 @@ export function chatCompletionsUrl(baseUrl) {
   return `${trimBaseUrl(baseUrl)}/v1/chat/completions`
 }
 
+export function responsesUrl(baseUrl) {
+  return `${trimBaseUrl(baseUrl)}/v1/responses`
+}
+
 export function upstreamAuthHeaders(protocol, apiKey, extra = {}) {
   const key = String(apiKey || '').trim()
   const { auth_scheme, authScheme, anthropic_apikey_auth_scheme, ...rest } = extra || {}

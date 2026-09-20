@@ -1,19 +1,20 @@
 import { officialMessagesBody } from '../protocol/anthropic-messages.mjs'
 import { forwardApi, readApiJson } from '../transport/api-kernel-client.mjs'
 import {
-  chatCompletionsUrl,
   messagesUrl,
   normalizeProtocol,
   resolvePreset,
+  responsesUrl,
   upstreamAuthHeaders,
 } from './api-presets.mjs'
+import { claudeToOpenAIResponsesRequest } from './api-openai.mjs'
 import {
-  applyOpenAIChatSSELine,
-  claudeSSEFromOpenAIDelta,
-  claudeToOpenAIChatRequest,
-  createOpenAIChatAssembler,
-  openAIAssemblerToClaude,
-} from './api-openai.mjs'
+  assembleCodexBodyFromSse,
+  codexBodyToAnthropicMessage,
+  createAnthropicSseState,
+  responsesSseToAnthropicEvents,
+  responsesSseToChatChunk,
+} from '../protocol/codex-convert.mjs'
 
 export function resolveInferenceBackend(req) {
   if (req?.apiKeyKind === 'managed') {
@@ -25,7 +26,7 @@ export function resolveInferenceBackend(req) {
   return 'oauth'
 }
 
-export { messagesUrl } from './api-presets.mjs'
+export { messagesUrl, responsesUrl } from './api-presets.mjs'
 
 function joinHeaderMap(headers = {}) {
   const out = {}
@@ -85,7 +86,7 @@ export async function runApiInference({
   const extraHeaders = joinHeaderMap(picked.endpoint.headers)
   const isOpenAI = protocolKind === 'openai'
   const body = isOpenAI
-    ? { ...claudeToOpenAIChatRequest({ ...canonical, model: picked.upstream_model }), stream: true }
+    ? { ...claudeToOpenAIResponsesRequest({ ...canonical, model: picked.upstream_model }), stream: true }
     : { ...canonical, model: picked.upstream_model, stream: true }
   const headers = {
     'content-type': 'application/json',
@@ -100,7 +101,7 @@ export async function runApiInference({
   try {
     upstream = await forwardApi({
       cfg,
-      url: isOpenAI ? chatCompletionsUrl(preset.base_url) : messagesUrl(preset.base_url),
+      url: isOpenAI ? responsesUrl(preset.base_url) : messagesUrl(preset.base_url),
       headers,
       body,
       proxyUrl: picked.key.proxy_url,
@@ -158,7 +159,7 @@ export async function runApiInference({
   }
 
   if (isOpenAI) {
-    return await runOpenAIUpstream({
+    return await runOpenAIResponsesUpstream({
       upstream,
       resultBase,
       protocol,
@@ -234,7 +235,7 @@ export async function runApiInference({
   }
 }
 
-async function runOpenAIUpstream({
+async function runOpenAIResponsesUpstream({
   upstream,
   resultBase,
   protocol,
@@ -245,78 +246,62 @@ async function runOpenAIUpstream({
   converters,
   body,
 }) {
-  const assembler = createOpenAIChatAssembler()
-  const flags = { started: false, closed: false }
+  const chunks = []
+  const anthropicSse = protocol === 'anthropic.messages' ? createAnthropicSseState() : null
   let committed = false
+  let completed = false
   let ttftMs = null
   const started = Date.now()
 
-  if (protocol === 'openai.chat' && clientStream) {
-    await readLines(upstream, async (line) => {
-      applyOpenAIChatSSELine(line, assembler)
-      if (String(line).startsWith('data:') && ttftMs == null) ttftMs = Date.now() - started
-      if (!committed && String(line).startsWith('data:')) {
-        committed = true
-        if (!res.headersSent) converters.writeSSEHeaders(res)
-      }
-      if (!res.headersSent) converters.writeSSEHeaders(res)
-      res.write(String(line).endsWith('\n') ? String(line) : `${line}\n`)
-    })
-    return {
-      ...resultBase,
-      ok: resultBase.ok && (deliveryMode !== 'verified' || assembler.done || !!assembler.finish),
-      terminalState: assembler.done || assembler.finish ? 'verified' : committed ? 'incomplete' : 'rejected',
-      committed,
-      ttftMs,
-    }
-  }
-
-  let convertState = null
-  if (protocol === 'openai.completions')
-    convertState = converters.createOpenAICompletionStreamState(inbound.model || body.model, resultBase.endpointId)
-  else if (protocol === 'openai.responses')
-    convertState = converters.createResponsesStreamState(inbound.model || body.model, resultBase.endpointId)
-
   await readLines(upstream, async (line) => {
-    const delta = applyOpenAIChatSSELine(line, assembler)
-    if (String(line).startsWith('data:') && ttftMs == null) ttftMs = Date.now() - started
-    if (!clientStream) return
-    const events = claudeSSEFromOpenAIDelta(delta, assembler, flags)
-    if (!events.length) return
-    if (!committed) committed = true
-    if (protocol === 'anthropic.messages') {
-      if (!res.headersSent) converters.writeSSEHeaders(res)
-      for (const evt of events) res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
+    const raw = String(line || '')
+    if (raw.startsWith('data:') && ttftMs == null) ttftMs = Date.now() - started
+    if (!committed && raw.startsWith('data:')) committed = true
+    if (!clientStream) {
+      chunks.push(raw)
       return
     }
-    const writeChunks = (chunks) => {
-      if (!chunks.length) return
-      if (!res.headersSent) converters.writeSSEHeaders(res)
-      for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+    if (!res.headersSent) converters.writeSSEHeaders(res)
+    if (protocol === 'openai.responses') {
+      res.write(raw.endsWith('\n') ? raw : `${raw}\n`)
+      if (/response\.(completed|done)/.test(raw)) completed = true
+      return
     }
-    for (const evt of events) {
-      const fake = `data: ${JSON.stringify(evt)}`
-      if (protocol === 'openai.completions')
-        writeChunks(converters.claudeSSELineToOpenAICompletionChunks(fake, convertState))
-      else writeChunks(converters.claudeSSELineToResponsesEvents(fake, convertState))
+    if (protocol === 'openai.chat' || protocol === 'openai.completions') {
+      const mapped = responsesSseToChatChunk(raw)
+      if (mapped) {
+        res.write(mapped)
+        if (mapped.includes('[DONE]')) completed = true
+      }
+      return
+    }
+    const mapped = responsesSseToAnthropicEvents(raw, anthropicSse)
+    if (mapped) {
+      res.write(mapped)
+      if (mapped.includes('message_stop')) completed = true
     }
   })
 
-  const claude = openAIAssemblerToClaude(assembler)
   if (!clientStream) {
+    const assembled = assembleCodexBodyFromSse(chunks, {})
+    const outBody =
+      protocol === 'anthropic.messages'
+        ? codexBodyToAnthropicMessage(assembled, inbound?.model || body?.model)
+        : assembled
     return {
       ...resultBase,
-      ok: resultBase.ok && !!claude.content?.length,
-      body: claude,
-      usage: claude.usage || null,
+      ok: resultBase.ok && !!(assembled && (assembled.output || assembled.id || outBody)),
+      body: outBody,
+      usage: assembled?.usage || outBody?.usage || null,
       terminalState: resultBase.ok ? 'verified' : 'rejected',
       committed: true,
     }
   }
+
   return {
     ...resultBase,
-    ok: resultBase.ok && (deliveryMode !== 'verified' || flags.closed || assembler.done),
-    terminalState: flags.closed || assembler.done ? 'verified' : committed ? 'incomplete' : 'rejected',
+    ok: resultBase.ok && (deliveryMode !== 'verified' || completed || committed),
+    terminalState: completed ? 'verified' : committed ? 'incomplete' : 'rejected',
     committed,
     ttftMs,
   }

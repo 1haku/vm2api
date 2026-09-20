@@ -21,6 +21,7 @@ import { boundProxyUrl } from '../vm/egress.mjs'
 import { pickCodexSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
 import { readCodexAccounts } from '../vm/codex-slot.mjs'
 import { applyCodexRotate, observeHopTurnState, scheduleCodexRotateCollect } from './codex-rotate.mjs'
+import { applyOpenaiWashLog } from './openai-wash.mjs'
 
 function sessionFrom(req, body) {
   const headers = req.headers || {}
@@ -154,6 +155,11 @@ export async function handleCodexProtocol({
   if (!converted.ok) {
     stats.errors++
     logBag.via = 'codex-kernel'
+    applyOpenaiWashLog(logBag, {
+      inboundPath: ctx.path,
+      inboundProtocol: protocol,
+      converted: false,
+    })
     logBag.error_code = converted.code
     return json(res, 400, {
       error: {
@@ -163,6 +169,12 @@ export async function handleCodexProtocol({
       },
     })
   }
+  applyOpenaiWashLog(logBag, {
+    inboundPath: ctx.path,
+    inboundProtocol: protocol,
+    converted: converted.converted,
+    outboundBody: converted.body,
+  })
   const picked = pickCodexCandidates(projectRoot, req)
   if (picked.error === 'platform_mismatch') {
     stats.errors++
