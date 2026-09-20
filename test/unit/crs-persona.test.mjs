@@ -8,7 +8,7 @@ import {
   applyCrsUnofficialPersona,
   billingPromptId,
   buildBillingAttributionText,
-  computeClaudeCodeCch,
+  CCH_PLACEHOLDER,
   computeClaudeCodeFingerprint,
   CRS_IDENTITY_OVERLAY,
   CRS_NO_TOOLS_APPEND,
@@ -327,7 +327,7 @@ test('fingerprint is stable for the same first user text and cli version', () =>
   assert.notEqual(a, other)
   assert.equal(
     a,
-    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=sdk-cli; cch=${computeClaudeCodeCch(user, '2.1.234')}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
+    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=sdk-cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
   )
 })
 

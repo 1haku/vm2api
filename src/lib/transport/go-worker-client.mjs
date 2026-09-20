@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { prepareOutboundHeaders } from '../protocol/outbound-attempt.mjs'
 import { sanitizeAnthropicBodyForBetaTokens } from '../protocol/anthropic-policy.mjs'
+import { sealClaudeCodeCch } from '../identity/cch.mjs'
 import { credentialModeFromOauth } from '../oauth/credential-mode.mjs'
 import { isCrsMock, writeCrsTrace, mockCrsPayload, emitMockSse } from './crs-mock.mjs'
 import {
@@ -232,7 +233,7 @@ export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m
   })
   return {
     headers,
-    body: sanitizeAnthropicBodyForBetaTokens(body, headers?.['anthropic-beta'] || ''),
+    body: sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(body, headers?.['anthropic-beta'] || '')),
   }
 }
 
