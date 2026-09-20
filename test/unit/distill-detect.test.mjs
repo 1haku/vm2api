@@ -50,7 +50,7 @@ test('prompt template needles are blocked without waiting for structure', () => 
   )
 })
 
-test('openai chat memory-extractor harvest is blocked without structure gates', () => {
+test('openai chat persistable envelope matches 1.2.1 and is not distill', () => {
   const hit = detectDistill({
     inbound: {
       model: 'claude-opus-5',
@@ -74,11 +74,15 @@ test('openai chat memory-extractor harvest is blocked without structure gates', 
       ],
     },
   })
-  assert.equal(hit.action, 'block')
-  assert.equal(
-    hit.hits.some((h) => h.rule === 'needle'),
-    true,
-  )
+  assert.equal(hit.action, 'pass')
+})
+
+test('default needles do not include persistable envelope or harvest wrapper phrases', () => {
+  const joined = DEFAULT_DISTILL_RULES.needles.join('\n')
+  assert.equal(/persistable response items/i.test(joined), false)
+  assert.equal(/memory-stage-one/i.test(joined), false)
+  assert.equal(/must distill reusable/i.test(joined), false)
+  assert.equal(/must extract durable memory/i.test(joined), false)
 })
 
 test('plain cluster VM email UI prompt is not distill', () => {

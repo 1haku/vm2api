@@ -99,19 +99,37 @@ function sameFile(src, dest) {
   }
 }
 
-function destAlreadyCurrent(src, dest) {
+function filesEqual(src, dest) {
+  let a
+  let b
   try {
-    const a = fs.statSync(src)
-    const b = fs.statSync(dest)
-    return a.size === b.size && b.mtimeMs + 1 >= a.mtimeMs
+    a = fs.openSync(src, 'r')
+    b = fs.openSync(dest, 'r')
+    const aStat = fs.fstatSync(a)
+    const bStat = fs.fstatSync(b)
+    if (aStat.size !== bStat.size) return false
+    const aBuf = Buffer.allocUnsafe(64 * 1024)
+    const bBuf = Buffer.allocUnsafe(64 * 1024)
+    let offset = 0
+    while (offset < aStat.size) {
+      const length = Math.min(aBuf.length, aStat.size - offset)
+      const aRead = fs.readSync(a, aBuf, 0, length, offset)
+      const bRead = fs.readSync(b, bBuf, 0, length, offset)
+      if (aRead !== bRead || !aBuf.subarray(0, aRead).equals(bBuf.subarray(0, bRead))) return false
+      offset += aRead
+    }
+    return true
   } catch {
     return false
+  } finally {
+    if (a != null) fs.closeSync(a)
+    if (b != null) fs.closeSync(b)
   }
 }
 
 function replaceFile(src, dest) {
   if (!src || src === dest || sameFile(src, dest)) return
-  if (destAlreadyCurrent(src, dest)) return
+  if (filesEqual(src, dest)) return
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   const tmp = path.join(path.dirname(dest), `.${path.basename(dest)}.${process.pid}.new`)
   fs.copyFileSync(src, tmp)

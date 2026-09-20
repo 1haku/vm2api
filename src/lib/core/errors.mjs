@@ -93,6 +93,11 @@ const POOL_CAPACITY_CODES = new Set([
 ])
 
 const POOL_CAPACITY_MESSAGE = /no eligible|no ready api|account pool|号池没有|无可用账号|eligible claude/i
+const WRAP_CONNECTION_MESSAGE = /provider error:.*connection error/i
+
+export function isWrapConnectionError(message = '') {
+  return WRAP_CONNECTION_MESSAGE.test(String(message || ''))
+}
 
 export function isPoolCapacityError(code, message = '') {
   if (POOL_CAPACITY_CODES.has(String(code || '').trim())) return true
@@ -246,6 +251,22 @@ export function mapUpstreamError(status, body, headers = {}) {
       message: String(msg || 'Client closed the connection'),
       status: 499,
       details: { upstream_status: status },
+    })
+  }
+  if (inboundCode === 'slot_busy' || /rust kernel has no free slot/i.test(String(msg || ''))) {
+    return makeError({
+      type: ErrorType.OVERLOADED,
+      code: 'slot_busy',
+      message: String(msg || 'rust kernel has no free slot'),
+      status: 503,
+    })
+  }
+  if (inboundCode === 'wrap_connection_error' || isWrapConnectionError(msg)) {
+    return makeError({
+      type: ErrorType.API,
+      code: 'wrap_connection_error',
+      message: String(msg || 'wrap CLI connection error'),
+      status: 503,
     })
   }
 

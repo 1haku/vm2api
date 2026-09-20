@@ -58,6 +58,25 @@ test('materializeWrapCli does not recopy identical wrap files', () => {
   }
 })
 
+test('materializeWrapCli replaces same-size stale kernel payload', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-kernel-update-'))
+  try {
+    const template = seedTemplate(project)
+    assert.equal(materializeWrapCli(project, { id: 'vm-13' }).ok, true)
+    const source = path.join(template, 'kin-kernel')
+    const dest = path.join(wrapCliHomeDir(project, 'vm-13'), 'kin-kernel.bin')
+    fs.writeFileSync(source, 'new-kernel')
+    fs.writeFileSync(dest, 'old-kernel')
+    const timestamp = new Date(Date.now() + 60_000)
+    fs.utimesSync(dest, timestamp, timestamp)
+
+    assert.equal(materializeWrapCli(project, { id: 'vm-13' }).ok, true)
+    assert.equal(fs.readFileSync(dest, 'utf8'), 'new-kernel')
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
 test('materializeWrapCli installs glibc wrapper over kernel.bin', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-wrap-'))
   try {

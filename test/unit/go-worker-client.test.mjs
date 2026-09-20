@@ -10,6 +10,7 @@ import {
   streamGoWorker,
   workerHealth,
   usageFromSseEvent,
+  isDownstreamCommitEvent,
 } from '../../src/lib/transport/go-worker-client.mjs'
 
 test('setup-token worker envelope is inference-only', () => {
@@ -210,6 +211,41 @@ unixTest('streamGoWorker scrapes usage from SSE when trailers are missing', asyn
     assert.equal(result.usage.cache_read_input_tokens, 20)
     assert.equal(result.model, 'claude-sonnet-5')
     assert.equal(result.stopReason, 'end_turn')
+  } finally {
+    await fx.close()
+  }
+})
+
+test('message_start is not a downstream commit', () => {
+  assert.equal(isDownstreamCommitEvent({ type: 'message_start', message: {} }), false)
+  assert.equal(isDownstreamCommitEvent({ type: 'error', error: { message: 'Connection error' } }), false)
+  assert.equal(isDownstreamCommitEvent({ type: 'message_stop' }), true)
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } }),
+    true,
+  )
+})
+
+unixTest('streamGoWorker does not commit or forward a Connection error after message_start', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('data: {"type":"message_start","message":{}}\n\n')
+    res.write(
+      'data: {"type":"error","error":{"type":"api_error","message":"provider error: provider error: Connection error."}}\n\n',
+    )
+    res.end()
+  })
+  try {
+    const lines = []
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.committed, false)
+    assert.equal(result.ok, false)
+    assert.match(String(result.body?.error?.message || ''), /Connection error/)
+    assert.equal(lines.length, 0)
   } finally {
     await fx.close()
   }

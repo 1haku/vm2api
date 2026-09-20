@@ -151,7 +151,11 @@ export function createHandleProtocol(deps) {
     logBag.attempt_count = 0
     logBag.final_state = 'distill_blocked'
     logBag.error_code = hit.error.code
-    logBag.error_message = hit.error.message
+    const evidence = (hit.hits || [])
+      .map((item) => item.evidence || item.rule)
+      .filter(Boolean)
+      .join(';')
+    logBag.error_message = evidence ? `${hit.error.message}: ${evidence}` : hit.error.message
     const blocked = distillBlockError(cfg.distill, requestId)
     json(res, blocked.status, blocked.body)
     return true

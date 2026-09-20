@@ -4,6 +4,7 @@
  */
 
 import crypto from 'node:crypto'
+import { ENVELOPE_NEEDLES, extractPrompt } from '../core/distill-detect.mjs'
 import { resolveStoreDb } from '../db/database.mjs'
 import { StickyRepo } from '../db/repos/sticky-repo.mjs'
 import { extractCallerSession, parseUserId } from '../identity/identity-rewrite.mjs'
@@ -44,6 +45,11 @@ export function clientIp(req) {
   return String(raw)
     .replace(/^::ffff:/, '')
     .slice(0, 45)
+}
+
+export function isPersistableEnvelope(body = {}, inbound = null) {
+  const hay = extractPrompt(inbound || body, body).joined.toLowerCase()
+  return ENVELOPE_NEEDLES.some((item) => hay.includes(String(item).toLowerCase()))
 }
 
 export function firstUserFingerprint(body = {}) {
@@ -110,6 +116,11 @@ export class StickyRouter {
       return ip ? this.isolateKey(`ip:${ip}`, req) : null
     }
 
+    if (isPersistableEnvelope(body)) {
+      const id = req?.apiKeyRecord?.id
+      if (id != null && id !== '') return `k${id}:envelope`
+    }
+
     const caller = extractCallerSession({ inbound: body, body, headers: req?.headers || {} })
     if (caller && !EPHEMERAL_STICKY_KEYS.has(String(caller).toLowerCase())) {
       return this.isolateKey(caller, req)
@@ -144,8 +155,14 @@ export class StickyRouter {
     return this.isolateKey(`dev:${device}`, req)
   }
 
-  /** Prefer device family, then per-hop session. Same account for parent + sub-agent. */
+  /** Prefer persistable-envelope API-key pin, then device family, then per-hop session. */
   extractPoolKey(req, body = {}) {
+    if (!this.config.enabled) return null
+    const mode = this.config.mode || 'conversation'
+    if (mode === 'conversation' && isPersistableEnvelope(body)) {
+      const id = req?.apiKeyRecord?.id
+      if (id != null && id !== '') return `k${id}:envelope`
+    }
     return this.extractOfficialFamilyKey(req, body) || this.extractKey(req, body)
   }
 

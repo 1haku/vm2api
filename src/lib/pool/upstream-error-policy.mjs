@@ -5,6 +5,7 @@ import {
   assistantVisibleOutput,
   isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
+  isWrapConnectionError,
 } from '../core/errors.mjs'
 import { parseResetMs } from './quota-window.mjs'
 
@@ -290,6 +291,13 @@ export function classifyUpstreamResult(
       reason: 'downstream_committed_or_incomplete',
       cooldownUntil: null,
     }
+  }
+  if (isWrapConnectionError(message) || isWrapConnectionError(hay)) {
+    return continueWithoutCooldown({
+      scope: 'worker',
+      reason: 'wrap_connection_error',
+      retrySameAccount: true,
+    })
   }
   if (result.transportError || status === 0) {
     if (isProxyFailure(workerCode, message)) {

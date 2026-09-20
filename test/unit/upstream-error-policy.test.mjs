@@ -80,6 +80,20 @@ test('entitlement 429 stops without poisoning pool', () => {
   assert.equal(policy.action, 'stop')
 })
 
+test('wrap Connection error retries the same account', () => {
+  const policy = classifyUpstreamResult({
+    status: 200,
+    ok: false,
+    committed: false,
+    terminalState: 'incomplete',
+    body: { error: { type: 'api_error', message: 'provider error: provider error: Connection error.' } },
+  })
+  assert.equal(policy.scope, 'worker')
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'wrap_connection_error')
+  assert.equal(policy.retrySameAccount, true)
+})
+
 test('committed incomplete stream never switches account', () => {
   const policy = classifyUpstreamResult({
     status: 200,

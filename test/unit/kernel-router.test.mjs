@@ -30,6 +30,8 @@ import {
   scheduleWrapRecycle,
   recycleWrapIfIdle,
   resetWrapRecycleState,
+  beginWrapHop,
+  endWrapHop,
 } from '../../src/lib/transport/rust-kernel-supervisor.mjs'
 import { rustKernelPaths, isNeedsRefreshResult } from '../../src/lib/transport/rust-kernel-client.mjs'
 import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
@@ -80,7 +82,10 @@ test('waitForReadySlot times out instead of hopping into a full kernel', async (
 test('hop slot wait uses remaining wait-plan budget instead of a second 30s', () => {
   assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 0 }), 0)
   assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 5000 }), 5000)
-  assert.equal(resolveHopSlotWaitMs({ remainingBudgetMs: 45_000, routing: { inference: { slot_wait_ms: 8000 } } }), 8000)
+  assert.equal(
+    resolveHopSlotWaitMs({ remainingBudgetMs: 45_000, routing: { inference: { slot_wait_ms: 8000 } } }),
+    8000,
+  )
   assert.equal(resolveHopSlotWaitMs({}), 30_000)
 })
 
@@ -468,11 +473,67 @@ unixTest('committed Rust stream transport failure is not replayed on Go', async 
     })
     assert.equal(result.engine, 'rust')
     assert.equal(result.wanted_engine, 'rust')
-    assert.equal(result.committed, true)
+    assert.equal(result.committed, false)
     assert.equal(result.transportError, true)
-    assert.equal(result.terminalState, 'incomplete')
+    assert.deepEqual(recycled, ['vm-01'])
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+    if (previous == null) delete process.env.KIN_KERNEL_BIN
+    else process.env.KIN_KERNEL_BIN = previous
+  }
+})
+
+unixTest('sibling wrap hop blocks recycle after incomplete', async () => {
+  const previous = process.env.KIN_KERNEL_BIN
+  process.env.KIN_KERNEL_BIN = '/bin/true'
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-sibling-'))
+  const runDir = path.join(root, 'vm-02', 'run')
+  const homeDir = path.join(root, 'vm-02', 'cli-home')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.mkdirSync(homeDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'internal.token'), 'internal-test\n', { mode: 0o600 })
+  const kernelSocket = path.join(runDir, 'kernel.sock')
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.flushHeaders()
+    res.write('data: {"type":"message_start","message":{}}\n\n', () => res.destroy())
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(kernelSocket, resolve)
+  })
+  const exec = {
+    vmId: 'vm-02',
+    homeDir,
+    vm: {
+      id: 'vm-02',
+      inference_engine: 'rust',
+      runtime: {
+        kernel_socket: kernelSocket,
+        worker_socket: path.join(runDir, 'worker.sock'),
+        worker_run_dir: runDir,
+        worker_token_file: path.join(runDir, 'internal.token'),
+      },
+    },
+  }
+  beginWrapHop(exec)
+  try {
+    const recycled = []
+    const result = await dispatchStreamInference({
+      exec,
+      body: { model: 'claude-haiku-4-5-20251001', messages: [{ role: 'user', content: 'hi' }] },
+      routing: { inference: { engine: 'rust' } },
+      ensureRust: async () => ({ ok: true, reason: 'already_up' }),
+      recycleWrap: (target) => {
+        recycled.push(target?.vmId)
+        return { ok: true, skipped: false }
+      },
+      timeoutMs: 3000,
+    })
     assert.deepEqual(recycled, [])
   } finally {
+    endWrapHop(exec)
     await new Promise((resolve) => server.close(resolve))
     fs.rmSync(root, { recursive: true, force: true })
     if (previous == null) delete process.env.KIN_KERNEL_BIN

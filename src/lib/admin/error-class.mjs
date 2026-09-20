@@ -50,6 +50,8 @@ const CODE_MAP = {
   account_pool_exhausted: 'overloaded',
   server_overloaded: 'overloaded',
   upstream_overloaded: 'overloaded',
+  slot_busy: 'overloaded',
+  wrap_connection_error: 'other',
   upstream_timeout: 'timeout',
   stream_incomplete: 'timeout',
   client_cancelled: 'timeout',

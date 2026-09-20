@@ -44,7 +44,7 @@ sudo bash /opt/vm2api/deploy/install.sh check
 sudo bash /opt/vm2api/deploy/install.sh changelog
 ```
 
-保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.13`。若 changelog 提到 `wrap-cli/sync`，加 `--sync-wrap`。
+保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。一键更新会自动把新版 `share/wrap-cli`（包括 `kin-kernel.bin`）同步到所有槽并重启槽内 dataplane；如需暂时跳过可加 `--no-sync-wrap`。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.22`。
 
 **手动：**
 
@@ -61,7 +61,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 二进制在仓内 `bin/`，Compose 会拷到挂载目录。`bin/kin-*` 必须 **755**。缺槽位系统镜像时会编 `kin-os/ubuntu:24.04`。
 
-升级到 **v1.2.13** 见下面「已部署机升级到 1.2.13」。只重启控制面，不要 `docker rm` 槽。
+升级到 **v1.2.22** 见下面「已部署机升级到 1.2.22」。更新控制面和槽内 kernel，但不要 `docker rm` 槽。
 
 Docker Desktop / WSL 下 `curl 127.0.0.1:8787` 可能失败：
 
@@ -128,13 +128,69 @@ curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
 
 # 指定 tag
-sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.13
+sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.22
 
 # 只检查
 sudo bash /opt/vm2api/deploy/install.sh check
 ```
 
 面板：`GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`（`{ confirm: true }` 才会在已挂 `docker.sock` 的机器上拉起升级助手）。容器里没有宿主机 git 仓时返回 `409 host_upgrade_required`，响应里带同一条 curl 命令。
+
+## 已部署机升级到 1.2.22
+
+1.2.22 修复 Anthropic 工具循环缓存边界：Node 保留上一轮稳定断点，槽内 kernel 只补当前尾部。升级必须同时更新 `bin/kin-kernel` 和 `share/wrap-cli/kin-kernel.bin`，再同步所有槽；不要 `docker rm` 槽。
+
+推荐：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+```
+
+脚本会重建控制面、调用 `wrap-cli/sync` 并重启槽内 dataplane。手动部署时必须完成同一同步步骤。
+
+## 已部署机升级到 1.2.15
+
+1.2.15 只动**控制面**（信封不再误拦蒸馏；同一 API key 信封粘一个账号）。不必换槽内 kernel，也不要 `docker rm` 槽。
+
+推荐：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+```
+
+手动：
+
+```bash
+cd /opt/vm2api
+git fetch --tags
+git checkout v1.2.15
+docker compose up -d --build
+curl -sS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+本机 systemd：`git checkout v1.2.15` → `npm ci` → `pnpm -C web install --frozen-lockfile && npm run build:web` → `systemctl restart vm2api` **一次**。
+
+## 已部署机升级到 1.2.14
+
+1.2.14 只动**控制面**（第三方 cli-hop 改回 1.2.1 剥光；保留 1.2.12 convert 升块）。不必换槽内 kernel，也不要 `docker rm` 槽。
+
+推荐：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+```
+
+手动：
+
+```bash
+cd /opt/vm2api
+git fetch --tags
+git checkout v1.2.14
+docker compose up -d --build
+curl -sS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+本机 systemd：`git checkout v1.2.14` → `npm ci` → `pnpm -C web install --frozen-lockfile && npm run build:web` → `systemctl restart vm2api` **一次**。
 
 ## 已部署机升级到 1.2.13
 

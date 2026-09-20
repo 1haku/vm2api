@@ -42,10 +42,6 @@ export const DEFAULT_DISTILL_RULES = {
     'as an internal monologue',
     'Please reason step by step, and put your final answer within \\boxed{}',
     'Respond in the following format: <think>',
-    'Memory-stage-one extractor',
-    'Persistable response items',
-    'You MUST extract durable memory now',
-    'MUST distill reusable, durable rollout knowledge',
   ],
   fingerprints: [
     'Let  $a,b,A,B$  be given reals. We consider the function defined by',
@@ -57,6 +53,9 @@ export const DEFAULT_DISTILL_RULES = {
     'What is the area, in square units, of an isosceles right triangle with a hypotenuse of 20 units?',
   ],
 }
+
+/** Transport wrapper used by normal agent sessions. Not a distill needle. */
+export const ENVELOPE_NEEDLES = Object.freeze(['Persistable response items'])
 
 const DEFAULT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../config/distill-rules.json')
 
@@ -91,15 +90,9 @@ function contentToText(content) {
 
 function systemText(body) {
   if (!body || typeof body !== 'object') return ''
-  const parts = []
-  if (typeof body.system === 'string') parts.push(body.system)
-  else if (Array.isArray(body.system)) parts.push(contentToText(body.system))
-  const messages = Array.isArray(body.messages) ? body.messages : []
-  for (const m of messages) {
-    const role = String(m?.role || '').toLowerCase()
-    if (role === 'system' || role === 'developer') parts.push(contentToText(m.content))
-  }
-  return parts.filter(Boolean).join('\n')
+  if (typeof body.system === 'string') return body.system
+  if (Array.isArray(body.system)) return contentToText(body.system)
+  return ''
 }
 
 function userTexts(body) {
@@ -323,6 +316,6 @@ export function detectDistill(ctx = {}, rules) {
   const harvest = contest && isHarvest(ctx.inbound, structure, r)
   if (harvest) hits.push({ layer: 'structure', rule: 'harvest', evidence: 'contest+harvest' })
 
-  if (!fp && !needle && !harvest) return { action: 'pass', hits }
+  if (!hits.length) return { action: 'pass', hits }
   return { action: 'block', hits, error: r.error }
 }
