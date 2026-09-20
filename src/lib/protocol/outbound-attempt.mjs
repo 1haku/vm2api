@@ -122,6 +122,7 @@ export function prepareCliHopBody(
     cacheTtl = null,
     cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
     cacheControlLimit = 4,
+    unofficial = false,
   } = {},
 ) {
   let body = officialMessagesBody(canonicalBody, { stream })
@@ -141,6 +142,10 @@ export function prepareCliHopBody(
   body = stripIllegalCacheControlFields(body)
   if (cacheTtl) body = applyCacheTtlToBody(body, cacheTtl)
   const cfg = normalizeCacheBreakpoints(cacheBreakpoints)
+  // Official CC: peel all message markers so kernel restamps Claude Code style.
+  // Third-party leftover after convert must keep rewrite last+prev or the
+  // hang points diverge by inbound protocol and cache_read freezes on system.
+  const messagesMode = !cfg.enabled ? 'off' : unofficial ? 'rewrite' : 'cli-hop'
   body = applyCacheBreakpoints(body, {
     ttl: cacheTtl || undefined,
     config: {
@@ -148,7 +153,7 @@ export function prepareCliHopBody(
       preserve_client: cfg.preserve_client,
       system_tail: false,
       tools_tail: false,
-      messages: 'cli-hop',
+      messages: messagesMode,
     },
     inbound: body,
   })

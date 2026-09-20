@@ -4,7 +4,12 @@
  * Streaming: Claude SSE events → OpenAI Chat chunks / Responses events
  */
 
-import { applyStructuredOutput, openaiResponseFormatToOutputConfig, sanitizeAnthropicBody } from './sanitize.mjs'
+import {
+  applyStructuredOutput,
+  canonicalizeClaudeMessagesShape,
+  openaiResponseFormatToOutputConfig,
+  sanitizeAnthropicBody,
+} from './sanitize.mjs'
 import { defaultMaxTokensForModel } from './model-policy.mjs'
 import { inboundHasOpenAIToolShape } from '../identity/crs-persona.mjs'
 import { openaiReasoningToClaudeThinking, claudeThinkingToOpenAIReasoning } from './thinking.mjs'
@@ -13,6 +18,12 @@ import { remapCodexTools } from './codex-tools.mjs'
 import { CLAUDE_WEB_SEARCH_TOOL, isWebSearchTool } from './web-search.mjs'
 
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'
+
+function withCacheControl(node, source) {
+  const control = source?.cache_control
+  if (!control || !node || typeof node !== 'object') return node
+  return { ...node, cache_control: control }
+}
 
 /** No aliases. Model must already be an official Claude id (validated upstream). */
 export function mapModel(m, { allowMap = false } = {}) {
@@ -64,11 +75,16 @@ export function openaiToolsToClaude(tools) {
     if (!(t.type === 'function' || t.function || t.name)) continue
     if (t.type === 'function' && t.function) {
       if (!t.function.name) continue
-      out.push({
-        name: t.function.name,
-        description: t.function.description || '',
-        input_schema: t.function.parameters || { type: 'object', properties: {} },
-      })
+      out.push(
+        withCacheControl(
+          {
+            name: t.function.name,
+            description: t.function.description || '',
+            input_schema: t.function.parameters || { type: 'object', properties: {} },
+          },
+          t.function.cache_control ? t.function : t,
+        ),
+      )
       continue
     }
     if (t.name && t.input_schema) {
@@ -77,11 +93,16 @@ export function openaiToolsToClaude(tools) {
     }
     const name = t.name || t.function?.name
     if (!name) continue
-    out.push({
-      name,
-      description: t.description || '',
-      input_schema: t.input_schema || t.parameters || { type: 'object', properties: {} },
-    })
+    out.push(
+      withCacheControl(
+        {
+          name,
+          description: t.description || '',
+          input_schema: t.input_schema || t.parameters || { type: 'object', properties: {} },
+        },
+        t,
+      ),
+    )
   }
   return out.length ? out : undefined
 }
@@ -153,11 +174,14 @@ function openaiMessagesToClaude(messages) {
 
     if (m.role === 'tool') {
       // tool result
-      const block = {
-        type: 'tool_result',
-        tool_use_id: m.tool_call_id || m.id || 'tool_unknown',
-        content: contentToText(m.content),
-      }
+      const block = withCacheControl(
+        {
+          type: 'tool_result',
+          tool_use_id: m.tool_call_id || m.id || 'tool_unknown',
+          content: contentToText(m.content),
+        },
+        m,
+      )
       // append to last user message or create user message
       if (out.length && out[out.length - 1].role === 'user' && Array.isArray(out[out.length - 1].content)) {
         out[out.length - 1].content.push(block)
@@ -195,16 +219,12 @@ function openaiMessagesToClaude(messages) {
       continue
     }
 
-    // user (text + optional images)
+    // user (text + optional images) — always blocks so cache stamps share a hang point
     const content = openaiContentToClaudeContent(m.content)
     const role = 'user'
-    if (
-      out.length &&
-      out[out.length - 1].role === role &&
-      typeof out[out.length - 1].content === 'string' &&
-      typeof content === 'string'
-    ) {
-      out[out.length - 1].content += '\n' + content
+    const last = out[out.length - 1]
+    if (last?.role === role && Array.isArray(last.content) && Array.isArray(content)) {
+      last.content = last.content.concat(content)
     } else {
       out.push({ role, content })
     }
@@ -285,7 +305,7 @@ function openaiToClaude(body, opts) {
     max_tokens: body.max_tokens || body.max_completion_tokens || defaultMaxTokensForModel(body.model),
     messages,
   }
-  if (systemParts.length) out.system = systemParts.join('\n\n')
+  if (systemParts.length) out.system = systemParts.map((text) => ({ type: 'text', text }))
   if (body.temperature != null) out.temperature = body.temperature
   if (body.top_p != null) out.top_p = body.top_p
   if (body.stop != null) out.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop]
@@ -298,7 +318,7 @@ function openaiToClaude(body, opts) {
   if (thinking) out.thinking = thinking
   applyStructuredOutput(out, body)
   if (body.stream) out.stream = true
-  return out
+  return canonicalizeClaudeMessagesShape(out)
 }
 
 /** Legacy OpenAI /v1/completions (prompt, not messages). */
@@ -325,26 +345,23 @@ function responsesToClaude(body, opts) {
   if (body.instructions) systemParts.push(String(body.instructions))
   const input = body.input
   if (typeof input === 'string') {
-    messages.push({ role: 'user', content: input })
+    messages.push({ role: 'user', content: [{ type: 'text', text: input }] })
   } else if (Array.isArray(input)) {
     for (const item of input) {
       if (typeof item === 'string') {
-        messages.push({ role: 'user', content: item })
+        messages.push({ role: 'user', content: [{ type: 'text', text: item }] })
         continue
       }
       const role = item.role === 'assistant' ? 'assistant' : item.role === 'system' ? 'system' : 'user'
       const text = contentToText(item.content ?? item.text ?? item)
       if (role === 'system') {
         if (text) systemParts.push(text)
-      } else if (
-        messages.length &&
-        messages[messages.length - 1].role === role &&
-        typeof messages[messages.length - 1].content === 'string'
-      ) {
-        messages[messages.length - 1].content += '\n' + text
-      } else {
-        messages.push({ role, content: text })
+        continue
       }
+      const block = withCacheControl({ type: 'text', text }, item)
+      const last = messages[messages.length - 1]
+      if (last?.role === role && Array.isArray(last.content)) last.content.push(block)
+      else messages.push({ role, content: [block] })
     }
   }
   if (!messages.length) messages.push({ role: 'user', content: '' })
@@ -354,14 +371,14 @@ function responsesToClaude(body, opts) {
     max_tokens: body.max_output_tokens || body.max_tokens || 1024,
     messages,
   }
-  if (systemParts.length) out.system = systemParts.join('\n\n')
+  if (systemParts.length) out.system = systemParts.map((text) => ({ type: 'text', text }))
   const tools = openaiToolsToClaude(body.tools)
   if (tools?.length) out.tools = tools
   const thinking = openaiReasoningToClaudeThinking(body)
   if (thinking) out.thinking = thinking
   applyStructuredOutput(out, body)
   if (body.stream) out.stream = true
-  return out
+  return canonicalizeClaudeMessagesShape(out)
 }
 
 export function fromClaudeToOpenAIChat(claude, requestedModel, vmId, mode = 'convert') {
