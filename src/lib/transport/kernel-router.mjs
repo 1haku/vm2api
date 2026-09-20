@@ -26,6 +26,8 @@ import {
 } from './rust-kernel-supervisor.mjs'
 
 const rustHealthCache = new Map()
+const DEFAULT_SLOT_WAIT_MS = 30_000
+const DEFAULT_SLOT_POLL_MS = 200
 
 export function rustHealthTtlMs(routing = {}) {
   const raw = routing?.inference?.health_ttl_ms
@@ -33,6 +35,31 @@ export function rustHealthTtlMs(routing = {}) {
   const n = Number(raw)
   if (!Number.isFinite(n) || n < 0) return 2000
   return n
+}
+
+export function rustSlotWaitMs(routing = {}) {
+  const raw = routing?.inference?.slot_wait_ms
+  if (raw == null || raw === '') return DEFAULT_SLOT_WAIT_MS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_SLOT_WAIT_MS
+  return n
+}
+
+export function rustShouldWaitForSlot(health, inflight = 0) {
+  return rustKernelBusy(health) || Number(inflight) > 0
+}
+
+export async function waitForReadySlot(exec, timeoutMs = DEFAULT_SLOT_WAIT_MS, pollMs = DEFAULT_SLOT_POLL_MS) {
+  const deadline = Date.now() + Math.max(200, Number(timeoutMs) || DEFAULT_SLOT_WAIT_MS)
+  const gap = Math.max(40, Number(pollMs) || DEFAULT_SLOT_POLL_MS)
+  let last = await rustKernelHealth(exec, { timeoutMs: 400 })
+  if (rustKernelReachable(last)) return { ok: true, reason: 'already_up', health: last }
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, gap))
+    last = await rustKernelHealth(exec, { timeoutMs: 400 })
+    if (rustKernelReachable(last)) return { ok: true, reason: 'slot_ready', health: last }
+  }
+  return { ok: false, reason: 'slot_busy', health: last, error: 'rust kernel has no free slot' }
 }
 
 export function clearRustHealthCache(vmId = null) {
@@ -79,9 +106,10 @@ export function resolveHopEngine(_vm, _routing = {}, { rustReady = null, binPath
 }
 
 function rustUnavailableResult(ready) {
+  const slotBusy = ready?.reason === 'slot_busy'
   return {
     ok: false,
-    status: 0,
+    status: slotBusy ? 503 : 0,
     via: 'rust-kernel',
     engine: 'rust',
     body: {
@@ -93,8 +121,8 @@ function rustUnavailableResult(ready) {
       },
     },
     headers: {},
-    terminalState: 'transport_error',
-    transportError: true,
+    terminalState: slotBusy ? 'rejected' : 'transport_error',
+    transportError: !slotBusy,
   }
 }
 
@@ -157,18 +185,22 @@ async function prepareRust(exec, { ensure, routing } = {}) {
   }
   const ttl = rustHealthTtlMs(routing)
   const cached = peekRustHealth(exec, ttl)
-  if (cached) {
+  if (cached && rustKernelReachable(cached.health)) {
     return { ok: true, reason: 'health_cache', health: cached.health }
   }
   const health = await rustKernelHealth(exec, { timeoutMs: 800 })
-  if (rustKernelReachable(health) || rustKernelBusy(health) || wrapHopInflight(exec) > 0) {
-    const ready = {
-      ok: true,
-      reason: rustKernelReachable(health) ? 'already_up' : 'busy',
-      health,
-    }
+  if (rustKernelReachable(health)) {
+    const ready = { ok: true, reason: 'already_up', health }
     rememberRustHealth(exec, ready)
     return ready
+  }
+  if (rustShouldWaitForSlot(health, wrapHopInflight(exec))) {
+    const waited = await waitForReadySlot(exec, rustSlotWaitMs(routing))
+    if (waited?.ok) {
+      rememberRustHealth(exec, waited)
+      return waited
+    }
+    return waited
   }
   if (exec?.homeDir) await ensureWorkerCredential(exec)
   const started = await ensureRustKernel(exec)
@@ -199,6 +231,7 @@ async function runHop({ mode, opts }) {
       wanted_engine: 'rust',
       engine_reason: decision.reason,
     }
+  }
   const send = mode === 'stream' ? streamRustKernel : callRustKernel
   beginWrapHop(opts.exec)
   try {

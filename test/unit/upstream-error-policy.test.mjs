@@ -242,6 +242,41 @@ test('7d_oi 429 cools fable family not the account', () => {
   assert.equal(policy.cooldownUntil, now + 90_000)
 })
 
+test('thinking-only verified hop retries the same account', () => {
+  const policy = classifyUpstreamResult({
+    ok: true,
+    status: 200,
+    terminalState: 'verified',
+    committed: false,
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: 'plan', signature: 'sig' }],
+      stop_reason: null,
+    },
+  })
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'incomplete_assistant')
+  assert.equal(policy.retrySameAccount, true)
+  assert.equal(shouldContinue(policy), true)
+})
+
+test('text plus end_turn is success even without ok flag', () => {
+  const policy = classifyUpstreamResult({
+    ok: true,
+    status: 200,
+    terminalState: 'verified',
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hello' }],
+      stop_reason: 'end_turn',
+    },
+  })
+  assert.equal(policy.scope, 'success')
+  assert.equal(policy.action, 'complete')
+})
+
 test('200 refusal with empty visible output is content_filter, not success', () => {
   const policy = classifyUpstreamResult({
     ok: true,

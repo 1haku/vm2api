@@ -1,5 +1,11 @@
 import { normalizeThinkingForModel } from '../protocol/thinking.mjs'
 import { flattenSearchResultHistory, rectifyUnofficialRequestForRetry } from '../protocol/request-rectifier.mjs'
+import {
+  assistantStopReason,
+  assistantVisibleOutput,
+  isCompleteAssistantMessage,
+  isIncompleteAssistantMessage,
+} from '../core/errors.mjs'
 
 const ENTITLEMENT_PATTERNS = [
   /extra usage required/i,
@@ -177,18 +183,11 @@ function continueWithoutCooldown({ scope, reason, retrySameAccount = true } = {}
 }
 
 function claudeStopReasonOf(result) {
-  return String(result?.stopReason || result?.body?.stop_reason || '')
+  return assistantStopReason(result)
 }
 
 function claudeHasVisibleOutput(body) {
-  const content = body?.content || body?.message?.content
-  if (!Array.isArray(content)) return false
-  for (const block of content) {
-    if (block?.type === 'text' && String(block.text || '').trim()) return true
-    if (block?.type === 'tool_use') return true
-    if (block?.type === 'refusal' && String(block.refusal || block.text || '').trim()) return true
-  }
-  return false
+  return assistantVisibleOutput(body)
 }
 
 /** 200 + stop_reason=refusal with no visible text — not a successful empty reply. */
@@ -222,7 +221,17 @@ export function classifyUpstreamResult(
   if (isSilentClaudeRefusal(result) && !result.committed) {
     return { scope: 'request', action: 'stop', reason: 'content_filter_refusal', cooldownUntil: null }
   }
-  if (result.ok && result.terminalState !== 'incomplete') {
+  if (isIncompleteAssistantMessage(result) && !result.committed) {
+    return continueWithoutCooldown({
+      scope: 'stream',
+      reason: 'incomplete_assistant',
+      retrySameAccount: true,
+    })
+  }
+  if (
+    !isIncompleteAssistantMessage(result) &&
+    (isCompleteAssistantMessage(result) || (result.ok && result.terminalState !== 'incomplete'))
+  ) {
     return { scope: 'success', action: 'complete', cooldownUntil: null }
   }
   const status = Number(result.status) || 0

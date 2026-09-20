@@ -15,11 +15,16 @@ test('watchdog ensure is called only when rust is unreachable', async () => {
   const wd = createKernelWatchdog({
     listTargets: () => [
       { id: 'vm-up', inference_engine: 'rust' },
+      { id: 'vm-busy', inference_engine: 'rust' },
       { id: 'vm-down', inference_engine: 'rust' },
       { id: 'vm-go', inference_engine: 'go' },
     ],
     homeDirFor: (vm) => `/tmp/${vm.id}`,
-    health: async (exec) => ({ ok: exec.vmId === 'vm-up', ready_slots: exec.vmId === 'vm-up' ? 1 : 0 }),
+    health: async (exec) => {
+      if (exec.vmId === 'vm-up') return { ok: true, ready_slots: 1, cli_pid: 1 }
+      if (exec.vmId === 'vm-busy') return { ok: true, ready_slots: 0, cli_pid: 9 }
+      return { ok: false, ready_slots: 0 }
+    },
     ensure: async (exec) => {
       ensured.push(exec.vmId)
       return { ok: true }
