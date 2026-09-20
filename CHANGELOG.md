@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.3 — 2026-09-21
+
+- Codex Rotate 插件：采集并注入 `X-Codex-Turn-State`（292/332），设置 → 协议可开关，默认关闭
+- OpenAI / Codex 用量保留 `cached_tokens` 与 `cache_write_tokens`，计费和日志不再把上游缓存读成 0
+- 面板公开 routing 脱敏 SMTP / Telegram 密钥
+- 官方 CCH 按 xxh64 body hash 计算
+
 ## 1.3.2 — 2026-09-21
 
 - 控制台左上角在 vm2api 徽标下显示构建版本号
