@@ -4,6 +4,7 @@
  */
 import {
   applyStructuredOutput,
+  canonicalizeClaudeMessagesShape,
   copyOfficialAnthropicFields,
   normalizeAnthropicMessages,
   stripIllegalBodyContentFields,
@@ -25,7 +26,7 @@ export function officialMessagesBody(body = {}, { stream = undefined } = {}) {
     out.stop_sequences = Array.isArray(out.stop) ? out.stop : [out.stop]
     delete out.stop
   }
-  return out
+  return canonicalizeClaudeMessagesShape(out)
 }
 
 const DISABLED = {

@@ -24,7 +24,7 @@ test('prepareCliHopBody drops metadata and CLI-owned system but keeps official a
   assert.equal(body.system.length, 1)
   assert.equal(body.system[0].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.equal(body.model, 'claude-sonnet-5')
-  assert.equal(body.messages[0].content, 'hi')
+  assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'hi' }])
   assert.equal(body.stream, true)
 })
 
@@ -222,6 +222,26 @@ test('cli-hop disabled keeps caller conversation breakpoints except last user', 
   )
   assert.equal(body.messages[0].content[0].cache_control.ttl, '1h')
   assert.equal(body.messages[2].content[0].cache_control.ttl, '1h')
+  assert.equal(body.messages[4].content[0].cache_control, undefined)
+})
+
+test('unofficial cli-hop rewrite keeps penultimate user after dropping last', () => {
+  const body = prepareCliHopBody(
+    {
+      model: 'claude-sonnet-5',
+      max_tokens: 256,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3' },
+      ],
+    },
+    { unofficial: true, cacheTtl: '1h' },
+  )
+  assert.equal(body.messages[0].content[0].cache_control, undefined)
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
