@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.2.13 — 2026-09-20
+
+修正 Compose 镜像名。不必换槽内 kernel。
+
+- `docker-compose.yml` 的 `image` 从错误的 `vm2api:1.2.12,,` 改为 `vm2api:1.2.13`
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1213)
+
 ## 1.2.12 — 2026-09-20
 
 第三方 OpenAI 兼容口与 Anthropic Messages 的 cache 断点对齐。不必换槽内 kernel。
