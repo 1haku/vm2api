@@ -1,6 +1,6 @@
 # 版本与构建
 
-linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/wrap-cli` 进 git。kernel / wrap 为预编译 ELF，clone 即可部署。GitHub Release 仍挂一份 ELF。当前发布线：**1.2.10**（tag `v1.2.10`）。
+linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/wrap-cli` 进 git。kernel / wrap 为预编译 ELF，clone 即可部署。GitHub Release 仍挂一份 ELF。当前发布线：**1.2.11**（tag `v1.2.11`）。
 
 ## 版本怎么记
 
@@ -18,8 +18,8 @@ linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/w
 仓库要有 `contents: write`。流程在 `.github/workflows/release.yml`。
 
 ```bash
-git tag -a v1.2.10 -m "vm2api v1.2.10"
-git push origin v1.2.10
+git tag -a v1.2.11 -m "vm2api v1.2.11"
+git push origin v1.2.11
 ```
 
 `v*` tag 推上去之后，Actions 在 `ubuntu-latest` 编 Go linux amd64，并挂仓内预编译 kernel / wrap ELF 到该 tag 的 Release：
@@ -90,7 +90,7 @@ CI（`.github/workflows/test.yml`）在 push / PR 上跑：Node unit、Go、预�
 
 ## 升级一台已部署的机
 
-升 **v1.2.10**：只更新控制面并重启。步骤见 [DEPLOY.md · 已部署机升级到 1.2.10](DEPLOY.md#已部署机升级到-1210)。
+升 **v1.2.11**：只更新控制面并重启。步骤见 [DEPLOY.md · 已部署机升级到 1.2.11](DEPLOY.md#已部署机升级到-1211)。
 
 **Compose（其它版本通用）**
 
@@ -101,13 +101,13 @@ docker compose up -d --build
 curl -sS --noproxy '*' http://127.0.0.1:8787/health
 ```
 
-槽位容器不会被这次升级 `docker rm`。1.2.10 / 1.2.9 / 1.2.8 / 1.2.7 / 1.2.6 不必 `wrap-cli/sync`；1.2.5 要；1.2.4 相对 1.2.2 不必 kernel sync。
+槽位容器不会被这次升级 `docker rm`。1.2.11 / 1.2.10 / 1.2.9 / 1.2.8 / 1.2.7 / 1.2.6 不必 `wrap-cli/sync`；1.2.5 要；1.2.4 相对 1.2.2 不必 kernel sync。
 
 **本机 Node + systemd**
 
 1. `git pull` 或检出目标 tag。
 2. `npm ci`；有 web 改动则 `pnpm -C web install --frozen-lockfile && npm run build:web`。
-3. 换仓内 `bin/` ELF（`install -m 755`）。1.2.5 再 `POST /api/panel/wrap-cli/sync`；1.2.6 / 1.2.7 / 1.2.8 / 1.2.9 / 1.2.10 不必。
+3. 换仓内 `bin/` ELF（`install -m 755`）。1.2.5 再 `POST /api/panel/wrap-cli/sync`；1.2.6 / 1.2.7 / 1.2.8 / 1.2.9 / 1.2.10 / 1.2.11 不必。
 4. `node --check src/server.mjs`。
 5. `systemctl restart vm2api` **一次**。确认 `/health`。
 

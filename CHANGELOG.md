@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.11 — 2026-09-20
+
 控制面调度补齐等待计划、额度受限三态和设置/列表。不必换槽内 kernel。
 
 - 槽满（`ready_slots=0` 且 CLI 在）按 `slot_busy` 等待或改选，不标 `worker_unhealthy`
@@ -10,6 +12,8 @@
 - 额度用尽 / 429 / 冷却写成 **受限**，不拨操作员调度关；窗口到了自动恢复
 - 列表芯片：在池 / 受限 / 关闭调用；设置页露出等待人数和两类超时
 - Windows 上 Vite 8 / Vitest 4 能装到 rolldown 的 win32 绑定
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1211)
 
 ## 1.2.10 — 2026-09-20
 
