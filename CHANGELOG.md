@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+控制面：版本检查与一键更新。不必换槽内 kernel。
+
+- `deploy/install.sh`：安装 / 更新 / 检查 / changelog / 状态（参考 sub2api 与 CLIProxyAPI）
+- 面板 `GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`；`GET /me` 带 `version`
+- 设置页「关于」：当前版本、GitHub 最新 Release、changelog、复制一键命令
+- 镜像 COPY `VERSION` / `CHANGELOG.md`；已挂 `docker.sock` 时可由面板拉起宿主机升级助手
+
+已部署机升级：只更新控制面 Node（含 web）并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#一键安装--更新)。
+
 ## 1.2.6 — 2026-09-20
 
 控制面：本地出口导入、kernel 探活、Setup Token 额度。不必换槽内 kernel。

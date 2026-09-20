@@ -11,7 +11,7 @@ linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/w
 | `package.json` `"version"` | 人改 | 和 `VERSION` 相同 |
 | `VERSION.txt` artifact | `.github/workflows/version.yml` 在 main 推送后 | 当时 `GITHUB_SHA` 前 7 位，给人对照部署，**不会**写回 git |
 
-发版当天三处一起改：`VERSION`、`package.json`、[CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。
+发版当天三处一起改：`VERSION`、`package.json`、[CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把 `VERSION` 和 `CHANGELOG.md` 拷进控制面镜像，面板才能读当前版本。一键脚本 `deploy/install.sh` 按 GitHub Release tag 升级，不改这三个文件。
 
 ## 打一个 Release
 

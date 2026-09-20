@@ -45,6 +45,8 @@ test('user can manage owned vm/proxy/key surfaces and nothing else', () => {
   assert.equal(authorizePanelRoute('PATCH', '/api/panel/vms/vm-01/owner', 'user').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/users', 'user').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/database/metrics', 'user').ok, false)
+  assert.equal(authorizePanelRoute('GET', '/api/panel/version', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'user').ok, false)
 })
 
 test('super can schedule VMs but cannot touch credentials or delete', () => {
@@ -63,6 +65,8 @@ test('super can schedule VMs but cannot touch credentials or delete', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/create', 'super').ok, false)
   assert.equal(authorizePanelRoute('POST', '/api/panel/users', 'super').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/database/metrics', 'super').ok, false)
+  assert.equal(authorizePanelRoute('GET', '/api/panel/version', 'super').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'super').ok, false)
 })
 
 test('admin is unrestricted', () => {
@@ -70,6 +74,8 @@ test('admin is unrestricted', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/settings', 'admin').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/import', 'admin').ok, true)
   assert.equal(authorizePanelRoute('GET', '/api/panel/database/metrics', 'admin').ok, true)
+  assert.equal(authorizePanelRoute('GET', '/api/panel/version', 'admin').ok, true)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'admin').ok, true)
 })
 
 test('managed keys cannot bypass admin role checks through models refresh', async () => {
