@@ -16,7 +16,9 @@ import {
   accountUsable,
   poolStatus,
   proxyHostLabel,
-  vmCooldownTitle,
+  restrictionCopy,
+  restrictionUntilOf,
+  scheduleStateLabel,
   vmRunning,
 } from '@/lib/vm-status'
 import {
@@ -225,8 +227,18 @@ export function VmStatusBoard(props: Props) {
                 </Field>
               </>
             )}
+            <Field label='调度状态' compact>
+              {scheduleStateLabel(vm)}
+            </Field>
+            <Field label='限制至' compact>
+              {restrictionUntilOf(vm) ? (
+                <ResetAt value={restrictionUntilOf(vm)} now={now} />
+              ) : (
+                '—'
+              )}
+            </Field>
             <Field label='冷却' compact>
-              {vmCooldownTitle(vm)}
+              {restrictionCopy(vm)}
             </Field>
           </div>
         </div>

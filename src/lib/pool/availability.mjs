@@ -7,6 +7,7 @@ import {
   effectiveRateWindow,
   headerHardBlocked,
   headerWindowOrEmpty,
+  parseResetMs,
   WINDOW_5H_MS,
   WINDOW_7D_MS,
 } from './quota-window.mjs'
@@ -147,7 +148,7 @@ function policyOf(input = {}) {
   }
 }
 
-function finish(base, { key, text, accept, usable, reason = null, window = null, sessions = null } = {}) {
+function finish(base, { key, text, accept, usable, reason = null, window = null, sessions = null, until = null } = {}) {
   return {
     ...base,
     key,
@@ -157,7 +158,18 @@ function finish(base, { key, text, accept, usable, reason = null, window = null,
     reason,
     window,
     sessions,
+    until,
   }
+}
+
+function resetUntilMs(reset, now = Date.now()) {
+  const ms = parseResetMs(reset)
+  return Number.isFinite(ms) && ms > now ? ms : null
+}
+
+function quotaUntilMs(quota = {}, window = '5h', now = Date.now()) {
+  if (window === '7d') return resetUntilMs(quota.reset_7d, now)
+  return resetUntilMs(quota.reset_5h, now)
 }
 
 /**
@@ -194,8 +206,9 @@ export function evaluateAccount({
   const claude = vm.claude || {}
   const token = hasToken ?? !!(vm.has_token || claude.has_access)
   const refresh = hasRefresh ?? !!(vm.has_refresh || claude.has_refresh)
-  const inPool = (schedulable ?? vm.schedulable) !== false
   const disabledReason = scheduleDisabledReason ?? vm.schedule_disabled_reason ?? null
+  const leftoverQuotaOff = isLeftoverQuotaScheduleOff(vm, disabledReason)
+  const inPool = leftoverQuotaOff || (schedulable ?? vm.schedulable) !== false
   const extras = { lastProbe, last_probe: lastProbe, probeSource, probe_source: probeSource }
   const probe = probeOf(account, quota, extras)
   const source = sourceOf(probe, account, quota, extras)
@@ -279,6 +292,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_5h_header',
       window: '5h',
+      until: quotaUntilMs({ ...quota, reset_5h: quota.reset_5h || account.unified?.headers?.['5h']?.reset }, '5h', now),
     })
   }
   if (headerHardBlocked(account.unified || {}, '7d', now) || headerHardBlocked(quota, '7d', now)) {
@@ -289,6 +303,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_7d_header',
       window: '7d',
+      until: quotaUntilMs({ ...quota, reset_7d: quota.reset_7d || account.unified?.headers?.['7d']?.reset }, '7d', now),
     })
   }
 
@@ -321,6 +336,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_5h_header',
       window: '5h',
+      until: resetUntilMs(w5.reset, now),
     })
   }
   if (u7 >= 1) {
@@ -331,6 +347,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_7d_header',
       window: '7d',
+      until: resetUntilMs(w7.reset, now),
     })
   }
 
@@ -342,6 +359,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_5h_safety',
       window: '5h',
+      until: resetUntilMs(w5.reset, now),
     })
   }
   if (u7 >= pol.limit_7d) {
@@ -352,6 +370,7 @@ export function evaluateAccount({
       usable: true,
       reason: 'quota_7d_safety',
       window: '7d',
+      until: resetUntilMs(w7.reset, now),
     })
   }
 
@@ -428,6 +447,7 @@ export function evaluateAccount({
         accept: false,
         usable: true,
         reason: authCool ? 'auth_cooldown' : 'cooldown',
+        until: coolUntil,
       })
     }
   }
@@ -442,9 +462,58 @@ export function evaluateAccount({
   })
 }
 
-/** Extra 5h/7d reject reasons that auto-toggle 调度关. */
+/** Extra 5h/7d reject reasons that write restriction, not 调度关. */
 export function isQuotaWindowReason(reason) {
   return /^(quota_5h|quota_7d)/.test(String(reason || ''))
+}
+
+/** Account-scope quota / 429 parks stored on temp_unschedulable_* + runtime cooldown. */
+export function isAccountRestrictionReason(reason) {
+  return isQuotaWindowReason(reason) || /^(account_quota_exhausted|rate_limited)$/i.test(String(reason || ''))
+}
+
+/** Old Extra auto-off that is not an operator lock. */
+export function isLeftoverQuotaScheduleOff(vm = {}, scheduleDisabledReason = null) {
+  if (vm?.schedule_manual === true) return false
+  if (vm?.schedulable !== false) return false
+  return isQuotaWindowReason(scheduleDisabledReason ?? vm.schedule_disabled_reason)
+}
+
+/**
+ * Operator switch stays a boolean. Quota / cooldown / leftover Extra-off
+ * collapse to restricted so the panel never paints them as 调度关.
+ */
+export function resolveScheduleState({
+  schedulable,
+  scheduleManual,
+  scheduleDisabledReason,
+  availability = {},
+  restrictionUntil = null,
+  restrictionReason = null,
+  now = Date.now(),
+} = {}) {
+  const leftover = isLeftoverQuotaScheduleOff(
+    {
+      schedulable,
+      schedule_manual: scheduleManual,
+      schedule_disabled_reason: scheduleDisabledReason,
+    },
+    scheduleDisabledReason,
+  )
+  if (schedulable === false && !leftover) {
+    return { schedule_state: 'off', restriction_reason: null, restriction_until: null }
+  }
+  const until = Number(restrictionUntil) || Number(availability.until) || 0
+  const liveRestriction = until > now
+  const restricted = liveRestriction || availability.key === 'quota' || availability.key === 'cool'
+  if (restricted) {
+    return {
+      schedule_state: 'restricted',
+      restriction_reason: restrictionReason || availability.reason || (leftover ? scheduleDisabledReason : null) || null,
+      restriction_until: liveRestriction ? until : availability.until || null,
+    }
+  }
+  return { schedule_state: 'on', restriction_reason: null, restriction_until: null }
 }
 
 /** True when 5h/7d is in 限制 and the account must not be scheduled or probed. */

@@ -219,6 +219,8 @@ export function vmCooldownTitle(vm: Vm): string {
 
 export function accountStatus(vm: Vm | undefined): StatusTone {
   if (parkedGrantDeath(vm) || vmRevoked(vm)) return invalidCredTone(vm)
+  const restricted = restrictionTone(vm)
+  if (restricted) return { ...restricted, label: restricted.text }
 
   if (vm?.availability?.key && !probeTaintedAvailability(vm)) {
     const a = vm.availability
@@ -349,10 +351,82 @@ export function credentialStatus(vm: Vm | undefined): StatusTone {
   return { cls: 'ok', key: 'ok', text: '凭证有效' }
 }
 
+function leftoverQuotaOff(vm: Vm | undefined): boolean {
+  if (!vm || vm.schedulable !== false || vm.schedule_manual === true) return false
+  return /^(quota_5h|quota_7d)/.test(String(vm.schedule_disabled_reason || ''))
+}
+
+/** 额度 / 429 / 冷却写成受限，不是操作员关。含未迁完的 leftover quota-off。 */
+export function isRestrictedSchedule(vm: Vm | undefined): boolean {
+  if (!vm) return false
+  return vm.schedule_state === 'restricted' || leftoverQuotaOff(vm)
+}
+
+export function scheduleStateLabel(vm: Vm | undefined): '开' | '受限' | '关' {
+  if (!vm) return '关'
+  if (isRestrictedSchedule(vm)) return '受限'
+  if (vm.schedule_state === 'off' || vm.schedulable === false) return '关'
+  return '开'
+}
+
+export function restrictionUntilOf(vm: Vm | undefined): number | null {
+  if (!vm) return null
+  const until = Number(vm.restriction_until || 0)
+  if (until > 0) return until
+  const cool = Number(vm.cooldown_until || 0)
+  return cool > 0 ? cool : null
+}
+
+/** 详情冷却格与限制态共用同一套文案，不另起一套冷却系统。 */
+export function restrictionCopy(vm: Vm | undefined): string {
+  if (!vm) return '无限制'
+  const restricted = restrictionTone(vm)
+  if (restricted) return restricted.text
+  if (vmCooldown(vm)) return restrictionLabel(vm, '冷却中')
+  return '无限制'
+}
+
+function restrictionLabel(vm: Vm, fallback: string): string {
+  const raw = String(vm.availability?.text || '').trim()
+  if (raw && raw !== '调度关' && vm.availability?.key !== 'off') return raw
+  const reason = String(
+    vm.restriction_reason ||
+      vm.availability?.reason ||
+      vm.schedule_disabled_reason ||
+      ''
+  )
+  if (/quota_5h/.test(reason)) return '5h 限制'
+  if (/quota_7d/.test(reason)) return '7d 限制'
+  return fallback
+}
+
+function restrictionTone(vm: Vm | undefined): StatusTone | null {
+  if (!vm) return null
+  if (vm.schedule_state === 'restricted' || leftoverQuotaOff(vm)) {
+    const reason = String(vm.restriction_reason || vm.availability?.reason || '')
+    if (vm.availability?.key === 'cool' || /cool|rate_limited|account_quota/i.test(reason)) {
+      return { key: 'cool', text: restrictionLabel(vm, '冷却中'), cls: 'caution' }
+    }
+    return {
+      key: 'quota',
+      text: restrictionLabel(vm, '额度限制'),
+      cls: 'warn',
+    }
+  }
+  return null
+}
+
 export function poolStatus(vm: Vm | undefined): StatusTone {
   // 吊销 / 废票先判：它可能同时带着 off / quota 的 availability.key，照 key
   // 判会显示成「调度关」，把真正的死因盖掉。
   if (parkedGrantDeath(vm) || vmRevoked(vm)) return invalidCredTone(vm)
+  const restricted = restrictionTone(vm)
+  if (restricted) return restricted
+  if (vm?.schedule_state === 'off') {
+    if (!vm.has_token) return { key: 'none', text: '无凭证', cls: 'none' }
+    if (ticketExpiredDead(vm)) return { key: 'bad', text: '已过期', cls: 'bad' }
+    return { key: 'off', text: '调度关', cls: 'off' }
+  }
 
   if (vm?.availability?.key && !probeTaintedAvailability(vm)) {
     const a = vm.availability
@@ -468,18 +542,31 @@ export function vmBuckets(vms: Vm[]) {
   return b
 }
 
-/** Coarse fleet grouping for the VM list (index.html parity). */
-export function fleetGroup(vm: Vm): 'pool' | 'off' | 'none' | 'bad' | 'revoke' {
-  const k = poolStatus(vm).key
+export type FleetGroup = 'pool' | 'restricted' | 'off' | 'none' | 'bad' | 'revoke'
+
+/** Coarse fleet grouping for the VM list. 受限 is the triad, not 5h/7d warning. */
+export function fleetGroup(vm: Vm): FleetGroup {
+  const status = poolStatus(vm)
+  const k = status.key
   if (k === 'revoke') return 'revoke'
   if (k === 'bad') return 'bad'
   if (k === 'none') return 'none'
   if (k === 'off') return 'off'
+  if (isRestrictedSchedule(vm) || k === 'cool') return 'restricted'
+  if (k === 'quota' && !/警告/.test(String(status.text || ''))) return 'restricted'
   return 'pool'
 }
 
-export function fleetCounts(vms: Vm[]) {
-  const c = { all: vms.length, pool: 0, off: 0, none: 0, bad: 0, revoke: 0 }
+export function fleetCounts(vms: Vm[]): Record<FleetGroup | 'all', number> {
+  const c: Record<FleetGroup | 'all', number> = {
+    all: vms.length,
+    pool: 0,
+    restricted: 0,
+    off: 0,
+    none: 0,
+    bad: 0,
+    revoke: 0,
+  }
   for (const vm of vms) c[fleetGroup(vm)] += 1
   return c
 }
@@ -529,8 +616,9 @@ export function healthScore(vms: Vm[]): number {
 
 export function normalizeVmFilter(f: string): string {
   if (f === 'ok') return 'pool'
-  if (f === 'caution') return 'cool'
-  if (f === 'warn') return 'quota'
+  if (f === 'caution' || f === 'cool' || f === 'warn' || f === 'quota') {
+    return 'restricted'
+  }
   return f || 'all'
 }
 

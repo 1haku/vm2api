@@ -7,6 +7,8 @@ import {
   mirrorWorkerCredentialsToVm,
   markVmAuthCooldown,
   clearVmAuthCooldown,
+  markVmRestriction,
+  clearVmQuotaRestriction,
 } from '../oauth/oauth-credentials.mjs'
 import { FABLE_FAMILY_KEY, isFableModel, modelCooldownKeys } from './upstream-error-policy.mjs'
 import {
@@ -19,13 +21,19 @@ import {
   isLeftoverGrantRevokeRuntime,
   viewRuntimeWithoutLeftoverRevoke,
 } from './schedule-eligibility.mjs'
-import { evaluateAccount, isQuotaWindowReason } from './availability.mjs'
+import {
+  evaluateAccount,
+  isAccountRestrictionReason,
+  isLeftoverQuotaScheduleOff,
+  isQuotaWindowReason,
+} from './availability.mjs'
 import { listQuotaFromHeaders } from './quota-window.mjs'
 import { isSlotProxyDesynced, readWorkerProxyEndpoint, readWorkerEgressMode } from '../vm/vm-runtime.mjs'
 import { splitBlocksModel } from './weekly-split.mjs'
 import { slotAllowsModel } from './slot-model-gate.mjs'
 import { resolveCredentialScheduleLevel } from './credential-weight.mjs'
 import { PLATFORM_SCOPE, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { rustKernelBusy, rustKernelProcessUp, rustKernelReachable } from '../transport/rust-kernel-client.mjs'
 
 const WAIT_TIMEOUT_MIN_MS = 1000
 const WAIT_TIMEOUT_MAX_MS = 120000
@@ -127,9 +135,19 @@ function cooldownActive(until, now) {
   return Number(until) > now
 }
 
-/** Concurrency and RPM wait on the bound account. Cooldown / quota must rotate. */
+/** Concurrency, RPM, and kernel slot-full wait on the bound account. Cooldown / fault must rotate. */
 function stickyShouldWait(waitReason) {
-  return waitReason === 'concurrency_limit' || waitReason === 'fable_concurrency' || waitReason === 'rpm_limit'
+  return (
+    waitReason === 'concurrency_limit' ||
+    waitReason === 'fable_concurrency' ||
+    waitReason === 'rpm_limit' ||
+    waitReason === 'slot_busy'
+  )
+}
+
+function runtimeHealthStatus(value) {
+  if (rustKernelBusy(value)) return 'busy'
+  return value?.ok ? 'ready' : 'worker_unhealthy'
 }
 
 function normalizeModel(model) {
@@ -191,9 +209,23 @@ export class PoolScheduler {
         ...selectionSnapshot(candidates, available, { reason, waitMs, stickyCleared, waitPool }),
       }
     }
-    const finalDeadline =
-      Number(deadline) ||
-      startedAt + (stickyKey ? this.config.sticky_wait_timeout_ms : this.config.fallback_wait_timeout_ms)
+    const failoverDeadline = Number(deadline) || null
+    const defaultPlanMs = stickyKey ? this.config.sticky_wait_timeout_ms : this.config.fallback_wait_timeout_ms
+    const loopDeadline = failoverDeadline || startedAt + defaultPlanMs
+    const finishReserve = (selected, reservation) => ({
+      ...selected,
+      ...reservation,
+      waitMs: Date.now() - startedAt,
+      waitPlan: this.makeWaitPlan(selected, {
+        sticky: selected.selectionReason === 'sticky',
+        requestDeadline: loopDeadline,
+      }),
+      slotWaitMs: this.remainingSlotWaitMs({
+        startedAt,
+        loopDeadline,
+        sticky: selected.selectionReason === 'sticky',
+      }),
+    })
     for (;;) {
       if (signal?.aborted) throw makeAbortError()
       const candidates = await this.eligibleCandidates({
@@ -204,43 +236,73 @@ export class PoolScheduler {
         sessionKey: stickyKey,
         ownerScope,
       })
-      const available = candidates.filter((candidate) => !candidate.busy)
-      const selected = this.pick(available, { model, stickyKey, eligible: candidates })
+      const available = candidates.filter((candidate) => this.isReservable(candidate))
+      let selected = this.pick(available, { model, stickyKey, eligible: candidates })
       if (this.lastStickyCleared) stickyCleared = true
-      if (selected) {
+      let reserveMissed = false
+      while (selected) {
         const reservation = this.reserve(selected, { sessionKey: stickyKey, skipQuota: pinned })
-        if (reservation) {
-          return {
-            ...selected,
-            ...reservation,
-            waitMs: Date.now() - startedAt,
-          }
-        }
+        if (reservation) return finishReserve(selected, reservation)
         // checkEligibility and reserve can disagree (pin skips the quota gate).
-        // Never retry the same account in this turn — a tight continue starves /health.
+        // Try other idle candidates this turn before waiting.
+        reserveMissed = true
         if (selected.accountId) blocked.add(selected.accountId)
         if (selected.vmId) blocked.add(selected.vmId)
-        continue
+        const remaining = available.filter(
+          (candidate) =>
+            candidate.accountId !== selected.accountId &&
+            !blocked.has(candidate.accountId) &&
+            !blocked.has(candidate.vmId),
+        )
+        if (!remaining.length) break
+        selected = this.pick(remaining, { model, stickyKey: null, eligible: candidates })
       }
+      if (reserveMissed) continue
       if (candidates.length === 0) {
         return fail(isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts', candidates, available)
       }
       const waitPool = candidates.filter((candidate) => !isUnboundAuthCooldown(candidate, boundBefore, stickyCleared))
-      if (!allowWait || Date.now() >= finalDeadline) {
+      if (!allowWait || Date.now() >= loopDeadline) {
         return fail('all_accounts_busy', candidates, available, waitPool)
       }
       const now = Date.now()
       const wakeAts = waitPool.map((candidate) => Number(candidate.availableAt) || 0).filter((value) => value > now)
       const concurrencyWait = waitPool.some((candidate) => candidate.busy && stickyShouldWait(candidate.waitReason))
-      if (wakeAts.length && Math.min(...wakeAts) >= finalDeadline && !concurrencyWait) {
+      const waitPlan = this.resolveWaitPlan({
+        candidates: waitPool,
+        stickyKey,
+        stickyCleared,
+        requestDeadline: loopDeadline,
+      })
+      const waitDeadline = waitPlan?.deadline || loopDeadline
+      if (wakeAts.length && Math.min(...wakeAts) >= waitDeadline && !concurrencyWait) {
         return fail('all_accounts_busy', candidates, available, waitPool)
       }
-      const wakeAt = wakeAts.length ? Math.min(finalDeadline, ...wakeAts) : finalDeadline
-      await this.waitForCapacity({
-        signal,
-        deadline: wakeAt,
-        stickyKey,
-      })
+      if (!waitPlan || waitPlan.timeoutMs <= 0) {
+        return fail('all_accounts_busy', candidates, available, waitPool)
+      }
+      if (waitPlan.queueFull) {
+        throw Object.assign(new Error('Account pool wait queue is full'), { code: 'pool_wait_queue_full' })
+      }
+      const waitCap = Math.min(waitDeadline, loopDeadline)
+      const sliceDeadline = wakeAts.length ? Math.min(waitCap, ...wakeAts) : waitCap
+      let woken = false
+      try {
+        const waited = await this.waitForCapacity({
+          signal,
+          deadline: sliceDeadline,
+          accountId: waitPlan.accountId,
+          sticky: waitPlan.sticky,
+          stickyKey,
+        })
+        woken = !!waited?.woken
+      } catch (error) {
+        if (error?.code === 'pool_wait_queue_full' && waitPlan.sticky) continue
+        throw error
+      }
+      // Notify continues the loop. availableAt-sliced timers also recheck.
+      // Only a wait-plan / failover deadline timeout is all_accounts_busy.
+      if (!woken && sliceDeadline >= waitCap) return fail('all_accounts_busy', candidates, available, waitPool)
     }
   }
 
@@ -335,6 +397,18 @@ export class PoolScheduler {
       const modelGate = slotAllowsModel({ vm, account, model })
       if (!modelGate.ok) return modelGate
       if (account) {
+        this.syncQuotaSchedule(vm, account)
+        if (this.projectRoot) {
+          const live = getVm(this.projectRoot, vm.id)
+          if (live) {
+            vm.schedulable = live.schedulable
+            vm.schedule_disabled_reason = live.schedule_disabled_reason
+            vm.schedule_manual = live.schedule_manual
+            vm.claude = live.claude || vm.claude
+            vm.temp_unschedulable_until = live.temp_unschedulable_until
+            vm.temp_unschedulable_reason = live.temp_unschedulable_reason
+          }
+        }
         const policy = this.accountQuota?.policyFor?.(account, { tier: vmTierOf(vm) }) || null
         const lastUsedAt = this.lastUsed.get(accountId) || state?.last_used_at || null
         const ev = evaluateAccount({
@@ -362,11 +436,10 @@ export class PoolScheduler {
           policy,
           sessionKey,
           sessionLimit: this.accountQuota?.sessions,
-          cooldownUntil: state?.cooldown_until || vm.claude?.temp_unschedulable_until || null,
-          cooldownReason: state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || null,
+          cooldownUntil: state?.cooldown_until || vm.claude?.temp_unschedulable_until || vm.temp_unschedulable_until || null,
+          cooldownReason: state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason || null,
           now,
         })
-        this.syncQuotaSchedule(vm, account)
         if (!ev.accept) {
           if (
             this.projectRoot &&
@@ -458,6 +531,11 @@ export class PoolScheduler {
         else return { ok: false, reason: quotaGate.reason || 'quota_gate' }
       }
     }
+    if (rustKernelBusy(workerStatus)) {
+      markWait('slot_busy')
+    } else if (workerStatus && rustKernelProcessUp(workerStatus) && !rustKernelReachable(workerStatus)) {
+      return { ok: false, reason: 'worker_unhealthy' }
+    }
     return { ok: true, account, workerStatus, busy, availableAt, waitReason }
   }
 
@@ -507,7 +585,7 @@ export class PoolScheduler {
       this.runtimeRepo.upsert({
         account_id: exec.accountId,
         vm_id: exec.vmId,
-        status: value?.ok ? 'ready' : 'worker_unhealthy',
+        status: runtimeHealthStatus(value),
         worker_heartbeat_at: now,
         worker_status: value,
         credential_generation: effectiveGen,
@@ -595,12 +673,14 @@ export class PoolScheduler {
       if (!amongEligible) {
         this.stickyRouter?.unbind?.(stickyKey)
         this.lastStickyCleared = true
-      } else if (amongEligible.busy) {
-        if (stickyShouldWait(amongEligible.waitReason)) return null
+      } else if (this.isReservable(amongEligible)) {
+        return { ...amongEligible, selectionReason: 'sticky' }
+      } else if (amongEligible.busy && stickyShouldWait(amongEligible.waitReason)) {
+        if (this.waiterCount(amongEligible.accountId) < this.maxWaiters()) return null
+        // Queue full: spillover to other candidates without unbinding.
+      } else {
         this.stickyRouter?.unbind?.(stickyKey)
         this.lastStickyCleared = true
-      } else {
-        return { ...amongEligible, selectionReason: 'sticky' }
       }
     }
     if (!candidates.length) return null
@@ -761,7 +841,7 @@ export class PoolScheduler {
           } catch {}
         }
         this.accountQuota?.release?.(candidate.accountId)
-        this.notifyCapacity()
+        this.notifyCapacity(candidate.accountId)
       },
     }
   }
@@ -810,6 +890,10 @@ export class PoolScheduler {
             null,
         })
       } catch {}
+    } else if (!model && isAccountRestrictionReason(reason) && this.projectRoot && candidate.vmId) {
+      try {
+        markVmRestriction(vmJsonPath(this.projectRoot, candidate.vmId), { until, reason })
+      } catch {}
     }
     this.healthCache.delete(candidate.vmId)
     this.scheduleCooldownWake(candidate.accountId, until)
@@ -828,17 +912,107 @@ export class PoolScheduler {
     this.cooldownTimers.set(accountId, timer)
   }
 
-  waitForCapacity({ signal, deadline, stickyKey }) {
-    const maxWaiters = Math.max(1, Number(this.config.max_waiters_per_account) || 32)
-    if (this.waiters.size >= maxWaiters) {
-      throw Object.assign(new Error('Account pool wait queue is full'), { code: 'pool_wait_queue_full' })
+  maxWaiters() {
+    return Math.max(1, Number(this.config.max_waiters_per_account) || 32)
+  }
+
+  waiterCount(accountId) {
+    if (!accountId) return 0
+    return this.waiters.get(accountId)?.size || 0
+  }
+
+  totalWaiters() {
+    let total = 0
+    for (const bucket of this.waiters.values()) total += bucket.size
+    return total
+  }
+
+  waiterSnapshot() {
+    const perAccount = {}
+    for (const [accountId, bucket] of this.waiters) {
+      perAccount[accountId] = bucket.size
+    }
+    return { ...perAccount, total: this.totalWaiters() }
+  }
+
+  isReservable(candidate) {
+    if (!candidate) return false
+    if (!candidate.busy) return true
+    return candidate.waitReason === 'slot_busy' && (candidate.inflight || 0) < (candidate.maxConcurrency || 0)
+  }
+
+  makeWaitPlan(candidate, { sticky = false, requestDeadline = null } = {}) {
+    const now = Date.now()
+    const base = sticky ? this.config.sticky_wait_timeout_ms : this.config.fallback_wait_timeout_ms
+    const failoverLeft = Number.isFinite(requestDeadline) ? requestDeadline - now : Infinity
+    const timeoutMs = Math.max(0, Math.min(base, failoverLeft))
+    return {
+      accountId: candidate?.accountId || null,
+      vmId: candidate?.vmId || null,
+      reason: candidate?.waitReason || null,
+      timeoutMs,
+      maxWaiting: this.maxWaiters(),
+      sticky: !!sticky,
+      deadline: now + timeoutMs,
+      availableAt: candidate?.availableAt || null,
+    }
+  }
+
+  remainingSlotWaitMs({ startedAt, loopDeadline, sticky = false } = {}) {
+    const now = Date.now()
+    const base = sticky ? this.config.sticky_wait_timeout_ms : this.config.fallback_wait_timeout_ms
+    const failoverLeft = Number.isFinite(loopDeadline) ? loopDeadline - now : Infinity
+    const planLeft = base - (now - Number(startedAt || now))
+    return Math.max(0, Math.min(base, failoverLeft, planLeft))
+  }
+
+  resolveWaitPlan({ candidates = [], stickyKey = null, stickyCleared = false, requestDeadline = null } = {}) {
+    const bound = !stickyCleared && stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null
+    if (bound) {
+      const match = candidates.find(
+        (candidate) => candidate.vmId === bound.vmId && candidate.accountId === bound.accountId,
+      )
+      if (match && match.busy && stickyShouldWait(match.waitReason) && !this.isReservable(match)) {
+        if (this.waiterCount(match.accountId) < this.maxWaiters()) {
+          return this.makeWaitPlan(match, { sticky: true, requestDeadline })
+        }
+      }
+    }
+    const waitable = candidates.filter((candidate) => candidate.busy && !this.isReservable(candidate))
+    const peek = this.peekRank(waitable)
+    const ranked = [...waitable].sort(
+      (left, right) => left.lastUsedAt - right.lastUsedAt || String(left.accountId).localeCompare(String(right.accountId)),
+    )
+    const order = peek ? [peek, ...ranked.filter((candidate) => candidate.accountId !== peek.accountId)] : ranked
+    for (const candidate of order) {
+      if (this.waiterCount(candidate.accountId) < this.maxWaiters()) {
+        return this.makeWaitPlan(candidate, { sticky: false, requestDeadline })
+      }
+    }
+    if (waitable.length) return { queueFull: true }
+    return null
+  }
+
+  waitForCapacity({ signal, deadline, stickyKey, accountId = null, sticky = false } = {}) {
+    const bucketId = String(accountId || stickyKey || '_pool')
+    if (this.waiterCount(bucketId) >= this.maxWaiters()) {
+      throw Object.assign(new Error('Account pool wait queue is full'), {
+        code: 'pool_wait_queue_full',
+        accountId: bucketId,
+      })
     }
     const id = Symbol('pool-waiter')
+    let bucket = this.waiters.get(bucketId)
+    if (!bucket) {
+      bucket = new Map()
+      this.waiters.set(bucketId, bucket)
+    }
     return new Promise((resolve, reject) => {
       const remaining = Math.max(1, deadline - Date.now())
+      const finish = (woken) => resolve({ woken: !!woken })
       const timer = setTimeout(() => {
         cleanup()
-        resolve()
+        finish(false)
       }, remaining)
       const onAbort = () => {
         cleanup()
@@ -847,33 +1021,59 @@ export class PoolScheduler {
       const cleanup = () => {
         clearTimeout(timer)
         signal?.removeEventListener?.('abort', onAbort)
-        this.waiters.delete(id)
+        const live = this.waiters.get(bucketId)
+        live?.delete(id)
+        if (live && live.size === 0) this.waiters.delete(bucketId)
       }
-      this.waiters.set(id, () => {
-        cleanup()
-        const jitter = stickyKey ? Math.floor(Math.random() * 20) : 0
-        if (jitter) setTimeout(resolve, jitter)
-        else resolve()
+      bucket.set(id, {
+        sticky: !!sticky,
+        wake: () => {
+          cleanup()
+          const jitter = stickyKey ? Math.floor(Math.random() * 20) : 0
+          if (jitter) setTimeout(() => finish(true), jitter)
+          else finish(true)
+        },
       })
       if (signal?.aborted) onAbort()
       else signal?.addEventListener?.('abort', onAbort, { once: true })
     })
   }
 
-  notifyCapacity() {
-    const callbacks = [...this.waiters.values()]
-    this.waiters.clear()
-    for (const callback of callbacks) {
+  notifyCapacity(accountId = null) {
+    const wakeEntry = (entry) => {
       try {
-        callback()
+        const wake = typeof entry === 'function' ? entry : entry?.wake
+        wake?.()
       } catch {}
+    }
+    if (accountId) {
+      const bucket = this.waiters.get(accountId)
+      if (bucket) {
+        this.waiters.delete(accountId)
+        for (const entry of bucket.values()) wakeEntry(entry)
+      }
+      for (const [id, other] of [...this.waiters]) {
+        if (id === accountId) continue
+        for (const [token, entry] of [...other]) {
+          if (entry?.sticky) continue
+          other.delete(token)
+          wakeEntry(entry)
+        }
+        if (other.size === 0) this.waiters.delete(id)
+      }
+      return
+    }
+    const buckets = [...this.waiters.values()]
+    this.waiters.clear()
+    for (const bucket of buckets) {
+      for (const entry of bucket.values()) wakeEntry(entry)
     }
   }
 
   /**
-   * Extra 5h/7d reject → 调度关. Window open again → auto-on unless the
-   * operator lock reason is something else. `source:force` so a leftover
-   * schedule_manual flag cannot keep a 100% Extra slot in the pool.
+   * Extra 5h/7d reject → restriction (temp_unschedulable_* + runtime cooldown).
+   * Never flips the operator switch. Leftover quota-off that is not
+   * schedule_manual is restored to on + restriction.
    */
   syncQuotaSchedule(vm, account = null) {
     if (!this.projectRoot || !vm?.id) return { action: 'keep', reason: null }
@@ -883,7 +1083,16 @@ export class PoolScheduler {
     const now = Date.now()
     const lastUsedAt = this.lastUsed.get(accountId) || account.last_used_at || 0
     const ev = evaluateAccount({
-      vm,
+      vm: {
+        ...vm,
+        claude: {
+          ...(vm.claude || {}),
+          temp_unschedulable_until: undefined,
+          temp_unschedulable_reason: undefined,
+        },
+        temp_unschedulable_until: undefined,
+        temp_unschedulable_reason: undefined,
+      },
       account: { ...account, last_used_at: lastUsedAt },
       hasToken: !!(vm?.claude?.has_access || vm?.has_token),
       hasRefresh: hasRefreshPresence(vm?.claude) || !!vm?.has_refresh,
@@ -907,18 +1116,75 @@ export class PoolScheduler {
       policy: this.accountQuota?.policyFor?.(account, { tier: vmTierOf(vm) }) || null,
       now,
     })
+    const leftover = isLeftoverQuotaScheduleOff(vm)
+    const file = vmJsonPath(this.projectRoot, vm.id)
     if (!ev.accept && isQuotaWindowReason(ev.reason)) {
-      if (vm.schedulable !== false) {
-        setVmSchedulable(this.projectRoot, vm.id, false, ev.reason, { preserveStatus: true, source: 'force' })
-        return { action: 'disable', reason: ev.reason }
+      const until = Number(ev.until) || now + 5 * 60_000
+      this.applyQuotaRestriction(vm, accountId, { until, reason: ev.reason, file })
+      if (leftover) {
+        setVmSchedulable(this.projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
+        vm.schedulable = true
+        vm.schedule_disabled_reason = null
+        return { action: 'restore', reason: ev.reason, until }
       }
-      return { action: 'keep', reason: ev.reason }
+      return { action: 'restrict', reason: ev.reason, until }
     }
-    if (ev.accept && vm.schedulable === false && isQuotaWindowReason(vm.schedule_disabled_reason)) {
+    if (ev.accept) {
+      this.clearQuotaRestriction(vm, accountId, file)
+      if (leftover) {
+        setVmSchedulable(this.projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
+        vm.schedulable = true
+        vm.schedule_disabled_reason = null
+        return { action: 'enable', reason: null }
+      }
+      return { action: 'clear', reason: null }
+    }
+    if (leftover) {
       setVmSchedulable(this.projectRoot, vm.id, true, null, { preserveStatus: true, source: 'force' })
-      return { action: 'enable', reason: null }
+      vm.schedulable = true
+      vm.schedule_disabled_reason = null
+      return { action: 'restore', reason: ev.reason || null }
     }
     return { action: 'keep', reason: ev.reason || null }
+  }
+
+  applyQuotaRestriction(vm, accountId, { until, reason, file }) {
+    this.runtimeRepo?.markCooldown?.(accountId, {
+      vmId: vm.id,
+      until,
+      reason,
+      status: 'cooldown',
+    })
+    const next = markVmRestriction(file, { until, reason })
+    if (next) {
+      vm.claude = next.claude || vm.claude
+      vm.temp_unschedulable_until = next.temp_unschedulable_until
+      vm.temp_unschedulable_reason = next.temp_unschedulable_reason
+    }
+    this.scheduleCooldownWake(accountId, until)
+  }
+
+  clearQuotaRestriction(vm, accountId, file) {
+    const state = this.runtimeRepo?.get?.(accountId)
+    const reason = state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason
+    if (reason && !isAccountRestrictionReason(reason) && !isQuotaWindowReason(reason)) return false
+    if (isAuthCooldownReason(reason)) return false
+    if (state && isAccountRestrictionReason(state.cooldown_reason)) {
+      this.runtimeRepo?.upsert?.({
+        account_id: accountId,
+        vm_id: vm.id,
+        cooldown_until: null,
+        cooldown_reason: null,
+        status: 'ready',
+      })
+    }
+    const next = clearVmQuotaRestriction(file)
+    if (next) {
+      vm.claude = next.claude || vm.claude
+      delete vm.temp_unschedulable_until
+      delete vm.temp_unschedulable_reason
+    }
+    return true
   }
 
   snapshot() {
@@ -931,7 +1197,7 @@ export class PoolScheduler {
       fable_max_per_account: this.config.fable_max_per_account,
       inflight: Object.fromEntries(this.inflight),
       inflight_family: family,
-      waiters: this.waiters.size,
+      waiters: this.waiterSnapshot(),
       health_cache: Object.fromEntries([...this.healthCache].map(([id, entry]) => [id, entry.value])),
     }
   }

@@ -738,6 +738,35 @@ test('pool exhaustion details include the scheduler snapshot', async () => {
   assert.deepEqual(result.body.error.details.wait_reasons, ['account_cooldown'])
 })
 
+test('preferLastResult does not deliver thinking-only as HTTP 200', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const runner = new FailoverRunner({
+    scheduler,
+    config: { max_total_attempts: 1, max_same_account_retries: 0, max_account_switches: 0 },
+  })
+  const result = await runner.run({
+    requestId: 'req-incomplete-last',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    callAttempt: () => ({
+      ok: true,
+      status: 200,
+      committed: false,
+      terminalState: 'verified',
+      body: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'draft', signature: 'sig' }],
+        stop_reason: null,
+      },
+    }),
+  })
+  assert.equal(result.ok, false)
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error.code, 'incomplete_response')
+  assert.notEqual(result.status, 200)
+})
+
 test('fable 403 marks pro and failovers without credential cooldown', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const denied = []

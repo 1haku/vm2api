@@ -45,12 +45,29 @@ export function rustSlotWaitMs(routing = {}) {
   return n
 }
 
+/** Hop slot poll uses leftover wait-plan budget; never stacks a second independent 30s. */
+export function resolveHopSlotWaitMs({ remainingBudgetMs, routing } = {}) {
+  const configuredRaw = routing?.inference?.slot_wait_ms
+  const hasConfigured = configuredRaw != null && configuredRaw !== ''
+  const configured = hasConfigured ? rustSlotWaitMs(routing) : null
+  const budget = Number(remainingBudgetMs)
+  const hasBudget = remainingBudgetMs != null && remainingBudgetMs !== '' && Number.isFinite(budget)
+  if (hasBudget) {
+    if (budget <= 0) return 0
+    if (configured != null) return Math.min(budget, configured)
+    return budget
+  }
+  return rustSlotWaitMs(routing)
+}
+
 export function rustShouldWaitForSlot(health, inflight = 0) {
   return rustKernelBusy(health) || Number(inflight) > 0
 }
 
 export async function waitForReadySlot(exec, timeoutMs = DEFAULT_SLOT_WAIT_MS, pollMs = DEFAULT_SLOT_POLL_MS) {
-  const deadline = Date.now() + Math.max(200, Number(timeoutMs) || DEFAULT_SLOT_WAIT_MS)
+  const parsed = Number(timeoutMs)
+  const waitMs = Number.isFinite(parsed) ? Math.max(0, parsed) : DEFAULT_SLOT_WAIT_MS
+  const deadline = Date.now() + waitMs
   const gap = Math.max(40, Number(pollMs) || DEFAULT_SLOT_POLL_MS)
   let last = await rustKernelHealth(exec, { timeoutMs: 400 })
   if (rustKernelReachable(last)) return { ok: true, reason: 'already_up', health: last }
@@ -176,7 +193,7 @@ async function bounceRustForFreshTicket(exec) {
   return started
 }
 
-async function prepareRust(exec, { ensure, routing } = {}) {
+async function prepareRust(exec, { ensure, routing, slotWaitMs } = {}) {
   await awaitWrapRecycle(exec)
   if (typeof ensure === 'function') return ensure(exec)
   await prepareSlotCredentials(exec)
@@ -195,7 +212,7 @@ async function prepareRust(exec, { ensure, routing } = {}) {
     return ready
   }
   if (rustShouldWaitForSlot(health, wrapHopInflight(exec))) {
-    const waited = await waitForReadySlot(exec, rustSlotWaitMs(routing))
+    const waited = await waitForReadySlot(exec, resolveHopSlotWaitMs({ remainingBudgetMs: slotWaitMs, routing }))
     if (waited?.ok) {
       rememberRustHealth(exec, waited)
       return waited
@@ -215,7 +232,11 @@ async function runHop({ mode, opts }) {
   let engine = 'rust'
   let reason = decision.reason
   if (!decision.blocked) {
-    const ready = await prepareRust(opts.exec, { ensure: opts.ensureRust, routing })
+    const ready = await prepareRust(opts.exec, {
+      ensure: opts.ensureRust,
+      routing,
+      slotWaitMs: opts.slotWaitMs,
+    })
     if (ready?.ok) {
       reason = ready.reason || 'configured_rust'
     } else {

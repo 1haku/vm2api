@@ -5,7 +5,7 @@
  */
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { extraToCodexSnapshot, normalizeCodexLimits, codexQuotaPark } from '../protocol/codex-usage.mjs'
-import { isQuotaWindowReason } from './availability.mjs'
+import { isLeftoverQuotaScheduleOff, isQuotaWindowReason } from './availability.mjs'
 
 export const CODEX_FAILOVER_MAX = 4
 
@@ -14,7 +14,7 @@ const HARD_UNAVAILABLE = new Set(['dead', 'error', 'disabled'])
 
 export function isCodexSlotReady(vm) {
   if (!vm || !isCodexVm(vm)) return false
-  if (vm.schedulable === false) return false
+  if (vm.schedulable === false && !isLeftoverQuotaScheduleOff(vm)) return false
   if (!vm.has_token) return false
   const status = String(vm.status || '').toLowerCase()
   if (HARD_UNAVAILABLE.has(status)) return false
@@ -130,20 +130,34 @@ export function codexQuotaWindowReason(vm, now = Date.now()) {
   return null
 }
 
+function codexRestrictionUntil(vm, now) {
+  const extra = extraFromSummary(vm)
+  const limits = normalizeCodexLimits(extraToCodexSnapshot(extra))
+  const reset5 = Date.parse(limits.reset_5h_at || '')
+  const reset7 = Date.parse(limits.reset_7d_at || '')
+  const park = Date.parse(extra.codex_limited_until || '')
+  const futures = [reset5, reset7, park].filter((value) => Number.isFinite(value) && value > now)
+  return futures.length ? Math.min(...futures) : now + 5 * 60_000
+}
+
+function hasQuotaRestriction(vm) {
+  const reason = vm?.claude?.temp_unschedulable_reason || vm?.temp_unschedulable_reason
+  return isQuotaWindowReason(reason)
+}
+
 /**
- * Same Extra 5h/7d auto-toggle as Claude `syncQuotaSchedule`:
- * spent window → 调度关 (`source:force`); window open → restore iff the
- * off reason is still a quota window (operator 调度关 stays off).
+ * Extra 5h/7d writes restriction, not 调度关. Leftover quota-off
+ * (not schedule_manual) restores the operator switch.
  */
 export function evaluateCodexQuotaSchedule(vm, now = Date.now()) {
   if (!vm || !isCodexVm(vm)) return { action: 'keep', reason: null }
   const reason = codexQuotaWindowReason(vm, now)
+  const leftover = isLeftoverQuotaScheduleOff(vm)
   if (reason) {
-    if (vm.schedulable !== false) return { action: 'disable', reason }
-    return { action: 'keep', reason }
+    const until = codexRestrictionUntil(vm, now)
+    return { action: leftover ? 'restore' : 'restrict', reason, until }
   }
-  if (vm.schedulable === false && isQuotaWindowReason(vm.schedule_disabled_reason)) {
-    return { action: 'enable', reason: null }
-  }
+  if (leftover) return { action: 'enable', reason: null }
+  if (hasQuotaRestriction(vm)) return { action: 'clear', reason: null }
   return { action: 'keep', reason: null }
 }
