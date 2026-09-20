@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.2.10 — 2026-09-20
+
+修复 Docker web 构建，并换仓内 `kin-cookie-auth`。不必换槽内 kernel。
+
+- 401 跳登录补上必填 `search`，`tsc -b` 通过，compose 不再卡在 Dockerfile 第 7 步 `pnpm build`
+- `kin-cookie-auth` 按 rust cli-hop 2.1.263 对齐 sessionKey 换票请求头（`claude-cli` + stainless，不再用合成 Chrome UA）
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1210)
+
 ## 1.2.9 — 2026-09-20
 
 thinking-only 残包不再当 HTTP 200；一键安装与 HTTP 面板登录加固。不必换槽内 kernel。
