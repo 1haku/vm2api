@@ -1,6 +1,6 @@
 # vm2api
 
-虚拟机拟真 + Claude Code 原生 subagent。**0 提示词注入**。
+虚拟机拟真 + Claude Code。**0 提示词注入**。
 
 [![Release](https://img.shields.io/github/v/release/dofastted/vm2api?display_name=tag)](https://github.com/dofastted/vm2api/releases)
 [![License](https://img.shields.io/badge/License-Noncommercial-yellow.svg)](LICENSE)
@@ -16,9 +16,7 @@
 
 ## 核心能力
 
-- 🪪 **Console API，不是 OAuth**：Setup Token 转成 Console 可用 API，取代 OAuth 换来的 AT / RT。上游按 Console 客户端看待你。
 - 🧼 **0 提示词注入**：不再靠改 system / 注入人设去“像官方”。身份在凭证形态上就已经是 Console。
-- 🧩 **Claude Code 原生 subagent**：槽内官方转发面，最大 **20** 路并发，不用第三方假客户端顶替。
 - 🖥️ **Docker 或真虚拟机**：一槽一台机器。拟真物理机指纹仍在攻克，欢迎方案。
 - 📡 **全量遥测**：目标是 Claude 认为你是一台完全独立的电脑，并且无其余特征。
 - 🌐 **出口可选**：每槽一条远程 SOCKS5，或代理池「添加本地出口」。
@@ -132,23 +130,13 @@ curl -sS http://127.0.0.1:8787/v1/messages \
 
 ## 技术路线
 
-![Console API 取代 OAuth AT/RT，零提示词注入](docs/images/vm2api-01-console-api.png)
-
-| 旧路 | 本仓 |
-|------|------|
-| OAuth 拿到 AT / RT，上游按 OAuth 客户端看你 | Setup Token → Console API |
-| 为了像官方，要注人设 / 提示词 | Claude 认为你是 Console API |
-| 提示词注入有泄漏面 | **0 提示词注入** |
-
-![用户请求到 Console API 的六站流水线](docs/images/vm2api-02-route.png)
-
 ```text
 用户请求
   → 协议清洗
   → POST /v1/messages
-  → 接入 Claude Code 原生 subagent
+  → 接入 Claude Code 
   → TCP 转发
-  → Console API endpoint
+  → endpoint
   → 透明转发给用户
 ```
 
