@@ -31,7 +31,10 @@ function Authenticated() {
   useEffect(() => {
     if (meQuery.error instanceof ApiError && meQuery.error.status === 401) {
       signOut()
-      navigate({ to: '/login' })
+      navigate({
+        to: '/login',
+        search: { redirect: undefined },
+      })
     }
   }, [meQuery.error, signOut, navigate])
   if (meQuery.error instanceof ApiError && meQuery.error.status === 401) {
