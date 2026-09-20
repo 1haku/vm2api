@@ -174,6 +174,7 @@ import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
 import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
+import { publicNotifyConfig, publicRoutingNotify } from './notify.mjs'
 
 async function commitImportedCodexVm({ cfg, vmPath, existing, account }) {
   const saved = upsertCodexAccount(cfg.paths.project, existing.id, account)
