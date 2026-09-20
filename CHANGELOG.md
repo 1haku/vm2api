@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.2.8 — 2026-09-20
+
+修复 compose build：`.dockerignore` 的 `*.md` 把 `CHANGELOG.md` 挡在构建上下文外，`COPY CHANGELOG.md` 失败。不必换槽内 kernel。
+
+- `.dockerignore` 增加 `!CHANGELOG.md`
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-128)。卡住的 1.2.7 构建可先在仓库根 `.dockerignore` 加一行 `!CHANGELOG.md` 再 `docker compose up -d --build`。
+
 ## 1.2.7 — 2026-09-20
 
 控制面：版本检查与一键更新。不必换槽内 kernel。

@@ -44,7 +44,7 @@ sudo bash /opt/vm2api/deploy/install.sh check
 sudo bash /opt/vm2api/deploy/install.sh changelog
 ```
 
-保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.7`。若 changelog 提到 `wrap-cli/sync`，加 `--sync-wrap`。
+保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.8`。若 changelog 提到 `wrap-cli/sync`，加 `--sync-wrap`。
 
 **手动：**
 
@@ -61,7 +61,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 二进制在仓内 `bin/`，Compose 会拷到挂载目录。`bin/kin-*` 必须 **755**。缺槽位系统镜像时会编 `kin-os/ubuntu:24.04`。
 
-升级到 **v1.2.7** 见下面「已部署机升级到 1.2.7」。只重启控制面，不要 `docker rm` 槽。
+升级到 **v1.2.8** 见下面「已部署机升级到 1.2.8」。只重启控制面，不要 `docker rm` 槽。
 
 Docker Desktop / WSL 下 `curl 127.0.0.1:8787` 可能失败：
 
@@ -110,13 +110,45 @@ curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
 
 # 指定 tag
-sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.7
+sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.8
 
 # 只检查
 sudo bash /opt/vm2api/deploy/install.sh check
 ```
 
 面板：`GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`（`{ confirm: true }` 才会在已挂 `docker.sock` 的机器上拉起升级助手）。容器里没有宿主机 git 仓时返回 `409 host_upgrade_required`，响应里带同一条 curl 命令。
+
+## 已部署机升级到 1.2.8
+
+1.2.8 只动**控制面**（`.dockerignore` 放行 `CHANGELOG.md`，修好 v1.2.7 的 compose `COPY CHANGELOG.md` 失败）。不必换槽内 kernel，也不要 `docker rm` 槽。
+
+推荐：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+```
+
+若还停在失败的 1.2.7 构建，可先手工：
+
+```bash
+cd /opt/vm2api
+grep -q '!CHANGELOG.md' .dockerignore || echo '!CHANGELOG.md' >> .dockerignore
+docker compose up -d --build
+```
+
+然后再升到 v1.2.8。
+
+手动：
+
+```bash
+cd /opt/vm2api
+git fetch --tags
+git checkout v1.2.8
+docker compose up -d --build
+curl -sS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+本机 systemd：`git checkout v1.2.8` → `npm ci` → `pnpm -C web install --frozen-lockfile && npm run build:web` → `systemctl restart vm2api` **一次**。
 
 ## 已部署机升级到 1.2.7
 
