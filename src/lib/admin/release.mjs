@@ -354,9 +354,11 @@ export async function startHostUpgrade({
     'set -euo pipefail',
     'export GIT_TERMINAL_PROMPT=0',
     'command -v git >/dev/null || apk add --no-cache git >/dev/null',
+    `git config --global --add safe.directory ${rootDir} || true`,
     'git fetch --tags origin',
     `git checkout -f ${target}`,
     'chmod 755 bin/kin-* 2>/dev/null || true',
+    'grep -q "!CHANGELOG.md" .dockerignore 2>/dev/null || echo "!CHANGELOG.md" >> .dockerignore',
     'docker compose up -d --build',
   ].join('\n')
   const child = spawnImpl(

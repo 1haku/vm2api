@@ -35,6 +35,7 @@ export function QueryGate({
     )
   }
   if (error) {
+    if (error instanceof ApiError && error.status === 401) return null
     return (
       <Alert variant='destructive'>
         <AlertTitle>加载失败</AlertTitle>

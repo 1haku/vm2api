@@ -33,6 +33,9 @@ TARGET_VERSION=""
 ASSUME_YES=0
 NO_START=0
 SYNC_WRAP=0
+DEFAULT_ADMIN_USER="admin"
+DEFAULT_ADMIN_PASSWORD="123456"
+WROTE_DEFAULT_PASSWORD=0
 
 info() { echo -e "${BLUE}[信息]${NC} $*"; }
 ok() { echo -e "${GREEN}[成功]${NC} $*"; }
@@ -84,44 +87,6 @@ normalize_tag() {
 
 version_of_tag() {
   echo "${1#v}"
-}
-
-semver_ge() {
-  # return 0 if $1 >= $2
-  python3 - "$1" "$2" <<'PY' 2>/dev/null || true
-import sys
-def p(v):
-    v = v[1:] if v.startswith("v") else v
-    parts = []
-    for x in v.split("."):
-        try:
-            parts.append(int(x))
-        except ValueError:
-            parts.append(0)
-    parts += [0] * (3 - len(parts))
-    return tuple(parts[:3])
-a, b = sys.argv[1], sys.argv[2]
-sys.exit(0 if p(a) >= p(b) else 1)
-PY
-}
-
-semver_ge() {
-  # return 0 if $1 >= $2
-  python3 - "$1" "$2" <<'PY' 2>/dev/null || true
-import sys
-def p(v):
-    v = v[1:] if v.startswith("v") else v
-    parts = []
-    for x in v.split("."):
-        try:
-            parts.append(int(x))
-        except ValueError:
-            parts.append(0)
-    parts += [0] * (3 - len(parts))
-    return tuple(parts[:3])
-a, b = sys.argv[1], sys.argv[2]
-sys.exit(0 if p(a) >= p(b) else 1)
-PY
 }
 
 local_version() {
@@ -252,30 +217,128 @@ gen_secret() {
   python3 -c 'import secrets; print(secrets.token_hex(32))'
 }
 
-ensure_env() {
+env_get() {
+  local name="$1"
+  local envf="${2:-${INSTALL_DIR}/.env}"
+  [ -f "$envf" ] || return 0
+  grep -E "^${name}=" "$envf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d "'" | tr -d '"' | tr -d '\r'
+}
+
+env_set() {
+  local name="$1"
+  local value="$2"
   local envf="${INSTALL_DIR}/.env"
-  if [ -f "$envf" ]; then
-    chmod 600 "$envf" || true
-    info "保留已有 .env"
-    return
+  if grep -qE "^${name}=" "$envf" 2>/dev/null; then
+    sed -i "s|^${name}=.*|${name}=${value}|" "$envf"
+  else
+    printf '%s=%s\n' "$name" "$value" >>"$envf"
   fi
-  local example="${INSTALL_DIR}/.env.example"
-  if [ ! -f "$example" ]; then
-    err "没有 .env.example，无法生成 .env"
+}
+
+env_set_if_empty() {
+  local name="$1"
+  local value="$2"
+  if [ -z "$(env_get "$name")" ]; then
+    env_set "$name" "$value"
+    return 0
+  fi
+  return 1
+}
+
+ensure_git_safe() {
+  if [ -d "${INSTALL_DIR}/.git" ]; then
+    git config --global --add safe.directory "${INSTALL_DIR}" 2>/dev/null || true
+  fi
+}
+
+guide_changelog_error() {
+  echo ""
+  warn "错误类型 1：构建找不到 CHANGELOG.md"
+  echo "  识别: COPY VERSION CHANGELOG.md ./  或  \"/CHANGELOG.md\": not found"
+  echo "  原因: .dockerignore 的 *.md 把 CHANGELOG.md 挡在构建上下文外（v1.2.7）。"
+  echo "  在 ${INSTALL_DIR} 执行:"
+  echo "    grep -q '!CHANGELOG.md' .dockerignore || echo '!CHANGELOG.md' >> .dockerignore"
+  echo "    docker compose up -d --build"
+  echo "  或一键升到已修复版本:"
+  echo "    curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash -s -- upgrade"
+  echo ""
+}
+
+guide_auth_error() {
+  local port
+  port="$(env_get PORT)"
+  port="${port:-$DEFAULT_PORT}"
+  echo ""
+  warn "错误类型 2：管理台 Missing credentials / 鉴权失效"
+  echo "  识别: 总览「加载失败」或 toast「鉴权失效，请重新登录」"
+  echo "  处理: 打开登录页，不要直接进总览"
+  echo "    http://127.0.0.1:${port}/cc#/login"
+  if [ "${WROTE_DEFAULT_PASSWORD:-0}" = 1 ]; then
+    echo "  默认账密: admin / 123456（本次写入的空密码默认值，登录后请改）"
+  else
+    echo "  已有密码见:"
+    echo "    grep '^VM2API_ADMIN_PASSWORD=' ${INSTALL_DIR}/.env"
+  fi
+  echo ""
+}
+
+print_login_banner() {
+  local port
+  port="$(env_get PORT)"
+  port="${port:-$DEFAULT_PORT}"
+  echo ""
+  info "管理台登录: http://127.0.0.1:${port}/cc#/login"
+  info "探活:       curl -sS --noproxy '*' http://127.0.0.1:${port}/health"
+  if [ "${WROTE_DEFAULT_PASSWORD:-0}" = 1 ]; then
+    info "默认账号:   ${DEFAULT_ADMIN_USER}"
+    info "默认密码:   ${DEFAULT_ADMIN_PASSWORD}（仅空字段写入；请登录后尽快改）"
+  else
+    info "管理台密码见 ${INSTALL_DIR}/.env 的 VM2API_ADMIN_PASSWORD"
+  fi
+  info "若总览报鉴权失效: 先打开上面的登录页"
+}
+
+ensure_build_context() {
+  local ignore="${INSTALL_DIR}/.dockerignore"
+  local changelog="${INSTALL_DIR}/CHANGELOG.md"
+  local version="${INSTALL_DIR}/VERSION"
+  if [ ! -f "$version" ]; then
+    err "缺少 ${version}。控制面镜像无法构建。"
+    guide_changelog_error
     exit 1
   fi
-  cp "$example" "$envf"
-  local key admin secret
-  key="$(gen_secret)"
-  admin="$(gen_secret)"
-  secret="$(gen_secret)"
-  if command -v sed >/dev/null 2>&1; then
-    sed -i -e "s|^VM2API_API_KEY=.*|VM2API_API_KEY=${key}|" \
-      -e "s|^VM2API_ADMIN_PASSWORD=.*|VM2API_ADMIN_PASSWORD=${admin}|" \
-      -e "s|^VM2API_DB_SECRET=.*|VM2API_DB_SECRET=${secret}|" "$envf"
+  if [ ! -f "$changelog" ]; then
+    err "缺少 ${changelog}。Docker 会报 COPY CHANGELOG.md not found。"
+    guide_changelog_error
+    exit 1
   fi
-  chmod 600 "$envf"
-  ok "已写 ${envf}（chmod 600），请记住管理台密码（VM2API_ADMIN_PASSWORD）"
+  if [ -f "$ignore" ] && ! grep -qE '^!CHANGELOG\.md$' "$ignore"; then
+    echo '!CHANGELOG.md' >>"$ignore"
+    warn "已在 .dockerignore 补上 !CHANGELOG.md（避免 *.md 挡住构建）"
+  fi
+}
+
+ensure_env() {
+  local envf="${INSTALL_DIR}/.env"
+  if [ ! -f "$envf" ]; then
+    local example="${INSTALL_DIR}/.env.example"
+    if [ ! -f "$example" ]; then
+      err "没有 .env.example，无法生成 .env"
+      exit 1
+    fi
+    cp "$example" "$envf"
+  fi
+  chmod 600 "$envf" || true
+  env_set_if_empty VM2API_ADMIN_USER "$DEFAULT_ADMIN_USER" || true
+  if env_set_if_empty VM2API_ADMIN_PASSWORD "$DEFAULT_ADMIN_PASSWORD"; then
+    WROTE_DEFAULT_PASSWORD=1
+    ok "已补默认管理台账密  ${DEFAULT_ADMIN_USER} / ${DEFAULT_ADMIN_PASSWORD}（只填空，已有密码未改）"
+  else
+    info "保留已有管理台密码"
+  fi
+  env_set_if_empty VM2API_API_KEY "$(gen_secret)" || true
+  env_set_if_empty VM2API_DB_SECRET "$(gen_secret)" || true
+  chmod 600 "$envf" || true
 }
 
 wait_health() {
@@ -325,6 +388,7 @@ checkout_tag() {
     err "${INSTALL_DIR} 不是 git 仓库。请重新安装，或手动 git clone。"
     exit 1
   fi
+  ensure_git_safe
   info "fetch tags"
   git fetch --tags origin
   if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null && \
@@ -356,20 +420,45 @@ fresh_clone() {
   git clone --branch "$tag" --depth 1 "https://github.com/${GITHUB_REPO}.git" "${INSTALL_DIR}" \
     || git clone "https://github.com/${GITHUB_REPO}.git" "${INSTALL_DIR}"
   cd "${INSTALL_DIR}"
+  ensure_git_safe
   git fetch --tags origin
   git checkout -f "$tag"
   chmod 755 bin/kin-* 2>/dev/null || true
 }
 
 start_stack() {
+  ensure_build_context
   if [ "$NO_START" = 1 ]; then
     warn "--no-start：跳过 compose up"
     return
   fi
   cd "${INSTALL_DIR}"
   info "docker compose up -d --build（只重建控制面，不 docker rm 槽）"
-  compose up -d --build
-  wait_health || true
+  local log
+  log="$(mktemp)"
+  if compose up -d --build >"$log" 2>&1; then
+    cat "$log"
+    rm -f "$log"
+    wait_health || true
+    return
+  fi
+  cat "$log"
+  if grep -qE 'CHANGELOG\.md|"/CHANGELOG\.md": not found' "$log"; then
+    warn "compose 因 CHANGELOG.md 失败，补 .dockerignore 后重试一次"
+    ensure_build_context
+    if compose up -d --build; then
+      rm -f "$log"
+      wait_health || true
+      return
+    fi
+    guide_changelog_error
+    rm -f "$log"
+    exit 1
+  fi
+  err "docker compose 失败"
+  guide_changelog_error
+  rm -f "$log"
+  exit 1
 }
 
 print_banner() {
@@ -388,12 +477,11 @@ cmd_install() {
   tag="$(normalize_tag "$tag")"
   info "目标版本 ${tag}"
   fresh_clone "$tag"
+  ensure_git_safe
   ensure_env
   start_stack
   ok "安装完成  ${INSTALL_DIR}  @ $(local_version)"
-  echo ""
-  info "管理台: http://127.0.0.1:${DEFAULT_PORT}/console"
-  info "探活:   curl -sS --noproxy '*' http://127.0.0.1:${DEFAULT_PORT}/health"
+  print_login_banner
   info "以后更新: curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash -s -- upgrade"
 }
 
@@ -418,6 +506,7 @@ cmd_upgrade() {
     ok "已经是 ${tag}，仍会重建控制面镜像以对齐仓内文件"
   fi
   checkout_tag "$tag"
+  ensure_git_safe
   ensure_env
   echo ""
   info "本版 changelog"
@@ -439,6 +528,7 @@ cmd_upgrade() {
     fi
   fi
   ok "已更新到 $(local_version)"
+  print_login_banner
 }
 
 cmd_check() {

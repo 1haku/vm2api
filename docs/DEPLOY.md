@@ -36,7 +36,7 @@ VM2API_DB_SECRET='再一串'
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
 ```
 
-脚本会 clone 到 `/opt/vm2api`、生成 `.env`（`chmod 600`）、`docker compose up -d --build`。打印出的 `VM2API_ADMIN_PASSWORD` 请立刻记下来。以后：
+脚本会 clone 到 `/opt/vm2api`、补全 `.env`（`chmod 600`）、`docker compose up -d --build`。`.env` 缺失或 `VM2API_ADMIN_PASSWORD` 为空时写入默认管理台 **`admin` / `123456`**（已有密码不覆盖）。空的 `VM2API_API_KEY` / `VM2API_DB_SECRET` 会生成随机值。登录：`http://<ip>:8787/cc#/login`。以后：
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
@@ -53,7 +53,7 @@ git clone https://github.com/dofastted/vm2api.git /opt/vm2api
 cd /opt/vm2api
 cp .env.example .env
 chmod 600 .env
-# 填写上面三项
+# 空密码默认 admin / 123456；API key / DB secret 为空时入口会生成
 
 docker compose up -d --build
 curl -sS --noproxy '*' http://127.0.0.1:8787/health
@@ -71,7 +71,7 @@ docker exec vm2api python3 -c 'import urllib.request; print(urllib.request.urlop
 
 ## 上线后
 
-1. 打开 `/console`，用 `VM2API_ADMIN_PASSWORD` 登录。
+1. 打开 `/cc#/login`，用管理台密码登录（未配置时为 `admin` / `123456`）。
 2. 代理池：添加本地出口，或导入 SOCKS5。
 3. 建槽、绑出口、启动。没出口会停在 `stopped`。
 4. 在槽里导入凭证，再用 `sk-vm-…` 或 master key 打 `POST /v1/messages`。
@@ -100,7 +100,25 @@ location / {
 
 ## 一键安装 / 更新
 
-`deploy/install.sh` 对齐 sub2api / CLIProxyAPI：查 GitHub 最新 Release → checkout tag → 重建控制面。不碰 `.env`、`vms/`、`data/`，不 `docker rm` 槽。
+`deploy/install.sh` 对齐 sub2api / CLIProxyAPI：查 GitHub 最新 Release → checkout tag → 重建控制面。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。构建前若 `.dockerignore` 挡住 `CHANGELOG.md` 会自动补 `!CHANGELOG.md` 并重试一次。
+
+### 两类安装错误
+
+**1. `COPY VERSION CHANGELOG.md` / `"/CHANGELOG.md": not found`**
+
+v1.2.7 的 `.dockerignore` 用 `*.md` 把 changelog 挡在构建上下文外。脚本会自动补一行；若仍失败：
+
+```bash
+cd /opt/vm2api
+grep -q '!CHANGELOG.md' .dockerignore || echo '!CHANGELOG.md' >> .dockerignore
+docker compose up -d --build
+```
+
+或 `curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade`。
+
+**2. 管理台「Missing credentials」/「鉴权失效，请重新登录」**
+
+打开登录页，不要直接进总览：`http://<ip>:8787/cc#/login`。未配置时账密是 `admin` / `123456`。已有密码：`grep '^VM2API_ADMIN_PASSWORD=' /opt/vm2api/.env`。
 
 ```bash
 # 安装

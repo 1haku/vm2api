@@ -40,7 +40,7 @@
 
 生产就用这条。仓库必须在 **`/opt/vm2api`**（容器内外路径一致）。
 
-**一键安装 / 更新**（保留 `.env` / `vms/` / `data/`，不 `docker rm` 槽）：
+**一键安装 / 更新**（保留已有非空 `.env` 字段 / `vms/` / `data/`，不 `docker rm` 槽）。空密码默认 **`admin` / `123456`**，登录 `http://<ip>:8787/cc#/login`。构建若报 `CHANGELOG.md: not found`，脚本会补 `.dockerignore` 并重试。
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
@@ -62,7 +62,7 @@ git clone https://github.com/dofastted/vm2api.git /opt/vm2api
 cd /opt/vm2api
 cp .env.example .env
 chmod 600 .env
-# 填写 VM2API_API_KEY / VM2API_ADMIN_PASSWORD / VM2API_DB_SECRET
+# 空密码默认 admin / 123456；空 API key / DB secret 由入口生成
 
 docker compose up -d --build
 curl -sS --noproxy '*' http://127.0.0.1:8787/health

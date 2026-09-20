@@ -9,6 +9,7 @@ import {
   createPanelSession,
   extractPanelToken,
   panelSessionCookie,
+  panelCookieSecure,
   clearPanelSessionCookie,
   revokePanelSession,
   revokePanelSessionsForUser,
@@ -577,7 +578,7 @@ export function createPanelHandler(ctx) {
         } catch {}
       }
       const token = createPanelSession(authed.username, { role: authed.role })
-      const secure = (process.env.PUBLIC_SCHEME || 'https') === 'https'
+      const secure = panelCookieSecure(req)
       res.setHeader('Set-Cookie', panelSessionCookie(token, { secure }))
       const me = { user: authed.username, role: authed.role }
       return json(res, 200, {
@@ -593,7 +594,7 @@ export function createPanelHandler(ctx) {
     if (req.method === 'POST' && p === '/api/panel/logout') {
       const tok = extractPanelToken(req)
       if (tok) revokePanelSession(tok)
-      const secure = (process.env.PUBLIC_SCHEME || 'https') === 'https'
+      const secure = panelCookieSecure(req)
       res.setHeader('Set-Cookie', clearPanelSessionCookie({ secure }))
       return json(res, 200, { ok: true })
     }
