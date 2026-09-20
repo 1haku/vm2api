@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1 — 2026-09-21
+
+整合 VM 列表可视化升级与 1.3.0 网关遗漏修复。
+
+- VM 列表加入 fleet pulse 与用量仪表，重整桌面和移动端信息层级
+- 并发预约竞态失败后尝试其他账号，全部繁忙时进入账号等待队列
+- thinking-only、缺少 `stop_reason` 或非 assistant envelope 的响应不再误判成功
+- 同槽兄弟请求阻止即时回收时，最后一个请求结束后补做 wrap 回收
+- 控制台缓存 TTL 仅支持 `5m` / `1h`；请求显式 TTL 覆盖默认值，所有出站断点统一复写
+- Compose 默认镜像更新为 `vm2api:1.3.1`
+
 ## 1.3.0 — 2026-09-20
 
 - 官方 Claude Code init 同时读取并保留 `~/.claude.json` 与 `CLAUDE_CONFIG_DIR/.claude.json`，不再在身份同步后删除 CLI 生成文件
