@@ -86,8 +86,14 @@ test('readLocalVersion prefers VERSION file over package.json', () => {
 test('loadChangelog reads the warehouse CHANGELOG.md', () => {
   const entries = loadChangelog(path.resolve(import.meta.dirname, '../..'))
   assert.ok(entries.length >= 3)
-  assert.equal(entries.some((e) => e.version === '1.2.6'), true)
-  assert.equal(entries.some((e) => e.version === '1.0.0'), true)
+  assert.equal(
+    entries.some((e) => e.version === '1.2.6'),
+    true,
+  )
+  assert.equal(
+    entries.some((e) => e.version === '1.0.0'),
+    true,
+  )
 })
 
 test('buildUpdateStatus reports an available GitHub release and the one-click command', async () => {
@@ -234,4 +240,3 @@ test('startHostUpgrade rejects non-semver targets', async () => {
   assert.equal(result.status, 400)
   assert.equal(result.error.code, 'invalid_version')
 })
-

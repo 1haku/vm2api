@@ -1,12 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowUpCircle, Copy, ExternalLink, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  ArrowUpCircle,
-  Copy,
-  ExternalLink,
-  RefreshCw,
-} from 'lucide-react'
 import { ApiError, api, isApiError } from '@/lib/api'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -14,8 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
-  versionQueryOptions,
   changelogQueryOptions,
+  versionQueryOptions,
   type ChangelogEntry,
   type ReleaseStatus,
 } from '@/features/settings/queries'
@@ -50,7 +45,9 @@ export function AboutPane() {
           ? `已开始升级到 ${payload.target || payload.latest_tag}，控制面会短暂中断，稍后刷新`
           : '已返回升级命令'
       )
-      await qc.invalidateQueries({ queryKey: versionQueryOptions().queryKey })
+      await qc.invalidateQueries({
+        queryKey: versionQueryOptions().queryKey,
+      })
     },
     onError: (error: Error) => {
       setConfirmOpen(false)
@@ -80,8 +77,9 @@ export function AboutPane() {
   const rawEntries =
     data?.changelog && data.changelog.length > 0
       ? data.changelog
-      : changelog.data?.entries?.filter((entry) => entry.version !== 'unreleased') ||
-        []
+      : changelog.data?.entries?.filter(
+          (entry) => entry.version !== 'unreleased'
+        ) || []
   const entries = data?.update_available ? rawEntries : rawEntries.slice(0, 8)
 
   return (
@@ -136,8 +134,9 @@ export function AboutPane() {
             <Alert>
               <AlertTitle>需要同步槽内 CLI</AlertTitle>
               <AlertDescription>
-                此跨度 changelog 提到 wrap-cli/sync。控制面升完后到内核页同步，或给
-                install.sh 加 --sync-wrap。
+                此跨度 changelog 提到
+                wrap-cli/sync。控制面升完后到内核页同步，或给 install.sh 加
+                --sync-wrap。
               </AlertDescription>
             </Alert>
           ) : null}
@@ -201,9 +200,13 @@ export function AboutPane() {
         </CardHeader>
         <CardContent className='space-y-4'>
           {entries.length === 0 ? (
-            <p className='text-sm text-muted-foreground'>没有比当前版本更新的条目。</p>
+            <p className='text-sm text-muted-foreground'>
+              没有比当前版本更新的条目。
+            </p>
           ) : (
-            entries.map((entry) => <ChangelogBlock key={entry.heading} entry={entry} />)
+            entries.map((entry) => (
+              <ChangelogBlock key={entry.heading} entry={entry} />
+            ))
           )}
         </CardContent>
       </Card>
