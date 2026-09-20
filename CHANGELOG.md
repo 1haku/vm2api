@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4 — 2026-09-21
+
+- OpenAI 模型无论入站 chat、messages 还是 responses，hop 都洗到 `/v1/responses`
+- 请求日志记录清洗后的 path/protocol；原来的入站协议留在 `hop_meta`
+- API 类 OpenAI 上游改为官方 Responses，不再 POST `/v1/chat/completions`
+
 ## 1.3.3 — 2026-09-21
 
 - Codex Rotate 插件：采集并注入 `X-Codex-Turn-State`（292/332），设置 → 协议可开关，默认关闭
