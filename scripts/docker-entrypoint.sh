@@ -46,10 +46,25 @@ if [ ! -x "$KERNEL" ]; then
   echo "vm2api: $KERNEL missing or not executable after image-bin copy. Rebuild with docker compose build, or put linux amd64 Release files in $ROOT/bin." >&2
   exit 1
 fi
-mkdir -p "$ROOT/share"
-if [ -d /opt/vm2api/image-wrap-cli ] && [ ! -f "$ROOT/share/wrap-cli/bun" ]; then
-  rm -rf "$ROOT/share/wrap-cli"
-  cp -a /opt/vm2api/image-wrap-cli "$ROOT/share/wrap-cli"
+mkdir -p "$ROOT/share/wrap-cli"
+WRAP_CHANGED=0
+if [ -d /opt/vm2api/image-wrap-cli ]; then
+  for name in kin-kernel.bin kin-kernel; do
+    src="/opt/vm2api/image-wrap-cli/$name"
+    dest="$ROOT/share/wrap-cli/$name"
+    if [ -f "$src" ]; then
+      if [ ! -f "$dest" ] || ! cmp -s "$src" "$dest"; then
+        WRAP_CHANGED=1
+      fi
+      cp "$src" "$dest.new"
+      chmod 755 "$dest.new"
+      mv -f "$dest.new" "$dest"
+    fi
+  done
+  if [ ! -f "$ROOT/share/wrap-cli/cli-node" ]; then
+    cp -a /opt/vm2api/image-wrap-cli/. "$ROOT/share/wrap-cli/"
+    WRAP_CHANGED=1
+  fi
 fi
 
 if [ ! -S /var/run/docker.sock ]; then
@@ -113,6 +128,10 @@ if [ -z "${VM2API_DB_SECRET:-}" ] && [ -z "${KIN_DB_SECRET:-}" ]; then
   VM2API_DB_SECRET="$(rand_hex)"
   export VM2API_DB_SECRET
   env_upsert_if_empty VM2API_DB_SECRET "$VM2API_DB_SECRET" "$ENVF"
+fi
+
+if [ "$WRAP_CHANGED" = 1 ] && [ "${KIN_AUTO_SYNC_WRAP:-0}" = 1 ]; then
+  node /opt/vm2api/scripts/sync-wrap-cli.mjs &
 fi
 
 cd /opt/vm2api

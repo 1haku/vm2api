@@ -174,6 +174,23 @@ function mergeUsage(current, next) {
   return out
 }
 
+/** First user-visible token or a real terminal — not message_start / HTTP 200. */
+export function isDownstreamCommitEvent(event) {
+  if (!event || typeof event !== 'object') return false
+  const t = String(event.type || '')
+  if (t === 'error' || t === 'message_start' || t === 'kin_response_headers') return false
+  if (t === 'message_stop' || t === 'response.completed' || t === 'response.done') return true
+  if (t === 'content_block_delta') {
+    const d = event.delta || {}
+    return !!(d.text || d.thinking || d.partial_json)
+  }
+  if (t === 'content_block_start') {
+    const b = event.content_block || {}
+    return !!(b.type === 'text' || b.type === 'thinking' || b.type === 'tool_use' || b.text || b.thinking)
+  }
+  return t.startsWith('response.output_')
+}
+
 /** Anthropic SSE: message_start.message.usage + message_delta.usage. OpenAI Responses: response.usage. */
 export function usageFromSseEvent(event) {
   if (!event || typeof event !== 'object') return null
@@ -416,8 +433,6 @@ export async function streamGoWorker({
         transportError: false,
       }
     }
-    committed = true
-    if (typeof onCommit === 'function') onCommit()
     let buffer = ''
     let lastError = null
     let sawTerminal = false
@@ -426,6 +441,7 @@ export async function streamGoWorker({
     let sseModel = null
     let sseStop = null
     let sseRateHeaders = {}
+    const pendingLines = []
     const takeSseEvent = () => {
       try {
         const event = JSON.parse(dataBuf)
@@ -435,8 +451,24 @@ export async function streamGoWorker({
         return null
       }
     }
+    const flushCommit = async () => {
+      if (committed) return
+      committed = true
+      if (typeof onCommit === 'function') onCommit()
+      if (onEvent) {
+        for (const queued of pendingLines) await onEvent(queued)
+      }
+      pendingLines.length = 0
+    }
+    const emitLine = async (line) => {
+      if (!committed) {
+        pendingLines.push(line)
+        return
+      }
+      if (onEvent) await onEvent(line)
+    }
     const observeSseEvent = (event) => {
-      if (!event) return
+      if (!event) return event
       if (event.type === 'kin_response_headers' && event.headers && typeof event.headers === 'object') {
         sseRateHeaders = { ...sseRateHeaders, ...event.headers }
       }
@@ -448,6 +480,7 @@ export async function streamGoWorker({
       if (event.message?.model) sseModel = event.message.model
       const stop = event.message?.stop_reason || event.delta?.stop_reason
       if (stop) sseStop = stop
+      return event
     }
     const firstByteMs = Math.max(0, Number(timeoutMs) || 0)
     const idleMs = Math.max(0, Number(idleTimeoutMs) || 0)
@@ -479,7 +512,8 @@ export async function streamGoWorker({
             const piece = line.slice(5).trim()
             if (piece && piece !== '[DONE]') {
               dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
-              observeSseEvent(takeSseEvent())
+              const event = observeSseEvent(takeSseEvent())
+              if (isDownstreamCommitEvent(event)) await flushCommit()
             }
             if (ttftMs == null) ttftMs = Date.now() - startedAt
           } else if (line === '') {
@@ -487,16 +521,21 @@ export async function streamGoWorker({
               const event = takeSseEvent()
               dataBuf = ''
               observeSseEvent(event)
+              if (isDownstreamCommitEvent(event)) await flushCommit()
             }
           } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
             dataBuf = `${dataBuf}\n${line}`
-            observeSseEvent(takeSseEvent())
+            const event = observeSseEvent(takeSseEvent())
+            if (isDownstreamCommitEvent(event)) await flushCommit()
           }
-          if (onEvent) await onEvent(line)
+          await emitLine(line)
         }
       }
-      if (buffer && onEvent) await onEvent(buffer)
-      if (dataBuf) observeSseEvent(takeSseEvent())
+      if (buffer) await emitLine(buffer)
+      if (dataBuf) {
+        const event = observeSseEvent(takeSseEvent())
+        if (isDownstreamCommitEvent(event)) await flushCommit()
+      }
       const trailers = mergeRateLimitHeaders(publicHeaders(response.trailers))
       const terminalState =
         trailers['x-kin-terminal-state'] || headers['x-kin-terminal-state'] || (sawTerminal ? 'verified' : 'incomplete')

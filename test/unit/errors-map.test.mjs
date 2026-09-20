@@ -4,6 +4,7 @@ import {
   mapUpstreamError,
   rewritePoolErrorForClient,
   isPoolCapacityError,
+  isWrapConnectionError,
   isAssistantMessageBody,
   isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
@@ -112,6 +113,28 @@ test('incomplete_response maps to HTTP 502', () => {
   })
   assert.equal(mapped.status, 502)
   assert.equal(mapped.body.error.code, 'incomplete_response')
+})
+
+test('wrap Connection error is not upstream', () => {
+  assert.equal(isWrapConnectionError('provider error: provider error: Connection error.'), true)
+  const mapped = mapUpstreamError(200, {
+    type: 'error',
+    error: { type: 'api_error', message: 'provider error: provider error: Connection error.' },
+  })
+  assert.equal(mapped.status, 503)
+  assert.equal(mapped.body.error.code, 'wrap_connection_error')
+  assert.notEqual(mapped.body.error.type, 'upstream_error')
+})
+
+test('kernel slot_busy is overloaded, not upstream', () => {
+  const mapped = mapUpstreamError(503, {
+    type: 'error',
+    error: { type: 'worker_error', code: 'slot_busy', message: 'rust kernel has no free slot' },
+  })
+  assert.equal(mapped.status, 503)
+  assert.equal(mapped.body.error.type, 'overloaded_error')
+  assert.equal(mapped.body.error.code, 'slot_busy')
+  assert.match(mapped.body.error.message, /no free slot/)
 })
 
 test('isPoolCapacityError covers internal empty-pool codes', () => {

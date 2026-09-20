@@ -225,7 +225,39 @@ test('cli-hop disabled keeps caller conversation breakpoints except last user', 
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('unofficial cli-hop rewrite keeps penultimate user after dropping last', () => {
+test('cli-hop rewrite wins over routing fill when inbound already stamped last user', () => {
+  const body = prepareCliHopBody(
+    {
+      model: 'claude-sonnet-5',
+      max_tokens: 256,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'u1' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
+        { role: 'user', content: [{ type: 'text', text: 'u2' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'u3', cache_control: { type: 'ephemeral', ttl: '5m' } }],
+        },
+      ],
+    },
+    {
+      cacheTtl: '1h',
+      cacheBreakpoints: {
+        enabled: true,
+        preserve_client: true,
+        system_tail: true,
+        tools_tail: true,
+        messages: 'fill',
+      },
+    },
+  )
+  assert.equal(body.messages[0].content[0].cache_control, undefined)
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(body.messages[4].content[0].cache_control, undefined)
+})
+
+test('cli-hop rewrite keeps 5m leftover so wrap tools 5m cannot 400', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -238,11 +270,88 @@ test('unofficial cli-hop rewrite keeps penultimate user after dropping last', ()
         { role: 'user', content: 'u3' },
       ],
     },
+    { cacheTtl: '1h' },
+  )
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(body.messages[4].content[0].cache_control, undefined)
+})
+
+test('cli-hop rewrite keeps sub2api penultimate user after dropping CLI last-user stamp', () => {
+  const body = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'u1' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
+      { role: 'user', content: [{ type: 'text', text: 'u2', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+    ],
+  })
+  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(body.messages[2].content[0].cache_control, undefined)
+  assert.equal(body.messages[3].content[0].cache_control, undefined)
+})
+
+test('unofficial cli-hop rewrite matches official penultimate-user leftover', () => {
+  const inbound = {
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u3' },
+    ],
+  }
+  const unofficial = prepareCliHopBody(inbound, { unofficial: true, cacheTtl: '1h' })
+  const official = prepareCliHopBody(structuredClone(inbound), { unofficial: false, cacheTtl: '1h' })
+  assert.equal(unofficial.messages[0].content[0].cache_control, undefined)
+  assert.deepEqual(unofficial.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(unofficial.messages[4].content[0].cache_control, undefined)
+  assert.deepEqual(
+    unofficial.messages.map((message) => message.content?.[0]?.cache_control),
+    official.messages.map((message) => message.content?.[0]?.cache_control),
+  )
+})
+
+test('unofficial cli-hop rewrite leaves leftover mid-system unmarked', () => {
+  const leftover = {
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    system: [{ type: 'text', text: 'persona system prefix' }],
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'caller leftover after first user' },
+    ],
+  }
+  const firstTurn = prepareCliHopBody(leftover, { unofficial: true, cacheTtl: '1h' })
+  assert.equal(firstTurn.messages.length, 2)
+  assert.equal(firstTurn.messages[0].role, 'user')
+  assert.equal(firstTurn.messages[1].role, 'system')
+  assert.equal(firstTurn.messages[1].content[0].text, 'caller leftover after first user')
+  assert.equal(firstTurn.messages[0].content[0].cache_control, undefined)
+  assert.equal(firstTurn.messages[1].content[0].cache_control, undefined)
+  assert.equal(firstTurn.system[0].cache_control, undefined)
+
+  const later = prepareCliHopBody(
+    {
+      ...leftover,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'system', content: 'caller leftover after first user' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+      ],
+    },
     { unofficial: true, cacheTtl: '1h' },
   )
-  assert.equal(body.messages[0].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.equal(body.messages[4].content[0].cache_control, undefined)
+  assert.equal(later.messages[1].role, 'system')
+  assert.equal(later.messages.at(-1).role, 'user')
+  assert.deepEqual(later.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(later.messages[1].content[0].cache_control, undefined)
+  assert.equal(later.messages.at(-1).content[0].cache_control, undefined)
+  assert.equal(later.system[0].cache_control, undefined)
 })
 
 test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {

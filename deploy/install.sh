@@ -32,7 +32,7 @@ DEFAULT_PORT="${PORT:-8787}"
 TARGET_VERSION=""
 ASSUME_YES=0
 NO_START=0
-SYNC_WRAP=0
+SYNC_WRAP=1
 DEFAULT_ADMIN_USER="admin"
 DEFAULT_ADMIN_PASSWORD="123456"
 WROTE_DEFAULT_PASSWORD=0
@@ -70,7 +70,7 @@ usage() {
   --dir PATH           安装目录（默认 ${INSTALL_DIR}）
   --yes                非交互
   --no-start           只拉代码，不 compose up
-  --sync-wrap          升级后若 changelog 提到 wrap-cli/sync 则自动同步槽内 CLI
+  --no-sync-wrap       升级后不自动替换并重启槽内 CLI / kernel
   -h, --help           帮助
 EOF
 }
@@ -202,12 +202,6 @@ if shown == 0:
 PY
 }
 
-needs_wrap_sync() {
-  local file="$1"
-  local from_ver="$2"
-  local to_ver="$3"
-  print_changelog_slice "$file" "$from_ver" "$to_ver" | grep -q 'wrap-cli/sync'
-}
 
 gen_secret() {
   if command -v openssl >/dev/null 2>&1; then
@@ -364,21 +358,29 @@ read_env_key() {
 }
 
 sync_wrap_cli() {
-  local key port
+  local key port response
   key="$(read_env_key VM2API_API_KEY)"
   port="$(read_env_key PORT)"
   port="${port:-$DEFAULT_PORT}"
   if [ -z "$key" ]; then
     warn "没有 VM2API_API_KEY，跳过 wrap-cli/sync。可稍后："
     echo "  curl -sS -X POST http://127.0.0.1:${port}/api/panel/wrap-cli/sync -H \"Authorization: Bearer \$VM2API_API_KEY\" -H 'Content-Type: application/json' -d '{\"restart\":true}'"
-    return 0
+    return 1
   fi
   info "同步槽内 wrap CLI / kernel"
-  curl -fsS -X POST "http://127.0.0.1:${port}/api/panel/wrap-cli/sync" \
+  response="$(curl -fsS -X POST "http://127.0.0.1:${port}/api/panel/wrap-cli/sync" \
     -H "Authorization: Bearer ${key}" \
     -H "Content-Type: application/json" \
-    -d '{"restart":true}' >/dev/null
-  ok "wrap-cli/sync 已提交"
+    -d '{"restart":true}')" || return 1
+  printf '%s' "$response" | python3 -c 'import json, sys
+d = json.load(sys.stdin)
+r = d.get("data") or {}
+failed = int(r.get("failed_count") or 0)
+total = int(r.get("total") or 0)
+ok = int(r.get("ok_count") or 0)
+print(f"wrap-cli/sync: {ok}/{total}, failed={failed}")
+raise SystemExit(0 if d.get("ok") and failed == 0 else 1)'
+  ok "槽内 wrap CLI / kernel 已同步"
 }
 
 checkout_tag() {
@@ -434,9 +436,10 @@ start_stack() {
   fi
   cd "${INSTALL_DIR}"
   info "docker compose up -d --build（只重建控制面，不 docker rm 槽）"
-  local log
+  local log auto_sync_wrap
   log="$(mktemp)"
-  if compose up -d --build >"$log" 2>&1; then
+  auto_sync_wrap="${KIN_AUTO_SYNC_WRAP:-0}"
+  if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d --build >"$log" 2>&1; then
     cat "$log"
     rm -f "$log"
     wait_health || true
@@ -446,7 +449,7 @@ start_stack() {
   if grep -qE 'CHANGELOG\.md|"/CHANGELOG\.md": not found' "$log"; then
     warn "compose 因 CHANGELOG.md 失败，补 .dockerignore 后重试一次"
     ensure_build_context
-    if compose up -d --build; then
+    if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d --build; then
       rm -f "$log"
       wait_health || true
       return
@@ -481,6 +484,9 @@ cmd_install() {
   ensure_env
   start_stack
   ok "安装完成  ${INSTALL_DIR}  @ $(local_version)"
+  if [ "$NO_START" = 0 ] && [ "$SYNC_WRAP" = 1 ]; then
+    sync_wrap_cli || warn "wrap-cli/sync 失败，可稍后在面板重试"
+  fi
   print_login_banner
   info "以后更新: curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash -s -- upgrade"
 }
@@ -498,10 +504,6 @@ cmd_upgrade() {
   tag="${TARGET_VERSION:-$(latest_release_tag)}"
   tag="$(normalize_tag "$tag")"
   info "当前 ${current}  →  目标 ${tag}"
-  if [ "v${current}" = "$tag" ] && [ "$ASSUME_YES" = 1 ]; then
-    ok "已经是 ${tag}"
-    return
-  fi
   if [ "v${current}" = "$tag" ]; then
     ok "已经是 ${tag}，仍会重建控制面镜像以对齐仓内文件"
   fi
@@ -518,14 +520,12 @@ cmd_upgrade() {
     echo ""
   fi
   start_stack
-  if needs_wrap_sync "${INSTALL_DIR}/CHANGELOG.md" "$current" "$(version_of_tag "$tag")" || [ "$SYNC_WRAP" = 1 ]; then
-    if [ "$SYNC_WRAP" = 1 ] || [ "$ASSUME_YES" = 1 ]; then
-      sync_wrap_cli || warn "wrap-cli/sync 失败，可稍后在面板重试"
-    else
-      warn "此跨度需要槽内 wrap CLI / kernel 同步。加 --sync-wrap 或："
-      echo "  curl -sS -X POST http://127.0.0.1:${DEFAULT_PORT}/api/panel/wrap-cli/sync \\"
-      echo "    -H \"Authorization: Bearer \$VM2API_API_KEY\" -H 'Content-Type: application/json' -d '{\"restart\":true}'"
-    fi
+  if [ "$NO_START" = 0 ] && [ "$SYNC_WRAP" = 1 ]; then
+    sync_wrap_cli || warn "wrap-cli/sync 失败，可稍后在面板重试"
+  elif [ "$NO_START" = 1 ]; then
+    warn "--no-start：控制面未启动，已跳过槽内 CLI / kernel 同步"
+  else
+    warn "--no-sync-wrap：已跳过槽内 CLI / kernel 同步"
   fi
   ok "已更新到 $(local_version)"
   print_login_banner
@@ -632,6 +632,10 @@ while [ $# -gt 0 ]; do
       ;;
     --sync-wrap)
       SYNC_WRAP=1
+      shift
+      ;;
+    --no-sync-wrap)
+      SYNC_WRAP=0
       shift
       ;;
     -h|--help)

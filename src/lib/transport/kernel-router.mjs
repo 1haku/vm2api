@@ -122,6 +122,22 @@ export function resolveHopEngine(_vm, _routing = {}, { rustReady = null, binPath
   return { engine: 'rust', wanted, reason: 'configured_rust', fallback: false }
 }
 
+function isDeadWrapHop(result) {
+  if (!result) return false
+  if (result.terminalState === 'incomplete') return true
+  if (result.transportError) return true
+  const msg = String(result?.body?.error?.message || '')
+  return /connection error/i.test(msg)
+}
+
+/** Incomplete / Connection error leaves kernel slots occupied. Bounce only when no sibling hop. */
+function recycleLeakedWrap(exec, recycleWrap) {
+  clearRustHealthCache(cacheKey(exec))
+  if (wrapHopInflight(exec) > 0) return
+  const recycle = recycleWrap || scheduleWrapRecycle
+  recycle(exec)
+}
+
 function rustUnavailableResult(ready) {
   const slotBusy = ready?.reason === 'slot_busy'
   return {
@@ -255,8 +271,9 @@ async function runHop({ mode, opts }) {
   }
   const send = mode === 'stream' ? streamRustKernel : callRustKernel
   beginWrapHop(opts.exec)
+  let result
   try {
-    let result = await send(opts)
+    result = await send(opts)
     noteWrapHop(opts.exec)
     if (result.transportError === true && result.committed !== true) {
       result = await send(opts)
@@ -276,9 +293,6 @@ async function runHop({ mode, opts }) {
         noteWrapHop(opts.exec)
       }
     }
-    if (result.terminalState === 'incomplete' || (result.committed && result.transportError)) {
-      clearRustHealthCache(cacheKey(opts.exec))
-    }
     return {
       ...result,
       engine,
@@ -287,6 +301,7 @@ async function runHop({ mode, opts }) {
     }
   } finally {
     endWrapHop(opts.exec)
+    if (isDeadWrapHop(result)) recycleLeakedWrap(opts.exec, opts.recycleWrap)
   }
 }
 

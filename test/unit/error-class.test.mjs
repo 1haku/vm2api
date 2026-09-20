@@ -47,6 +47,8 @@ test('classifyRequestError maps known codes and statuses', () => {
     'credential',
   )
   assert.equal(classifyRequestError({ status: 504, error_code: 'upstream_timeout' }).error_class, 'timeout')
+  assert.equal(classifyRequestError({ status: 503, error_code: 'slot_busy' }).error_class, 'overloaded')
+  assert.equal(classifyRequestError({ status: 503, error_code: 'wrap_connection_error' }).error_class, 'other')
   assert.equal(classifyRequestError({ status: 403, error_message: 'Just a moment Cloudflare' }).error_class, 'proxy')
   assert.equal(
     classifyRequestError({

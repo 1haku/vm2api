@@ -279,6 +279,10 @@ function extractError(result, { wrapHop = true } = {}) {
     /rust_unavailable|bin_missing|kernel_binary|kernel_start_failed|kernel_health|kernel\.sock/i.test(blob)
   ) {
     message = 'wrap cli-hop 未就绪，未回退 Go HTTP（避免 OAuth extra usage）。'
+  } else if (wrapHop && /no free slot|slot_busy/i.test(blob)) {
+    message = 'VM 内核槽已占满（不是 Anthropic 上游）。连续 session 半截后槽没释放。'
+  } else if (wrapHop && /provider error:.*connection error/i.test(blob)) {
+    message = 'VM wrap CLI 连接失败（不是 Anthropic 上游）。已回收槽内 kernel 并应同号重试。'
   } else if (
     result?.status === 429 &&
     (message === 'Error' || /rate_limit/i.test(message) || message === 'upstream error')
@@ -287,9 +291,27 @@ function extractError(result, { wrapHop = true } = {}) {
       ? '上游 429 rate_limit（OAuth extra usage / 模型额度）。rust 槽测试应走 cli-hop，不应回退 Go HTTP。'
       : '上游 429 rate_limit。'
   }
+  const slotBusy = /no free slot|slot_busy/i.test(blob)
+  const wrapConn = /provider error:.*connection error|wrap_connection_error/i.test(blob)
   const out = {
-    type: err.type || (result?.status === 429 ? 'rate_limit_error' : 'upstream_error'),
-    code: err.code || (result?.status === 429 ? 'upstream_rate_limit' : 'upstream_error'),
+    type:
+      err.type ||
+      (result?.status === 429
+        ? 'rate_limit_error'
+        : slotBusy
+          ? 'overloaded_error'
+          : wrapConn
+            ? 'api_error'
+            : 'upstream_error'),
+    code:
+      err.code ||
+      (result?.status === 429
+        ? 'upstream_rate_limit'
+        : slotBusy
+          ? 'slot_busy'
+          : wrapConn
+            ? 'wrap_connection_error'
+            : 'upstream_error'),
     message,
   }
   if (retry) out.retry_after = retry

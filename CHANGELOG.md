@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+## 1.2.22 — 2026-09-20
+
+修复 Anthropic 工具循环缓存命中固定在约 53.2K，并让一键更新与 Docker 更新自动替换槽内 kernel。
+
+- Node 重写稳定的上一轮 user 断点，并移除当前尾部断点；槽内 kernel 只补当前尾部，不再清除历史 marker
+- cli-hop 断点统一为 5m，避免 wrap/kernel 的 5m marker 后出现 1h 而被 Anthropic 拒绝
+- `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 同步更新；一键更新默认调用 `wrap-cli/sync`，Docker 更新检测发行 kernel 变化后自动同步所有槽
+- 槽同步按文件内容判断，不会因二进制大小相同或旧文件 mtime 更新而跳过；替换和重启 dataplane 均不 `docker rm` 槽
+
+已部署机升级：使用一键更新即可同时更新控制面、模板与槽内 kernel。实测工具循环 `cache_read` 为 `12532 → 14584 → 16636`，不再固定。
+
+## 1.2.21 — 2026-09-20
+
+57K 掉回 53K 不是 TTL。线上所有 `kernel.json` 都是 `system_layout=zero`，wrap 只打 persona，不重打 last+prev user；Node rewrite 的 message 断点到不了 Anthropic。不必 overlay 整份 routing，也不必 `wrap-cli/sync`。
+
+- `resolveCliSystemLayout` 跟 `persona_preset`（`official_full` → identity），不再在缺 routing 时静默写成 zero
+- 已有槽位 `kernel.json` 改成 identity 后 `docker restart`（不是 `docker rm`）
+- 线上 `cache_ttl` 从误写的 `5m` 改回 `1h`
+
+已部署机升级：覆盖 `src/lib/vm/slot-engine.mjs`，改 `kernel.json` + `routing.json` 的 `cache_ttl`，重启槽容器和 Node 各一次。
+
+## 1.2.20 — 2026-09-20
+
+cli-hop 不再吃 routing 的 `messages=fill`。1.2.19 常量改回 rewrite，但 hop 仍传入线上 fill；入站已有 last-user 标记时 fill 空转，再 drop last 就只剩 ~53k persona。不必换槽内 kernel。
+
+- `prepareCliHopBody` 强制 `messages: rewrite`，并继续关掉 system/tools tail
+- 多轮 leftover 是上一条 user，`cache_read` 应随对话增长
+- 不要 overlay `routing.json`
+
+已部署机升级：只覆盖 `src/lib/protocol/outbound-attempt.mjs` 并重启 Node 一次。不必 `wrap-cli/sync`。
+
+## 1.2.19 — 2026-09-20
+
+cli-hop 断点回到 1.2.0 rewrite。线上 kernel 是 `system_layout=zero`，不会重打 messages，剥光后 cache_read 就钉在 ~53.2k persona 前缀。不必换槽内 kernel。
+
+- Node 重打最后一条 + 上一条 user，再去掉最后一条 stamp，留给 wrap 打当前 last user
+- leftover `role:system` 仍不打断点；tools / system tail 仍关
+- 官方和第三方同一套 stamp，conversation 增长后 cache_read 应超过 53.2k
+
+已部署机升级：只覆盖 `src/lib/protocol/outbound-attempt.mjs` 并重启 Node 一次。不要 overlay `routing.json`。不必 `wrap-cli/sync`。
+
+## 1.2.18 — 2026-09-20
+
+连续 session 的 `provider error: Connection error` 是 wrap CLI 本地断流，不是 Anthropic。`message_start` 曾被当成已提交，导致不重试；1.2.17 回收又被 inflight 挡住。不必换槽内 kernel。
+
+- 下游提交改到可见输出或 `message_stop`；只有 `message_start` 的 Connection error 不写给客户端
+- 同号重试一次，并 **强制** `docker restart` 回收 wrap（不再被 busy/inflight 短路）
+- 客户端代码是 `wrap_connection_error`，不是 `upstream_error`
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。
+
+## 1.2.17 — 2026-09-20
+
+连续 session 半截后 kernel 槽不释放，下一跳空等 30s 再报 `no free slot`，面板还写成上游错误。不必换槽内 kernel。
+
+- 半截 / Connection error 且没有并列 hop 时回收 wrap（pid1 走 `docker restart`，不是 `docker rm`）
+- `slot_busy` 对客户端是 `overloaded_error`，不是 `upstream_error`
+- 面板测试文案标明这是 VM 内核槽占满
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。
+
+## 1.2.16 — 2026-09-20
+
+蒸馏针名单回到 1.2.1。今天加的信封收割句是误拦根因。不必换槽内 kernel。
+
+- 去掉 `Persistable response items` / `Memory-stage-one extractor` / `MUST extract` / `MUST distill`，也不再扫 messages 里的 system/developer
+- 指纹、`<think>`、contest+harvest 与 1.2.1 相同
+- 信封流量仍按 API key 粘 `k{id}:envelope`，避免 403 重试把同一会话拆到多个号
+
+已部署机升级：只更新控制面并重启一次。必须覆盖 `src/config/distill-rules.json`。不必 `wrap-cli/sync`。
+
+## 1.2.15 — 2026-09-20
+
+信封流量不再误拦蒸馏，同一 API key 信封会话粘到一个账号。不必换槽内 kernel。
+
+- `Persistable response items` 只当运输包装，不再单独 `distill_blocked`；收割句、其它 needle、指纹、contest+harvest 仍拦
+- conversation 模式下信封请求绑 `k{apiKeyId}:envelope`，忽略每跳不同的 `thread_id` / first-user hash
+- `ip` / `session` 模式不改；无信封流量仍走 header / metadata / first-user hash
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1215)
+
+## 1.2.14 — 2026-09-20
+
+第三方 cli-hop 改回 1.2.1 剥光，让 cache_read 随对话增长。不必换槽内 kernel。
+
+- 保留 1.2.12 的 convert 块形状对齐（chat / Messages / responses 升块并保留 `cache_control`）
+- unofficial hop 不再 Node rewrite last+prev；官方和第三方都剥光，由 kernel 重打最后一块 + 上一条 user
+- 避免 leftover `role:system` 被打上断点，把 `cache_read` 钉在 ~53k persona 前缀
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1214)
+
 ## 1.2.13 — 2026-09-20
 
 修正 Compose 镜像名。不必换槽内 kernel。

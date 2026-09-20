@@ -71,14 +71,17 @@ export function stripCliOwnedSystem(system) {
   return kept.length ? kept : undefined
 }
 
-/** Wrap CLI already stamps tools + system. Extra tails overflow the 4-breakpoint cap. */
+/** Wrap CLI owns tools + system + current tail; Node owns the stable previous-user boundary. */
 export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   enabled: true,
   preserve_client: true,
   system_tail: false,
   tools_tail: false,
-  messages: 'cli-hop',
+  messages: 'rewrite',
 })
+
+/** Wrap CLI and kernel emit ttl-less ephemeral markers, which Anthropic treats as 5m. */
+export const CLI_HOP_CACHE_TTL = '5m'
 
 function dropNodeCacheControl(node) {
   if (!node || typeof node !== 'object' || !node.cache_control) return node
@@ -93,19 +96,12 @@ function dropCliOwnedBreakpoints(body) {
   return out
 }
 
-function dropLastUserBreakpoint(body) {
+/** Kernel restamps the current tail, so keep only Node's stable previous-user marker. */
+function dropLastMessageBreakpoint(body) {
   const messages = body?.messages
   if (!Array.isArray(messages) || messages.length === 0) return body
-  let idx = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === 'user') {
-      idx = i
-      break
-    }
-  }
-  if (idx < 0) return body
+  const idx = messages.length - 1
   const last = messages[idx]
-  if (typeof last?.content === 'string') return body
   if (!last || !Array.isArray(last.content)) return body
   const content = last.content.map(dropNodeCacheControl)
   const next = messages.slice()
@@ -122,7 +118,7 @@ export function prepareCliHopBody(
     cacheTtl = null,
     cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
     cacheControlLimit = 4,
-    unofficial = false,
+    unofficial: _unofficial = false,
   } = {},
 ) {
   let body = officialMessagesBody(canonicalBody, { stream })
@@ -140,25 +136,27 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
-  if (cacheTtl) body = applyCacheTtlToBody(body, cacheTtl)
-  const cfg = normalizeCacheBreakpoints(cacheBreakpoints)
-  // Official CC: peel all message markers so kernel restamps Claude Code style.
-  // Third-party leftover after convert must keep rewrite last+prev or the
-  // hang points diverge by inbound protocol and cache_read freezes on system.
-  const messagesMode = !cfg.enabled ? 'off' : unofficial ? 'rewrite' : 'cli-hop'
-  body = applyCacheBreakpoints(body, {
-    ttl: cacheTtl || undefined,
-    config: {
-      enabled: cfg.enabled,
-      preserve_client: cfg.preserve_client,
-      system_tail: false,
-      tools_tail: false,
-      messages: messagesMode,
-    },
-    inbound: body,
-  })
+  if (cacheTtl) body = applyCacheTtlToBody(body, CLI_HOP_CACHE_TTL)
+  // 1.2.0 contract: Node rewrites last + penultimate user, then removes the
+  // current tail so the kernel can restamp it after transport conversion.
+  // Force 5m because wrap-owned earlier markers are ttl-less (=5m); a later
+  // 1h message marker is rejected by Anthropic's TTL ordering rule.
+  if (cacheBreakpoints) {
+    const cfg = normalizeCacheBreakpoints(cacheBreakpoints)
+    body = applyCacheBreakpoints(body, {
+      ttl: CLI_HOP_CACHE_TTL,
+      config: {
+        enabled: cfg.enabled,
+        preserve_client: cfg.preserve_client,
+        system_tail: false,
+        tools_tail: false,
+        messages: cfg.enabled ? 'rewrite' : 'off',
+      },
+      inbound: body,
+    })
+  }
   body = dropCliOwnedBreakpoints(body)
-  body = dropLastUserBreakpoint(body)
+  body = dropLastMessageBreakpoint(body)
   body = enforceCacheTtlOrder(body)
   enforceCacheLimit(body, cacheControlLimit)
   return body
