@@ -239,31 +239,42 @@ export class PoolScheduler {
       const available = candidates.filter((candidate) => this.isReservable(candidate))
       let selected = this.pick(available, { model, stickyKey, eligible: candidates })
       if (this.lastStickyCleared) stickyCleared = true
-      let reserveMissed = false
+      const reserveMisses = []
+      const attempted = new Set()
       while (selected) {
         const reservation = this.reserve(selected, { sessionKey: stickyKey, skipQuota: pinned })
         if (reservation) return finishReserve(selected, reservation)
-        // checkEligibility and reserve can disagree (pin skips the quota gate).
-        // Try other idle candidates this turn before waiting.
-        reserveMissed = true
-        if (selected.accountId) blocked.add(selected.accountId)
-        if (selected.vmId) blocked.add(selected.vmId)
+        // Eligibility is a snapshot. A failed atomic reservation means this
+        // account became busy; try every other idle candidate, then queue on
+        // the raced accounts instead of excluding them for the whole request.
+        reserveMisses.push({ ...selected, busy: true, waitReason: 'concurrency_limit' })
+        attempted.add(selected.accountId)
         const remaining = available.filter(
           (candidate) =>
-            candidate.accountId !== selected.accountId &&
-            !blocked.has(candidate.accountId) &&
-            !blocked.has(candidate.vmId),
+            !attempted.has(candidate.accountId) && !blocked.has(candidate.accountId) && !blocked.has(candidate.vmId),
         )
         if (!remaining.length) break
         selected = this.pick(remaining, { model, stickyKey: null, eligible: candidates })
       }
-      if (reserveMissed) continue
-      if (candidates.length === 0) {
-        return fail(isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts', candidates, available)
+      const effectiveCandidates = reserveMisses.length
+        ? candidates.map((candidate) => {
+            const missed = reserveMisses.find((item) => item.accountId === candidate.accountId)
+            return missed || candidate
+          })
+        : candidates
+      const effectiveAvailable = reserveMisses.length
+        ? available.filter((candidate) => !attempted.has(candidate.accountId))
+        : available
+      const waitCandidates = reserveMisses.length ? effectiveCandidates : candidates
+      const waitAvailable = reserveMisses.length ? effectiveAvailable : available
+      if (waitCandidates.length === 0) {
+        return fail(isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts', waitCandidates, waitAvailable)
       }
-      const waitPool = candidates.filter((candidate) => !isUnboundAuthCooldown(candidate, boundBefore, stickyCleared))
+      const waitPool = waitCandidates.filter(
+        (candidate) => !isUnboundAuthCooldown(candidate, boundBefore, stickyCleared),
+      )
       if (!allowWait || Date.now() >= loopDeadline) {
-        return fail('all_accounts_busy', candidates, available, waitPool)
+        return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
       }
       const now = Date.now()
       const wakeAts = waitPool.map((candidate) => Number(candidate.availableAt) || 0).filter((value) => value > now)
@@ -276,10 +287,10 @@ export class PoolScheduler {
       })
       const waitDeadline = waitPlan?.deadline || loopDeadline
       if (wakeAts.length && Math.min(...wakeAts) >= waitDeadline && !concurrencyWait) {
-        return fail('all_accounts_busy', candidates, available, waitPool)
+        return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
       }
       if (!waitPlan || waitPlan.timeoutMs <= 0) {
-        return fail('all_accounts_busy', candidates, available, waitPool)
+        return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
       }
       if (waitPlan.queueFull) {
         throw Object.assign(new Error('Account pool wait queue is full'), { code: 'pool_wait_queue_full' })
@@ -302,7 +313,9 @@ export class PoolScheduler {
       }
       // Notify continues the loop. availableAt-sliced timers also recheck.
       // Only a wait-plan / failover deadline timeout is all_accounts_busy.
-      if (!woken && sliceDeadline >= waitCap) return fail('all_accounts_busy', candidates, available, waitPool)
+      if (!woken && sliceDeadline >= waitCap) {
+        return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
+      }
     }
   }
 
@@ -436,8 +449,10 @@ export class PoolScheduler {
           policy,
           sessionKey,
           sessionLimit: this.accountQuota?.sessions,
-          cooldownUntil: state?.cooldown_until || vm.claude?.temp_unschedulable_until || vm.temp_unschedulable_until || null,
-          cooldownReason: state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason || null,
+          cooldownUntil:
+            state?.cooldown_until || vm.claude?.temp_unschedulable_until || vm.temp_unschedulable_until || null,
+          cooldownReason:
+            state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason || null,
           now,
         })
         if (!ev.accept) {
@@ -691,9 +706,9 @@ export class PoolScheduler {
     if (pool.length === 1) return { ...pool[0], selectionReason: 'priority-load' }
 
     const strategy = String(this.config.strategy || 'weighted-round-robin')
-    if (strategy === 'fill-first') {
+    if (strategy === 'lru' || strategy === 'fill-first') {
       pool.sort((left, right) => left.lastUsedAt - right.lastUsedAt || left.accountId.localeCompare(right.accountId))
-      return { ...pool[0], selectionReason: 'fill-first' }
+      return { ...pool[0], selectionReason: strategy }
     }
     if (strategy === 'round-robin') {
       const key = `rr:${normalizeModel(model)}`
@@ -981,7 +996,8 @@ export class PoolScheduler {
     const waitable = candidates.filter((candidate) => candidate.busy && !this.isReservable(candidate))
     const peek = this.peekRank(waitable)
     const ranked = [...waitable].sort(
-      (left, right) => left.lastUsedAt - right.lastUsedAt || String(left.accountId).localeCompare(String(right.accountId)),
+      (left, right) =>
+        left.lastUsedAt - right.lastUsedAt || String(left.accountId).localeCompare(String(right.accountId)),
     )
     const order = peek ? [peek, ...ranked.filter((candidate) => candidate.accountId !== peek.accountId)] : ranked
     for (const candidate of order) {

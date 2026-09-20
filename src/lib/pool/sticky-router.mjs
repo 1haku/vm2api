@@ -155,25 +155,31 @@ export class StickyRouter {
     return this.isolateKey(`dev:${device}`, req)
   }
 
-  /** Prefer persistable-envelope API-key pin, then device family, then per-hop session. */
-  extractPoolKey(req, body = {}) {
-    if (!this.config.enabled) return null
+  /** Ordered aliases for one logical conversation across protocol adapters. */
+  collectPoolKeys(req, body = {}) {
+    if (!this.config.enabled) return []
+    const keys = []
+    const add = (key) => {
+      if (key && !keys.includes(key)) keys.push(key)
+    }
     const mode = this.config.mode || 'conversation'
     if (mode === 'conversation' && isPersistableEnvelope(body)) {
       const id = req?.apiKeyRecord?.id
-      if (id != null && id !== '') return `k${id}:envelope`
+      if (id != null && id !== '') add(`k${id}:envelope`)
     }
-    return this.extractOfficialFamilyKey(req, body) || this.extractKey(req, body)
+    add(this.extractOfficialFamilyKey(req, body))
+    if (mode === 'conversation') {
+      const fingerprint = firstUserFingerprint(body)
+      if (fingerprint) add(this.isolateKey(`ch:${fingerprint}`, req))
+    }
+    add(this.extractKey(req, body))
+    return keys
   }
 
-  /** All keys that should bind to the selected account for this request. */
-  collectPoolKeys(req, body = {}) {
-    const keys = []
-    const family = this.extractOfficialFamilyKey(req, body)
-    const session = this.extractKey(req, body)
-    if (family) keys.push(family)
-    if (session && session !== family) keys.push(session)
-    return keys
+  /** Prefer an already-bound alias, then the strongest available identity. */
+  extractPoolKey(req, body = {}) {
+    const keys = this.collectPoolKeys(req, body)
+    return keys.find((key) => this.resolve(key)) || keys[0] || null
   }
 
   /** @returns {{ accountId: string, vmId: string } | null } */

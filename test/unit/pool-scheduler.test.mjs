@@ -93,8 +93,7 @@ function scheduler(root, extras = {}) {
     runtimeRepo: extras.runtimeRepo || new RuntimeRepo(),
     stickyRouter: extras.stickyRouter || null,
     accountQuota: extras.accountQuota || { canAccept: () => ({ ok: true }) },
-    workerHealth:
-      extras.workerHealth || (async () => ({ ok: true, credential: { generation: 1, has_access: true } })),
+    workerHealth: extras.workerHealth || (async () => ({ ok: true, credential: { generation: 1, has_access: true } })),
     config: { fallback_wait_timeout_ms: 5, sticky_wait_timeout_ms: 5 },
   })
 }
@@ -208,6 +207,20 @@ test('weighted round robin distributes equal-load candidates', async (t) => {
     selected.release()
   }
   assert.deepEqual(counts, { 'account-1': 5, 'account-2': 5 })
+})
+
+test('lru strategy selects the least recently used candidate', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const pool = scheduler(root)
+  pool.reloadConfig({ strategy: 'lru', fallback_wait_timeout_ms: 5, sticky_wait_timeout_ms: 5 })
+  pool.lastUsed.set('account-1', 200)
+  pool.lastUsed.set('account-2', 100)
+
+  const selected = await pool.selectAndReserve({ model: 'claude-test', allowWait: false })
+  assert.equal(selected.accountId, 'account-2')
+  assert.equal(selected.selectionReason, 'lru')
+  selected.release()
 })
 
 test('adaptive reset level and manual level order ordinary candidates', async (t) => {
@@ -978,21 +991,31 @@ test('pinVmId skips quota tryAcquire and does not tight-loop', async (t) => {
   picked.release()
 })
 
-test('reserve miss excludes the account instead of spinning', async (t) => {
+test('reserve miss waits on the raced account before retrying', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  let tries = 0
   const pool = scheduler(root, {
     accountQuota: {
       canAccept: () => ({ ok: true }),
-      tryAcquire: () => ({ ok: false, reason: 'quota_5h_safety' }),
+      tryAcquire: () => (++tries <= 2 ? { ok: false, reason: 'concurrency_limit' } : { ok: true }),
+      release: () => {},
     },
+    config: { fallback_wait_timeout_ms: 200 },
   })
-  const picked = await Promise.race([
-    pool.selectAndReserve({ model: 'claude-test', allowWait: false }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('reserve-miss tight-loop')), 200)),
-  ])
-  assert.equal(picked.ok, false)
-  assert.equal(picked.reason, 'no_eligible_accounts')
+  const pending = pool.selectAndReserve({ model: 'claude-test' })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const waiting = pool.waiterSnapshot()
+  assert.equal(waiting.total, 1)
+  assert.equal(
+    Object.values(waiting).some((count) => count === 1),
+    true,
+  )
+  pool.notifyCapacity()
+  const picked = await pending
+  assert.equal(picked.ok, true)
+  assert.equal(tries, 3)
+  picked.release()
 })
 
 test('pinVmId can test a slot parked with leftover oauth_no_refresh', async (t) => {

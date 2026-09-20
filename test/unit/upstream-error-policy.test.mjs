@@ -319,6 +319,34 @@ test('text plus end_turn is success even without ok flag', () => {
   assert.equal(policy.action, 'complete')
 })
 
+test('verified text without stop_reason retries instead of succeeding', () => {
+  const policy = classifyUpstreamResult({
+    ok: true,
+    status: 200,
+    terminalState: 'verified',
+    committed: false,
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial' }],
+    },
+  })
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'incomplete_assistant')
+})
+
+test('non-assistant ok envelope is not classified as success', () => {
+  const policy = classifyUpstreamResult({
+    ok: true,
+    status: 200,
+    terminalState: 'verified',
+    committed: false,
+    body: { output_text: 'assembled text', error: { message: 'original upstream failure' } },
+  })
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'incomplete_assistant')
+})
+
 test('200 refusal with empty visible output is content_filter, not success', () => {
   const policy = classifyUpstreamResult({
     ok: true,

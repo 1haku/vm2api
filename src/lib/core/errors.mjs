@@ -201,11 +201,10 @@ export function isIncompleteAssistantMessage(result = {}) {
 }
 
 export function finalizeAssembledAssistantHop(result = {}) {
-  if (isIncompleteAssistantMessage(result)) {
+  if (isCompleteAssistantMessage(result)) return result?.ok ? result : { ...result, ok: true }
+  if (isIncompleteAssistantMessage(result) || result?.ok) {
     return { ...result, ok: false, committed: false, terminalState: 'incomplete' }
   }
-  if (result?.ok) return result
-  if (isCompleteAssistantMessage(result)) return { ...result, ok: true }
   return result
 }
 

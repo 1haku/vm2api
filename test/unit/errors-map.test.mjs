@@ -103,6 +103,30 @@ test('text plus stop_reason is a complete assistant hop', () => {
   assert.equal(finalizeAssembledAssistantHop(complete).ok, true)
 })
 
+test('ok text without stop_reason is finalized as incomplete', () => {
+  const finalized = finalizeAssembledAssistantHop({
+    ok: true,
+    terminalState: 'verified',
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial' }],
+    },
+  })
+  assert.equal(finalized.ok, false)
+  assert.equal(finalized.terminalState, 'incomplete')
+})
+
+test('ok non-assistant envelope is finalized as incomplete', () => {
+  const finalized = finalizeAssembledAssistantHop({
+    ok: true,
+    terminalState: 'verified',
+    body: { output_text: 'assembled over an error', error: { message: 'upstream failed' } },
+  })
+  assert.equal(finalized.ok, false)
+  assert.equal(finalized.terminalState, 'incomplete')
+})
+
 test('incomplete_response maps to HTTP 502', () => {
   const mapped = mapUpstreamError(502, {
     error: {

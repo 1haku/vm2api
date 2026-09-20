@@ -348,6 +348,12 @@ test('PUT routing accepts official_full and empty follow-preset templates', () =
   assert.ok(validatePersonaRoutingPatch({ compatibility: { persona_preset: 'official_prompt' } }).length > 0)
 })
 
+test('PUT routing accepts only 5m and 1h cache TTL values', () => {
+  assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '5m' } }), [])
+  assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '1h' } }), [])
+  assert.match(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '60m' } })[0], /5m \/ 1h/)
+})
+
 test('legacy routing without persona_preset keeps the old rewrite path', () => {
   withRoutingFile({ persona_inject: 'rewrite', persona_park: false }, (file) => {
     const out = applyCrsUnofficialPersona(

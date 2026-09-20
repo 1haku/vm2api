@@ -22,6 +22,7 @@ import {
   beginWrapHop,
   endWrapHop,
   wrapHopInflight,
+  deferWrapRecycle,
   credentialsNewerThanKernel,
 } from './rust-kernel-supervisor.mjs'
 
@@ -130,11 +131,14 @@ function isDeadWrapHop(result) {
   return /connection error/i.test(msg)
 }
 
-/** Incomplete / Connection error leaves kernel slots occupied. Bounce only when no sibling hop. */
+/** Incomplete / Connection error leaves kernel slots occupied. Bounce after the last sibling hop. */
 function recycleLeakedWrap(exec, recycleWrap) {
   clearRustHealthCache(cacheKey(exec))
-  if (wrapHopInflight(exec) > 0) return
   const recycle = recycleWrap || scheduleWrapRecycle
+  if (wrapHopInflight(exec) > 0) {
+    deferWrapRecycle(exec, recycle)
+    return
+  }
   recycle(exec)
 }
 

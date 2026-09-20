@@ -290,12 +290,14 @@ const wrapRecycleAt = new Map()
 const wrapRecyclePending = new Map()
 const wrapLastHopAt = new Map()
 const wrapInflight = new Map()
+const wrapRecycleDeferred = new Map()
 
 export function resetWrapRecycleState() {
   wrapRecycleAt.clear()
   wrapRecyclePending.clear()
   wrapLastHopAt.clear()
   wrapInflight.clear()
+  wrapRecycleDeferred.clear()
 }
 
 function wrapVmId(exec) {
@@ -318,14 +320,31 @@ export function endWrapHop(exec, now = Date.now()) {
   const id = wrapVmId(exec)
   if (!id) return
   const n = (wrapInflight.get(id) || 1) - 1
-  if (n <= 0) wrapInflight.delete(id)
-  else wrapInflight.set(id, n)
+  if (n <= 0) {
+    wrapInflight.delete(id)
+    const deferred = wrapRecycleDeferred.get(id)
+    if (deferred) {
+      wrapRecycleDeferred.delete(id)
+      try {
+        deferred.recycle(deferred.exec)
+      } catch {}
+    }
+  } else {
+    wrapInflight.set(id, n)
+  }
   wrapLastHopAt.set(id, now)
 }
 
 export function wrapHopInflight(exec) {
   const id = wrapVmId(exec)
   return id ? wrapInflight.get(id) || 0 : 0
+}
+
+export function deferWrapRecycle(exec, recycle = scheduleWrapRecycle) {
+  const id = wrapVmId(exec)
+  if (!id) return { ok: false, skipped: true, reason: 'missing_vm' }
+  wrapRecycleDeferred.set(id, { exec, recycle })
+  return { ok: true, deferred: true }
 }
 
 export function wrapIdleMs(exec, now = Date.now()) {

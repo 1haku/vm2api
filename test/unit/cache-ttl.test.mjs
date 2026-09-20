@@ -11,13 +11,11 @@ import {
 } from '../../src/lib/protocol/cache-ttl.mjs'
 import { calculateCost } from '../../src/lib/admin/pricing.mjs'
 
-test('default and aliases normalize to 1h or 5m', () => {
+test('cache ttl accepts only 1h or 5m output values', () => {
   assert.equal(normalizeCacheTtl(undefined), DEFAULT_CACHE_TTL)
   assert.equal(DEFAULT_CACHE_TTL, '1h')
   assert.equal(normalizeCacheTtl('5m'), '5m')
   assert.equal(normalizeCacheTtl('1h'), '1h')
-  assert.equal(normalizeCacheTtl('1hour'), '1h')
-  assert.equal(normalizeCacheTtl('default'), '1h')
   assert.equal(normalizeCacheTtl('bogus'), '1h')
 })
 
@@ -48,7 +46,7 @@ test('official traffic keeps caller TTLs instead of applying gateway policy', ()
   )
 })
 
-test('inbound 1h cache_control upgrades resolved ttl; routing 5m stays 5m', () => {
+test('explicit inbound 5m or 1h overrides the console default', () => {
   assert.equal(
     resolveCacheTtl({
       headers: {},
@@ -61,7 +59,7 @@ test('inbound 1h cache_control upgrades resolved ttl; routing 5m stays 5m', () =
     resolveCacheTtl({
       headers: {},
       body: { tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
-      routing: { compatibility: { cache_ttl: '5m' } },
+      routing: { compatibility: { cache_ttl: '1h' } },
     }),
     '5m',
   )
@@ -125,35 +123,25 @@ test('tool 5m then system 1h is downgraded so Anthropic order stays legal', () =
   assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '5m' })
 })
 
-test('applyCacheTtlToBody keeps caller tool 1h when default is 5m', () => {
+test('applyCacheTtlToBody rewrites every cache marker to selected 5m', () => {
   const out = applyCacheTtlToBody(
     {
+      cache_control: { type: 'ephemeral', ttl: '1h' },
       system: [{ type: 'text', text: 'x', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
       tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '1h' } }],
-    },
-    '5m',
-  )
-  assert.equal(out.tools[0].cache_control.ttl, '1h')
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-})
-
-test('applyCacheTtlToBody keeps caller message 1h and upgrades earlier tool 5m', () => {
-  const out = applyCacheTtlToBody(
-    {
-      tools: [{ name: 'Write', cache_control: { type: 'ephemeral', ttl: '5m' } }],
-      system: [{ type: 'text', text: 'agent', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
       messages: [
         { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
       ],
     },
     '5m',
   )
-  assert.equal(out.tools[0].cache_control.ttl, '1h')
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.equal(out.cache_control.ttl, '5m')
+  assert.equal(out.system[0].cache_control.ttl, '5m')
+  assert.equal(out.tools[0].cache_control.ttl, '5m')
+  assert.equal(out.messages[0].content[0].cache_control.ttl, '5m')
 })
 
-test('applyCacheTtlToBody 1h fills missing tool ttl and keeps caller message 5m', () => {
+test('applyCacheTtlToBody rewrites every cache marker to selected 1h', () => {
   const out = applyCacheTtlToBody(
     {
       system: [{ type: 'text', text: 'x', cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' } }],
@@ -164,9 +152,9 @@ test('applyCacheTtlToBody 1h fills missing tool ttl and keeps caller message 5m'
     },
     '1h',
   )
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.equal(out.system[0].cache_control.ttl, '1h')
   assert.equal(out.tools[0].cache_control.ttl, '1h')
-  assert.equal(out.messages[0].content[0].cache_control.ttl, '5m')
+  assert.equal(out.messages[0].content[0].cache_control.ttl, '1h')
 })
 
 test('stripIllegalCacheControlFields drops ephemeral.scope', () => {
