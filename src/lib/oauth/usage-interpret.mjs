@@ -85,7 +85,7 @@ export function usageFablePresence(data = {}) {
 function viewWindow(rawWin, scale) {
   if (!rawWin || typeof rawWin !== 'object') return null
   const raw = rawNumber(rawWin.utilization ?? rawWin.percent)
-  const resetsAt = rawWin.resets_at || rawWin.resetsAt || null
+  const resetsAt = rawWin.resets_at || rawWin.resetsAt || rawWin.reset || rawWin.reset_at || null
   const rawStatus = rawWin.status || null
   if (raw == null && !resetsAt && !rawStatus) return null
   const utilization = scale === 'legacy' ? normLegacyMixed(raw) : normUsagePercent(raw)
