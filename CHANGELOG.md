@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.2.12 — 2026-09-20
+
+第三方 OpenAI 兼容口与 Anthropic Messages 的 cache 断点对齐。不必换槽内 kernel。
+
+- 清洗后 system / messages 升成可挂断点的 text 块，保留 tools 与文本块上的 `cache_control`
+- 非官方 cli-hop 改回 Node rewrite（last + 倒数第二个 user），官方仍剥光交给 kernel
+- 三种入站协议 stamp 位置一致，避免 `cache_read` 冻在 system 前缀
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1212)
+
 ## 1.2.11 — 2026-09-20
 
 控制面调度补齐等待计划、额度受限三态和设置/列表。不必换槽内 kernel。
