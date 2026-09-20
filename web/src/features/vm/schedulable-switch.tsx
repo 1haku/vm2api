@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
 import type { Vm } from '@/types/panel-vm'
+import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { expiresAtToMs } from '@/lib/fable-status'
 import { isRestrictedSchedule, restrictionUntilOf } from '@/lib/vm-status'

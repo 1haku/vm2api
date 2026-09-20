@@ -18,19 +18,11 @@ test('panel admin has no hard-coded password fallback', async () => {
 })
 
 test('panelCookieSecure follows PUBLIC_SCHEME then the request', async () => {
-  const { panelCookieSecure, panelSessionCookie } = await import(
-    `../../src/lib/core/security.mjs?cookie=${Date.now()}`
-  )
+  const { panelCookieSecure, panelSessionCookie } = await import(`../../src/lib/core/security.mjs?cookie=${Date.now()}`)
   assert.equal(panelCookieSecure({}, { PUBLIC_SCHEME: 'http' }), false)
   assert.equal(panelCookieSecure({}, { PUBLIC_SCHEME: 'https' }), true)
-  assert.equal(
-    panelCookieSecure({ headers: { 'x-forwarded-proto': 'http' } }, {}),
-    false,
-  )
-  assert.equal(
-    panelCookieSecure({ headers: { 'x-forwarded-proto': 'https' } }, {}),
-    true,
-  )
+  assert.equal(panelCookieSecure({ headers: { 'x-forwarded-proto': 'http' } }, {}), false)
+  assert.equal(panelCookieSecure({ headers: { 'x-forwarded-proto': 'https' } }, {}), true)
   assert.equal(panelCookieSecure({ headers: {}, socket: {} }, {}), false)
   const httpCookie = panelSessionCookie('kin-panel-test', { secure: false })
   assert.doesNotMatch(httpCookie, /Secure/)

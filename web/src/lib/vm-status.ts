@@ -352,7 +352,8 @@ export function credentialStatus(vm: Vm | undefined): StatusTone {
 }
 
 function leftoverQuotaOff(vm: Vm | undefined): boolean {
-  if (!vm || vm.schedulable !== false || vm.schedule_manual === true) return false
+  if (!vm || vm.schedulable !== false || vm.schedule_manual === true)
+    return false
   return /^(quota_5h|quota_7d)/.test(String(vm.schedule_disabled_reason || ''))
 }
 
@@ -403,9 +404,18 @@ function restrictionLabel(vm: Vm, fallback: string): string {
 function restrictionTone(vm: Vm | undefined): StatusTone | null {
   if (!vm) return null
   if (vm.schedule_state === 'restricted' || leftoverQuotaOff(vm)) {
-    const reason = String(vm.restriction_reason || vm.availability?.reason || '')
-    if (vm.availability?.key === 'cool' || /cool|rate_limited|account_quota/i.test(reason)) {
-      return { key: 'cool', text: restrictionLabel(vm, '冷却中'), cls: 'caution' }
+    const reason = String(
+      vm.restriction_reason || vm.availability?.reason || ''
+    )
+    if (
+      vm.availability?.key === 'cool' ||
+      /cool|rate_limited|account_quota/i.test(reason)
+    ) {
+      return {
+        key: 'cool',
+        text: restrictionLabel(vm, '冷却中'),
+        cls: 'caution',
+      }
     }
     return {
       key: 'quota',
@@ -542,7 +552,8 @@ export function vmBuckets(vms: Vm[]) {
   return b
 }
 
-export type FleetGroup = 'pool' | 'restricted' | 'off' | 'none' | 'bad' | 'revoke'
+export type FleetGroup =
+  'pool' | 'restricted' | 'off' | 'none' | 'bad' | 'revoke'
 
 /** Coarse fleet grouping for the VM list. 受限 is the triad, not 5h/7d warning. */
 export function fleetGroup(vm: Vm): FleetGroup {
@@ -553,7 +564,8 @@ export function fleetGroup(vm: Vm): FleetGroup {
   if (k === 'none') return 'none'
   if (k === 'off') return 'off'
   if (isRestrictedSchedule(vm) || k === 'cool') return 'restricted'
-  if (k === 'quota' && !/警告/.test(String(status.text || ''))) return 'restricted'
+  if (k === 'quota' && !/警告/.test(String(status.text || '')))
+    return 'restricted'
   return 'pool'
 }
 
