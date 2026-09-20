@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { credStatusFromQuota, inferClaudeTier, normalizePanelExpiresAt } from '../../src/lib/admin/panel-api.mjs'
+import {
+  credStatusFromQuota,
+  findAccount,
+  inferClaudeTier,
+  isLeftoverVmKeyedAccount,
+  isSeedAccountRow,
+  normalizePanelExpiresAt,
+} from '../../src/lib/admin/panel-api.mjs'
 
 const usageOk = { ok: true, source: 'vm-oauth-usage', at: '2026-08-24T00:00:00.000Z' }
 const officialOk = { ok: true, source: 'official-cc-usage', at: '2026-08-24T00:00:00.000Z' }
@@ -491,4 +498,30 @@ test('Claude tier: no token is none, plan denied is Pro, Fable window is Max', (
     'max',
   )
   assert.equal(inferClaudeTier({ has_token: true }).key, 'unknown')
+})
+
+test('setup-token Extra-only row is not leftover/seed and is findable', () => {
+  const acc = {
+    account_id: 'vm-01',
+    vm_id: 'vm-01',
+    email: null,
+    unified: {
+      '5h': { utilization: 0, reset: null, status: 'active' },
+      headers: {
+        '5h': { utilization: 0.18, reset: '1789872000', status: 'allowed' },
+        '7d': { utilization: 0.06, reset: '1790118000', status: 'allowed' },
+      },
+    },
+  }
+  const vm = { id: 'vm-01', account_uuid: null, claude: { mode: 'setup-token' } }
+  assert.equal(isLeftoverVmKeyedAccount(acc, vm), false)
+  assert.equal(isSeedAccountRow(acc), false)
+  const found = findAccount({ snapshot: () => ({ accounts: [acc] }) }, vm)
+  assert.equal(found?.account_id, 'vm-01')
+})
+
+test('vm-keyed row is leftover only when the slot already has an account_uuid', () => {
+  const acc = { account_id: 'vm-01', vm_id: 'vm-01', email: null, unified: {} }
+  assert.equal(isLeftoverVmKeyedAccount(acc, { id: 'vm-01', account_uuid: 'acct-uuid' }), true)
+  assert.equal(isLeftoverVmKeyedAccount(acc, { id: 'vm-01', account_uuid: null }), false)
 })

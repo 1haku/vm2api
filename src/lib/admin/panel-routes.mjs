@@ -1448,7 +1448,7 @@ export function createPanelHandler(ctx) {
       // POST /api/panel/vms/:id/probe
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/probe$/.test(p)) {
         const id = p.split('/')[4]
-        const result = await panel.buildProbeOne({ cfg, accountQuota, id })
+        const result = await panel.buildProbeOne({ cfg, accountQuota, id, hop: true, force: true })
         if (result.status) return json(res, result.status, result.body)
         return json(res, 200, result)
       }
@@ -2777,7 +2777,10 @@ export function createPanelHandler(ctx) {
 
       // POST /api/panel/probe
       if (req.method === 'POST' && p === '/api/panel/probe') {
-        const result = await panel.buildProbeAll({ cfg, accountQuota })
+        const body = await readBody(req, 4096).catch(() => ({}))
+        const hop = body?.hop !== false
+        const force = body?.force !== false
+        const result = await panel.buildProbeAll({ cfg, accountQuota, hop, force })
         return json(res, 200, result)
       }
       if (req.method === 'GET' && p === '/api/panel/health-probe') {
