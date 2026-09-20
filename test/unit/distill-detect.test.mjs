@@ -165,6 +165,25 @@ test('default needles do not include 请分步解答', () => {
   )
 })
 
+test('default needles do not include x-anthropic-billing-header', () => {
+  assert.equal(
+    DEFAULT_DISTILL_RULES.needles.some((n) => /billing-header/i.test(n)),
+    false,
+  )
+})
+
+test('Claude Code billing header in system is not distill', () => {
+  const hit = detectDistill({
+    inbound: inbound('帮我改一下登录页的校验提示', {
+      max_tokens: 64000,
+      tools: [{ name: 'bash', input_schema: { type: 'object' } }],
+      system:
+        "x-anthropic-billing-header: cc_version=2.1.257.efd; cc_entrypoint=cli; cch=cc746;\nYou are Claude Code, Anthropic's official CLI for Claude.",
+    }),
+  })
+  assert.equal(hit.action, 'pass')
+})
+
 test('distillBlockError uses panel-editable message and 403', () => {
   const err = distillBlockError(
     { error: { message: '不允许蒸馏', status: 403, code: ErrorCode.DISTILL_BLOCKED } },
@@ -209,6 +228,8 @@ test('handleProtocol intercepts distill before credential hop, refusal guard aft
   assert.ok(distill > before)
   assert.ok(refusal > distill)
   assert.ok(api > refusal)
+  const guard = src.slice(src.indexOf('function applyDistillGuard'), src.indexOf('function isZeroInjectMode'))
+  assert.ok(guard.includes('isProxiedOfficialClaudeCode'))
 })
 
 test('assemble path does not forward onCommit to the kernel hop', () => {

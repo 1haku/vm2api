@@ -29,8 +29,7 @@
     "Memory-stage-one extractor",
     "Persistable response items",
     "You MUST extract durable memory now",
-    "MUST distill reusable, durable rollout knowledge",
-    "x-anthropic-billing-header"
+    "MUST distill reusable, durable rollout knowledge"
   ],
   "fingerprints": [
     "Let  $a,b,A,B$  be given reals. We consider the function defined by",

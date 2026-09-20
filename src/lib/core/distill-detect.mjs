@@ -46,7 +46,6 @@ export const DEFAULT_DISTILL_RULES = {
     'Persistable response items',
     'You MUST extract durable memory now',
     'MUST distill reusable, durable rollout knowledge',
-    'x-anthropic-billing-header',
   ],
   fingerprints: [
     'Let  $a,b,A,B$  be given reals. We consider the function defined by',
