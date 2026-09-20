@@ -43,6 +43,11 @@ export function ProfileDropdown() {
               设置
             </Link>
           </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link to='/settings/$tab' params={{ tab: 'about' }}>
+              关于 / 更新
+            </Link>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant='destructive' onClick={() => setOpen(true)}>
             退出

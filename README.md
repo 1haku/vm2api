@@ -40,6 +40,17 @@
 
 生产就用这条。仓库必须在 **`/opt/vm2api`**（容器内外路径一致）。
 
+**一键安装 / 更新**（保留 `.env` / `vms/` / `data/`，不 `docker rm` 槽）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
+# 以后更新
+curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+sudo bash /opt/vm2api/deploy/install.sh check
+```
+
+管理台 **设置 → 关于** 会对照 GitHub Release，并给出同一条命令。
+
 **运行形态（不是一个父容器里一堆子进程）：**
 
 - Compose **只起 1 个** `vm2api` 控制面（面板、`/v1`、调度）
@@ -57,7 +68,7 @@ docker compose up -d --build
 curl -sS --noproxy '*' http://127.0.0.1:8787/health
 ```
 
-`--build` 拷仓内 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}` 和 `share/wrap-cli`，**不在服务器上编 Rust/Go**。缺槽位 OS 时入口编 `kin-os/ubuntu:24.04`。其它发行版：`node docker/kin-os/build.mjs`。槽 UID 是 `10000+序号`，`bin/kin-*` 必须 **755**，不要 `700`。已部署机升 **v1.2.6**：控制面重启即可。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-126)。
+`--build` 拷仓内 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}` 和 `share/wrap-cli`，**不在服务器上编 Rust/Go**。缺槽位 OS 时入口编 `kin-os/ubuntu:24.04`。其它发行版：`node docker/kin-os/build.mjs`。槽 UID 是 `10000+序号`，`bin/kin-*` 必须 **755**，不要 `700`。已部署机升 **v1.2.7**：控制面重启即可。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-127)。
 
 
 
@@ -202,11 +213,11 @@ VM2API_DB_SECRET=       # 库加密
 
 ## 版本与构建
 
-当前发布：**v1.2.6**
+当前发布：**v1.2.7**
 
 ```bash
-git tag -a v1.2.6 -m "vm2api v1.2.6"
-git push origin v1.2.6
+git tag -a v1.2.7 -m "vm2api v1.2.7"
+git push origin v1.2.7
 ```
 
 `v*` tag 会触发 [Release 工作流](.github/workflows/release.yml)，再挂一份 linux amd64 ELF。仓内 `bin/` 已可直接部署。步骤：[BUILD.md](docs/BUILD.md)

@@ -6,4 +6,5 @@ export type MeResponse = {
   views?: string[]
   capabilities?: string[]
   vm_create_quota?: number
+  version?: string
 }
