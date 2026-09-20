@@ -6,6 +6,8 @@ import {
   isUsageRefreshSuccess,
   isQuotaLimitedAccount,
   isQuotaWindowReason,
+  isLeftoverQuotaScheduleOff,
+  resolveScheduleState,
 } from '../../src/lib/pool/availability.mjs'
 import { SessionLimitRegistry } from '../../src/lib/pool/session-limit.mjs'
 
@@ -228,6 +230,43 @@ test('调度关 plus fatal refresh is 无效凭证', () => {
   assert.equal(av.reason, 'credential_refresh_failed')
   assert.equal(av.accept, false)
   assert.equal(av.usable, false)
+})
+
+test('leftover quota-off is restricted, not 调度关', () => {
+  const reset = new Date(Date.now() + 3600_000).toISOString()
+  const av = evaluateAccount({
+    vm: { schedulable: false, schedule_disabled_reason: 'quota_5h_header' },
+    hasRefresh: true,
+    schedulable: false,
+    scheduleDisabledReason: 'quota_5h_header',
+    lastProbe: usageOk,
+    quota: { utilization_5h: 1, status_5h: 'rejected', reset_5h: reset },
+  })
+  assert.equal(av.key, 'quota')
+  assert.equal(av.in_pool, true)
+  assert.equal(av.accept, false)
+  assert.equal(isLeftoverQuotaScheduleOff({ schedulable: false, schedule_disabled_reason: 'quota_5h_header' }), true)
+  const triad = resolveScheduleState({
+    schedulable: true,
+    availability: av,
+    restrictionUntil: av.until,
+    restrictionReason: av.reason,
+  })
+  assert.equal(triad.schedule_state, 'restricted')
+  assert.equal(triad.restriction_reason, 'quota_5h_header')
+})
+
+test('schedule_manual leftover quota-off stays 调度关', () => {
+  const av = evaluateAccount({
+    vm: { schedulable: false, schedule_manual: true, schedule_disabled_reason: 'quota_5h_header' },
+    hasRefresh: true,
+    schedulable: false,
+    scheduleDisabledReason: 'quota_5h_header',
+    lastProbe: usageOk,
+    quota: { utilization_5h: 1, status_5h: 'rejected' },
+  })
+  assert.equal(av.key, 'off')
+  assert.equal(av.text, '调度关')
 })
 
 test('disabled slot is 调度关 not 不可用', () => {

@@ -4,6 +4,7 @@
  */
 import { isVmScheduleReady, vmHasClaudeCredential, isCodexVm } from '../vm/vm-registry.mjs'
 import { expiresAtToMs, hasRefreshPresence } from '../oauth/oauth-credentials.mjs'
+import { rustKernelBusy } from '../transport/rust-kernel-client.mjs'
 
 // Only a dead grant / operator disable should keep the slot out of the pool.
 // Stale access 401 (`authentication_failed_after_refresh`) is not fatal when
@@ -193,6 +194,9 @@ export function evaluateCredentialEligibility({ vm, workerStatus = null, now = D
   }
   if (!expMs && workerStatus && !cred.has_access && !refreshPresent) {
     return { ok: false, reason: 'oauth_unconfirmed' }
+  }
+  if (rustKernelBusy(workerStatus)) {
+    return { ok: true, reason: 'slot_busy' }
   }
   if (workerStatus && workerStatus.ok !== true && !refreshPresent) {
     return { ok: false, reason: 'worker_unhealthy' }

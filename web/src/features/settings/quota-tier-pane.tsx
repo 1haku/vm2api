@@ -71,8 +71,8 @@ export function QuotaTierPane({
       </CardHeader>
       <CardContent className='space-y-4'>
         <p className='text-xs text-muted-foreground'>
-          只编当前档的 <code>tiers.*</code>。过 5h/7d 硬闸或会话满员就拒新请求，
-          胶囊写「5h 限制 / 会话已满」，不是「不可用」。
+          只编当前档的 <code>tiers.*</code>。过 5h/7d 硬闸写入受限并切号，不是调度关。
+          会话满员仍拒新请求，胶囊写「5h 限制 / 会话已满」。
         </p>
 
         <Tabs value={tier} onValueChange={(v) => setTier(v as QuotaTierKey)}>
@@ -203,8 +203,8 @@ export function QuotaTierPane({
         </div>
 
         <p className='text-xs text-muted-foreground'>
-          RPM 满了排队等窗口，不切号。额度用完或撞闸才换凭证。0 为不限制。
-          机器页改过并发 / RPM 的槽位保持手动值。
+          RPM 满了排队等窗口，不切号。过 5h/7d 闸写入受限并切号，不是调度关。
+          0 为不限制。机器页改过并发 / RPM 的槽位保持手动值。
         </p>
       </CardContent>
     </Card>

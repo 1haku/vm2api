@@ -28,7 +28,10 @@ import { PlatformChip, SlotIdentity } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
-import { SchedulableSwitch } from '@/features/vm/schedulable-switch'
+import {
+  SchedulableSwitch,
+  vmSchedulableProps,
+} from '@/features/vm/schedulable-switch'
 import {
   StatusBarOptions,
   useStatusBarShow,
@@ -554,10 +557,7 @@ export function VmTable({
             >
               <SlotCell vm={vm} />
               <div className={LIST_COL.sched}>
-                <SchedulableSwitch
-                  vmId={vm.id}
-                  schedulable={vm.schedulable !== false}
-                />
+                <SchedulableSwitch {...vmSchedulableProps(vm)} />
               </div>
               <div className={LIST_COL.group}>
                 <PlatformChip vm={vm} className='px-2 py-1 text-sm' />

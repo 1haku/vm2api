@@ -364,3 +364,18 @@ test('disk oauth_revoked still blocks even if runtime was cleared', () => {
     true,
   )
 })
+
+test('slot-full kernel is eligible busy, not worker_unhealthy', () => {
+  const r = evaluateCredentialEligibility({
+    vm: vm({ has_access: true, has_refresh: true, expires_at: Math.floor(Date.now() / 1000) + 3600 }),
+    workerStatus: {
+      ok: false,
+      engine: 'rust',
+      ready_slots: 0,
+      cli_pid: 9,
+      credential: { has_access: true, has_refresh: true },
+    },
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.reason, 'slot_busy')
+})

@@ -164,8 +164,9 @@ test('quota 429 hops the next GPT slot and records 5h/7d extra', async () => {
   assert.equal(spent.codex.extra.codex_primary_used_percent, 100)
   assert.ok(spent.codex.extra.codex_limited_until)
   assert.equal(spent.codex.usage.quota.utilization_5h, 1)
-  assert.equal(spent.schedulable, false)
-  assert.equal(spent.schedule_disabled_reason, 'quota_5h_header')
+  assert.equal(spent.schedulable, true)
+  assert.equal(spent.schedule_disabled_reason ?? null, null)
+  assert.equal(spent.claude?.temp_unschedulable_reason || spent.temp_unschedulable_reason, 'quota_5h_header')
   assert.equal(spent.status, 'running')
   fs.rmSync(root, { recursive: true, force: true })
 })
@@ -189,7 +190,7 @@ test('persistCodexUsage writes cluster 5h/7d quota', () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-test('persistCodexUsage restores 调度关 after the 5h window opens', () => {
+test('persistCodexUsage keeps switch on and clears restriction after the 5h window opens', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-restore-'))
   writeGptVm(root, 'vm-gpt-a')
   const now = Date.parse('2026-09-17T00:00:00.000Z')
@@ -201,7 +202,9 @@ test('persistCodexUsage restores 调度关 after the 5h window opens', () => {
       'x-codex-primary-reset-after-seconds': '60',
     },
   })
-  assert.equal(getVm(root, 'vm-gpt-a').schedulable, false)
+  const spent = getVm(root, 'vm-gpt-a')
+  assert.equal(spent.schedulable, true)
+  assert.equal(spent.claude?.temp_unschedulable_reason || spent.temp_unschedulable_reason, 'quota_5h_header')
   persistCodexUsage(root, 'vm-gpt-a', {
     now: now + 61_000,
     headers: {
@@ -212,7 +215,8 @@ test('persistCodexUsage restores 调度关 after the 5h window opens', () => {
   })
   const restored = getVm(root, 'vm-gpt-a')
   assert.equal(restored.schedulable, true)
-  assert.equal(restored.schedule_disabled_reason, null)
+  assert.equal(restored.schedule_disabled_reason ?? null, null)
+  assert.equal(restored.claude?.temp_unschedulable_reason, undefined)
   fs.rmSync(root, { recursive: true, force: true })
 })
 

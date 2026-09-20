@@ -267,7 +267,10 @@ export function SettingsPage() {
                       <CardTitle>配额</CardTitle>
                     </CardHeader>
                     <CardContent className='divide-y'>
-                      <SettingRow label='5h 打满阻断'>
+                      <SettingRow
+                        label='5h 打满阻断'
+                        desc='过闸写入受限并切号，不拨调度关'
+                      >
                         <Switch
                           checked={quota.block_on_5h !== false}
                           onCheckedChange={(on) =>
@@ -278,7 +281,10 @@ export function SettingsPage() {
                           }
                         />
                       </SettingRow>
-                      <SettingRow label='7d 打满阻断'>
+                      <SettingRow
+                        label='7d 打满阻断'
+                        desc='过闸写入受限并切号，不拨调度关'
+                      >
                         <Switch
                           checked={quota.block_on_7d !== false}
                           onCheckedChange={(on) =>
