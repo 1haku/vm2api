@@ -229,8 +229,8 @@ export function enforceCacheTtlOrder(body) {
   return changed ? out : body
 }
 
-/** Cli-hop wrap markers are ttl-less (5m). Retarget every Node marker to that one TTL. */
-export function forceEphemeralCacheTtl(body, ttl = '5m') {
+/** Retarget every Node marker to one TTL. Default matches DEFAULT_CACHE_TTL. */
+export function forceEphemeralCacheTtl(body, ttl = DEFAULT_CACHE_TTL) {
   const target = normalizeCacheTtl(ttl)
   if (!body || typeof body !== 'object') return body
   let changed = false
