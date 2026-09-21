@@ -224,7 +224,15 @@ export function createRoutingRuntime(ctx) {
     getNotify()?.setConfig(routingConfig.notify)
   }
 
-  function syncKernelCacheTtl(routingConfig) {
+  function compatibilityTouchesKernel(compatibility) {
+    if (!compatibility || typeof compatibility !== 'object') return false
+    return (
+      Object.prototype.hasOwnProperty.call(compatibility, 'cache_ttl') ||
+      Object.prototype.hasOwnProperty.call(compatibility, 'persona_preset')
+    )
+  }
+
+  function syncKernelPanelConfig(routingConfig) {
     for (const { id } of listVms(ctx.cfg.paths.project)) {
       const vm = getVm(ctx.cfg.paths.project, id)
       if (!vm || vm.platform === 'openai' || vm.family === 'codex') continue
@@ -284,9 +292,7 @@ export function createRoutingRuntime(ctx) {
     ctx.stickyRouter.reloadConfig(routingConfig)
     ctx.accountQuota.reloadConfig(routingConfig)
     getPool()?.reloadConfig?.(poolSchedulerConfig())
-    if (body.compatibility && Object.prototype.hasOwnProperty.call(body.compatibility, 'cache_ttl')) {
-      syncKernelCacheTtl(routingConfig)
-    }
+    if (compatibilityTouchesKernel(body.compatibility)) syncKernelPanelConfig(routingConfig)
     if (body.pool || body.failover) initPoolRuntime()
     try {
       return {
