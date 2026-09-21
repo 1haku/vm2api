@@ -18,6 +18,9 @@ import { ensureSlotClaudeOwnership } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureProxyEgress, isLocalEgressProxy, slotNetworkForVm } from './egress.mjs'
+import { toHostPath } from './host-path.mjs'
+import { fileURLToPath } from 'node:url'
+import { OS_CATALOG, OS_ORDER, imageForKernel, buildDirForKernel } from './os-catalog.mjs'
 
 export const RUNTIME = 'docker'
 const WORKER_BIN = process.env.KIN_WORKER_BIN || '/opt/kin-gateway/bin/kin-worker'
@@ -27,15 +30,9 @@ export const SLOT_MEMORY = process.env.KIN_VM_MEMORY || '500m'
 const MEM = SLOT_MEMORY
 const NET = process.env.KIN_VM_NETWORK || 'bridge'
 const PUBLIC_IP = process.env.PUBLIC_HOST || '166.88.96.199'
+const MODULE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
-export const OS_CATALOG = {
-  'ubuntu-24.04': { image: 'kin-os/ubuntu:24.04', family: 'ubuntu', pretty: 'Ubuntu 24.04' },
-  'debian-12': { image: 'kin-os/debian:12', family: 'debian', pretty: 'Debian 12' },
-  archlinux: { image: 'kin-os/arch:latest', family: 'arch', pretty: 'Arch Linux' },
-  'fedora-41': { image: 'kin-os/fedora:41', family: 'fedora', pretty: 'Fedora 41' },
-}
-
-export const OS_ORDER = ['ubuntu-24.04', 'debian-12', 'archlinux', 'fedora-41']
+export { OS_REGISTRY, OS_CATALOG, OS_ORDER, imageForKernel } from './os-catalog.mjs'
 export { normalizeTimezone, normalizeTimezone as normalizeUsTimezone, US_TIMEZONES } from '../core/timezone.mjs'
 export const STANDARD_LOCALE = 'en_US.UTF-8'
 
@@ -47,8 +44,18 @@ export function timezoneForIndex(i) {
   return US_TIMEZONES[(Number(i) - 1) % US_TIMEZONES.length]
 }
 
-export function imageForKernel(kernel) {
-  return (OS_CATALOG[kernel] || OS_CATALOG['ubuntu-24.04']).image
+/** Pull the guest image, falling back to the in-repo Dockerfile when the registry is unreachable. */
+export function ensureSlotImage(kernel, { run = sh, projectRoot } = {}) {
+  const image = imageForKernel(kernel)
+  if (run(['docker', 'image', 'inspect', image], { timeout: 10_000 }).ok) return { ok: true, action: 'present', image }
+  if (run(['docker', 'pull', image], { timeout: 300_000 }).ok) return { ok: true, action: 'pulled', image }
+  const dir = path.join(projectRoot || MODULE_ROOT, 'docker', 'kin-os', buildDirForKernel(kernel))
+  if (!fs.existsSync(path.join(dir, 'Dockerfile'))) {
+    return { ok: false, error: `guest image ${image} not available and no build context at ${dir}` }
+  }
+  const built = run(['docker', 'build', '-t', image, dir], { timeout: 900_000 })
+  if (!built.ok) return { ok: false, error: built.stderr || `docker build ${image} failed` }
+  return { ok: true, action: 'built', image }
 }
 
 export function parseVmIndex(value) {
@@ -452,6 +459,9 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = 
     return { ok: true, action: 'started', runtime: vm.runtime }
   }
 
+  const img = ensureSlotImage(kernel, { projectRoot })
+  if (!img.ok) return img
+
   try {
     fs.rmSync(worker.socket, { force: true })
   } catch {}
@@ -459,8 +469,15 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = 
     fs.rmSync(worker.kernelSocket, { force: true })
   } catch {}
   const machineIdFile = ensureGuestMachineIdFile(projectRoot, vm)
+  // Slots are created by the host engine: every -v source must be a host path.
+  const hostOf = (p) => toHostPath(p, { projectRoot })
   const machineMounts = machineIdFile
-    ? ['-v', `${machineIdFile}:/etc/machine-id:ro`, '-v', `${machineIdFile}:/var/lib/dbus/machine-id:ro`]
+    ? [
+        '-v',
+        `${hostOf(machineIdFile)}:/etc/machine-id:ro`,
+        '-v',
+        `${hostOf(machineIdFile)}:/var/lib/dbus/machine-id:ro`,
+      ]
     : []
   const netName = slotNetworkForVm(vm)
   if (!netName || netName === 'host' || netName === 'bridge') {
@@ -502,11 +519,11 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = 
     '--label',
     `kin.vm.os=${kernel}`,
     '-v',
-    `${home}:/home/kincli`,
+    `${hostOf(home)}:/home/kincli`,
     '-v',
-    `${worker.runDir}:/run/kin`,
-    ...(fs.existsSync(WORKER_BIN) ? ['-v', `${WORKER_BIN}:/usr/local/bin/kin-worker:ro`] : []),
-    ...(mountKernel ? ['-v', `${kernelBin}:/usr/local/bin/kin-kernel:ro`] : []),
+    `${hostOf(worker.runDir)}:/run/kin`,
+    ...(fs.existsSync(WORKER_BIN) ? ['-v', `${hostOf(WORKER_BIN)}:/usr/local/bin/kin-worker:ro`] : []),
+    ...(mountKernel ? ['-v', `${hostOf(kernelBin)}:/usr/local/bin/kin-kernel:ro`] : []),
     ...machineMounts,
     '-e',
     'HOME=/home/kincli',
