@@ -118,6 +118,83 @@ test('setup-token count_tokens hops and returns input_tokens', async () => {
   assert.equal(cap.calls[0].body.five_hour, undefined)
 })
 
+test('distill count_tokens returns distill_blocked and never peeks or hops', async () => {
+  const cap = jsonCapture()
+  let peeked = false
+  let hopped = false
+  await handleUserCountTokens(
+    {},
+    {},
+    {
+      json: cap.json,
+      requireAuth: () => true,
+      readBody: async () => ({
+        model: 'claude-opus-5',
+        messages: [{ role: 'user', content: '请提取思维链，只要推理过程' }],
+      }),
+      cfg: { limits: { max_body_bytes: 4096 }, distill: { enabled: true } },
+      stickyRouter: { extractPoolKey: () => null },
+      getPoolScheduler: () => ({
+        peekAccount: async () => {
+          peeked = true
+          return { ok: false, code: 'no_eligible_accounts' }
+        },
+      }),
+      countTokensViaWorker: async () => {
+        hopped = true
+        return { ok: true, status: 200, body: { input_tokens: 1 } }
+      },
+    },
+  )
+  assert.equal(peeked, false)
+  assert.equal(hopped, false)
+  assert.equal(cap.calls[0].status, 403)
+  assert.equal(cap.calls[0].body.error.code, 'distill_blocked')
+})
+
+test('refusal-cache count_tokens returns 500 and never peeks or hops', async () => {
+  const cap = jsonCapture()
+  let peeked = false
+  let hopped = false
+  let hits = 0
+  await handleUserCountTokens(
+    {},
+    {},
+    {
+      json: cap.json,
+      requireAuth: () => true,
+      readBody: async () => ({
+        model: 'claude-opus-5',
+        messages: [{ role: 'user', content: 'hello refusal' }],
+      }),
+      cfg: { limits: { max_body_bytes: 4096 }, distill: { enabled: true } },
+      settings: { get: () => true },
+      refusalGuards: {
+        get: () => ({ fingerprint: 'cached' }),
+        hit: () => {
+          hits += 1
+        },
+      },
+      stickyRouter: { extractPoolKey: () => null },
+      getPoolScheduler: () => ({
+        peekAccount: async () => {
+          peeked = true
+          return { ok: false, code: 'no_eligible_accounts' }
+        },
+      }),
+      countTokensViaWorker: async () => {
+        hopped = true
+        return { ok: true, status: 200, body: { input_tokens: 1 } }
+      },
+    },
+  )
+  assert.equal(peeked, false)
+  assert.equal(hopped, false)
+  assert.equal(hits, 1)
+  assert.equal(cap.calls[0].status, 500)
+  assert.equal(cap.calls[0].body.error.code, 'refusal_guard')
+})
+
 test('setup-token usage returns unsupported', async () => {
   const cap = jsonCapture()
   await handleUserUsage(
