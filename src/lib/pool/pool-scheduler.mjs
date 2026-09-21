@@ -146,7 +146,8 @@ function stickyShouldWait(waitReason) {
     waitReason === 'concurrency_limit' ||
     waitReason === 'fable_concurrency' ||
     waitReason === 'rpm_limit' ||
-    waitReason === 'slot_busy'
+    waitReason === 'slot_busy' ||
+    waitReason === 'session_window_full'
   )
 }
 
@@ -551,7 +552,7 @@ export class PoolScheduler {
         max: sessionSlots,
         idleMin,
       })
-      if (!windowGate.ok) return { ok: false, reason: 'session_window_full' }
+      if (!windowGate.ok) markWait('session_window_full', windowGate.detail?.retry_at || now + 5_000)
     }
 
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
