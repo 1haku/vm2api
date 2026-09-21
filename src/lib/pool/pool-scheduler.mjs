@@ -1033,7 +1033,12 @@ export class PoolScheduler {
       const match = candidates.find(
         (candidate) => candidate.vmId === bound.vmId && candidate.accountId === bound.accountId,
       )
-      if (match && match.busy && stickyShouldWait(match.waitReason, match.cooldownReason) && !this.isReservable(match)) {
+      if (
+        match &&
+        match.busy &&
+        stickyShouldWait(match.waitReason, match.cooldownReason) &&
+        !this.isReservable(match)
+      ) {
         if (this.waiterCount(match.accountId) < this.maxWaiters()) {
           return this.makeWaitPlan(match, { sticky: true, requestDeadline })
         }
