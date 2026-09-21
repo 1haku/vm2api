@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.15 — 2026-09-22
+
+- 有调用方 session id 时，粘滞只认这一条。内容指纹、设备号和 envelope 不再把同一条对话拖到别的 VM。已绑定的账号和出站 session 不会被后一次成功改写
+- `session_slots` 只数不同的对话，不再用正在飞的请求数占槽
+- cli-hop 进内核前写入同一个 `metadata.user_id`
+- HTTP 500/502/503/504 暂停该账号调度 1 小时，并把这次请求写入拒答缓存，1 小时后过期。不再因此换槽。响应头超时仍按原逻辑重试；529 仍是 15 秒短冷却
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。
+
 ## 1.3.14 — 2026-09-22
 
 - 设置 → 协议仍是人设和缓存 TTL 的唯一开关，写在 `routing.json`。保存后把解析结果投影到 Claude 槽 `vms/<id>/run/kernel.json`（`persona_preset`、`system_layout`、`default_cache_ttl`）。kernel 热读该文件，不必重启槽。Codex 槽不写。手改 `kernel.json` 会被下一次投影盖掉
