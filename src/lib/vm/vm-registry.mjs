@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { atomicWriteJson } from './vm-file.mjs'
+import { atomicWriteJson, listVmRecordFiles } from './vm-file.mjs'
 import {
   hasAccessPresence,
   hasCredentialPresence,
@@ -34,7 +34,7 @@ export { isCodexVm, normalizeVmKind } from './vm-kind.mjs'
 export function listVms(projectRoot) {
   const dir = path.join(projectRoot, 'vms')
   if (!fs.existsSync(dir)) return []
-  const files = fs.readdirSync(dir).filter((f) => f.startsWith('vm-') && f.endsWith('.json'))
+  const files = listVmRecordFiles(dir)
   return files
     .map((f) => {
       try {

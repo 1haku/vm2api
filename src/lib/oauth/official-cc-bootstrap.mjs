@@ -41,7 +41,7 @@ import { loadVmIdentity, persistVmSettings } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm, readOfficialCcIdentity } from '../identity/official-fingerprint.mjs'
 import { writeSlotSeedFiles, inferProjectRootFromCliHome } from '../vm/slot-seed.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
-import { atomicWriteJson } from '../vm/vm-file.mjs'
+import { atomicWriteJson, listVmRecordFiles } from '../vm/vm-file.mjs'
 import { normalizeOfficialCcInference, resolveOfficialCcInference } from '../vm/slot-engine.mjs'
 export const DEFAULT_HELLO_PROMPT = 'hello'
 export const DEFAULT_STATS_PROMPT = '/stats'
@@ -400,10 +400,7 @@ export async function keepOfficialCcResidentAfterHello({ vmId, projectRoot, uid,
 export function listOfficialCcVmIds(projectRoot) {
   const dir = path.join(projectRoot, 'vms')
   if (!fs.existsSync(dir)) return []
-  return fs
-    .readdirSync(dir)
-    .filter((name) => /^vm-[a-z0-9-]+\.json$/i.test(name))
-    .map((name) => name.replace(/\.json$/i, ''))
+  return listVmRecordFiles(dir).map((name) => name.slice(0, -5))
 }
 
 /** Already-initialized slots whose official CLI died with the Node process. */
@@ -594,7 +591,8 @@ export function repairProjectOfficialClaudeBins(projectRoot) {
     return items
   }
   for (const name of names) {
-    if (!/^vm-\d+$/.test(name)) continue
+    // Slot home dirs are named after the slot id; skip json records and dotfiles.
+    if (name.startsWith('.') || name.endsWith('.json')) continue
     const home = officialCcHome(projectRoot, name)
     if (!fs.existsSync(home)) continue
     items.push({ vm_id: name, ...repairOfficialClaudeBinLink(home) })
