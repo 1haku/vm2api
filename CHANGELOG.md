@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.6 — 2026-09-21
+
+- Rust kernel 固定预开 20 个 Claude native CLI session 位
+- 新增全局与每槽 `session_slots` 热准入上限，独立于并发、RPM 与 sticky session
+- 设置页和 Claude VM 详情支持 Session 槽位配置；Codex 槽保持隐藏
+- routing 持久化失败时完整恢复内存运行态，避免半应用配置
+
 ## 1.3.5 — 2026-09-21
 
 - Claude Code 身份、User-Agent 与默认 beta 序列同步官方 2.1.278 抓包
