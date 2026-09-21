@@ -157,6 +157,20 @@ test('SSE assembler rebuilds a Claude message for buffered chat completions', ()
   assert.equal(state.message.usage.output_tokens, 1)
 })
 
+test('SSE assembler preserves safeguard results and diagnostic delta fields', () => {
+  const state = createClaudeMessageAssembler()
+  applyClaudeSSELineToMessage(
+    'data: {"type":"message_start","message":{"id":"msg_s","type":"message","role":"assistant","content":[]}}',
+    state,
+  )
+  applyClaudeSSELineToMessage(
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","safeguard_results":{"classifier":"allow"},"diagnostics":{"trace":"t1"}}}',
+    state,
+  )
+  assert.deepEqual(state.message.safeguard_results, { classifier: 'allow' })
+  assert.deepEqual(state.message.diagnostics, { trace: 't1' })
+})
+
 test('SSE assembler rebuilds tool_use input from json deltas', () => {
   const state = createClaudeMessageAssembler()
   const lines = [
