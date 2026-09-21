@@ -38,9 +38,9 @@
 
 ### Docker Compose（推荐）
 
-生产就用这条。仓库必须在 **`/opt/vm2api`**（容器内外路径一致）。
+生产就用这条。**拉预构建镜像，不在服务器上构建**；安装目录任意。
 
-**一键安装 / 更新**（保留已有非空 `.env` 字段 / `vms/` / `data/`，不 `docker rm` 槽）。空密码默认 **`admin` / `123456`**，登录 `http://<ip>:8787/cc#/login`。构建若报 `CHANGELOG.md: not found`，脚本会补 `.dockerignore` 并重试。
+**一键安装 / 更新**（保留已有非空 `.env` 字段 / `vms/` / `data/`，不 `docker rm` 槽）。空密码默认 **`admin` / `123456`**，登录 `http://<ip>:8787/cc#/login`。
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
@@ -58,17 +58,19 @@ sudo bash /opt/vm2api/deploy/install.sh check
 - 未启动的槽不占容器。`docker ps` 里其它名字是同机别的项目，不是 vm2api
 
 ```bash
-git clone https://github.com/dofastted/vm2api.git /opt/vm2api
-cd /opt/vm2api
-cp .env.example .env
+mkdir -p /opt/vm2api && cd /opt/vm2api
+curl -sSLO https://raw.githubusercontent.com/dofastted/vm2api/main/docker-compose.yml
+curl -sSL -o .env https://raw.githubusercontent.com/dofastted/vm2api/main/.env.example
 chmod 600 .env
 # 空密码默认 admin / 123456；空 API key / DB secret 由入口生成
 
-docker compose up -d --build
+docker compose pull && docker compose up -d
 curl -sS --noproxy '*' http://127.0.0.1:8787/health
 ```
 
-`--build` 拷仓内 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}` 和 `share/wrap-cli`，**不在服务器上编 Rust/Go**。缺槽位 OS 时入口编 `kin-os/ubuntu:24.04`。其它发行版：`node docker/kin-os/build.mjs`。槽 UID 是 `10000+序号`，`bin/kin-*` 必须 **755**，不要 `700`。已部署机升 **v1.2.22**：一键更新会替换并重启槽内 kernel，不会 `docker rm` 槽。见 [DEPLOY.md](docs/DEPLOY.md#已部署机升级到-1222)。
+镜像自带 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}` 与 `share/wrap-cli`，入口写进挂载目录，**服务器上不编 Rust/Go/前端**。槽位 OS 镜像先 `docker pull ghcr.io/dofastted/kin-os-*`，拉不到时建槽阶段兜底构建。槽 UID 是 `10000+序号`，`bin/kin-*` 必须 **755**。
+
+改代码自己构建：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`（一键脚本用 `--from-source`）。
 
 
 
@@ -261,7 +263,7 @@ git push origin v1.2.22
    立刻轮换 `VM2API_*`、Setup Token、面板密码。不要把密钥贴到 Issue。
 
 7. **Compose 起来了但建不了槽 / `egress network missing`？**  
-   仓库在 `/opt/vm2api`、`bin/kin-*` 为 **755**、宿主机有 `kin-os/*`、挂了 `docker.sock`。先添加本地出口再启动槽。1.1.0 已对齐 egress 的 `name`/`network` 字段。
+   `bin/kin-*` 为 **755**、挂了 `docker.sock`、控制面容器名与 `VM2API_CONTAINER_NAME` 一致（自省宿主路径用）。先添加本地出口再启动槽——首次启动会自动补一个本机出口 `px-local`。
 
 8. **`exec: "/usr/local/bin/kin-kernel": permission denied`？**  
    `chmod 755 bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel bin/kin-cookie-auth`。不要用 `700`。
