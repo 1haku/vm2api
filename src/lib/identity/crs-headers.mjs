@@ -36,6 +36,10 @@ const KEEP = [
   'x-stainless-timeout',
   'x-stainless-helper-method',
   'x-claude-code-session-id',
+  'x-claude-code-request-class',
+  'x-claude-code-agent-type',
+  'x-claude-code-prev-tool-durations',
+  'x-claude-code-context-compacted',
   'accept-language',
   'sec-fetch-mode',
 ]
@@ -56,8 +60,18 @@ const DEVICE_HEADER_KEYS = [
   'x-stainless-timeout',
   'x-stainless-helper-method',
   'x-claude-code-session-id',
+  'x-claude-code-request-class',
+  'x-claude-code-agent-type',
+  'x-claude-code-prev-tool-durations',
+  'x-claude-code-context-compacted',
   'accept-language',
   'sec-fetch-mode',
+]
+const CONDITIONAL_HEADERS = [
+  'x-claude-code-request-class',
+  'x-claude-code-agent-type',
+  'x-claude-code-prev-tool-durations',
+  'x-claude-code-context-compacted',
 ]
 
 const DEFAULTS = {
@@ -110,6 +124,14 @@ export function extractClaudeCodeHeaders(reqHeaders = {}) {
   const out = {}
   for (const k of KEEP) {
     if (src[k] != null) out[k] = src[k]
+  }
+  return out
+}
+function conditionalHeaders(headers = {}) {
+  const src = lowerHeaders(headers)
+  const out = {}
+  for (const key of CONDITIONAL_HEADERS) {
+    if (src[key] != null) out[key] = src[key]
   }
   return out
 }
@@ -267,6 +289,7 @@ export function resolveVmCharacteristicHeaders(identity = {}, reqHeaders = {}, h
       ...stored,
       ...protocol,
       ...device,
+      ...conditionalHeaders(incoming),
     }
     return applyReplayBetaPolicy(base, model, true, want1m)
   }
