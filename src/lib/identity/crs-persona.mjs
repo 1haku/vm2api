@@ -1313,6 +1313,7 @@ export function personaPresetFromHopMode(mode) {
   )
     return 'official'
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') return 'zero'
+  if (raw === 'custom' || raw === 'diy' || raw === 'manual') return 'custom'
   return null
 }
 
