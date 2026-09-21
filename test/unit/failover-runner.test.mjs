@@ -767,6 +767,58 @@ test('preferLastResult does not deliver thinking-only as HTTP 200', async () => 
   assert.notEqual(result.status, 200)
 })
 
+test('same sticky session requests execute serially', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const runner = new FailoverRunner({ scheduler })
+  let active = 0
+  let peak = 0
+  const callAttempt = async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    active -= 1
+    return success()
+  }
+  const request = (requestId) =>
+    runner.run({
+      requestId,
+      canonicalBody: { model: 'claude-opus-test' },
+      model: 'claude-opus-test',
+      stickyKey: 'shared-session',
+      callAttempt,
+    })
+  const [first, second] = await Promise.all([request('req-serial-1'), request('req-serial-2')])
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  assert.equal(peak, 1)
+})
+
+test('different sticky sessions still execute concurrently', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({ scheduler })
+  let active = 0
+  let peak = 0
+  const callAttempt = async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    active -= 1
+    return success()
+  }
+  await Promise.all(
+    ['session-a', 'session-b'].map((stickyKey) =>
+      runner.run({
+        requestId: `req-${stickyKey}`,
+        canonicalBody: { model: 'claude-opus-test' },
+        model: 'claude-opus-test',
+        stickyKey,
+        callAttempt,
+      }),
+    ),
+  )
+  assert.equal(peak, 2)
+})
+
 test('fable 403 marks pro and failovers without credential cooldown', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const denied = []

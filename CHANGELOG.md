@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.7 — 2026-09-21
+
+- cli-hop 固定以 5m 写入多轮会话断点，避免 wrap 的 ttl-less 5m 断点后出现 1h 而被上游 400；覆盖 `/v1/chat/completions` 入站转换
+- SSE 聚合不再用空 assistant 信封覆盖真实上游错误；同一 session 请求串行，不同 session 继续并发
+- 控制面启动后立即核验并修复已启用出口，不再等待下一轮代理池定时探测
+
 ## 1.3.6 — 2026-09-21
 
 - Rust kernel 固定预开 20 个 Claude native CLI session 位

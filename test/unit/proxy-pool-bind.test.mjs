@@ -121,6 +121,31 @@ test('probeOne repairs egress then passes', async () => {
   }
 })
 
+test('startScheduler immediately repairs enabled egress', async () => {
+  const socks = await listenSocks()
+  let healthy = false
+  let repairs = 0
+  const pool = new ProxyPool({
+    dataDir: tmpDir(),
+    egressCheck: () => ({ ok: healthy, reason: healthy ? null : 'not_running' }),
+    repairEgress: () => {
+      repairs += 1
+      healthy = true
+    },
+  })
+  try {
+    pool.importLines(`${socks.host}:${socks.port}`)
+    pool.startScheduler()
+    const deadline = Date.now() + 1000
+    while (!healthy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(healthy, true)
+    assert.equal(repairs, 1)
+  } finally {
+    pool.stopScheduler()
+    socks.server.close()
+  }
+})
+
 test('egress_down does not mark a live SOCKS proxy dead', async () => {
   const socks = await listenSocks()
   const pool = new ProxyPool({

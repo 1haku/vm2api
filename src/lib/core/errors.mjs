@@ -210,6 +210,19 @@ export function finalizeAssembledAssistantHop(result = {}) {
   return result
 }
 
+export function mergeAssembledAssistantHop(result = {}, assembled = null) {
+  if (!assembled || result?.body?.error || result?.body?.type === 'error') return result
+  const assembledResult = { body: assembled, stopReason: assembled.stop_reason }
+  if (!isCompleteAssistantMessage(assembledResult) && isCompleteAssistantMessage(result)) return result
+  return {
+    ...result,
+    body: assembled,
+    usage: assembled.usage || result.usage,
+    model: assembled.model || result.model,
+    stopReason: assembled.stop_reason || result.stopReason,
+  }
+}
+
 export function incompleteAssistantClientError(result = {}) {
   return {
     ...result,
