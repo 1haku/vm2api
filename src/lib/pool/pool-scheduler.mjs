@@ -243,6 +243,7 @@ export class PoolScheduler {
       })
       const available = candidates.filter((candidate) => this.isReservable(candidate))
       let selected = this.pick(available, { model, stickyKey, eligible: candidates })
+      if (this.lastStickyHeld) return fail('provider_pause', candidates, available)
       if (this.lastStickyCleared) stickyCleared = true
       const reserveMisses = []
       const attempted = new Set()
@@ -552,7 +553,7 @@ export class PoolScheduler {
       })
       if (!windowGate.ok) return { ok: false, reason: 'session_window_full' }
     }
-    if (inflight >= sessionSlots) markWait('slot_busy')
+
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
     const fableCap = Number(this.config.fable_max_per_account)
     if (isFableModel(modelKey) && Number.isFinite(fableCap) && fableCap > 0) {
@@ -701,6 +702,7 @@ export class PoolScheduler {
 
   pick(candidates, { model, stickyKey, eligible = candidates } = {}) {
     this.lastStickyCleared = false
+    this.lastStickyHeld = false
     if (!candidates.length && !eligible?.length) return null
     const bound = stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null
     if (bound) {
@@ -714,6 +716,9 @@ export class PoolScheduler {
       } else if (amongEligible.busy && stickyShouldWait(amongEligible.waitReason)) {
         if (this.waiterCount(amongEligible.accountId) < this.maxWaiters()) return null
         // Queue full: spillover to other candidates without unbinding.
+      } else if (amongEligible.cooldownReason === 'provider_pause') {
+        this.lastStickyHeld = true
+        return null
       } else {
         this.stickyRouter?.unbind?.(stickyKey)
         this.lastStickyCleared = true
@@ -838,7 +843,6 @@ export class PoolScheduler {
   reserve(candidate, { sessionKey = null, skipQuota = false } = {}) {
     const current = this.inflight.get(candidate.accountId) || 0
     if (!candidate.maxConcurrency || current >= candidate.maxConcurrency) return null
-    if (current >= candidate.sessionSlots) return null
     const family = isFableModel(candidate.model) ? FABLE_FAMILY_KEY : null
     const fableCap = Number(this.config.fable_max_per_account)
     if (

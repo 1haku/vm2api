@@ -140,7 +140,7 @@ test('response-header timeout does not cool the account', () => {
   assert.equal(shouldContinue(policy), true)
 })
 
-test('generic 502/5xx can failover without account cooldown', () => {
+test('generic 502 pauses scheduling for one hour instead of failing over', () => {
   const policy = classifyUpstreamResult(
     {
       status: 502,
@@ -148,9 +148,11 @@ test('generic 502/5xx can failover without account cooldown', () => {
     },
     { now: 1000 },
   )
-  assert.equal(policy.action, 'continue')
-  assert.equal(policy.cooldownUntil, null)
-  assert.equal(policy.retrySameAccount, true)
+  assert.equal(policy.action, 'pause')
+  assert.equal(policy.reason, 'provider_pause')
+  assert.equal(policy.cooldownUntil, 1000 + 60 * 60 * 1000)
+  assert.equal(policy.rememberRefusal, true)
+  assert.equal(shouldContinue(policy), false)
 })
 
 test('transport timeout is not treated as a dead proxy', () => {
@@ -364,7 +366,8 @@ test('200 refusal with empty visible output is content_filter, not success', () 
   assert.equal(policy.reason, 'content_filter_refusal')
 })
 
-test('wrap Usage Policy 502 failovers like other 502s and does not cache as refusal', () => {
+test('502 pauses the account for one hour and is not a content-filter refusal', () => {
+  const before = Date.now()
   const policy = classifyUpstreamResult({
     ok: false,
     status: 502,
@@ -378,9 +381,13 @@ test('wrap Usage Policy 502 failovers like other 502s and does not cache as refu
       },
     },
   })
-  assert.equal(policy.action, 'continue')
+  assert.equal(policy.action, 'pause')
+  assert.equal(policy.reason, 'provider_pause')
+  assert.equal(policy.rememberRefusal, true)
+  assert.equal(policy.refusalTtlMs, 60 * 60 * 1000)
+  assert.ok(policy.cooldownUntil >= before + 60 * 60 * 1000)
+  assert.equal(shouldContinue(policy), false)
   assert.notEqual(policy.reason, 'content_filter_refusal')
-  assert.equal(shouldContinue(policy), true)
 })
 
 test('assistant prefill 400 is repairable', () => {

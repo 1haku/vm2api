@@ -216,6 +216,8 @@ export function isSilentClaudeRefusal(result = {}) {
 
 export const DEFAULT_OAUTH_401_COOLDOWN_MS = 120_000
 export const MAX_OAUTH_401_COOLDOWN_MS = 600_000
+/** Upstream 5xx: stop the account and the same prompt. Do not open another slot. */
+export const PROVIDER_PAUSE_MS = 60 * 60 * 1000
 
 export function clampOauth401CooldownMs(ms) {
   const n = Number(ms)
@@ -485,10 +487,21 @@ export function classifyUpstreamResult(
         cooldownUntil: now + 30_000,
       }
     }
-    return continueWithoutCooldown({
-      scope: 'provider',
-      reason: isTimeoutFailure(workerCode, message) ? 'provider_timeout' : 'provider_transient_error',
-    })
+    if (status === 408 || isTimeoutFailure(workerCode, message)) {
+      return continueWithoutCooldown({
+        scope: 'provider',
+        reason: 'provider_timeout',
+      })
+    }
+    return {
+      scope: 'account',
+      action: 'pause',
+      reason: 'provider_pause',
+      cooldownUntil: now + PROVIDER_PAUSE_MS,
+      retrySameAccount: false,
+      rememberRefusal: true,
+      refusalTtlMs: PROVIDER_PAUSE_MS,
+    }
   }
   return { scope: 'request', action: 'stop', reason: `http_${status}`, cooldownUntil: null }
 }
