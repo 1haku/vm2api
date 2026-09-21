@@ -364,6 +364,25 @@ test('200 refusal with empty visible output is content_filter, not success', () 
   assert.equal(policy.reason, 'content_filter_refusal')
 })
 
+test('wrap Usage Policy 502 failovers like other 502s and does not cache as refusal', () => {
+  const policy = classifyUpstreamResult({
+    ok: false,
+    status: 502,
+    terminalState: 'incomplete',
+    body: {
+      type: 'error',
+      error: {
+        type: 'api_error',
+        message:
+          'provider error: provider error: API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup)',
+      },
+    },
+  })
+  assert.equal(policy.action, 'continue')
+  assert.notEqual(policy.reason, 'content_filter_refusal')
+  assert.equal(shouldContinue(policy), true)
+})
+
 test('assistant prefill 400 is repairable', () => {
   const policy = classifyUpstreamResult({
     status: 400,

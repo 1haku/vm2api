@@ -1,18 +1,31 @@
-import test from 'node:test'
+import test, { after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
   captureWrapSample,
+  inspectLinuxAmd64Elf,
   inspectWrapCliDir,
   makeWrapSample,
   materializeWrapCli,
+  replaceKernelBinary,
   syncWrapSample,
   wrapCliHomeDir,
   wrapCliTemplateDir,
 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
 import { listVms } from '../../src/lib/vm/vm-registry.mjs'
+
+const prevKernelBin = process.env.KIN_KERNEL_BIN
+
+before(() => {
+  delete process.env.KIN_KERNEL_BIN
+})
+
+after(() => {
+  if (prevKernelBin == null) delete process.env.KIN_KERNEL_BIN
+  else process.env.KIN_KERNEL_BIN = prevKernelBin
+})
 
 function seedTemplate(root) {
   const src = path.join(root, 'share', 'wrap-cli')
@@ -22,6 +35,21 @@ function seedTemplate(root) {
     fs.chmodSync(path.join(src, name), 0o644)
   }
   return src
+}
+
+function fakeElf64Amd64(payload = 'host-kernel') {
+  const extra = Buffer.from(String(payload))
+  const buf = Buffer.alloc(64 + extra.length)
+  buf[0] = 0x7f
+  buf[1] = 0x45
+  buf[2] = 0x4c
+  buf[3] = 0x46
+  buf[4] = 2
+  buf[5] = 1
+  buf.writeUInt16LE(3, 16)
+  buf.writeUInt16LE(62, 18)
+  extra.copy(buf, 64)
+  return buf
 }
 
 test('materializeWrapCli copies compiled cli-node into slot home', () => {
@@ -203,5 +231,94 @@ test('wrapCliTemplateDir prefers KIN_WRAP_CLI_ROOT', () => {
   } finally {
     if (prev == null) delete process.env.KIN_WRAP_CLI_ROOT
     else process.env.KIN_WRAP_CLI_ROOT = prev
+  }
+})
+
+test('materializeWrapCli prefers KIN_KERNEL_BIN over sample kernel', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-configured-'))
+  const prev = process.env.KIN_KERNEL_BIN
+  try {
+    seedTemplate(project)
+    const host = path.join(project, 'host-kernel')
+    fs.writeFileSync(host, 'host-kernel')
+    process.env.KIN_KERNEL_BIN = host
+    assert.equal(materializeWrapCli(project, { id: 'vm-13' }).ok, true)
+    assert.equal(fs.readFileSync(path.join(wrapCliHomeDir(project, 'vm-13'), 'kin-kernel.bin'), 'utf8'), 'host-kernel')
+  } finally {
+    if (prev == null) delete process.env.KIN_KERNEL_BIN
+    else process.env.KIN_KERNEL_BIN = prev
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('materializeWrapCli falls back to project bin/kin-kernel', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-bundled-'))
+  try {
+    seedTemplate(project)
+    fs.mkdirSync(path.join(project, 'bin'), { recursive: true })
+    fs.writeFileSync(path.join(project, 'bin', 'kin-kernel'), 'bundled-kernel')
+    assert.equal(materializeWrapCli(project, { id: 'vm-13' }).ok, true)
+    assert.equal(
+      fs.readFileSync(path.join(wrapCliHomeDir(project, 'vm-13'), 'kin-kernel.bin'), 'utf8'),
+      'bundled-kernel',
+    )
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('makeWrapSample overlays configured kernel onto the sample', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-make-host-'))
+  const prev = process.env.KIN_KERNEL_BIN
+  try {
+    seedTemplate(project)
+    const host = path.join(project, 'host-kernel')
+    fs.writeFileSync(host, 'host-kernel')
+    process.env.KIN_KERNEL_BIN = host
+    const made = makeWrapSample(project)
+    assert.equal(made.ok, true, made.error)
+    assert.equal(fs.readFileSync(path.join(wrapCliTemplateDir(project), 'kin-kernel.bin'), 'utf8'), 'host-kernel')
+  } finally {
+    if (prev == null) delete process.env.KIN_KERNEL_BIN
+    else process.env.KIN_KERNEL_BIN = prev
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('inspectLinuxAmd64Elf accepts linux amd64 ELF64', () => {
+  assert.equal(inspectLinuxAmd64Elf(fakeElf64Amd64()).ok, true)
+  assert.equal(inspectLinuxAmd64Elf(Buffer.from('not-elf')).ok, false)
+  const wrongMachine = fakeElf64Amd64()
+  wrongMachine.writeUInt16LE(3, 18)
+  assert.equal(inspectLinuxAmd64Elf(wrongMachine).code, 'kernel_not_amd64')
+})
+
+test('replaceKernelBinary writes sample and project bin kernel', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-upload-'))
+  try {
+    seedTemplate(project)
+    const elf = fakeElf64Amd64('uploaded-kernel')
+    const replaced = replaceKernelBinary(project, elf)
+    assert.equal(replaced.ok, true, replaced.error)
+    assert.equal(replaced.kernel.source, 'configured')
+    assert.ok(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'kin-kernel.bin')).equals(elf))
+    assert.ok(fs.readFileSync(path.join(project, 'bin', 'kin-kernel')).equals(elf))
+    const meta = JSON.parse(fs.readFileSync(path.join(wrapCliTemplateDir(project), 'SAMPLE.json'), 'utf8'))
+    assert.equal(meta.source, 'upload')
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('replaceKernelBinary rejects non-ELF payloads', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-bad-elf-'))
+  try {
+    seedTemplate(project)
+    const replaced = replaceKernelBinary(project, Buffer.alloc(64, 0x41))
+    assert.equal(replaced.ok, false)
+    assert.equal(replaced.code, 'kernel_not_elf')
+    assert.equal(fs.existsSync(path.join(project, 'bin', 'kin-kernel')), false)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
   }
 })

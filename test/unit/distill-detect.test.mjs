@@ -50,7 +50,29 @@ test('prompt template needles are blocked without waiting for structure', () => 
   )
 })
 
-test('openai chat persistable envelope matches 1.2.1 and is not distill', () => {
+test('openai chat persistable envelope without harvest is not distill', () => {
+  const hit = detectDistill({
+    inbound: {
+      model: 'claude-opus-5',
+      max_tokens: 4096,
+      stream: true,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'thread_id: abc\n\nPersistable response items (JSON):\n[{"role":"user","text":"ui显示效果追加"}]',
+            },
+          ],
+        },
+      ],
+    },
+  })
+  assert.equal(hit.action, 'pass')
+})
+
+test('memory-stage-one harvest is distill even at 4096 tokens', () => {
   const hit = detectDistill({
     inbound: {
       model: 'claude-opus-5',
@@ -74,15 +96,60 @@ test('openai chat persistable envelope matches 1.2.1 and is not distill', () => 
       ],
     },
   })
-  assert.equal(hit.action, 'pass')
+  assert.equal(hit.action, 'block')
+  assert.equal(hit.error.code, ErrorCode.DISTILL_BLOCKED)
+  assert.equal(hit.hits[0].rule, 'harvest_needle')
+  assert.ok(
+    hit.hits.some((item) =>
+      /memory-stage-one|must distill|durable rollout|must extract|strict json/i.test(item.evidence),
+    ),
+  )
 })
 
-test('default needles do not include persistable envelope or harvest wrapper phrases', () => {
+test('hostdzire memory-stage-one envelope is distill even if official or zero inject', () => {
+  const inbound = {
+    model: 'claude-opus-5',
+    max_tokens: 4096,
+    stream: true,
+    thinking: { type: 'adaptive', display: 'summarized' },
+    output_config: { effort: 'low' },
+    system: [
+      { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.257.ab9; cc_entrypoint=cli; cch=72eba;' },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+      {
+        type: 'text',
+        text: 'Memory-stage-one extractor.\n\nMUST return strict JSON only; no markdown, no commentary.\n\nMUST distill reusable, durable rollout knowledge:',
+      },
+    ],
+    messages: [
+      {
+        role: 'user',
+        content:
+          'thread_id: 01a057ba-d606-7255-a932-a2cfad833afe\n\nPersistable response items (JSON):\n[{"role":"user","text":"再windows 重装 cli"}]\n\nYou MUST extract durable memory now.',
+      },
+    ],
+  }
+  for (const extra of [{}, { official: true }, { zeroInject: true }]) {
+    const hit = detectDistill({ inbound, ...extra })
+    assert.equal(hit.action, 'block')
+    assert.equal(hit.hits[0].rule, 'harvest_needle')
+  }
+})
+
+test('default needles include harvest wrappers but not persistable envelope', () => {
   const joined = DEFAULT_DISTILL_RULES.needles.join('\n')
   assert.equal(/persistable response items/i.test(joined), false)
-  assert.equal(/memory-stage-one/i.test(joined), false)
-  assert.equal(/must distill reusable/i.test(joined), false)
-  assert.equal(/must extract durable memory/i.test(joined), false)
+  assert.equal(/memory-stage-one/i.test(joined), true)
+  assert.equal(/must distill reusable/i.test(joined), true)
+  assert.equal(/must extract durable memory/i.test(joined), true)
+  assert.equal(/must return strict json only/i.test(joined), true)
+})
+
+test('normalizeDistillRules reinserts harvest needles dropped from the panel list', () => {
+  const rules = normalizeDistillRules({ needles: ['<think>'] })
+  assert.equal(rules.needles.includes('<think>'), true)
+  assert.equal(rules.needles.includes('Memory-stage-one extractor'), true)
+  assert.equal(rules.needles.includes('You MUST extract durable memory now'), true)
 })
 
 test('plain cluster VM email UI prompt is not distill', () => {
