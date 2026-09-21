@@ -110,6 +110,30 @@ function dropLastMessageBreakpoint(body) {
   return { ...body, messages: next }
 }
 
+/** A CLI hop must end on a conversational user/assistant turn. Preserve older
+ * role=system leftovers in place, but lift only a trailing run to system[]. */
+function liftTrailingSystemMessages(body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : []
+  let firstTrailing = messages.length
+  while (firstTrailing > 0 && messages[firstTrailing - 1]?.role === 'system') firstTrailing--
+  if (firstTrailing === messages.length) return body
+  const lifted = messages.slice(firstTrailing).flatMap((message) => {
+    const content = message?.content
+    if (typeof content === 'string') return content.trim() ? [{ type: 'text', text: content }] : []
+    if (!Array.isArray(content)) return []
+    return content
+      .map((block) => (typeof block === 'string' ? { type: 'text', text: block } : block))
+      .filter((block) => block?.type === 'text' && String(block.text || '').trim())
+  })
+  if (!lifted.length) return { ...body, messages: messages.slice(0, firstTrailing) }
+  const system = Array.isArray(body.system)
+    ? body.system
+    : body.system == null
+      ? []
+      : [{ type: 'text', text: String(body.system) }]
+  return { ...body, system: [...system, ...lifted], messages: messages.slice(0, firstTrailing) }
+}
+
 /** Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks. */
 export function prepareCliHopBody(
   canonicalBody,
@@ -126,6 +150,8 @@ export function prepareCliHopBody(
   const leftover = stripCliOwnedSystem(body.system)
   if (leftover == null) delete body.system
   else body.system = leftover
+  body = liftTrailingSystemMessages(body)
+
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
     normalizeThinkingForModel(body)

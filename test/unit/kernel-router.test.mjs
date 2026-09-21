@@ -206,6 +206,10 @@ unixTest('dispatchStreamInference uses rust socket when ready', async () => {
       'x-kin-terminal-state': 'verified',
       'x-kin-model': 'claude-haiku-4-5-20251001',
     })
+    res.write('event: message_start\n')
+    res.write('data: {"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}\n\n')
+    res.write('event: content_block_start\n')
+    res.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}\n\n')
     res.write('event: message_stop\n')
     res.write('data: {"type":"message_stop"}\n\n')
     res.addTrailers({

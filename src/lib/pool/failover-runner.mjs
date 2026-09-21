@@ -58,6 +58,24 @@ function poolError(code, message, details = {}) {
   }
 }
 
+function fableRequiresMaxError(details = {}) {
+  return {
+    ok: false,
+    status: 429,
+    via: 'pool-failover',
+    terminalState: 'exhausted',
+    body: {
+      type: 'error',
+      error: {
+        type: 'rate_limit_error',
+        code: 'fable_requires_max',
+        message: 'Fable requires an available Max account',
+        details,
+      },
+    },
+  }
+}
+
 function selectedHasRefresh(selected) {
   if (selected?.hasRefresh === true || selected?.hasRefresh === false) return selected.hasRefresh
   const cred = selected?.workerStatus?.credential || selected?.state?.worker_status?.credential || {}
@@ -355,6 +373,15 @@ export class FailoverRunner {
         }
         throw error
       }
+      if (!selected?.ok && selected?.reason === 'fable_requires_max') {
+        return fableRequiresMaxError({
+          wait_ms: selected?.waitMs ?? selected?.wait_ms ?? 0,
+          eligible: selected?.eligible ?? 0,
+          available: selected?.available ?? 0,
+          attempt_count: attemptNo - 1,
+        })
+      }
+
       if (!selected?.ok) {
         return preferLastResult(
           lastResult,
@@ -517,6 +544,21 @@ export class FailoverRunner {
           }
           continue
         }
+        // A terminal 2xx without a complete assistant message is request/CLI
+        // state, not account health. One same-slot recovery is useful; replaying
+        // the same conversation across the pool breaks affinity and multiplies cost.
+        if (policy.reason === 'incomplete_assistant') {
+          return {
+            ...incompleteAssistantClientError(result),
+            via: result?.via || 'pool-failover',
+            accountId: selected.accountId,
+            vmId: selected.vmId,
+            attemptCount: attemptNo,
+            finalState: 'incomplete',
+            policy,
+          }
+        }
+
         excluded.add(selected.accountId)
         excluded.add(selected.vmId)
         accountSwitches++
