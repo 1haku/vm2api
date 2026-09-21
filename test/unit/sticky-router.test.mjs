@@ -196,7 +196,7 @@ test('extractOfficialFamilyKey binds parent and child hops by device_id', () => 
   )
 })
 
-test('local-agent sessions keep independent locks while sharing device affinity', () => {
+test('parent and child hops share one sticky session', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
   const parentReq = {
     headers: { 'user-agent': 'claude-cli/2.1.241 (external, sdk-cli)', 'x-claude-code-session-id': 'parent-sess' },
@@ -209,11 +209,27 @@ test('local-agent sessions keep independent locks while sharing device affinity'
     },
   }
   const childBody = { metadata: { user_id: { device_id: 'aabbcc', session_id: 'child-sess' } } }
+  assert.equal(r.extractPoolKey(parentReq, parentBody), 'dev:aabbcc')
+  assert.equal(r.extractPoolKey(childReq, childBody), 'dev:aabbcc')
+  r.bind('child-sess', { accountId: 'acc-2', vmId: 'vm-02' })
   r.bind('dev:aabbcc', { accountId: 'acc-1', vmId: 'vm-01' })
-  assert.equal(r.extractPoolKey(parentReq, parentBody), 'parent-sess')
-  assert.equal(r.extractPoolKey(childReq, childBody), 'child-sess')
+  assert.equal(r.extractPoolKey(childReq, childBody), 'dev:aabbcc')
   assert.deepEqual(r.collectPoolKeys(childReq, childBody), ['dev:aabbcc', 'child-sess'])
-  assert.equal(r.resolve(r.collectPoolKeys(childReq, childBody)[0]).vmId, 'vm-01')
+  assert.equal(r.resolve(r.extractPoolKey(childReq, childBody)).vmId, 'vm-01')
+})
+
+test('anthropic and openai sticky keys do not share a session', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { headers: { 'x-session-id': 'same-session' } }
+  const body = { metadata: { user_id: { session_id: 'same-session' } } }
+  const claude = r.extractPoolKey(req, body, { platform: 'anthropic' })
+  const gpt = r.extractPoolKey(req, body, { platform: 'openai' })
+  assert.equal(claude, 'p:anthropic:same-session')
+  assert.equal(gpt, 'p:openai:same-session')
+  r.bind(claude, { accountId: 'acc-claude', vmId: 'vm-claude' })
+  assert.equal(r.resolve(gpt), null)
+  assert.equal(r.extractPoolKey(req, body, { platform: 'openai' }), gpt)
+  assert.equal(r.resolve(r.extractPoolKey(req, body, { platform: 'anthropic' })).vmId, 'vm-claude')
 })
 
 test('protocol aliases resolve one conversation to the same account', () => {
