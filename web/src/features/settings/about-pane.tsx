@@ -132,11 +132,10 @@ export function AboutPane() {
           ) : null}
           {data?.needs_wrap_cli_sync ? (
             <Alert>
-              <AlertTitle>需要同步槽内 CLI</AlertTitle>
+              <AlertTitle>需要重装槽内 kernel</AlertTitle>
               <AlertDescription>
-                此跨度 changelog 提到
-                wrap-cli/sync。控制面升完后到内核页同步，或给 install.sh 加
-                --sync-wrap。
+                此跨度 changelog 提到 wrap-cli/sync。控制面升完后到内核页重装
+                kernel，或给 install.sh 加 --sync-wrap。
               </AlertDescription>
             </Alert>
           ) : null}

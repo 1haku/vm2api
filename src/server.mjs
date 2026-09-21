@@ -568,7 +568,7 @@ async function refreshWorkerCredentialForVm({ vmId, vmPath, homeDir, vm, force =
   return published
 }
 
-const { json, writeSSEHeaders, readBody } = createRespond(cfg, {
+const { json, writeSSEHeaders, readBody, readRawBody } = createRespond(cfg, {
   tcpNodelay: () => routingConfig?.inference?.tcp_nodelay !== false,
 })
 
@@ -753,6 +753,7 @@ const { handleProtocol } = createHandleProtocol({
 const handlePanel = createPanelHandler({
   json,
   readBody,
+  readRawBody,
   requireAuth,
   cfg,
   routingConfigPath,

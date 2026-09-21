@@ -97,11 +97,11 @@ export function FleetActions() {
       const ok = report.ok_count ?? 0
       const kernelFail = wrapSyncKernelFails(report.items)
       if ((report.failed_count || 0) > 0) {
-        toast.error(`wrap 母样本同步 ${ok}/${total}`)
+        toast.error(`kernel 重装 ${ok}/${total}`)
       } else if (kernelFail > 0) {
-        toast.error(`wrap 文件 ${ok}/${total}，kernel 未起来 ${kernelFail}`)
+        toast.error(`kernel 文件 ${ok}/${total}，进程未起来 ${kernelFail}`)
       } else {
-        toast.success(`wrap 母样本同步 ${ok}/${total}`)
+        toast.success(`kernel 重装 ${ok}/${total}`)
       }
       await invalidateFleet(qc)
     },
@@ -144,7 +144,7 @@ export function FleetActions() {
         disabled={wrapSync.isPending}
         loading={wrapSync.isPending}
       >
-        同步 wrap 母样本
+        重装 kernel
       </Button>
 
       <Dialog open={fleetOpen} onOpenChange={setFleetOpen}>

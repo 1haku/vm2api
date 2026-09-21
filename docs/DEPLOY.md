@@ -69,6 +69,8 @@ Docker Desktop / WSL 下 `curl 127.0.0.1:8787` 可能失败：
 docker exec vm2api python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8787/health").read().decode())'
 ```
 
+槽位安装、同步和模板制作优先使用 `KIN_KERNEL_BIN` / `bin/kin-kernel`；母样本或槽内快照只在主内核不可用时使用。更新或上传主内核后，仍需同步并重启目标槽。控制面重启本身不会替换正在运行的槽内进程。
+
 ## 上线后
 
 1. 打开 `/cc#/login`，用管理台密码登录（未配置时为 `admin` / `123456`）。

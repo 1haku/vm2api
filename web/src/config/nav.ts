@@ -49,7 +49,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   logs: '日志',
   database: '数据库',
   settings: '设置',
-  wrap: 'Wrap 母样本',
+  wrap: 'kernel重装',
 }
 
 export const NAV_ITEMS: {

@@ -165,9 +165,11 @@ import {
   describeWrapSample,
   makeWrapSample,
   materializeWrapCli,
+  replaceKernelBinary,
   syncWrapSample,
   wrapCliHomeDir,
 } from '../vm/wrap-cli-runtime.mjs'
+import { readRawBody as defaultReadRawBody } from '../http/respond.mjs'
 import { restartRustKernel, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
 import { countTokensViaWorker } from '../transport/go-worker-client.mjs'
@@ -214,6 +216,7 @@ async function commitImportedCodexVm({ cfg, vmPath, existing, account }) {
 export function createPanelHandler(ctx) {
   const json = (...args) => ctx.json(...args)
   const readBody = (...args) => ctx.readBody(...args)
+  const readRawBody = (...args) => (ctx.readRawBody || defaultReadRawBody)(...args)
   const requireAuth = (...args) => ctx.requireAuth(...args)
   const cfg = ctx.cfg
   const routingConfigPath = ctx.routingConfigPath
@@ -1222,6 +1225,25 @@ export function createPanelHandler(ctx) {
           return json(res, 400, { ok: false, error: { code: made.code, message: made.error } })
         }
         return json(res, 200, panel.ok(made))
+      }
+      if (req.method === 'POST' && p === '/api/panel/wrap-cli/kernel') {
+        let buf
+        try {
+          buf = await readRawBody(req, cfg.limits?.max_body_bytes || 32 * 1024 * 1024)
+        } catch (error) {
+          const status = error?.status || 400
+          const body = error?.body || { error: { message: String(error?.message || error) } }
+          return json(res, status, { ok: false, ...body })
+        }
+        if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf || [])
+        if (!buf.length) {
+          return json(res, 400, { ok: false, error: { code: 'kernel_empty', message: 'kernel binary required' } })
+        }
+        const replaced = replaceKernelBinary(cfg.paths.project, buf)
+        if (!replaced.ok) {
+          return json(res, 400, { ok: false, error: { code: replaced.code, message: replaced.error } })
+        }
+        return json(res, 200, panel.ok(replaced))
       }
 
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/sync') {
