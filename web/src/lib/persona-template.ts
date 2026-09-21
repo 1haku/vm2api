@@ -377,12 +377,13 @@ export function personaHidesFromCompat(
   return blocks.some((block) => block.hide === true)
 }
 
-/** 回滚兼容：把 preset 折回 legacy persona_inject，保留未知旧值。 */
+/** 三档写回对应 inject。custom 才保留未知旧值，避免把完整官方提示词折成 rewrite。 */
 export function personaInjectFromPreset(
   preset: PersonaPreset,
   legacy: unknown
 ): string {
   if (preset === 'official') return 'official_prompt'
+  if (preset === 'official_full') return 'official_full'
   if (preset === 'zero') return 'zero'
   return String(legacy ?? '').trim() || 'rewrite'
 }
@@ -642,6 +643,23 @@ export function renderOverlayTemplate(
 export function personaPresetLabel(preset: PersonaPreset): string {
   return (PERSONA_PRESET_OPTIONS.find(([v]) => v === preset) ||
     PERSONA_PRESET_OPTIONS[0])[1]
+}
+
+/** 协议页保存提示。文案必须对应服务端已写入的 preset，而不是点击前的草稿猜测。 */
+export function protocolPersonaSaveToast(
+  compat: Record<string, unknown> | undefined,
+  inherited: number,
+  kernel?: { updated?: number } | null
+): string {
+  const label = personaPresetLabel(personaPresetFromCompat(compat))
+  const hot =
+    kernel && typeof kernel.updated === 'number'
+      ? kernel.updated > 0
+        ? `人设与缓存 TTL 已热更新 ${kernel.updated} 个槽`
+        : '人设与缓存 TTL 的 kernel 配置已一致'
+      : '已写入'
+  if (!inherited) return `已保存 · ${label} · ${hot}`
+  return `已保存 · ${label} · ${inherited} 个槽位改为跟随全局 · ${hot}`
 }
 
 export function overlayPresetLabel(preset: OverlayPreset): string {
