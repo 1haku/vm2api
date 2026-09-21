@@ -168,16 +168,21 @@ export class StickyRouter {
       if (id != null && id !== '') add(`k${id}:envelope`)
     }
     add(this.extractOfficialFamilyKey(req, body))
+    // A caller-provided conversation/session id is the cross-request lock.
+    // First-user fingerprints are only a protocol bridge/fallback: concurrent
+    // turns in one session can carry different visible first messages.
+    add(this.extractKey(req, body))
     if (mode === 'conversation') {
       const fingerprint = firstUserFingerprint(body)
       if (fingerprint) add(this.isolateKey(`ch:${fingerprint}`, req))
     }
-    add(this.extractKey(req, body))
     return keys
   }
 
-  /** Prefer an already-bound alias, then the strongest available identity. */
+  /** Explicit session locks the turn; resolved aliases only preserve VM affinity. */
   extractPoolKey(req, body = {}) {
+    const explicit = this.extractKey(req, body)
+    if (explicit) return explicit
     const keys = this.collectPoolKeys(req, body)
     return keys.find((key) => this.resolve(key)) || keys[0] || null
   }
