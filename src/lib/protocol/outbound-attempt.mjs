@@ -37,8 +37,8 @@ import {
   applyCacheTtlToBody,
   applyCacheBreakpoints,
   enforceCacheTtlOrder,
+  forceEphemeralCacheTtl,
   normalizeCacheBreakpoints,
-  normalizeCacheTtl,
   stripIllegalCacheControlFields,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
@@ -164,8 +164,11 @@ export function prepareCliHopBody(
   }
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
-  if (cacheTtl == null) return body
-  const ttl = normalizeCacheTtl(cacheTtl)
+  if (cacheTtl == null) return forceEphemeralCacheTtl(body, CLI_HOP_CACHE_TTL)
+  // Wrap CLI tools/system are ttl-less, which Anthropic treats as 5m.
+  // A console 1h written on a later message is the live 400, so cli-hop
+  // never emits 1h.
+  const ttl = CLI_HOP_CACHE_TTL
   body = stripIllegalCacheControlFields(body)
   // Node owns the stable previous-user boundary; the kernel receives the same
   // resolved TTL and owns the current tail plus wrap-owned markers.
@@ -185,7 +188,7 @@ export function prepareCliHopBody(
   }
   body = dropCliOwnedBreakpoints(body)
   body = dropLastMessageBreakpoint(body)
-  body = enforceCacheTtlOrder(body, { honorHour: ttl === '1h' })
+  body = forceEphemeralCacheTtl(enforceCacheTtlOrder(body), ttl)
   enforceCacheLimit(body, cacheControlLimit)
   return body
 }
