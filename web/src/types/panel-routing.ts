@@ -46,6 +46,8 @@ export type DistillRules = {
     require_single_turn: boolean
   }
   needles: string[]
+  /** Hard regexes. Server reinserts built-in distillation / CoT patterns if omitted. */
+  patterns: string[]
   fingerprints: string[]
 }
 
