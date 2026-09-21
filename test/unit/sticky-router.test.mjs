@@ -196,7 +196,7 @@ test('extractOfficialFamilyKey binds parent and child hops by device_id', () => 
   )
 })
 
-test('extractPoolKey pins local-agent sub-agent to parent device family', () => {
+test('local-agent sessions keep independent locks while sharing device affinity', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
   const parentReq = {
     headers: { 'user-agent': 'claude-cli/2.1.241 (external, sdk-cli)', 'x-claude-code-session-id': 'parent-sess' },
@@ -209,10 +209,11 @@ test('extractPoolKey pins local-agent sub-agent to parent device family', () => 
     },
   }
   const childBody = { metadata: { user_id: { device_id: 'aabbcc', session_id: 'child-sess' } } }
-  assert.equal(r.extractPoolKey(parentReq, parentBody), 'dev:aabbcc')
-  assert.equal(r.extractPoolKey(childReq, childBody), r.extractPoolKey(parentReq, parentBody))
-  assert.notEqual(r.extractKey(childReq, childBody), r.extractPoolKey(parentReq, parentBody))
+  r.bind('dev:aabbcc', { accountId: 'acc-1', vmId: 'vm-01' })
+  assert.equal(r.extractPoolKey(parentReq, parentBody), 'parent-sess')
+  assert.equal(r.extractPoolKey(childReq, childBody), 'child-sess')
   assert.deepEqual(r.collectPoolKeys(childReq, childBody), ['dev:aabbcc', 'child-sess'])
+  assert.equal(r.resolve(r.collectPoolKeys(childReq, childBody)[0]).vmId, 'vm-01')
 })
 
 test('protocol aliases resolve one conversation to the same account', () => {
@@ -227,12 +228,21 @@ test('protocol aliases resolve one conversation to the same account', () => {
 
   const primary = r.extractPoolKey(req, anthropic)
   const aliases = r.collectPoolKeys(req, anthropic)
-  assert.match(primary, /^kkey_cross_protocol:ch:/)
-  assert.equal(aliases[1], 'kkey_cross_protocol:anthropic-session')
+  assert.equal(primary, 'kkey_cross_protocol:anthropic-session')
+  assert.match(aliases[1], /^kkey_cross_protocol:ch:/)
   for (const key of aliases) r.bind(key, { accountId: 'acc-1', vmId: 'vm-01' })
 
-  assert.equal(r.extractPoolKey(req, openai), primary)
   assert.equal(r.resolve(r.extractPoolKey(req, openai)).vmId, 'vm-01')
+})
+
+test('explicit session is the stable lock when concurrent turns have different first messages', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key_lock' }, headers: { 'x-session-id': 'shared-session' } }
+  const first = { messages: [{ role: 'user', content: 'first visible turn' }] }
+  const second = { messages: [{ role: 'user', content: 'trimmed current turn' }] }
+  assert.equal(r.extractPoolKey(req, first), 'kkey_lock:shared-session')
+  assert.equal(r.extractPoolKey(req, second), 'kkey_lock:shared-session')
+  assert.notEqual(r.collectPoolKeys(req, first)[1], r.collectPoolKeys(req, second)[1])
 })
 
 test('provisional bind does not increment hits', () => {
