@@ -311,40 +311,42 @@ test('unofficial cli-hop rewrite matches official penultimate-user leftover', ()
   )
 })
 
-test('unofficial cli-hop rewrite leaves leftover mid-system unmarked', () => {
+test('cli-hop lifts trailing system constraints so the hop ends with a user turn', () => {
   const leftover = {
     model: 'claude-sonnet-5',
     max_tokens: 256,
     system: [{ type: 'text', text: 'persona system prefix' }],
     messages: [
       { role: 'user', content: 'u1' },
-      { role: 'system', content: 'caller leftover after first user' },
+      { role: 'system', content: 'caller constraint after current user' },
     ],
   }
   const firstTurn = prepareCliHopBody(leftover, { unofficial: true })
-  assert.equal(firstTurn.messages.length, 2)
+  assert.equal(firstTurn.messages.length, 1)
   assert.equal(firstTurn.messages[0].role, 'user')
-  assert.equal(firstTurn.messages[1].role, 'system')
-  assert.equal(firstTurn.messages[1].content[0].text, 'caller leftover after first user')
+  assert.equal(firstTurn.messages[0].content[0].text, 'u1')
+  assert.equal(firstTurn.system.at(-1).text, 'caller constraint after current user')
   assert.equal(firstTurn.messages[0].content[0].cache_control, undefined)
-  assert.equal(firstTurn.messages[1].content[0].cache_control, undefined)
-  assert.equal(firstTurn.system[0].cache_control, undefined)
+  assert.ok(firstTurn.system.every((block) => block.cache_control == null))
 
   const later = prepareCliHopBody({
     ...leftover,
     messages: [
       { role: 'user', content: 'u1' },
-      { role: 'system', content: 'caller leftover after first user' },
+      { role: 'system', content: 'historical constraint' },
       { role: 'assistant', content: 'a1' },
       { role: 'user', content: 'u2' },
+      { role: 'system', content: 'current constraint' },
     ],
   })
   assert.equal(later.messages[1].role, 'system')
   assert.equal(later.messages.at(-1).role, 'user')
+  assert.equal(later.messages.at(-1).content[0].text, 'u2')
+  assert.equal(later.system.at(-1).text, 'current constraint')
   assert.deepEqual(later.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
   assert.equal(later.messages[1].content[0].cache_control, undefined)
   assert.equal(later.messages.at(-1).content[0].cache_control, undefined)
-  assert.equal(later.system[0].cache_control, undefined)
+  assert.ok(later.system.every((block) => block.cache_control == null))
 })
 
 test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {
