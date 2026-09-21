@@ -68,7 +68,7 @@ import {
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
-import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { prepareOutboundEnvelope, prepareCliHopBody, CLI_HOP_CACHE_TTL } from './outbound-attempt.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import { extractCallerSession, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
@@ -533,12 +533,13 @@ export function createHandleProtocol(deps) {
     const outboundSessionId = resolveOutboundSessionId(extractCallerSession({ inbound, headers: req.headers }), {
       officialClient: officialTraffic,
     })
-    const cacheTtl = resolveCacheTtl({
+    const requestedCacheTtl = resolveCacheTtl({
       headers: req.headers,
       body: inbound,
       routingFile: routingConfigPath,
       officialTraffic,
     })
+    let cacheTtl = requestedCacheTtl
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
     const openaiCompat = String(protocol || '').startsWith('openai.')
     const personaMode = personaModeFromRoutingFile(routingConfigPath)
@@ -747,6 +748,7 @@ export function createHandleProtocol(deps) {
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
+            cacheTtl = CLI_HOP_CACHE_TTL
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             if (!officialTraffic) {
@@ -786,6 +788,7 @@ export function createHandleProtocol(deps) {
             return { body: hopBody, meta: { toolNames: {} } }
           }
 
+          cacheTtl = requestedCacheTtl
           if (!officialTraffic && modeOverride) {
             const rewritten = applyCrsUnofficialPersona(structuredClone(personaIn), {
               officialClient: officialTraffic,

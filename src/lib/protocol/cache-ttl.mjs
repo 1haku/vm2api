@@ -188,10 +188,6 @@ function downgradePinnedHourToFive() {
   return { type: 'ephemeral', ttl: '5m' }
 }
 
-function upgradeFiveToHour() {
-  return { type: 'ephemeral', ttl: '1h' }
-}
-
 function walkCacheNodes(body, mapFn) {
   const out = { ...body }
   if (out.cache_control) {
@@ -211,59 +207,43 @@ function walkCacheNodes(body, mapFn) {
 }
 
 /**
- * Anthropic processes breakpoints in order: tools → system → messages.
- * A ttl=1h block must not appear after a ttl=5m block.
- * Caller last-tool 5m + KIN expansion 1h is the live 400.
- * honorHour: keep caller 1h and upgrade earlier 5m instead of wiping the 1h.
+ * One TTL per request. Anthropic reads a missing ttl as 5m and rejects a later
+ * 1h. If any breakpoint is 5m, every 1h is rewritten to 5m. Never upgrade 5m
+ * to 1h: wrap re-adds ttl-less tools after that upgrade and the 1h 400s.
  */
-export function enforceCacheTtlOrder(body, { honorHour = false } = {}) {
+export function enforceCacheTtlOrder(body) {
   if (!body || typeof body !== 'object') return body
-  if (honorHour) return honorHourCacheTtlOrder(body)
-  let seen5m = false
+  let has5m = false
+  walkCacheNodes(body, (node) => {
+    if (node?.cache_control && ephemeralCacheTtl(node.cache_control) === '5m') has5m = true
+    return node
+  })
+  if (!has5m) return body
   let changed = false
   const fix = (node) => {
-    if (!node || typeof node !== 'object' || !node.cache_control) return node
-    const ttl = ephemeralCacheTtl(node.cache_control)
-    if (ttl === '1h' && seen5m) {
-      changed = true
-      return { ...node, cache_control: downgradePinnedHourToFive() }
-    }
-    if (ttl === '5m') seen5m = true
-    return node
+    if (!node?.cache_control || ephemeralCacheTtl(node.cache_control) !== '1h') return node
+    changed = true
+    return { ...node, cache_control: downgradePinnedHourToFive() }
   }
   const out = walkCacheNodes(body, fix)
   return changed ? out : body
 }
 
-function honorHourCacheTtlOrder(body) {
-  const ttls = []
-  const record = (node) => {
-    if (!node || typeof node !== 'object' || !node.cache_control) return node
-    ttls.push(ephemeralCacheTtl(node.cache_control))
-    return node
-  }
-  walkCacheNodes(body, record)
-  let last1h = -1
-  for (let i = 0; i < ttls.length; i++) if (ttls[i] === '1h') last1h = i
-  if (last1h < 0) return body
-  let need = false
-  for (let i = 0; i < last1h; i++) {
-    if (ttls[i] === '5m') {
-      need = true
-      break
-    }
-  }
-  if (!need) return body
-  let idx = 0
+/** Cli-hop wrap markers are ttl-less (5m). Retarget every Node marker to that one TTL. */
+export function forceEphemeralCacheTtl(body, ttl = '5m') {
+  const target = normalizeCacheTtl(ttl)
+  if (!body || typeof body !== 'object') return body
+  let changed = false
   const fix = (node) => {
-    if (!node || typeof node !== 'object' || !node.cache_control) return node
-    const at = idx++
-    if (at < last1h && ephemeralCacheTtl(node.cache_control) === '5m') {
-      return { ...node, cache_control: upgradeFiveToHour() }
-    }
-    return node
+    if (!node?.cache_control) return node
+    const control = node.cache_control
+    if (control.type && control.type !== 'ephemeral') return node
+    if (control.type === 'ephemeral' && control.ttl === target) return node
+    changed = true
+    return { ...node, cache_control: { ...control, type: 'ephemeral', ttl: target } }
   }
-  return walkCacheNodes(body, fix)
+  const out = walkCacheNodes(body, fix)
+  return changed ? out : body
 }
 
 /** Rewrite every outbound cache breakpoint to this request's resolved TTL. */
