@@ -58,6 +58,7 @@ import {
   validateRequestBody,
   mapModelError,
   isClientCancelledResult,
+  isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
   finalizeAssembledAssistantHop,
   incompleteAssistantClientError,
@@ -257,10 +258,17 @@ export function createHandleProtocol(deps) {
       },
     })
     if (assembler.message) {
-      workerResult.body = assembler.message
-      if (assembler.message.usage) workerResult.usage = assembler.message.usage
-      if (assembler.message.model) workerResult.model = assembler.message.model
-      if (assembler.message.stop_reason) workerResult.stopReason = assembler.message.stop_reason
+      const localComplete = isCompleteAssistantMessage({
+        body: assembler.message,
+        stopReason: assembler.message.stop_reason,
+      })
+      const workerComplete = isCompleteAssistantMessage(workerResult)
+      if (localComplete || !workerComplete) {
+        workerResult.body = assembler.message
+        if (assembler.message.usage) workerResult.usage = assembler.message.usage
+        if (assembler.message.model) workerResult.model = assembler.message.model
+        if (assembler.message.stop_reason) workerResult.stopReason = assembler.message.stop_reason
+      }
     }
     if (workerResult?.body) {
       workerResult.body = restoreToolNames(workerResult.body, toolNames)
