@@ -485,8 +485,9 @@ cmd_install() {
   start_stack
   ok "安装完成  ${INSTALL_DIR}  @ $(local_version)"
   if [ "$NO_START" = 0 ] && [ "$SYNC_WRAP" = 1 ]; then
-    sync_wrap_cli || warn "wrap-cli/sync 失败，可稍后在面板重试"
+    sync_wrap_cli || { err "槽内 wrap CLI / kernel 同步失败，安装未完成"; exit 1; }
   fi
+
   print_login_banner
   info "以后更新: curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash -s -- upgrade"
 }
@@ -521,7 +522,8 @@ cmd_upgrade() {
   fi
   start_stack
   if [ "$NO_START" = 0 ] && [ "$SYNC_WRAP" = 1 ]; then
-    sync_wrap_cli || warn "wrap-cli/sync 失败，可稍后在面板重试"
+    sync_wrap_cli || { err "槽内 wrap CLI / kernel 同步失败，升级未完成"; exit 1; }
+
   elif [ "$NO_START" = 1 ]; then
     warn "--no-start：控制面未启动，已跳过槽内 CLI / kernel 同步"
   else
