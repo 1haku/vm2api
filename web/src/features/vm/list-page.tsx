@@ -191,6 +191,7 @@ export function VmListPage() {
           view === 'grid' ? (
             <VmCards
               vms={list}
+              accounts={accounts}
               onReset={(vm) => {
                 setResetInput('')
                 setResetTarget(vm)

@@ -12,7 +12,7 @@ import {
 
 export const STATUS_BAR_ITEMS = [
   ['label', '状态'],
-  ['bar', '成功率条'],
+  ['bar', '可用性'],
   ['proxy', '代理'],
 ] as const
 

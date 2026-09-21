@@ -85,4 +85,22 @@ describe('filterVms fleet chips', () => {
   it('keeps 关闭调用 as operator off only', () => {
     expect(filterVms(all, '', 'off').map((row) => row.id)).toEqual(['off'])
   })
+
+  it('splits Claude and OpenAI slots', () => {
+    const claude = vm({ id: 'claude', platform: 'anthropic' })
+    const openai = vm({ id: 'openai', platform: 'openai' })
+    const rows = [...all, claude, openai]
+    expect(filterVms(rows, '', 'all', 'gpt').map((row) => row.id)).toEqual([
+      'openai',
+    ])
+    expect(filterVms(rows, '', 'all', 'claude').map((row) => row.id)).toEqual([
+      'pool',
+      'restricted',
+      'cool',
+      'off',
+      'leftover',
+      'warn',
+      'claude',
+    ])
+  })
 })
