@@ -138,9 +138,13 @@ export function VmDetailPage() {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
-    onSuccess: async (_data, body) => {
+    onSuccess: async (saved, body) => {
+      const sync = (
+        saved as { timezone_sync?: { kernel_hot?: boolean } } | undefined
+      )?.timezone_sync
+      const hot = sync?.kernel_hot ? ' · 已热更新 kernel.json' : ''
       toast.success(
-        body.timezone_follow_proxy ? '已跟随代理时区' : '已保存时区'
+        (body.timezone_follow_proxy ? '已跟随代理时区' : '已保存时区') + hot
       )
       await refreshAll()
     },

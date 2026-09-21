@@ -383,6 +383,9 @@ export function createPanelHandler(ctx) {
     try {
       const saved = persistSlotEnginePolicy(cfg.paths.project, id, patch)
       if (!saved) return { ok: false, id, code: 'vm_not_found', error: 'vm not found' }
+      if (Object.prototype.hasOwnProperty.call(patch, 'persona_preset') && !isCodexVm(saved)) {
+        writeKernelConfig(cfg.paths.project, saved, { routing: ctx.routingConfig })
+      }
       return {
         ok: true,
         id,
@@ -403,6 +406,15 @@ export function createPanelHandler(ctx) {
         rollback,
       }
     }
+  }
+
+  function projectSlotKernelConfig(vm) {
+    if (!vm?.id || isCodexVm(vm)) return null
+    const full = getVm(cfg.paths.project, vm.id) || vm
+    return writeKernelConfig(cfg.paths.project, full, {
+      routing: ctx.routingConfig,
+      timezone: full.timezone,
+    })
   }
 
   function restoreRoutingRuntime(previous) {
@@ -1426,7 +1438,13 @@ export function createPanelHandler(ctx) {
           }
           const vm = persistVmTimezone(cfg.paths.project, id, zone, { source: 'manual' })
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-          timezoneSync = { applied: true, timezone: zone, source: 'manual' }
+          const kernel = projectSlotKernelConfig(vm)
+          timezoneSync = {
+            applied: true,
+            timezone: zone,
+            source: 'manual',
+            kernel_hot: kernel?.changed === true,
+          }
         } else if (followProxyTz) {
           const synced = await syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, id, { force: true })
           if (!synced.ok) {
@@ -1440,6 +1458,10 @@ export function createPanelHandler(ctx) {
             })
           }
           timezoneSync = { applied: synced.applied, timezone: synced.timezone, source: 'proxy_geo' }
+          if (synced.applied) {
+            const kernel = projectSlotKernelConfig({ id })
+            timezoneSync.kernel_hot = kernel?.changed === true
+          }
         }
         if (next != null) {
           const vm = applyVmConcurrency(id, next, { override: true })
@@ -3098,6 +3120,7 @@ export function createPanelHandler(ctx) {
             applied_concurrency: applied.concurrency,
             applied_rpm: applied.rpm,
             applied_session_slots: applied.session_slots,
+            kernel_persona: applied.kernel_persona || null,
             inference_runtime: publicEngineRuntime,
           }),
         )

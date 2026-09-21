@@ -187,10 +187,12 @@ test('persistRoutingPatch writes persona_preset into Claude kernel system_layout
       requestLog: { setConfig() {} },
     })
 
-    runtime.persistRoutingPatch({ compatibility: { persona_preset: 'zero' } })
+    const applied = runtime.persistRoutingPatch({ compatibility: { persona_preset: 'zero' } })
+    assert.equal(applied.kernel_persona.updated, 1)
 
     const kernel = JSON.parse(fs.readFileSync(path.join(vms, 'vm-claude', 'run', 'kernel.json'), 'utf8'))
     assert.equal(kernel.system_layout, 'zero')
+    assert.equal(kernel.persona_preset, 'zero')
     assert.equal(kernel.default_cache_ttl, '1h')
     assert.equal(kernel.cli_version, OFFICIAL_CLI_VERSION)
     assert.equal(fs.existsSync(path.join(vms, 'vm-codex', 'run', 'kernel.json')), false)
