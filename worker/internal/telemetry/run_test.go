@@ -2,10 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,5 +144,66 @@ func TestRunPostsInitSuccessAndEval(t *testing.T) {
 	}
 	if batches.Load() < 2 || evals.Load() != 1 {
 		t.Fatalf("hits=%d batches=%d evals=%d", hits.Load(), batches.Load(), evals.Load())
+	}
+}
+
+func TestRunReloadsTelemetryWithoutRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "worker.json")
+	stamp := time.Now()
+	write := func(enabled bool, device string) {
+		raw := fmt.Sprintf(`{"telemetry":{"enabled":%t,"betas":"thinking-binding-controls-2026-08-01","identity":{"device_id":%q,"platform":"linux","cli_version":"2.1.278","env":{"version":"2.1.278","platform":"linux"}}}}`, enabled, device)
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp = stamp.Add(time.Second)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(true, "dev-1")
+	var bodies atomic.Value
+	bodies.Store("")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != batchPath {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		buf, _ := io.ReadAll(r.Body)
+		bodies.Store(bodies.Load().(string) + string(buf) + "\n")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	store := saveCred(t, dir, credential.Credential{
+		AccessToken: "tok",
+		ExpiresAt:   time.Now().Add(time.Hour).UnixMilli(),
+	})
+	ticks := 0
+	err := Run(context.Background(), config.Config{
+		ConfigPath: path,
+		Telemetry:  config.TelemetryConfig{Enabled: false},
+	}, Deps{
+		HTTP:  &Client{HTTP: server.Client(), AnthropicBase: base, Timeout: time.Second},
+		Store: store,
+		Now:   time.Now,
+		Sleep: func(context.Context, time.Duration) bool {
+			ticks++
+			if ticks == 1 {
+				write(true, "dev-2")
+				return true
+			}
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := bodies.Load().(string)
+	if !strings.Contains(got, "dev-2") || !strings.Contains(got, "thinking-binding-controls-2026-08-01") {
+		t.Fatalf("reloaded body missing new identity: %s", got)
+	}
+	if strings.Contains(got, "2.1.241") {
+		t.Fatalf("stale version in %s", got)
 	}
 }

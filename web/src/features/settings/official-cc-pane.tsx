@@ -96,11 +96,10 @@ export function OfficialCcSettingsPane({
       </CardHeader>
       <CardContent className='space-y-3'>
         <p className='text-xs text-muted-foreground'>
-          槽位首次换票后自动跑一次官方初装：用本槽新票跑单次官方{' '}
-          <code>hello</code>。默认 hello 后退出，不常驻。rust 槽推理永远 wrap
-          cli-hop，不是 official_full
-          HTTP。成功后写入官方身份并开遥测；再换票只写票， 不再跑官方
-          CLI。关自动后仍可在虚拟机页手动执行。
+          这是槽位外面的初装配置。启用时每次换票都重新 wipe 再跑官方
+          hello，不是只写票。 rust 槽推理固定 cli-hop，这里不能改成
+          HTTP。成功后按「同步遥测」写官方身份，并热更新槽内 worker.json。
+          虚拟机页的种子开关不能单独打开 DNT 来对抗这份配置。
         </p>
 
         <div className='divide-y'>
@@ -146,6 +145,31 @@ export function OfficialCcSettingsPane({
                 checked={config.usage_fallback === true}
                 onChange={(v) => set({ usage_fallback: v })}
               />
+              <SwitchRow
+                id='occ-cli_stats'
+                label='CLI /stats'
+                hint='默认关。只在协议额度不够时才开'
+                checked={config.cli_stats === true}
+                onChange={(v) => set({ cli_stats: v })}
+              />
+            </div>
+
+            <div className='space-y-1.5'>
+              <Label htmlFor='occ-quota'>额度来源</Label>
+              <Select
+                value={config.quota_via === 'cli' ? 'cli' : 'usage-api'}
+                onValueChange={(v) => set({ quota_via: v })}
+              >
+                <SelectTrigger id='occ-quota'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='usage-api'>
+                    协议 /api/oauth/usage
+                  </SelectItem>
+                  <SelectItem value='cli'>CLI</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className='space-y-1.5'>
@@ -198,9 +222,9 @@ export function OfficialCcSettingsPane({
             </div>
 
             <p className='text-xs text-muted-foreground'>
-              官方 CLI 只在初装启动一次：hello
-              用换票后的凭证，默认不常驻。内存按 500m 跑，不再临时抬到
-              2G。额度走协议 /usage。
+              推理固定 cli-hop，跟外部 inference.engine=rust。保存不会把
+              official_cc.inference 写成 http。 额度默认走协议 /usage。hello
+              默认不常驻。
             </p>
           </CollapsibleContent>
         </Collapsible>

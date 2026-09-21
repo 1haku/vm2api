@@ -126,3 +126,34 @@ func TestInitEventOmitsEmptyOptionalFields(t *testing.T) {
 		t.Fatalf("is_ci=%v", env["is_ci"])
 	}
 }
+
+func TestEventUsesConfiguredEnvAnd278Betas(t *testing.T) {
+	ev := InitEvent(Identity{
+		DeviceID: "d",
+		Betas:    "thinking-binding-controls-2026-08-01",
+		Env:      map[string]any{"platform": "linux", "version": "2.1.278", "linux_kernel": "from-env"},
+	}, time.Date(2026, 8, 23, 1, 0, 0, 0, time.UTC))
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, must := range []string{`"linux_kernel":"from-env"`, `"version":"2.1.278"`, "thinking-binding-controls-2026-08-01"} {
+		if !strings.Contains(body, must) {
+			t.Fatalf("missing %s in %s", must, body)
+		}
+	}
+	if strings.Contains(body, "2.1.241") || strings.Contains(body, "advanced-tool-use-2025-11-20") {
+		t.Fatalf("stale protocol marker in %s", body)
+	}
+	fallback := InitEvent(Identity{}, time.Date(2026, 8, 23, 1, 0, 0, 0, time.UTC))
+	raw, _ = json.Marshal(fallback)
+	body = string(raw)
+	if !strings.Contains(body, "thinking-binding-controls-2026-08-01") || !strings.Contains(body, `"version":"2.1.278"`) {
+		t.Fatalf("fallback=%s", body)
+	}
+	attrs := GrowthbookEval(Identity{UserID: "u"})["attributes"].(map[string]any)
+	if attrs["appVersion"] != "2.1.278" {
+		t.Fatalf("appVersion=%v", attrs["appVersion"])
+	}
+}

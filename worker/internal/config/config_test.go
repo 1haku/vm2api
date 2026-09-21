@@ -76,3 +76,40 @@ func TestLoadTransparentAllowsEmptyProxyURL(t *testing.T) {
 		t.Fatalf("ProxyURL=%q", cfg.ProxyURL)
 	}
 }
+
+func TestLoadTelemetryKeepsEnvBetasAndSource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "worker.json")
+	raw := `{
+  "vm_id": "",
+  "proxy_url": "",
+  "telemetry": {
+    "enabled": true,
+    "betas": "thinking-binding-controls-2026-08-01",
+    "headers": {"user-agent": "claude-code/2.1.278"},
+    "identity": {
+      "device_id": "dev",
+      "cli_version": "2.1.278",
+      "source": "official-cc-init",
+      "betas": "thinking-binding-controls-2026-08-01",
+      "env": {"version": "2.1.278", "linux_kernel": "6.8.0", "platform": "linux"}
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tel, err := LoadTelemetry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tel.Enabled || tel.Betas == "" || tel.Identity.Source != "official-cc-init" {
+		t.Fatalf("telemetry=%+v", tel)
+	}
+	if tel.Identity.Env["linux_kernel"] != "6.8.0" || tel.Identity.Env["version"] != "2.1.278" {
+		t.Fatalf("env=%v", tel.Identity.Env)
+	}
+	if tel.Headers["user-agent"] != "claude-code/2.1.278" {
+		t.Fatalf("headers=%v", tel.Headers)
+	}
+}
