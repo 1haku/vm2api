@@ -49,3 +49,12 @@ patches/
 .impeccable/
 .idea/
 *.swp
+
+# local scratch and unpublished artifacts
+/.tmp/
+/.tmp-*
+/AGENTS.md
+/docs/benchmarks.zip
+/worker/bin/
+/issues/
+/plan/
