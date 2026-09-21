@@ -45,11 +45,12 @@
 | GET/PUT | `/vms/:id/seed-settings` | 播种；强制保留 telemetry/bedrock/vertex 等 env |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`） |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
-| GET | `/wrap-cli` | wrap 母样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta` |
-| POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；可从指定槽拷 glibc shim |
-| POST | `/wrap-cli/sync` | `{ ids?, restart? }` 铺到槽 `.kin`（cli-node ELF + kernel.bin + 包装器）。1.2.5 升级用这条换槽内 CLI，**不是**重装整槽。`restart` 默认 true，rust 槽 bounce kernel |
-| POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升母样本，不复制凭证/SOCKS |
-| POST | `/vms/:id/wrap-cli/repair` | 单槽重装 wrap。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
+| GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
+| POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
+| POST | `/wrap-cli/kernel` | 原始 `application/octet-stream` linux amd64 ELF。替换仓内 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`。不自动同步槽位 |
+| POST | `/wrap-cli/sync` | `{ ids?, restart? }` 铺到槽 `.kin`（cli-node ELF + **最新** kernel.bin + 包装器）。kernel 优先仓内二进制，不被旧母样本盖回。`restart` 默认 true，rust 槽 bounce kernel |
+| POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升 wrap 文件，不复制凭证/SOCKS。下次 sync 仍优先仓内最新 kernel |
+| POST | `/vms/:id/wrap-cli/repair` | 单槽重装 kernel。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
 | POST | `/vms/:id/activate` | 标 active |
 | POST | `/vms/:id/reset` | 销毁容器与家目录，再按原槽位重建（保留 ID/代理/种子；凭证清空） |
@@ -134,13 +135,13 @@
 |------|------|------|
 | GET/PUT | `/distill` | 协议入口蒸馏拦截。命中后 HTTP 403，`code=distill_blocked`，默认文案 `不允许蒸馏`，不 hop 凭证 |
 
-`PUT` 热更新 `src/config/distill-rules.json`。字段：`enabled`、`skip_official`（官方 Claude Code 放行）、`skip_zero`（`persona_preset/inject=zero` 放行）、`error.{status,type,code,message}`、`needles[]`、`fingerprints[]`、`structure.{min_max_tokens,require_no_tools,require_single_turn}`。仅 admin。
+`PUT` 热更新 `src/config/distill-rules.json`。字段：`enabled`、`skip_official`（官方 Claude Code 放行其它针）、`skip_zero`（`persona_preset/inject=zero` 放行其它针）、`error.{status,type,code,message}`、`needles[]`、`fingerprints[]`、`structure.{min_max_tokens,require_no_tools,require_single_turn}`。`Memory-stage-one extractor` / `MUST distill` / `MUST extract durable memory` 等收割包装是硬拦截，官方/0 注入/面板删针也 403，不 hop。**不含**单独的 `Persistable response items`（普通 agent 信封）。仅 admin。
 
 ## 拒答缓存
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET/PUT | `/refusal-guards` | 上游 AUP / `stop_reason=refusal` 指纹缓存。命中后 HTTP 403，`code=refusal_guard`，不 hop |
+| GET/PUT | `/refusal-guards` | 仅缓存 `stop_reason=refusal` / refusal 块 / `finalState=content_filter`。命中后 HTTP 403，`code=refusal_guard`，不 hop。wrap `Usage Policy` 文案和信封 JSON 不会入缓存 |
 | DELETE | `/refusal-guards/:fingerprint` | 删除一条 64 位 hex 指纹 |
 | DELETE | `/refusal-guards` | 须 `{ "confirm": true }` 清空 |
 

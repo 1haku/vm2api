@@ -34,7 +34,21 @@ test('fingerprint ignores stream and max_tokens, includes model', () => {
   assert.notEqual(a, c)
 })
 
-test('AUP and stop_reason=refusal count as upstream refusal; distill does not', () => {
+test('envelope persistable JSON bodies keep distinct fingerprints', () => {
+  const a = refusalFingerprint(
+    body(
+      'thread_id: 01a057ba-d606-7255-a932-a2cfad833afe\n\nPersistable response items (JSON):\n[{"role":"user","text":"再windows 重装 cli"}]',
+    ),
+  )
+  const b = refusalFingerprint(
+    body(
+      'thread_id: 01a0bb2c-a363-7707-8691-ba523befae35\n\nPersistable response items (JSON):\n[{"role":"user","text":"pull最新源码"}]',
+    ),
+  )
+  assert.notEqual(a, b)
+})
+
+test('stop_reason=refusal counts as upstream refusal; wrap AUP text and distill do not', () => {
   assert.equal(
     isUpstreamRefusal({
       body: {
@@ -44,10 +58,24 @@ test('AUP and stop_reason=refusal count as upstream refusal; distill does not', 
         },
       },
     }),
-    true,
+    false,
+  )
+  assert.equal(
+    isUpstreamRefusal(
+      { status: 502, terminalState: 'incomplete' },
+      {
+        error_message:
+          'provider error: provider error: API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup)',
+      },
+    ),
+    false,
   )
   assert.equal(isUpstreamRefusal({ finalState: 'content_filter' }), true)
   assert.equal(isUpstreamRefusal({ body: { stop_reason: 'refusal' } }), true)
+  assert.equal(
+    isUpstreamRefusal({ body: { content: [{ type: 'refusal', refusal: 'I cannot help with that.' }] } }),
+    true,
+  )
   assert.equal(isUpstreamRefusal({ body: { error: { code: 'distill_blocked', message: '不允许蒸馏' } } }), false)
 })
 

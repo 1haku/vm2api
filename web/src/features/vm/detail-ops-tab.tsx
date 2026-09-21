@@ -160,14 +160,14 @@ export function VmOpsTab(props: VmOpsTabProps) {
               variant='outline'
               onClick={() => onAction('/wrap-cli/promote')}
             >
-              设为 wrap 母样本
+              晋升 wrap 文件
             </Button>
             <Button
               size='sm'
               variant='outline'
               onClick={() => onAction('/wrap-cli/repair')}
             >
-              从此样本重装 wrap
+              重装 kernel
             </Button>
           </div>
         </>

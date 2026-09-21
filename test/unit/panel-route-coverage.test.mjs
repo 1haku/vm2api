@@ -72,6 +72,7 @@ const PANEL_ROUTE_SAMPLES = [
   ['GET', '/api/panel/wrap-cli'],
   ['POST', '/api/panel/wrap-cli/sync'],
   ['POST', '/api/panel/wrap-cli/make'],
+  ['POST', '/api/panel/wrap-cli/kernel'],
 
   ['POST', '/api/panel/vms/vm-01/wrap-cli/promote'],
   ['POST', '/api/panel/vms/vm-01/wrap-cli/repair'],

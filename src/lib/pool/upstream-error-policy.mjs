@@ -205,6 +205,10 @@ function claudeHasVisibleOutput(body) {
 }
 
 /** 200 + stop_reason=refusal with no visible text — not a successful empty reply. */
+function isContentFilterRefusal(result = {}) {
+  return isSilentClaudeRefusal(result)
+}
+
 export function isSilentClaudeRefusal(result = {}) {
   if (claudeStopReasonOf(result) !== 'refusal') return false
   return !claudeHasVisibleOutput(result.body)
@@ -233,7 +237,7 @@ export function classifyUpstreamResult(
     usage = null,
   } = {},
 ) {
-  if (isSilentClaudeRefusal(result) && !result.committed) {
+  if (isContentFilterRefusal(result) && !result.committed) {
     return { scope: 'request', action: 'stop', reason: 'content_filter_refusal', cooldownUntil: null }
   }
   const completeAssistant = isCompleteAssistantMessage(result)
