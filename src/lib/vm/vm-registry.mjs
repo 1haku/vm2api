@@ -87,6 +87,8 @@ export function summarizeVm(vm, projectRoot = null) {
     has_session_key: false,
     max_concurrency: vm.policy?.maxConcurrency ?? 2,
     max_rpm: vm.policy?.maxRpm ?? 0,
+    session_slots: kind.kind === 'codex' ? null : (vm.policy?.sessionSlots ?? null),
+    session_slots_override: kind.kind === 'codex' ? false : vm.policy?.sessionSlotsOverride === true,
     allowed_models:
       Array.isArray(vm.policy?.allowed_models) && vm.policy.allowed_models.length
         ? vm.policy.allowed_models.map((id) => String(id || '').trim()).filter(Boolean)
@@ -232,6 +234,20 @@ export function persistAllowedModels(projectRoot, vmId, models) {
   vm.policy = { ...(vm.policy || {}) }
   if (!next.length) delete vm.policy.allowed_models
   else vm.policy.allowed_models = next
+  vm.updated_at = new Date().toISOString()
+  atomicWriteJson(file, vm, { mode: 0o600 })
+  return vm
+}
+
+export function persistVmSessionSlots(projectRoot, vmId, value, { override = true } = {}) {
+  const file = path.join(projectRoot, 'vms', `${vmId}.json`)
+  if (!fs.existsSync(file)) return null
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.policy = {
+    ...(vm.policy || {}),
+    sessionSlots: value,
+    sessionSlotsOverride: override,
+  }
   vm.updated_at = new Date().toISOString()
   atomicWriteJson(file, vm, { mode: 0o600 })
   return vm

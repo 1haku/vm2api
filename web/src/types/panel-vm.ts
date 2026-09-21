@@ -185,6 +185,9 @@ export type Vm = {
   active?: boolean
   max_concurrency?: number
   max_rpm?: number
+  /** Claude CLI native 执行位热准入上限；内核固定预开 20。 */
+  session_slots?: number | null
+  session_slots_override?: boolean
   /** 当前有效调度等级；自动模式范围 1～7，手动模式范围 1～10。 */
   schedule_level?: number
   /** 调度等级来源；缺失时按自动模式展示。 */

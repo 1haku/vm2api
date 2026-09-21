@@ -243,6 +243,7 @@ const {
   applyRoutingTierConcurrency,
   applyVmConcurrency,
   applyVmRpm,
+  applyVmSessionSlots,
 } = routingRt
 
 routingConfig = loadRoutingConfig()
@@ -798,6 +799,7 @@ const handlePanel = createPanelHandler({
   persistRoutingPatch,
   applyVmConcurrency,
   applyVmRpm,
+  applyVmSessionSlots,
   initPoolRuntime,
   poolSchedulerConfig,
   commitImportedOauth,

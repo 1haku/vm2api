@@ -5,19 +5,42 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   assertCliHopAllowed,
+  KERNEL_NATIVE_SLOT_COUNT,
   normalizeInferenceConfig,
+  normalizeSessionSlots,
   parseSlotEnginePolicyPatch,
   parseSlotPolicyTargets,
   personaModeFromPreset,
   resolveCliSystemLayout,
   resolveInferenceEngine,
   resolveOfficialCcInference,
+  resolveSessionSlots,
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
   validateInferenceRoutingPatch,
 } from '../../src/lib/vm/slot-engine.mjs'
 
 import { persistSlotEnginePolicy, persistSlotEnginePolicyMany, summarizeVm } from '../../src/lib/vm/vm-registry.mjs'
+
+test('session slots default to native capacity and clamp persisted values', () => {
+  assert.equal(KERNEL_NATIVE_SLOT_COUNT, 20)
+  assert.equal(normalizeSessionSlots(undefined), 20)
+  assert.equal(normalizeSessionSlots(0), 1)
+  assert.equal(normalizeSessionSlots(99), 20)
+  assert.equal(resolveSessionSlots({ policy: { sessionSlots: 4 } }, { inference: { session_slots: 8 } }), 4)
+  assert.equal(resolveSessionSlots({}, { inference: { session_slots: 8 } }), 8)
+  assert.equal(normalizeInferenceConfig({}).session_slots, 20)
+})
+
+test('routing patch rejects session slots outside the native range', () => {
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { session_slots: 0 } }), [
+    'inference.session_slots 必须是 1–20 的整数',
+  ])
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { session_slots: 21 } }), [
+    'inference.session_slots 必须是 1–20 的整数',
+  ])
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { session_slots: 8 } }), [])
+})
 
 function makeRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-engine-'))

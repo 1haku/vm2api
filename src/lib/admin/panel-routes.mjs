@@ -111,9 +111,12 @@ import { parseAllowedModelsPatch } from '../pool/slot-model-gate.mjs'
 import { parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import {
   normalizeInferenceConfig,
+  normalizeSessionSlots,
   parseSlotEnginePolicyPatch,
   parseSlotPolicyTargets,
   resolveInferenceEngine,
+  SESSION_SLOT_MAX,
+  SESSION_SLOT_MIN,
   validateInferenceRoutingPatch,
 } from '../vm/slot-engine.mjs'
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
@@ -227,6 +230,7 @@ export function createPanelHandler(ctx) {
   const persistRoutingPatch = (...args) => ctx.persistRoutingPatch(...args)
   const applyVmConcurrency = (...args) => ctx.applyVmConcurrency(...args)
   const applyVmRpm = (...args) => ctx.applyVmRpm(...args)
+  const applyVmSessionSlots = (...args) => ctx.applyVmSessionSlots(...args)
   const initPoolRuntime = (...args) => ctx.initPoolRuntime(...args)
   const poolSchedulerConfig = (...args) => ctx.poolSchedulerConfig(...args)
   const commitImportedOauth = (...args) => ctx.commitImportedOauth(...args)
@@ -398,12 +402,32 @@ export function createPanelHandler(ctx) {
     }
   }
 
+  function restoreRoutingRuntime(previous) {
+    ctx.routingConfig = previous
+    setManualScheduleWins(ctx.routingConfig.pool?.manual_schedule_wins)
+    ctx.healthMonitor?.setConfig(ctx.routingConfig.health_probe)
+    ctx.usageProbeMonitor?.setConfig(ctx.routingConfig.usage_probe)
+    ctx.notifyMonitor?.setConfig(ctx.routingConfig.notify)
+    if (ctx.routingConfig.logging) {
+      requestLog.setConfig({
+        mode: ctx.routingConfig.logging.mode,
+        retainDays: ctx.routingConfig.logging.retain_days,
+        debugRetainDays: ctx.routingConfig.logging.debug_retain_days,
+        maxMb: ctx.routingConfig.logging.max_mb,
+        mutedErrorClasses: ctx.routingConfig.logging.muted_error_classes,
+      })
+    }
+    stickyRouter.reloadConfig(ctx.routingConfig)
+    accountQuota.reloadConfig(ctx.routingConfig)
+    ctx.poolScheduler?.reloadConfig?.(poolSchedulerConfig())
+  }
+
   async function prepareInheritedInferenceEngine(body) {
     if (!body?.inference) return { ok: true, changed: false, items: [] }
     const previous = normalizeInferenceConfig(ctx.routingConfig.inference || {}).engine
     const target = normalizeInferenceConfig({ ...(ctx.routingConfig.inference || {}), ...body.inference }).engine
     if (previous === target) return { ok: true, changed: false, items: [] }
-    const previousRoutingConfig = ctx.routingConfig
+    const previousRoutingConfig = structuredClone(ctx.routingConfig)
     return switchInheritedInferenceEngines({
       projectRoot: cfg.paths.project,
       previousEngine: previous,
@@ -412,23 +436,7 @@ export function createPanelHandler(ctx) {
         try {
           return persistRoutingPatch(body)
         } catch (error) {
-          ctx.routingConfig = previousRoutingConfig
-          setManualScheduleWins(ctx.routingConfig.pool?.manual_schedule_wins)
-          ctx.healthMonitor?.setConfig(ctx.routingConfig.health_probe)
-          ctx.usageProbeMonitor?.setConfig(ctx.routingConfig.usage_probe)
-          ctx.notifyMonitor?.setConfig(ctx.routingConfig.notify)
-          if (ctx.routingConfig.logging) {
-            requestLog.setConfig({
-              mode: ctx.routingConfig.logging.mode,
-              retainDays: ctx.routingConfig.logging.retain_days,
-              debugRetainDays: ctx.routingConfig.logging.debug_retain_days,
-              maxMb: ctx.routingConfig.logging.max_mb,
-              mutedErrorClasses: ctx.routingConfig.logging.muted_error_classes,
-            })
-          }
-          stickyRouter.reloadConfig(ctx.routingConfig)
-          accountQuota.reloadConfig(ctx.routingConfig)
-          ctx.poolScheduler?.reloadConfig?.(poolSchedulerConfig())
+          restoreRoutingRuntime(previousRoutingConfig)
           if (body.pool || body.failover) initPoolRuntime()
           throw error
         }
@@ -1329,6 +1337,7 @@ export function createPanelHandler(ctx) {
         const body = await readBody(req, 8192).catch(() => ({}))
         const next = body?.max_concurrency ?? body?.maxConcurrency
         const nextRpm = body?.max_rpm ?? body?.maxRpm
+        const hasSessionSlots = body && Object.prototype.hasOwnProperty.call(body, 'session_slots')
         const hasModels = body && Object.prototype.hasOwnProperty.call(body, 'allowed_models')
         const hasAuthScheme = body && (body.auth_scheme != null || body.authScheme != null)
         const hasScheduleLevel = body && Object.prototype.hasOwnProperty.call(body, 'schedule_level')
@@ -1343,6 +1352,7 @@ export function createPanelHandler(ctx) {
         if (
           next == null &&
           nextRpm == null &&
+          !hasSessionSlots &&
           !hasModels &&
           !hasAuthScheme &&
           !hasSlotPolicy &&
@@ -1354,7 +1364,7 @@ export function createPanelHandler(ctx) {
             ok: false,
             error: {
               message:
-                'max_concurrency, max_rpm, allowed_models, auth_scheme, inference_engine, persona_preset, schedule_level, timezone or timezone_follow_proxy required',
+                'max_concurrency, max_rpm, session_slots, allowed_models, auth_scheme, inference_engine, persona_preset, schedule_level, timezone or timezone_follow_proxy required',
             },
           })
         }
@@ -1402,6 +1412,25 @@ export function createPanelHandler(ctx) {
         }
         if (nextRpm != null) {
           const vm = applyVmRpm(id, nextRpm, { override: true })
+          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        }
+        if (hasSessionSlots) {
+          const currentVm = getVm(cfg.paths.project, id)
+          if (!currentVm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+          if (isCodexVm(currentVm)) {
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'gpt_session_slots_forbidden', message: 'GPT slots do not use native session slots' },
+            })
+          }
+          const raw = Number(body.session_slots)
+          if (!Number.isInteger(raw) || raw < SESSION_SLOT_MIN || raw > SESSION_SLOT_MAX) {
+            return json(res, 400, {
+              ok: false,
+              error: { message: `session_slots must be an integer from ${SESSION_SLOT_MIN} to ${SESSION_SLOT_MAX}` },
+            })
+          }
+          const vm = applyVmSessionSlots(id, normalizeSessionSlots(raw), { override: true })
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         if (hasModels) {
@@ -2989,6 +3018,7 @@ export function createPanelHandler(ctx) {
       // PUT /api/panel/routing
       if (req.method === 'PUT' && p === '/api/panel/routing') {
         const body = await readBody(req, cfg.limits.max_body_bytes)
+        const previousRoutingConfig = structuredClone(ctx.routingConfig)
         const personaProblems = [...panel.validatePersonaRoutingPatch(body), ...validateInferenceRoutingPatch(body)]
         if (personaProblems.length) {
           return json(res, 400, {
@@ -3013,7 +3043,16 @@ export function createPanelHandler(ctx) {
           })
         }
         const { applied: appliedDuringSwitch, ...publicEngineRuntime } = engineRuntime
-        const applied = appliedDuringSwitch ?? persistRoutingPatch(body)
+        let applied
+        try {
+          applied = appliedDuringSwitch ?? persistRoutingPatch(body)
+        } catch (error) {
+          restoreRoutingRuntime(previousRoutingConfig)
+          return json(res, 503, {
+            ok: false,
+            error: { code: 'routing_persist_failed', message: String(error?.message || error) },
+          })
+        }
         return json(
           res,
           200,
@@ -3021,6 +3060,7 @@ export function createPanelHandler(ctx) {
             ...publicRoutingNotify(ctx.routingConfig),
             applied_concurrency: applied.concurrency,
             applied_rpm: applied.rpm,
+            applied_session_slots: applied.session_slots,
             inference_runtime: publicEngineRuntime,
           }),
         )

@@ -78,7 +78,8 @@
   },
   "inference": {
     "engine": "rust",
-    "fallback_to_go": false
+    "fallback_to_go": false,
+    "session_slots": 20
   },
 
   "compatibility": {

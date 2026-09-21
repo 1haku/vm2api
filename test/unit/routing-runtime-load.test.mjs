@@ -28,3 +28,22 @@ test('loadRoutingConfig fails when routing.json is invalid', () => {
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('applyVmSessionSlots updates only native admission policy', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-session-slots-'))
+  const vms = path.join(root, 'vms')
+  const file = path.join(vms, 'vm-01.json')
+  fs.mkdirSync(vms, { recursive: true })
+  fs.writeFileSync(file, JSON.stringify({ id: 'vm-01', policy: { maxConcurrency: 8, maxRpm: 60 } }))
+  try {
+    const runtime = createRoutingRuntime({ cfg: { paths: { project: root } } })
+    runtime.applyVmSessionSlots('vm-01', 4, { override: true })
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+    assert.equal(saved.policy.sessionSlots, 4)
+    assert.equal(saved.policy.sessionSlotsOverride, true)
+    assert.equal(saved.policy.maxConcurrency, 8)
+    assert.equal(saved.policy.maxRpm, 60)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

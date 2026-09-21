@@ -6,8 +6,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
-import { listVms, getVm, persistAccountTier, setVmSchedulable } from '../vm/vm-registry.mjs'
-import { normalizeInferenceConfig } from '../vm/slot-engine.mjs'
+import { listVms, getVm, persistAccountTier, persistVmSessionSlots, setVmSchedulable } from '../vm/vm-registry.mjs'
+import { normalizeInferenceConfig, normalizeSessionSlots } from '../vm/slot-engine.mjs'
 
 import { accountTierKey, mergeTierMaps, normalizeTiers } from '../pool/quota-tiers.mjs'
 import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
@@ -74,6 +74,26 @@ export function createRoutingRuntime(ctx) {
     atomicWriteJson(vmPath, vm, { mode: 0o600 })
     ctx.accountQuota.setMaxRpm(vm.claude?.account_uuid || vm.id, value, { override })
     return vm
+  }
+
+  function applyVmSessionSlots(id, n, { override = true } = {}) {
+    return persistVmSessionSlots(ctx.cfg.paths.project, id, normalizeSessionSlots(n), { override })
+  }
+
+  function applyRoutingSessionSlots(n) {
+    const value = normalizeSessionSlots(n)
+    const applied = { updated: 0, skipped: 0 }
+    for (const vm of listVms(ctx.cfg.paths.project)) {
+      if (vm.codex_kernel || vm.platform === 'openai' || vm.family === 'codex') continue
+      if (vm.session_slots_override) {
+        applied.skipped += 1
+        continue
+      }
+      if (Number(vm.session_slots) === value) continue
+      applyVmSessionSlots(vm.id, value, { override: false })
+      applied.updated += 1
+    }
+    return applied
   }
 
   function applyRoutingConcurrency(n) {
@@ -210,6 +230,7 @@ export function createRoutingRuntime(ctx) {
     const prevUsageProbe = routingConfig.usage_probe
     const prevNotify = routingConfig.notify
     const prevTiers = routingConfig.tiers
+    const previousSessionSlots = normalizeSessionSlots(routingConfig.inference?.session_slots)
     setRouting(routingConfig)
     if (body.sticky) routingConfig.sticky = { ...(routingConfig.sticky || {}), ...body.sticky }
     if (body.quota) routingConfig.quota = { ...(routingConfig.quota || {}), ...body.quota }
@@ -225,6 +246,7 @@ export function createRoutingRuntime(ctx) {
         ...body.inference,
       })
     }
+    const nextSessionSlots = normalizeSessionSlots(routingConfig.inference?.session_slots)
     if (body.compatibility)
       routingConfig.compatibility = { ...(routingConfig.compatibility || {}), ...body.compatibility }
     if (body.codex) routingConfig.codex = normalizeCodexRouting({ ...(routingConfig.codex || {}), ...body.codex })
@@ -258,6 +280,10 @@ export function createRoutingRuntime(ctx) {
       return {
         concurrency: applyRoutingTierConcurrency(routingConfig.tiers),
         rpm: applyRoutingTierRpm(routingConfig.tiers),
+        session_slots:
+          previousSessionSlots === nextSessionSlots
+            ? { updated: 0, skipped: 0 }
+            : applyRoutingSessionSlots(nextSessionSlots),
       }
     } catch (err) {
       console.error(
@@ -297,6 +323,7 @@ export function createRoutingRuntime(ctx) {
     return {
       ...(routingConfig.pool || {}),
       fable_max_per_account: Number(routingConfig.concurrency?.fable_max_per_account ?? 4),
+      default_session_slots: normalizeSessionSlots(routingConfig.inference?.session_slots),
       default_max_per_account: Number(routingConfig.concurrency?.default_max_per_account ?? 2),
     }
   }
@@ -403,6 +430,7 @@ export function createRoutingRuntime(ctx) {
     initPoolRuntime,
     applyVmConcurrency,
     applyVmRpm,
+    applyVmSessionSlots,
     storedAccountTier,
     vmTierKey,
   }
