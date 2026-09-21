@@ -104,10 +104,7 @@ export function normalizeUsage(usage = {}) {
   const input = usage.input_tokens ?? usage.tokens_in ?? usage.prompt_tokens ?? extracted?.input_tokens
   const output = usage.output_tokens ?? usage.tokens_out ?? usage.completion_tokens ?? extracted?.output_tokens
   const cacheRead =
-    usage.cache_read_tokens ??
-    usage.cache_read_input_tokens ??
-    details.cached_tokens ??
-    extracted?.cached_tokens
+    usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? details.cached_tokens ?? extracted?.cached_tokens
   const cacheCreate =
     usage.cache_creation_tokens ??
     usage.cache_creation_input_tokens ??

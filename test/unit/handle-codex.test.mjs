@@ -515,10 +515,7 @@ test('rotate plugin stays off and does not collect', async () => {
   })
   assert.equal(envelope.body.turn_state, undefined)
   assert.equal(collected, 0)
-  assert.equal(
-    getTurnState({ vmId: 'vm-gpt-a', account: 'vm-gpt-a', model: 'gpt-5.4', ttlSeconds: 3600 }),
-    null,
-  )
+  assert.equal(getTurnState({ vmId: 'vm-gpt-a', account: 'vm-gpt-a', model: 'gpt-5.4', ttlSeconds: 3600 }), null)
   fs.rmSync(root, { recursive: true, force: true })
   resetCodexRotateStore()
 })
