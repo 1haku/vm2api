@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Vm } from '@/types/panel-vm'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { fmtUsd } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { dashboardQueryOptions } from '@/features/overview/queries'
@@ -23,11 +24,15 @@ export function OpenaiQuotaPanel({
   u5,
   u7,
   now,
+  cost5 = 0,
+  cost7 = 0,
 }: {
   vm: Vm
   u5: number
   u7: number
   now: number
+  cost5?: number
+  cost7?: number
 }) {
   const qc = useQueryClient()
   const [confirm, setConfirm] = useState(false)
@@ -86,7 +91,7 @@ export function OpenaiQuotaPanel({
       <Meter
         label='5 小时已用'
         value={u5}
-        hint={vm.status_5h ? String(vm.status_5h) : undefined}
+        hint={quotaHint(vm.status_5h, cost5)}
       />
       <div className='text-[11px] text-muted-foreground'>
         5h 重置 <ResetAt value={vm.reset_5h} now={now} />
@@ -94,7 +99,7 @@ export function OpenaiQuotaPanel({
       <Meter
         label='7 天已用'
         value={u7}
-        hint={vm.status_7d ? String(vm.status_7d) : undefined}
+        hint={quotaHint(vm.status_7d, cost7)}
       />
       <div className='text-[11px] text-muted-foreground'>
         7d 重置 <ResetAt value={vm.reset_7d} now={now} />
@@ -136,4 +141,12 @@ export function OpenaiQuotaPanel({
       />
     </div>
   )
+}
+
+function quotaHint(status: unknown, cost: number): string {
+  const bits: string[] = []
+  const text = String(status || '').trim()
+  if (text) bits.push(text)
+  bits.push(`合计 ${fmtUsd(cost, 2)}`)
+  return bits.join(' · ')
 }

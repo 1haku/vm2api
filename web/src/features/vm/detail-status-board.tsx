@@ -1,14 +1,15 @@
 import type { Dashboard } from '@/types/panel-overview'
 import type { Vm, VmKernelSnapshot, VmProxySnap } from '@/types/panel-vm'
 import type { StatusTone } from '@/types/status'
-import type {
-  ConcurrencyInfo,
-  RpmInfo,
-  SessionCapacity,
-  VmCostSummary,
-  WeeklySplitSummary,
+import {
+  fableCap,
+  fableCardInfo,
+  type ConcurrencyInfo,
+  type RpmInfo,
+  type SessionCapacity,
+  type VmCostSummary,
+  type WeeklySplitSummary,
 } from '@/lib/fable-status'
-import { fableCap, fableCardInfo } from '@/lib/fable-status'
 import { fmtNum, fmtUsd } from '@/lib/format'
 import { isCodexVm } from '@/lib/vm-kind'
 import {
@@ -144,6 +145,11 @@ function topologyLabel(
   return '未知'
 }
 
+function money(value: unknown): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
 export function VmStatusBoard(props: Props) {
   const {
     vm,
@@ -166,6 +172,8 @@ export function VmStatusBoard(props: Props) {
   const fable = fableCardInfo(vm, tierKey, fableCap(dash.data))
   const reset5 = acc.reset_5h ?? vm.reset_5h
   const reset7 = acc.reset_7d ?? vm.reset_7d
+  const cost5 = money(acc.window_5h_cost ?? vm.window_5h_cost ?? cost.w)
+  const cost7 = money(acc.window_7d_cost ?? vm.window_7d_cost)
   const telemetry = kernel?.telemetry
   const topology = kernel?.process_topology
   const rust = wrapHealthLabel(kernel?.rust_health)
@@ -248,18 +256,25 @@ export function VmStatusBoard(props: Props) {
           <h3 className='text-sm font-medium'>额度</h3>
           <div className='mt-3 grid gap-3'>
             {isCodexVm(vm) ? (
-              <OpenaiQuotaPanel vm={vm} u5={u5} u7={u7} now={now} />
+              <OpenaiQuotaPanel
+                vm={vm}
+                u5={u5}
+                u7={u7}
+                now={now}
+                cost5={cost5}
+                cost7={cost7}
+              />
             ) : (
               <>
                 <Meter
                   label='5 小时已用'
                   value={u5}
-                  hint={quotaWindowHint(u5, reset5, now)}
+                  hint={`${quotaWindowHint(u5, reset5, now)} · 合计 ${fmtUsd(cost5, 2)}`}
                 />
                 <Meter
                   label='7 天已用'
                   value={u7}
-                  hint={quotaWindowHint(u7, reset7, now)}
+                  hint={`${quotaWindowHint(u7, reset7, now)} · 合计 ${fmtUsd(cost7, 2)}`}
                 />
                 {fable.usedPct != null ? (
                   <Meter
