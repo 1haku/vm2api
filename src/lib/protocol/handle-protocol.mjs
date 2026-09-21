@@ -51,6 +51,7 @@ import {
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
 } from '../vm/slot-engine.mjs'
+import { isValidVmId } from '../vm/vm-file.mjs'
 import {
   makeError,
   mapUpstreamError,
@@ -710,7 +711,7 @@ export function createHandleProtocol(deps) {
     // stream:false only changes the client response shape (assembled JSON).
     const deliveryMode = requestedDelivery === 'verified' ? 'verified' : 'realtime'
     const pinVmRaw = String(req.headers['x-kin-vm'] || '').trim()
-    const pinVmId = req.apiKeyKind === 'master' && /^vm-[a-z0-9-]+$/i.test(pinVmRaw) ? pinVmRaw : null
+    const pinVmId = req.apiKeyKind === 'master' && isValidVmId(pinVmRaw) ? pinVmRaw : null
     // Pin is panel test-chat / diagnostics (manage). Unpinned /v1 is dispatch.
     const ownerScope = pinVmId ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
     const healthReal = isHealthRealBypass(req.headers)
