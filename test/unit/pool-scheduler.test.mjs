@@ -939,6 +939,52 @@ test('sticky RPM still waits on the bound account', async (t) => {
   first.release()
 })
 
+test('sticky RPM waits instead of hopping to a free account', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const unbound = []
+  const pool = scheduler(root, {
+    stickyRouter: {
+      resolve: () => ({ vmId: 'vm-01', accountId: 'account-1' }),
+      unbind: (key) => unbound.push(key),
+    },
+    accountQuota: {
+      canAccept: (accountId) =>
+        accountId === 'account-1'
+          ? { ok: false, reason: 'rpm_limit', detail: { reset_at: Date.now() + 60_000 } }
+          : { ok: true },
+      tryAcquire: () => ({ ok: true }),
+    },
+  })
+  applyShortWaits(pool, { sticky: 30, fallback: 30 })
+  const selected = await pool.selectAndReserve({
+    model: 'claude-opus-5',
+    stickyKey: 'conversation-rpm',
+    allowWait: true,
+  })
+  assert.equal(selected.ok, false)
+  assert.equal(selected.reason, 'all_accounts_busy')
+  assert.deepEqual(unbound, [])
+})
+
+test('opus is not scheduled onto an OpenAI slot', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const file = path.join(root, 'vms', 'vm-02.json')
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.platform = 'openai'
+  vm.family = 'codex'
+  vm.codex_kernel = true
+  fs.writeFileSync(file, JSON.stringify(vm))
+  const selected = await scheduler(root).selectAndReserve({
+    model: 'claude-opus-5',
+    excluded: new Set(['account-1']),
+    allowWait: false,
+  })
+  assert.equal(selected.ok, false)
+  assert.equal(selected.reason, 'no_eligible_accounts')
+})
+
 test('dead sticky binding is unbound then WRR continues', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
