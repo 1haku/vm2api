@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { startGateway, api } from '../harness.mjs'
+import { REPO_ROOT, startGateway, api } from '../harness.mjs'
 
 test('panel login → cookie → /api/panel/me', async () => {
   const gw = await startGateway()
@@ -26,6 +26,7 @@ test('panel login → cookie → /api/panel/me', async () => {
       const body = await me.json()
       assert.ok(body.user || body.ok || body.username)
       assert.ok((body.data?.views || body.views || []).includes('database'))
+      assert.equal(body.data?.version || body.version, fs.readFileSync(path.join(REPO_ROOT, 'VERSION'), 'utf8').trim())
     }
   } finally {
     await gw.stop()
