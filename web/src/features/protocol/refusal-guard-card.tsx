@@ -101,7 +101,7 @@ export function RefusalGuardCard() {
       <CardContent className='divide-y'>
         <SettingRow
           label='拦截重复拒答'
-          desc='上游 AUP / stop_reason=refusal 落库后，同样 model + prompt 直接 403，不再 hop。与蒸馏拦截独立。环境变量 REFUSAL_GUARD=0 强制关闭'
+          desc='上游 AUP / stop_reason=refusal 落库后，同样 model + prompt 直接 500，不再 hop。与蒸馏拦截独立。环境变量 REFUSAL_GUARD=0 强制关闭'
         >
           <Switch
             checked={data.enabled}

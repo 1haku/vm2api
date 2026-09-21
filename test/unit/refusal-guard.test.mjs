@@ -115,9 +115,9 @@ test('remember then lookup hits the same prompt', () => {
   }
 })
 
-test('guard error is permission_error refusal_guard not distill_blocked', () => {
+test('guard error is HTTP 500 refusal_guard not distill_blocked', () => {
   const err = refusalGuardError('abc')
-  assert.equal(err.status, 403)
+  assert.equal(err.status, 500)
   assert.equal(err.body.error.code, 'refusal_guard')
   assert.equal(err.body.error.type, 'permission_error')
   assert.equal(err.body.error.message, REFUSAL_GUARD_MESSAGE)

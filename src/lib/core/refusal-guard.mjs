@@ -77,7 +77,7 @@ export function refusalGuardError(requestId) {
     type: ErrorType.PERMISSION,
     code: ErrorCode.REFUSAL_GUARD,
     message: REFUSAL_GUARD_MESSAGE,
-    status: 403,
+    status: 500,
     request_id: requestId,
   })
 }
