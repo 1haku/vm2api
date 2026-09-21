@@ -1,11 +1,13 @@
 /**
  * Distill harvest detector.
  * Runs in handleProtocol and count_tokens before any credential / slot hop.
+ * OpenAI platform models (detectInboundPlatform === openai) always pass.
  * Match layers: hard harvest needles, hard distill/CoT regex, fingerprint, prompt needles, contest structure.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
 import { ErrorType, ErrorCode, makeError } from './errors.mjs'
 
@@ -171,6 +173,13 @@ function toolsCount(body) {
 function maxTokensOf(body) {
   const n = body?.max_tokens ?? body?.max_output_tokens ?? body?.max_new_tokens
   return n == null ? null : Number(n)
+}
+
+/** OpenAI platform models (gpt-*) never hit distill. Claude paths stay on the existing rules. */
+function isOpenaiPlatformModel(inbound, body) {
+  const model = body?.model ?? inbound?.model
+  const platform = detectInboundPlatform(model)
+  return platform.ok === true && platform.platform === 'openai'
 }
 
 export function extractStructure(inbound, body) {
@@ -383,6 +392,7 @@ export function distillBlockError(rules, requestId) {
 export function detectDistill(ctx = {}, rules) {
   const r = normalizeDistillRules(rules)
   if (!r.enabled) return { action: 'pass', hits: [] }
+  if (isOpenaiPlatformModel(ctx.inbound, ctx.body)) return { action: 'pass', hits: [] }
   const prompt = extractPrompt(ctx.inbound, ctx.body)
   const harvestNeedle = matchNeedles(prompt.joined, HARVEST_NEEDLES)
   if (harvestNeedle) {

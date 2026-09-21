@@ -98,7 +98,7 @@ export function DistillCard() {
       <CardContent className='divide-y'>
         <SettingRow
           label='拦截蒸馏请求'
-          desc='命中后返回下面配置的错误码，默认 403 distill_blocked。不打凭证、不 hop 槽位'
+          desc='命中后返回下面配置的错误码，默认 403 distill_blocked。不打凭证、不 hop 槽位。OpenAI 平台模型不拦截'
         >
           <Switch
             checked={draft.enabled}
