@@ -123,6 +123,15 @@ test('tool 5m then system 1h is downgraded so Anthropic order stays legal', () =
   assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '5m' })
 })
 
+test('a leading 1h is removed when any later breakpoint is 5m', () => {
+  const out = enforceCacheTtlOrder({
+    system: [{ type: 'text', text: 'early', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'later', cache_control: { type: 'ephemeral' } }] }],
+  })
+  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral' })
+})
+
 test('applyCacheTtlToBody rewrites every cache marker to selected 5m', () => {
   const out = applyCacheTtlToBody(
     {

@@ -205,7 +205,7 @@ test('cli-hop default 5m leaves last user unmarked for wrap', () => {
   assert.equal(body.messages[0].content[0].cache_control, undefined)
 })
 
-test('cli-hop disabled keeps caller conversation breakpoints except last user', () => {
+test('cli-hop disabled keeps caller conversation breakpoints but never 1h', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -220,8 +220,8 @@ test('cli-hop disabled keeps caller conversation breakpoints except last user', 
     },
     { cacheBreakpoints: { enabled: false } },
   )
-  assert.equal(body.messages[0].content[0].cache_control.ttl, '1h')
-  assert.equal(body.messages[2].content[0].cache_control.ttl, '1h')
+  assert.equal(body.messages[0].content[0].cache_control.ttl, '5m')
+  assert.equal(body.messages[2].content[0].cache_control.ttl, '5m')
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
@@ -272,7 +272,7 @@ test('cli-hop rewrite keeps 5m leftover so wrap markers cannot violate TTL order
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('cli-hop uses resolved 1h TTL for the Node-owned boundary', () => {
+test('cli-hop writes the Node-owned boundary at 5m even when the console asks for 1h', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -291,11 +291,11 @@ test('cli-hop uses resolved 1h TTL for the Node-owned boundary', () => {
   )
   assert.equal(body.tools[0].cache_control, undefined)
   assert.equal(body.system[0].cache_control, undefined)
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('official cli-hop preserves client-owned breakpoints when cache TTL is null', () => {
+test('official cli-hop collapses mixed client breakpoints to 5m', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -309,8 +309,8 @@ test('official cli-hop preserves client-owned breakpoints when cache TTL is null
     },
     { cacheTtl: null },
   )
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
   assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
 })
 
