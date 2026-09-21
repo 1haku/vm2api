@@ -31,6 +31,8 @@ import { listQuotaFromHeaders } from './quota-window.mjs'
 import { isSlotProxyDesynced, readWorkerProxyEndpoint, readWorkerEgressMode } from '../vm/vm-runtime.mjs'
 import { splitBlocksModel } from './weekly-split.mjs'
 import { slotAllowsModel } from './slot-model-gate.mjs'
+import { isCodexVm } from '../vm/vm-kind.mjs'
+import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 import { resolveCredentialScheduleLevel } from './credential-weight.mjs'
 import { PLATFORM_SCOPE, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { rustKernelBusy, rustKernelProcessUp, rustKernelReachable } from '../transport/rust-kernel-client.mjs'
@@ -141,14 +143,27 @@ function cooldownActive(until, now) {
 }
 
 /** Concurrency, RPM, and kernel slot-full wait on the bound account. Cooldown / fault must rotate. */
-function stickyShouldWait(waitReason) {
-  return (
+function stickyShouldWait(waitReason, cooldownReason = null) {
+  if (
     waitReason === 'concurrency_limit' ||
     waitReason === 'fable_concurrency' ||
     waitReason === 'rpm_limit' ||
     waitReason === 'slot_busy' ||
     waitReason === 'session_window_full'
-  )
+  ) {
+    return true
+  }
+  // Upstream RPM cooldown is the same queue, not a reason to open another session.
+  return waitReason === 'account_cooldown' && String(cooldownReason || '') === 'rate_limited'
+}
+
+function platformMismatch(model, vm) {
+  const detected = detectInboundPlatform(model)
+  if (!detected.ok) return false
+  const codex = isCodexVm(vm)
+  if (detected.platform === 'openai') return !codex
+  if (detected.platform === 'anthropic') return codex
+  return false
 }
 
 function runtimeHealthStatus(value) {
@@ -344,6 +359,7 @@ export class PoolScheduler {
       if (pin && summary.id !== pin) continue
       const vm = getVm(this.projectRoot, summary.id)
       if (!vm) continue
+      if (!pin && platformMismatch(model, vm)) continue
       if (!vmMatchesOwnerScope(vm, ownerScope)) continue
       const accountId = accountIdOf(vm, this.projectRoot)
       if (!accountId || excluded.has(accountId) || excluded.has(vm.id)) continue
@@ -714,9 +730,9 @@ export class PoolScheduler {
         this.lastStickyCleared = true
       } else if (this.isReservable(amongEligible)) {
         return { ...amongEligible, selectionReason: 'sticky' }
-      } else if (amongEligible.busy && stickyShouldWait(amongEligible.waitReason)) {
-        if (this.waiterCount(amongEligible.accountId) < this.maxWaiters()) return null
-        // Queue full: spillover to other candidates without unbinding.
+      } else if (amongEligible.busy && stickyShouldWait(amongEligible.waitReason, amongEligible.cooldownReason)) {
+        // RPM / concurrency stays on this session. A full queue does not open another slot.
+        return null
       } else if (amongEligible.cooldownReason === 'provider_pause') {
         this.lastStickyHeld = true
         return null
@@ -1017,10 +1033,11 @@ export class PoolScheduler {
       const match = candidates.find(
         (candidate) => candidate.vmId === bound.vmId && candidate.accountId === bound.accountId,
       )
-      if (match && match.busy && stickyShouldWait(match.waitReason) && !this.isReservable(match)) {
+      if (match && match.busy && stickyShouldWait(match.waitReason, match.cooldownReason) && !this.isReservable(match)) {
         if (this.waiterCount(match.accountId) < this.maxWaiters()) {
           return this.makeWaitPlan(match, { sticky: true, requestDeadline })
         }
+        return { queueFull: true, sticky: true, accountId: match.accountId }
       }
     }
     const waitable = candidates.filter((candidate) => candidate.busy && !this.isReservable(candidate))
