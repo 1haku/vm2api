@@ -224,11 +224,20 @@ test('publicRelease ignores malformed GitHub payloads', () => {
   assert.equal(publicRelease({ tag_name: 'v1.2.7' }).version, '1.2.7')
 })
 
-test('VERSION matches package.json', () => {
+test('VERSION is the only application release version source', () => {
   const root = path.resolve(import.meta.dirname, '../..')
-  const ver = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim()
+  const version = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim()
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  assert.equal(ver, pkg.version)
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
+  const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8')
+  const vite = fs.readFileSync(path.join(root, 'web', 'vite.config.ts'), 'utf8')
+
+  assert.match(version, /^\d+\.\d+\.\d+$/)
+  assert.equal(Object.hasOwn(pkg, 'version'), false)
+  assert.equal(Object.hasOwn(lock, 'version'), false)
+  assert.equal(Object.hasOwn(lock.packages[''], 'version'), false)
+  assert.doesNotMatch(compose, /image:\s*vm2api:[^\s]+/)
+  assert.doesNotMatch(vite, /__APP_VERSION__|readFileSync/)
 })
 
 test('startHostUpgrade rejects non-semver targets', async () => {
