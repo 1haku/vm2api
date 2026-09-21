@@ -58,9 +58,9 @@ import {
   validateRequestBody,
   mapModelError,
   isClientCancelledResult,
-  isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
   finalizeAssembledAssistantHop,
+  mergeAssembledAssistantHop,
   incompleteAssistantClientError,
   ErrorType,
   ErrorCode,
@@ -257,19 +257,7 @@ export function createHandleProtocol(deps) {
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
       },
     })
-    if (assembler.message) {
-      const localComplete = isCompleteAssistantMessage({
-        body: assembler.message,
-        stopReason: assembler.message.stop_reason,
-      })
-      const workerComplete = isCompleteAssistantMessage(workerResult)
-      if (localComplete || !workerComplete) {
-        workerResult.body = assembler.message
-        if (assembler.message.usage) workerResult.usage = assembler.message.usage
-        if (assembler.message.model) workerResult.model = assembler.message.model
-        if (assembler.message.stop_reason) workerResult.stopReason = assembler.message.stop_reason
-      }
-    }
+    Object.assign(workerResult, mergeAssembledAssistantHop(workerResult, assembler.message))
     if (workerResult?.body) {
       workerResult.body = restoreToolNames(workerResult.body, toolNames)
     }
@@ -765,7 +753,6 @@ export function createHandleProtocol(deps) {
             hopBody = prepareCliHopBody(repaired ? body : cliAppliesNodePersona ? body : personaIn, {
               stream: upstreamStream,
               repaired,
-              cacheTtl,
               cacheBreakpoints,
               cacheControlLimit: Number(getRouting()?.compatibility?.cache_control_limit) || 4,
               unofficial: !officialTraffic,

@@ -9,6 +9,7 @@ import {
   isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
   finalizeAssembledAssistantHop,
+  mergeAssembledAssistantHop,
   CLIENT_POOL_BUSY_MESSAGE,
 } from '../../src/lib/core/errors.mjs'
 
@@ -139,6 +140,20 @@ test('ok non-assistant envelope is finalized as incomplete', () => {
   })
   assert.equal(finalized.ok, false)
   assert.equal(finalized.terminalState, 'incomplete')
+})
+
+test('assembled message never overwrites a real SSE error', () => {
+  const upstream = {
+    ok: false,
+    status: 200,
+    terminalState: 'incomplete',
+    body: {
+      type: 'error',
+      error: { type: 'api_error', message: 'provider error: API Error: 400 invalid cache ttl order' },
+    },
+  }
+  const assembled = { type: 'message', role: 'assistant', content: [] }
+  assert.equal(mergeAssembledAssistantHop(upstream, assembled), upstream)
 })
 
 test('incomplete_response maps to HTTP 502', () => {
