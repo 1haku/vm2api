@@ -150,7 +150,7 @@ import {
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
 import { writeSlotSeedFiles } from '../vm/slot-seed.mjs'
-import { egressEnabled, ensureProxyEgress, stopProxyEgress, boundProxyUrl } from '../vm/egress.mjs'
+import { egressEnabled, ensureProxyEgress, stopProxyEgress, boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
 import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../identity/official-fingerprint.mjs'
 import {
@@ -2218,7 +2218,9 @@ export function createPanelHandler(ctx) {
         } catch (e) {}
         let allocated = null
         const wantProxy = body.auto_allocate_proxy === true || startNow
-        if (wantProxy && !vm.proxy?.url) {
+        // px-local 没有 SOCKS URL，但它是合法出口；不要把它当成"未绑定"。
+        const hasExit = (v) => !!(v?.proxy?.url || isLocalEgressProxy(v?.proxy))
+        if (wantProxy && !hasExit(vm)) {
           try {
             allocated = proxyPool.allocateForVm(id, {
               ownerUserId: vm.owner_user_id || null,
@@ -2236,7 +2238,7 @@ export function createPanelHandler(ctx) {
           } catch (e) {}
         }
         let startError = null
-        if (startNow && vm.proxy?.url) {
+        if (startNow && hasExit(vm)) {
           const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
           if (!boot.ok) {
             // Slot JSON is already on disk. 500 here makes the console treat

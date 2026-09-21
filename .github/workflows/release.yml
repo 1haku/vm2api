@@ -1,4 +1,4 @@
-# Publish linux amd64 binaries from git (prebuilt kernel; Go still built here).
+# Publish linux amd64 binaries + control-plane and guest images (pull-only install).
 name: release
 
 on:
@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   linux-amd64:
@@ -54,3 +55,52 @@ jobs:
             dist/kin-worker
             dist/kin-egress
             dist/kin-cookie-auth
+
+  images:
+    # Control plane + guest OS images so installs never build on the user's machine.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: resolve tags
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < VERSION)
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tags=ghcr.io/${owner}/vm2api:v${version},ghcr.io/${owner}/vm2api:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=ghcr.io/${owner}/vm2api:edge" >> "$GITHUB_OUTPUT"
+          fi
+      - name: control plane image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: guest images
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner='${{ steps.meta.outputs.owner }}'
+          push() {
+            docker build -t "ghcr.io/${owner}/kin-os-$1" docker/kin-os/"$2"
+            docker push "ghcr.io/${owner}/kin-os-$1"
+          }
+          push ubuntu:24.04 ubuntu-24.04
+          push debian:12 debian-12
+          push arch:latest archlinux
+          push fedora:41 fedora-41
