@@ -1758,7 +1758,8 @@ test('session slots count conversations and ignore inflight', async (t) => {
     allowWait: false,
   })
   assert.equal(other.ok, false)
-  assert.equal(other.reason, 'no_eligible_accounts')
+  assert.equal(other.reason, 'all_accounts_busy')
+  assert.ok((other.wait_reasons || []).includes('session_window_full'))
   for (const item of held) item.release()
 })
 
@@ -1849,5 +1850,6 @@ test('session windows follow the VM slot cap and keep one conversation on one VM
   second.release()
   const third = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-c', allowWait: false })
   assert.equal(third.ok, false)
-  assert.equal(third.reason, 'no_eligible_accounts')
+  assert.equal(third.reason, 'all_accounts_busy')
+  assert.ok((third.wait_reasons || []).includes('session_window_full'))
 })
