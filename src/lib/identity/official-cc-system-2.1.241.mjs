@@ -30,7 +30,7 @@ Do not invent or guess URLs. Use only links the user provided, links returned by
 
 export const AGENT_EXPANSION_CACHE_CONTROL = Object.freeze({
   type: 'ephemeral',
-  ttl: '5m',
+  ttl: '1h',
 })
 
 export const OFFICIAL_CONTEXT_MANAGEMENT = `# Context management

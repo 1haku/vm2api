@@ -34,11 +34,13 @@ import {
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
 import {
+  DEFAULT_CACHE_TTL,
   applyCacheTtlToBody,
   applyCacheBreakpoints,
   enforceCacheTtlOrder,
   forceEphemeralCacheTtl,
   normalizeCacheBreakpoints,
+  normalizeCacheTtl,
   stripIllegalCacheControlFields,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
@@ -82,9 +84,8 @@ export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   messages: 'rewrite',
 })
 
-/** Direct utility callers use the legacy 5m policy; production passes either
- * the resolved TTL or null for official Claude Code traffic. */
-export const CLI_HOP_CACHE_TTL = '5m'
+/** Fallback when a caller passes no console TTL. Same value as DEFAULT_CACHE_TTL. */
+export const CLI_HOP_CACHE_TTL = DEFAULT_CACHE_TTL
 
 function dropNodeCacheControl(node) {
   if (!node || typeof node !== 'object' || !node.cache_control) return node
@@ -164,11 +165,8 @@ export function prepareCliHopBody(
   }
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
-  if (cacheTtl == null) return forceEphemeralCacheTtl(body, CLI_HOP_CACHE_TTL)
-  // Wrap CLI tools/system are ttl-less, which Anthropic treats as 5m.
-  // A console 1h written on a later message is the live 400, so cli-hop
-  // never emits 1h.
-  const ttl = CLI_HOP_CACHE_TTL
+  const ttl = cacheTtl == null ? DEFAULT_CACHE_TTL : normalizeCacheTtl(cacheTtl)
+  if (cacheTtl == null) return forceEphemeralCacheTtl(body, ttl)
   body = stripIllegalCacheControlFields(body)
   // Node owns the stable previous-user boundary; the kernel receives the same
   // resolved TTL and owns the current tail plus wrap-owned markers.
