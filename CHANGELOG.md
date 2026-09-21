@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.5 — 2026-09-21
+
+- Claude Code 身份、User-Agent 与默认 beta 序列同步官方 2.1.278 抓包
+- official 请求条件透传 request class、agent type、前序工具耗时与 context compacted 标记
+- SSE 聚合保留 `stop_details`、`safeguard_results` 与 `diagnostics`
+
 ## 1.3.4 — 2026-09-21
 
 - OpenAI 模型无论入站 chat、messages 还是 responses，hop 都洗到 `/v1/responses`
