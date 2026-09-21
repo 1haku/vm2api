@@ -350,6 +350,58 @@ test('GPT on anthropic.messages converts and pins a GPT slot', async () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('nested Responses cached_tokens reaches the request log cache column', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-cache-'))
+  writeGptVm(root, 'vm-gpt-a')
+  const res = {
+    headersSent: false,
+    write() {
+      this.headersSent = true
+    },
+    end() {
+      this.ended = true
+    },
+  }
+  const logBag = {}
+  await handleCodexProtocol({
+    req: { headers: {} },
+    res,
+    protocol: 'openai.responses',
+    ctx: { body: { model: 'gpt-5.4', input: [], stream: true } },
+    inbound: { stream: true },
+    logBag,
+    stats: { errors: 0, requests: 0, by_route: {} },
+    json: (_res, status, body) => {
+      res.statusCode = status
+      res.body = body
+      return body
+    },
+    writeSSEHeaders() {
+      res.headersSent = true
+    },
+    routing: {},
+    projectRoot: root,
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async ({ onEvent }) => {
+        await onEvent('data: {"type":"response.completed"}')
+        return {
+          ok: true,
+          status: 200,
+          terminalState: 'verified',
+          // merged trailer + SSE usage: totals flat, cache read nested
+          usage: { input_tokens: 120, output_tokens: 9, input_tokens_details: { cached_tokens: 8 } },
+        }
+      },
+    },
+  })
+  assert.equal(logBag.input_tokens, 120)
+  assert.equal(logBag.output_tokens, 9)
+  assert.equal(logBag.cache_read_tokens, 8)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 test('rotate plugin injects cached turn-state into the kernel envelope', async () => {
   resetCodexRotateStore()
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-rotate-'))

@@ -12,6 +12,7 @@ import {
   usageFromSseEvent,
   isDownstreamCommitEvent,
 } from '../../src/lib/transport/go-worker-client.mjs'
+import { extractOpenaiUsage } from '../../src/lib/protocol/openai-usage.mjs'
 
 test('setup-token worker envelope is inference-only', () => {
   const out = finalizeWorkerPayload({
@@ -216,6 +217,36 @@ unixTest('streamGoWorker scrapes usage from SSE when trailers are missing', asyn
   }
 })
 
+unixTest('streamGoWorker merges SSE cache details into a totals-only usage trailer', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.setHeader('trailer', 'x-kin-terminal-state, x-kin-usage')
+    res.write('data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4"}}\n\n')
+    res.write('data: {"type":"response.output_text.delta","delta":"hi"}\n\n')
+    res.write(
+      'data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.4","usage":{"input_tokens":120,"output_tokens":9,"total_tokens":129,"input_tokens_details":{"cached_tokens":8}}}}\n\n',
+    )
+    res.addTrailers({
+      'x-kin-terminal-state': 'verified',
+      'x-kin-usage': JSON.stringify({ input_tokens: 120, output_tokens: 9 }),
+    })
+    res.end()
+  })
+  try {
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      body: { model: 'gpt-5.4', stream: true, input: [] },
+      onEvent: () => {},
+    })
+    assert.equal(result.usage.input_tokens, 120)
+    assert.equal(result.usage.output_tokens, 9)
+    assert.equal(result.usage.input_tokens_details.cached_tokens, 8)
+    assert.equal(extractOpenaiUsage(result.usage).cached_tokens, 8)
+  } finally {
+    await fx.close()
+  }
+})
+
 test('message_start is not a downstream commit', () => {
   assert.equal(isDownstreamCommitEvent({ type: 'message_start', message: {} }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'error', error: { message: 'Connection error' } }), false)
@@ -239,12 +270,8 @@ unixTest('streamGoWorker assembles text+stop_reason even without message_stop', 
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.write('data: {"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}\n\n')
-    res.write(
-      'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
-    )
-    res.write(
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n',
-    )
+    res.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
+    res.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n')
     res.write('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n')
     res.end()
   })

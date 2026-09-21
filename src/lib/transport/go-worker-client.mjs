@@ -563,9 +563,7 @@ export async function streamGoWorker({
       const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason })
       if (!committed && complete) await flushCommit()
       const headerState = trailers['x-kin-terminal-state'] || headers['x-kin-terminal-state']
-      const terminalState = complete
-        ? 'verified'
-        : headerState || (sawTerminal ? 'verified' : 'incomplete')
+      const terminalState = complete ? 'verified' : headerState || (sawTerminal ? 'verified' : 'incomplete')
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
       return {
         ok: response.statusCode === 200 && !lastError && (terminalState === 'verified' || complete),
@@ -573,7 +571,9 @@ export async function streamGoWorker({
         via: 'go-worker-stream',
         body: lastError || assembled || { type: 'message', role: 'assistant', content: [] },
         headers: rateHeaders,
-        usage: meta.usage || sseUsage || assembled?.usage || null,
+        // Trailer stays authoritative, but it may carry totals only (Codex/Responses hops).
+        // Merge so SSE `input_tokens_details` / cache breakdown survives instead of being short-circuited.
+        usage: mergeUsage(mergeUsage(assembled?.usage || null, sseUsage), meta.usage),
         model: meta.model || sseModel || assembled?.model || null,
         stopReason,
         ttftMs,
