@@ -3,18 +3,23 @@ import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
 import type { StatusTone } from '@/types/status'
 import { expiresAtToMs, fmtResetClock } from '@/lib/fable-status'
-import { fmtNum, fmtUsd, remainPct, usedPctOf } from '@/lib/format'
+import { fmtNum, fmtUsd, usedPctOf } from '@/lib/format'
 import { tierVisual } from '@/lib/tier-visual'
 import { cn } from '@/lib/utils'
 import { isCodexVm } from '@/lib/vm-kind'
 import {
+  credentialStatus,
   fleetGroup,
   poolStatus,
   vmCooldown,
   vmCooldownTitle,
-  windowLimited,
 } from '@/lib/vm-status'
-import { vmTodayStats, vmWeekOutcome, type VmWeekOutcome } from '@/lib/vm-usage'
+import {
+  vmTodayStats,
+  vmWeekOutcome,
+  vmWindowCosts,
+  type VmWeekOutcome,
+} from '@/lib/vm-usage'
 import { useNow } from '@/hooks/use-now'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,7 +51,7 @@ const LIST_COL = {
   status: 'min-w-[240px] flex-[1.9] px-1.5',
   today: 'min-w-[168px] flex-[1.15] px-1.5',
   week: 'min-w-[128px] flex-[0.85] px-1.5',
-  usage: 'min-w-[228px] flex-[1.6] px-1.5',
+  usage: 'min-w-[280px] flex-[1.7] px-1.5',
   cost: 'min-w-[144px] flex-[1] px-1.5',
   actions: 'min-w-[96px] flex-[0.65] pr-2',
 } as const
@@ -69,74 +74,22 @@ const DOT_FG: Record<DotTone, string> = {
   none: 'text-muted-foreground',
 }
 
-function utilDotTone(
-  status: unknown,
-  util: number,
-  hasWindow: boolean
-): DotTone {
-  if (!hasWindow) return 'none'
-  if (windowLimited(status, util)) return 'bad'
-  if (util >= 85) return 'caution'
-  if (util >= 70) return 'warn'
-  return 'ok'
+function credDot(cls: string): DotTone {
+  if (cls === 'ok') return 'ok'
+  if (cls === 'caution') return 'caution'
+  if (cls === 'warn') return 'warn'
+  if (cls === 'bad') return 'bad'
+  return 'none'
 }
 
-function healthModel(
-  vm: Vm,
-  week: VmWeekOutcome
-): { dots: DotTone[]; rate: number | null; label: string } {
-  const pool = poolStatus(vm)
-  if (pool.cls === 'bad') {
-    return {
-      dots: Array.from({ length: 16 }, () => 'bad' as const),
-      rate: null,
-      label: pool.text,
-    }
-  }
-  if (pool.cls === 'none' || pool.cls === 'off') {
-    return {
-      dots: Array.from({ length: 16 }, () => 'none' as const),
-      rate: null,
-      label: pool.text,
-    }
-  }
-  const total = week.success + week.fail
-  if (week.known && total > 0) {
-    const rate = (week.success / total) * 100
-    const okN = Math.round((week.success / total) * 16)
-    return {
-      dots: Array.from({ length: 16 }, (_, i) => (i < okN ? 'ok' : 'bad')),
-      rate,
-      label: '7D 成功率',
-    }
-  }
-  const has = Boolean(vm.has_token)
-  const t5 = utilDotTone(vm.status_5h, usedPctOf(vm, '5h'), has)
-  const t7 = utilDotTone(vm.status_7d, usedPctOf(vm, '7d'), has)
-  const fable = isCodexVm(vm) ? null : fableRow(vm)
-  const tf: DotTone = !fable
-    ? t5
-    : fable.kind === 'bar'
-      ? utilDotTone(null, fable.pct, true)
-      : 'warn'
-  if (isCodexVm(vm)) {
-    return {
-      dots: [
-        ...Array.from({ length: 8 }, () => t5),
-        ...Array.from({ length: 8 }, () => t7),
-      ],
-      rate: has ? remainPct(vm.utilization_7d) : null,
-      label: '7D 剩余',
-    }
-  }
+/** 状态条只回答这张票现在能不能用，不把请求成败画成可用性。 */
+function healthModel(vm: Vm): { dots: DotTone[]; text: string; tone: DotTone } {
+  const cred = credentialStatus(vm)
+  const tone = credDot(cred.cls)
   return {
-    dots: [
-      ...Array.from({ length: 6 }, () => t5),
-      ...Array.from({ length: 6 }, () => t7),
-      ...Array.from({ length: 4 }, () => tf),
-    ],
-    rate: has ? remainPct(vm.utilization_7d) : null,
-    label: '7D 剩余',
+    dots: Array.from({ length: 16 }, () => tone),
+    text: cred.text || (tone === 'none' ? '无凭证' : '可用'),
+    tone,
   }
 }
 
@@ -158,16 +111,28 @@ function UsageTrack({
   value,
   resetAt,
   detail,
+  cost,
 }: {
   label: string
   value: number
   resetAt?: string | null
   detail?: string | null
+  cost?: number | null
 }) {
   return (
     <div className='min-w-0 space-y-1'>
       <div className='flex items-baseline justify-between gap-1 text-base text-muted-foreground'>
-        <span className='truncate'>{label}</span>
+        <span className='flex min-w-0 items-baseline gap-1.5'>
+          <span className='truncate'>{label}</span>
+          {cost != null ? (
+            <span
+              className='shrink-0 font-mono text-sm text-foreground/80 tabular-nums'
+              title={`${label} 调用费用合计`}
+            >
+              {fmtUsd(cost, 2)}
+            </span>
+          ) : null}
+        </span>
         <span className={cn('font-medium tabular-nums', riskFg(value))}>
           {value.toFixed(1)}%
         </span>
@@ -272,18 +237,10 @@ function CountPill({ tone, n }: { tone: 'ok' | 'bad'; n: number }) {
   )
 }
 
-function StatusCell({
-  vm,
-  week,
-  show,
-}: {
-  vm: Vm
-  week: VmWeekOutcome
-  show: StatusBarShow
-}) {
+function StatusCell({ vm, show }: { vm: Vm; show: StatusBarShow }) {
   const tone = poolStatus(vm)
   const inflight = Number(vm.inflight) || Number(vm.session_active) || 0
-  const health = healthModel(vm, week)
+  const health = healthModel(vm)
   const showInflight =
     inflight > 0 &&
     tone.cls !== 'bad' &&
@@ -305,10 +262,7 @@ function StatusCell({
         </div>
       ) : null}
       {show.bar ? (
-        <div
-          className='flex items-center gap-2'
-          title={`${health.label}${health.rate != null ? ` ${health.rate.toFixed(1)}%` : ''}`}
-        >
+        <div className='flex items-center gap-2' title={health.text}>
           <div
             className='flex h-2.5 min-w-0 flex-1 gap-px overflow-hidden rounded-full track-recessed'
             aria-hidden
@@ -323,23 +277,11 @@ function StatusCell({
           </div>
           <span
             className={cn(
-              'shrink-0 text-base font-medium tabular-nums',
-              health.rate == null
-                ? 'text-muted-foreground'
-                : health.label === '7D 成功率'
-                  ? health.rate >= 95
-                    ? DOT_FG.ok
-                    : health.rate >= 80
-                      ? DOT_FG.caution
-                      : DOT_FG.bad
-                  : health.rate >= 40
-                    ? DOT_FG.ok
-                    : health.rate >= 15
-                      ? DOT_FG.caution
-                      : DOT_FG.bad
+              'max-w-[7.5rem] shrink-0 truncate text-sm font-medium',
+              DOT_FG[health.tone]
             )}
           >
-            {health.rate == null ? '—' : `${health.rate.toFixed(1)}%`}
+            {health.text}
           </span>
         </div>
       ) : null}
@@ -390,7 +332,15 @@ function WeekReqCell({ week }: { week: VmWeekOutcome }) {
   )
 }
 
-function UsageCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
+function UsageCell({
+  vm,
+  week,
+  accounts,
+}: {
+  vm: Vm
+  week: VmWeekOutcome
+  accounts?: UsageAccountRow[]
+}) {
   const hasToken = Boolean(vm.has_token)
   const u5 = usedPctOf(vm, '5h')
   const u7 = usedPctOf(vm, '7d')
@@ -398,6 +348,7 @@ function UsageCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
   const reset5 = hasToken ? fmtResetClock(vm.reset_5h) : null
   const reset7 = hasToken ? fmtResetClock(vm.reset_7d) : null
   const resetFable = hasToken ? fmtResetClock(vm.reset_7d_oi) : null
+  const costs = vmWindowCosts(vm, accounts)
   const weekDetail =
     week.req > 0 || week.tok > 0
       ? `${fmtNum(week.req)} req / ${fmtNum(week.tok)} tok`
@@ -405,7 +356,7 @@ function UsageCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
   return (
     <div className='space-y-1.5'>
       <div className='grid grid-cols-2 gap-2'>
-        <UsageTrack label='5h' value={u5} resetAt={reset5} />
+        <UsageTrack label='5h' value={u5} resetAt={reset5} cost={costs.h5} />
         {fable?.kind === 'bar' ? (
           <UsageTrack label='Fable' value={fable.pct} resetAt={resetFable} />
         ) : fable?.kind === 'note' ? (
@@ -424,6 +375,7 @@ function UsageCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
             value={u7}
             resetAt={reset7}
             detail={weekDetail}
+            cost={costs.d7}
           />
         )}
       </div>
@@ -433,6 +385,7 @@ function UsageCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
           value={u7}
           resetAt={reset7}
           detail={weekDetail}
+          cost={costs.d7}
         />
       ) : null}
     </div>
@@ -489,7 +442,7 @@ export function VmTable({
   const statusBar = useStatusBarShow()
   return (
     <div className='overflow-x-auto rounded-lg border border-border/60'>
-      <div className='min-w-[1600px]'>
+      <div className='min-w-[1680px]'>
         <div className='sticky top-0 z-10 flex h-10 items-center border-b bg-muted/30 text-sm font-medium tracking-wide text-muted-foreground'>
           <div className={LIST_COL.vm}>账号</div>
           <div className={LIST_COL.sched}>调度</div>
@@ -539,7 +492,7 @@ export function VmTable({
                 <PlanCell vm={vm} now={now} />
               </div>
               <div className={LIST_COL.status}>
-                <StatusCell vm={vm} week={week} show={statusBar.show} />
+                <StatusCell vm={vm} show={statusBar.show} />
               </div>
               <div className={LIST_COL.today}>
                 <TodayCell vm={vm} accounts={accounts} />
@@ -548,7 +501,7 @@ export function VmTable({
                 <WeekReqCell week={week} />
               </div>
               <div className={LIST_COL.usage}>
-                <UsageCell vm={vm} week={week} />
+                <UsageCell vm={vm} week={week} accounts={accounts} />
               </div>
               <div className={LIST_COL.cost}>
                 <CostCell vm={vm} week={week} />
