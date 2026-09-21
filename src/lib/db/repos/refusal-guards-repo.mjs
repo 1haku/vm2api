@@ -14,6 +14,7 @@ function rowToRec(row) {
     source_request_id: row.source_request_id,
     error_message: row.error_message,
     preview: row.preview,
+    expires_at: row.expires_at || null,
   }
 }
 
@@ -24,12 +25,17 @@ export class RefusalGuardsRepo {
     this._insert = db.prepare(`
       INSERT INTO refusal_guards (
         fingerprint, model, first_seen_at, last_seen_at, hit_count,
-        source_request_id, error_message, preview
-      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+        source_request_id, error_message, preview, expires_at
+      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
       ON CONFLICT(fingerprint) DO UPDATE SET
         last_seen_at = excluded.last_seen_at,
         error_message = COALESCE(excluded.error_message, refusal_guards.error_message),
-        preview = COALESCE(excluded.preview, refusal_guards.preview)
+        preview = COALESCE(excluded.preview, refusal_guards.preview),
+        expires_at = CASE
+          WHEN refusal_guards.expires_at IS NULL THEN NULL
+          WHEN excluded.expires_at IS NULL THEN NULL
+          ELSE excluded.expires_at
+        END
     `)
     this._hit = db.prepare(`
       UPDATE refusal_guards SET hit_count = hit_count + 1, last_seen_at = ?
@@ -42,10 +48,14 @@ export class RefusalGuardsRepo {
   }
 
   get(fingerprint) {
-    return rowToRec(this._get.get(String(fingerprint || '')))
+    const rec = rowToRec(this._get.get(String(fingerprint || '')))
+    if (!rec?.expires_at) return rec
+    if (Date.parse(rec.expires_at) > Date.now()) return rec
+    this.remove(rec.fingerprint)
+    return null
   }
 
-  remember({ fingerprint, model = '', requestId = null, errorMessage = null, preview = null } = {}) {
+  remember({ fingerprint, model = '', requestId = null, errorMessage = null, preview = null, expiresAt = null } = {}) {
     const fp = String(fingerprint || '').trim()
     if (!fp) return null
     const now = new Date().toISOString()
@@ -57,6 +67,7 @@ export class RefusalGuardsRepo {
       requestId,
       errorMessage ? String(errorMessage).slice(0, 500) : null,
       preview ? String(preview).slice(0, 240) : null,
+      expiresAt || null,
     )
     return this.get(fp)
   }
@@ -70,7 +81,11 @@ export class RefusalGuardsRepo {
 
   list(limit = 200) {
     const n = Math.min(500, Math.max(1, Number(limit) || 200))
-    return this._list.all(n).map(rowToRec)
+    const now = Date.now()
+    return this._list
+      .all(n)
+      .map(rowToRec)
+      .filter((rec) => !rec.expires_at || Date.parse(rec.expires_at) > now)
   }
 
   count() {
