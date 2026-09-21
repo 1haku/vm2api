@@ -47,3 +47,73 @@ test('applyVmSessionSlots updates only native admission policy', () => {
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('persistRoutingPatch reconciles inherited Claude session slots and preserves overrides', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-session-default-'))
+  const vms = path.join(root, 'vms')
+  const routingFile = path.join(root, 'routing.json')
+  fs.mkdirSync(vms, { recursive: true })
+  fs.writeFileSync(
+    path.join(vms, 'vm-inherited.json'),
+    JSON.stringify({
+      id: 'vm-inherited',
+      claude: { account_uuid: 'account-inherited' },
+      policy: { sessionSlots: 20, sessionSlotsOverride: false },
+    }),
+  )
+  fs.writeFileSync(
+    path.join(vms, 'vm-override.json'),
+    JSON.stringify({
+      id: 'vm-override',
+      claude: { account_uuid: 'account-override' },
+      policy: { sessionSlots: 8, sessionSlotsOverride: true },
+    }),
+  )
+  fs.writeFileSync(
+    path.join(vms, 'vm-codex.json'),
+    JSON.stringify({
+      id: 'vm-codex',
+      platform: 'openai',
+      family: 'codex',
+      codex: {},
+      policy: { sessionSlots: 20, sessionSlotsOverride: false },
+    }),
+  )
+  const routingConfig = {
+    inference: { session_slots: 4 },
+    concurrency: {},
+    tiers: {},
+  }
+  fs.writeFileSync(routingFile, JSON.stringify(routingConfig))
+  try {
+    const runtime = createRoutingRuntime({
+      cfg: { paths: { project: root } },
+      routingConfigPath: routingFile,
+      routingConfig,
+      stickyRouter: { reloadConfig() {} },
+      accountQuota: {
+        setMaxConcurrency() {},
+        setMaxRpm() {},
+        reloadConfig() {},
+        applyTierConcurrency() {},
+        applyTierRpm() {},
+        repo: { get: () => null },
+      },
+      requestLog: { setConfig() {} },
+    })
+
+    const applied = runtime.persistRoutingPatch({ inference: { session_slots: 4 } })
+
+    const inherited = JSON.parse(fs.readFileSync(path.join(vms, 'vm-inherited.json'), 'utf8'))
+    const overridden = JSON.parse(fs.readFileSync(path.join(vms, 'vm-override.json'), 'utf8'))
+    const codex = JSON.parse(fs.readFileSync(path.join(vms, 'vm-codex.json'), 'utf8'))
+    assert.deepEqual(applied.session_slots, { updated: 1, skipped: 1 })
+    assert.equal(inherited.policy.sessionSlots, 4)
+    assert.equal(inherited.policy.sessionSlotsOverride, false)
+    assert.equal(overridden.policy.sessionSlots, 8)
+    assert.equal(overridden.policy.sessionSlotsOverride, true)
+    assert.equal(codex.policy.sessionSlots, 20)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
