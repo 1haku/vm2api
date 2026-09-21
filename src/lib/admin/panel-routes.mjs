@@ -1234,14 +1234,27 @@ export function createPanelHandler(ctx) {
           for (const item of report.items || []) {
             if (!item.ok) continue
             const vm = getVm(cfg.paths.project, item.id)
+            if (vm.status !== 'running') {
+              item.kernel = { ok: true, skipped: true, reason: 'vm_stopped' }
+              continue
+            }
             if (resolveInferenceEngine(vm, ctx.routingConfig) !== 'rust') continue
             const exec = slotExec(cfg.paths.project, vm)
             item.kernel = await restartRustKernel(exec).catch((e) => ({
               ok: false,
               error: String(e?.message || e).slice(0, 200),
             }))
+            if (!item.kernel?.ok) {
+              item.ok = false
+              item.code = 'kernel_restart_failed'
+              item.error = item.kernel?.error || item.kernel?.reason || 'kernel restart failed'
+            }
           }
         }
+        const failed = (report.items || []).filter((item) => !item.ok)
+        report.ok = failed.length === 0
+        report.ok_count = report.items.length - failed.length
+        report.failed_count = failed.length
         return json(res, report.ok ? 200 : 400, panel.ok(report))
       }
       if (req.method === 'POST' && p === '/api/panel/vms/slot-policy') {

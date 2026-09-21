@@ -12,6 +12,7 @@ import {
   wrapCliHomeDir,
   wrapCliTemplateDir,
 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
+import { listVms } from '../../src/lib/vm/vm-registry.mjs'
 
 function seedTemplate(root) {
   const src = path.join(root, 'share', 'wrap-cli')
@@ -108,6 +109,27 @@ test('captureWrapSample promotes a proven slot into share/wrap-cli', () => {
     assert.equal(synced.ok, true)
     assert.equal(synced.ok_count, 1)
     assert.equal(fs.readFileSync(path.join(wrapCliHomeDir(project, 'vm-10'), 'cli-node'), 'utf8'), 'proven-cli\n')
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('legacy VM ids are included in fleet wrap synchronization', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-legacy-vm-'))
+  try {
+    seedTemplate(project)
+    const vmDir = path.join(project, 'vms')
+    fs.mkdirSync(vmDir, { recursive: true })
+    fs.writeFileSync(path.join(vmDir, 'active.json'), JSON.stringify({ active_vm: 'legacy-slot' }))
+    fs.writeFileSync(path.join(vmDir, 'legacy-slot.json'), JSON.stringify({ id: 'legacy-slot', name: 'legacy-slot' }))
+    fs.writeFileSync(path.join(vmDir, 'vm-01.json'), JSON.stringify({ id: 'vm-01', name: 'vm-01' }))
+    const synced = syncWrapSample(project, listVms(project))
+    assert.equal(synced.ok, true)
+    assert.deepEqual(synced.items.map((item) => item.id).sort(), ['legacy-slot', 'vm-01'])
+    assert.equal(
+      fs.readFileSync(path.join(wrapCliHomeDir(project, 'legacy-slot'), 'kin-kernel.bin'), 'utf8'),
+      'kin-kernel',
+    )
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }
