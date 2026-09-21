@@ -1,7 +1,7 @@
 /** Official CLI IDs come from CLAUDE_CONFIG_DIR when configured; slot-generated UUIDs never replace them. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { atomicWriteJson } from '../vm/vm-file.mjs'
+import { atomicWriteJson, listVmRecordFiles } from '../vm/vm-file.mjs'
 
 export const OFFICIAL_IDENTITY_SOURCE = 'official-cc-init'
 
@@ -133,8 +133,7 @@ export function reconcileOfficialFingerprints(projectRoot) {
   const vmsDir = path.join(projectRoot, 'vms')
   const summary = { scanned: 0, reconciled: 0, leftover_removed: 0, replaced_device: 0, skipped: 0 }
   if (!fs.existsSync(vmsDir)) return summary
-  for (const name of fs.readdirSync(vmsDir)) {
-    if (!name.startsWith('vm-') || !name.endsWith('.json')) continue
+  for (const name of listVmRecordFiles(vmsDir)) {
     const vmId = name.slice(0, -5)
     const vmPath = path.join(vmsDir, name)
     const homeDir = path.join(vmsDir, vmId, 'cli-home')

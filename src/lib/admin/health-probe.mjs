@@ -7,6 +7,7 @@
 import { isOfficialClaudeUa } from '../identity/crs-headers.mjs'
 import { isOfficialClaudeCodeTraffic } from '../identity/crs-persona.mjs'
 import { vmHasClaudeCredential } from '../vm/vm-registry.mjs'
+import { isValidVmId } from '../vm/vm-file.mjs'
 import { fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions, fromClaudeToResponses } from '../protocol/convert.mjs'
 
 export const HEALTH_REAL_HEADER = 'x-kin-health-real'
@@ -78,7 +79,7 @@ function normalizePromptList(input, fallback) {
 
 function normalizeVmIds(input) {
   if (!Array.isArray(input)) return []
-  return [...new Set(input.map((id) => String(id || '').trim()).filter((id) => /^vm-[a-z0-9-]+$/i.test(id)))]
+  return [...new Set(input.map((id) => String(id || '').trim()).filter(isValidVmId))]
 }
 
 function normalizeModelId(id) {

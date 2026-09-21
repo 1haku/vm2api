@@ -65,6 +65,8 @@ export function VmListPage() {
   const [dir, setDir] = useState<'asc' | 'desc'>('asc')
   const [resetTarget, setResetTarget] = useState<Vm | null>(null)
   const [resetInput, setResetInput] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Vm | null>(null)
+  const [deleteInput, setDeleteInput] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const resetVm = useMutation({
     mutationFn: (id: string) =>
@@ -76,6 +78,17 @@ export function VmListPage() {
       toast.success('已销毁并重建')
       setResetTarget(null)
       setResetInput('')
+      await qc.invalidateQueries({ queryKey: vmsListQueryOptions().queryKey })
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const deleteVm = useMutation({
+    mutationFn: (id: string) =>
+      api(`/api/panel/vms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: async () => {
+      toast.success('已删除')
+      setDeleteTarget(null)
+      setDeleteInput('')
       await qc.invalidateQueries({ queryKey: vmsListQueryOptions().queryKey })
     },
     onError: (error: Error) => toast.error(error.message),
@@ -182,6 +195,10 @@ export function VmListPage() {
                 setResetInput('')
                 setResetTarget(vm)
               }}
+              onDelete={(vm) => {
+                setDeleteInput('')
+                setDeleteTarget(vm)
+              }}
             />
           ) : (
             <VmTable
@@ -190,6 +207,10 @@ export function VmListPage() {
               onReset={(vm) => {
                 setResetInput('')
                 setResetTarget(vm)
+              }}
+              onDelete={(vm) => {
+                setDeleteInput('')
+                setDeleteTarget(vm)
               }}
             />
           )
@@ -249,6 +270,56 @@ export function VmListPage() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && resetInput.trim() === resetTarget?.id) {
               resetVm.mutate(resetTarget.id)
+            }
+          }}
+        />
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+            setDeleteInput('')
+          }
+        }}
+        title='删除'
+        desc={
+          deleteTarget ? (
+            <>
+              <p className='flex min-w-0 items-center gap-1.5'>
+                <SlotIdentity vm={deleteTarget} compact />
+                <span className='shrink-0 text-muted-foreground'>
+                  · {deleteTarget.id}
+                </span>
+              </p>
+              <p className='mt-2 text-destructive'>
+                删除槽位不可恢复：容器、家目录、凭证与代理绑定一并清除。活跃槽位需先切换活跃再删。
+              </p>
+            </>
+          ) : (
+            ''
+          )
+        }
+        confirmText='删除'
+        cancelBtnText='取消'
+        destructive
+        disabled={deleteInput.trim() !== deleteTarget?.id}
+        isLoading={deleteVm.isPending}
+        handleConfirm={() => {
+          if (deleteTarget) deleteVm.mutate(deleteTarget.id)
+        }}
+      >
+        <Input
+          autoFocus
+          autoComplete='off'
+          spellCheck={false}
+          placeholder={deleteTarget?.id}
+          aria-label='确认 ID'
+          value={deleteInput}
+          onChange={(e) => setDeleteInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && deleteInput.trim() === deleteTarget?.id) {
+              deleteVm.mutate(deleteTarget.id)
             }
           }}
         />

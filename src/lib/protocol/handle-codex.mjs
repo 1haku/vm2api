@@ -3,6 +3,7 @@
  */
 import path from 'node:path'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
+import { isValidVmId } from '../vm/vm-file.mjs'
 import { isCodexProtocolAllowed, isCodexVm, normalizeCodexRouting } from './codex-route.mjs'
 import { restrictCodexClient } from './codex-restriction.mjs'
 import {
@@ -40,7 +41,7 @@ function sessionFrom(req, body) {
 function pinnedVmId(req) {
   const pinVmRaw = String(req?.headers?.['x-kin-vm'] || '').trim()
   if (req?.apiKeyKind !== 'master') return null
-  return /^vm-[a-z0-9-]+$/i.test(pinVmRaw) ? pinVmRaw : null
+  return isValidVmId(pinVmRaw) ? pinVmRaw : null
 }
 
 export function pickCodexCandidates(projectRoot, req) {

@@ -12,6 +12,40 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
+/**
+ * Names inside `vms/` that are not slot records: `active.json` is the active
+ * pointer, `<id>-chat.json` is a test-chat side file, and `create`/`import`
+ * collide with the `/api/panel/vms/:id` route segments.
+ */
+const RESERVED_VM_IDS = new Set(['active', 'create', 'import'])
+
+/** True when `id` must not be used for a slot record. */
+export function isReservedVmId(id) {
+  const s = String(id || '').toLowerCase()
+  return !s || RESERVED_VM_IDS.has(s) || s.endsWith('-chat')
+}
+
+/** Slot ids are filename-safe (`[A-Za-z0-9_-]`) and never a reserved name. */
+export function isValidVmId(id) {
+  return /^[A-Za-z0-9_-]+$/.test(String(id || '')) && !isReservedVmId(id)
+}
+
+/** True for a `vms/<id>.json` slot record — any id, not just `vm-` prefixed. */
+export function isVmRecordFile(base) {
+  const name = String(base || '')
+  if (!name.endsWith('.json') || name.startsWith('.')) return false
+  return !isReservedVmId(name.slice(0, -5))
+}
+
+/** Slot record file names inside `dir` (missing/unreadable dir → `[]`). */
+export function listVmRecordFiles(dir) {
+  try {
+    return fs.readdirSync(dir).filter(isVmRecordFile)
+  } catch {
+    return []
+  }
+}
+
 const locks = new Map()
 
 /**
