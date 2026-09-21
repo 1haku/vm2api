@@ -249,11 +249,11 @@ export class PoolScheduler {
       while (selected) {
         const reservation = this.reserve(selected, { sessionKey: stickyKey, skipQuota: pinned })
         if (reservation) return finishReserve(selected, reservation)
-        // Eligibility is a snapshot. A failed atomic reservation means this
-        // account became busy; try every other idle candidate, then queue on
-        // the raced accounts instead of excluding them for the whole request.
-        reserveMisses.push({ ...selected, busy: true, waitReason: 'concurrency_limit' })
+        // A sticky hit that loses the race stays on that account and waits.
+        // Dropping the key here is how one conversation lands on a second session.
+        reserveMisses.push({ ...selected, busy: true, waitReason: selected.waitReason || 'concurrency_limit' })
         attempted.add(selected.accountId)
+        if (selected.selectionReason === 'sticky') break
         const remaining = available.filter(
           (candidate) =>
             !attempted.has(candidate.accountId) && !blocked.has(candidate.accountId) && !blocked.has(candidate.vmId),
@@ -539,6 +539,19 @@ export class PoolScheduler {
     }
     const inflight = this.inflight.get(accountId) || 0
     const sessionSlots = sessionSlotsOf(vm, this.config.default_session_slots)
+    if (sessionKey && !pinned && this.accountQuota?.sessions?.canAccept) {
+      let idleMin = 5
+      try {
+        const policy = this.accountQuota.policyFor?.(account, { tier: vmTierOf(vm) })
+        const configured = Number(policy?.session_idle_min)
+        if (Number.isFinite(configured) && configured > 0) idleMin = configured
+      } catch {}
+      const windowGate = this.accountQuota.sessions.canAccept(accountId, sessionKey, {
+        max: sessionSlots,
+        idleMin,
+      })
+      if (!windowGate.ok) return { ok: false, reason: 'session_window_full' }
+    }
     if (inflight >= sessionSlots) markWait('slot_busy')
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
     const fableCap = Number(this.config.fable_max_per_account)

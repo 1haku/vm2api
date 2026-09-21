@@ -1784,3 +1784,66 @@ test('sticky slot_busy stays on the bound account', async (t) => {
   assert.deepEqual(unbound, [])
   selected.release()
 })
+
+test('a sticky reserve miss does not open a second session', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const unbound = []
+  const pool = scheduler(root, {
+    stickyRouter: {
+      resolve: () => ({ vmId: 'vm-01', accountId: 'account-1' }),
+      unbind: (key) => unbound.push(key),
+    },
+  })
+  const real = pool.reserve.bind(pool)
+  pool.reserve = (candidate, opts) => {
+    if (candidate.accountId === 'account-1') return null
+    return real(candidate, opts)
+  }
+  const selected = await pool.selectAndReserve({
+    model: 'claude-test',
+    stickyKey: 'conversation-one',
+    allowWait: false,
+  })
+  assert.equal(selected.ok, false)
+  assert.equal(selected.reason, 'all_accounts_busy')
+  assert.notEqual(selected.accountId, 'account-2')
+  assert.deepEqual(unbound, [])
+})
+
+test('session windows follow the VM slot cap and keep one conversation on one VM', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  for (const id of ['vm-01', 'vm-02']) {
+    const file = path.join(root, 'vms', `${id}.json`)
+    const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+    vm.policy.sessionSlots = 1
+    fs.writeFileSync(file, JSON.stringify(vm))
+  }
+  const sessions = new SessionLimitRegistry()
+  const bindings = new Map()
+  const pool = scheduler(root, {
+    accountQuota: { canAccept: () => ({ ok: true }), sessions },
+    stickyRouter: {
+      resolve: (key) => bindings.get(key) || null,
+      bind: (key, value) => bindings.set(key, value),
+      unbind: (key) => bindings.delete(key),
+    },
+  })
+  const first = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-a', allowWait: false })
+  assert.equal(first.ok, true)
+  bindings.set('conv-a', { accountId: first.accountId, vmId: first.vmId })
+  first.release()
+  const again = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-a', allowWait: false })
+  assert.equal(again.ok, true)
+  assert.equal(again.accountId, first.accountId)
+  assert.equal(again.selectionReason, 'sticky')
+  again.release()
+  const second = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-b', allowWait: false })
+  assert.equal(second.ok, true)
+  assert.notEqual(second.accountId, first.accountId)
+  second.release()
+  const third = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-c', allowWait: false })
+  assert.equal(third.ok, false)
+  assert.equal(third.reason, 'no_eligible_accounts')
+})

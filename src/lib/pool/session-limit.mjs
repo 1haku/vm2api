@@ -115,6 +115,18 @@ export class SessionLimitRegistry {
     return bag.size
   }
 
+  /** Conversation left this account. The window is free for a new session. */
+  drop(accountId, sessionKey) {
+    const id = String(accountId || '')
+    const key = String(sessionKey || '')
+    if (!id || !key) return 0
+    const bag = this.byAccount.get(id)
+    if (!bag) return 0
+    bag.delete(key)
+    if (bag.size === 0) this.byAccount.delete(id)
+    return bag.size
+  }
+
   reset(accountId = null) {
     if (accountId == null) {
       this.byAccount.clear()

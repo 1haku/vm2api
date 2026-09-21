@@ -430,6 +430,11 @@ export function createHandleProtocol(deps) {
     }
     if (platform.platform === 'openai') {
       const routing = getRouting() || {}
+      const codexSticky = {
+        stickyRouter,
+        sessions: accountQuota?.sessions || null,
+        body: ctx.body,
+      }
       if (protocol === 'anthropic.messages') {
         const codex = normalizeCodexRouting(routing.codex)
         return handleCodexProtocol({
@@ -454,6 +459,7 @@ export function createHandleProtocol(deps) {
             },
           },
           projectRoot: cfg.paths.project,
+          ...codexSticky,
         })
       }
       return handleCodexProtocol({
@@ -468,6 +474,7 @@ export function createHandleProtocol(deps) {
         writeSSEHeaders,
         routing,
         projectRoot: cfg.paths.project,
+        ...codexSticky,
       })
     }
     if (protocol === 'openai.responses') {
@@ -669,10 +676,10 @@ export function createHandleProtocol(deps) {
     }
 
     const canonicalBody = officialMessagesBody(ctx.body)
-    // Family key (device_id) first so Agent/local-agent sub-hops stay on the
-    // parent account even when persona classifies them unofficial.
-    const stickyKey = stickyRouter.extractPoolKey(req, inbound)
-    const stickyKeys = stickyRouter.collectPoolKeys(req, inbound)
+    // One platform key. Family device_id wins when it is already bound so a
+    // child hop cannot open a second VM session.
+    const stickyKey = stickyRouter.extractPoolKey(req, inbound, { platform: 'anthropic' })
+    const stickyKeys = stickyRouter.collectPoolKeys(req, inbound, { platform: 'anthropic' })
     const streamKeepaliveMs = Number(
       getRouting()?.failover?.stream_keepalive_ms ?? cfg.limits.stream_keepalive_ms ?? 15_000,
     )
