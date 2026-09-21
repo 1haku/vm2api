@@ -6,6 +6,7 @@
  */
 import crypto from 'node:crypto'
 import { OFFICIAL_CLI_VERSION } from './vm-identity.mjs'
+import { DEFAULT_BETA_HEADER } from '../protocol/claude-code-betas.mjs'
 
 export const GROWTHBOOK_CLIENT_KEY = 'sdk-zAZezfDKGoZuXXKe'
 export const TELEMETRY_SESSION_TTL_MS = 10 * 60 * 1000
@@ -179,7 +180,7 @@ export function buildEventData(id = {}, opts = {}) {
     is_interactive: eventName !== 'tengu_init',
     client_type: 'cli',
     entrypoint: str(id.entrypoint || 'cli'),
-    betas: '',
+    betas: str(id.betas || DEFAULT_BETA_HEADER),
     agent_sdk_version: '',
     swe_bench_run_id: '',
     swe_bench_instance_id: '',

@@ -9,6 +9,7 @@ import path from 'node:path'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { acceptLanguageFromLocale } from '../identity/crs-headers.mjs'
 import { defaultSeedPolicy } from '../protocol/seed-policy.mjs'
+import { DEFAULT_BETA_HEADER } from '../protocol/claude-code-betas.mjs'
 import { snapshotOauth } from './execution-context.mjs'
 import {
   buildFullEnvJson,
@@ -106,9 +107,11 @@ export function buildWorkerTelemetry(vm, projectRoot) {
     process: { ...DEFAULT_PROCESS_RANGES },
     source: 'official-cc-init',
   }
+  payload.betas = DEFAULT_BETA_HEADER
   payload.env = buildFullEnvJson(payload)
   return {
     enabled: true,
+    betas: DEFAULT_BETA_HEADER,
     identity: payload,
     headers: telemetryHeaders(identity),
   }

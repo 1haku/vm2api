@@ -55,6 +55,8 @@ type TelemetryConfig struct {
 	Enabled  bool              `json:"enabled"`
 	Identity TelemetryIdentity `json:"identity"`
 	Headers  map[string]string `json:"headers"`
+	// Betas is the Claude Code main-session header. Empty means the Go default.
+	Betas string `json:"betas"`
 }
 
 type TelemetryIdentity struct {
@@ -79,6 +81,9 @@ type TelemetryIdentity struct {
 	LinuxDistroVersion string           `json:"linux_distro_version"`
 	LinuxKernel        string           `json:"linux_kernel"`
 	Process            TelemetryProcess `json:"process"`
+	Source             string           `json:"source"`
+	Env                map[string]any   `json:"env"`
+	Betas              string           `json:"betas"`
 }
 
 type TelemetryProcess struct {
@@ -108,6 +113,26 @@ func Load(path string) (Config, error) {
 	}
 	cfg.ConfigPath = path
 	return cfg, nil
+}
+
+// LoadTelemetry reads only worker.json's telemetry block.
+// Proxy and endpoint validation stay out of this path so a hot reload can
+// apply identity, headers, env, and betas without bouncing the process.
+func LoadTelemetry(path string) (TelemetryConfig, error) {
+	if strings.TrimSpace(path) == "" {
+		return TelemetryConfig{}, errors.New("worker config path is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return TelemetryConfig{}, fmt.Errorf("read worker config: %w", err)
+	}
+	var wrap struct {
+		Telemetry TelemetryConfig `json:"telemetry"`
+	}
+	if err = json.Unmarshal(data, &wrap); err != nil {
+		return TelemetryConfig{}, fmt.Errorf("decode worker config: %w", err)
+	}
+	return wrap.Telemetry, nil
 }
 
 func (c *Config) applyDefaults() {

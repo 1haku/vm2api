@@ -35,9 +35,8 @@ func runTelemetry(args []string) int {
 		log.Printf("telemetry: load config failed")
 		return 1
 	}
-	if !cfg.Telemetry.Enabled {
-		return 0
-	}
+	// Disabled still enters Run. The loop re-reads worker.json, so a later
+	// enable or identity rewrite is picked up without another docker exec.
 	var httpClient *http.Client
 	if cfg.EgressMode == "transparent" {
 		httpClient, err = upstream.NewTransparentHTTPClient(20 * time.Second)
