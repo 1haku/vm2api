@@ -10,6 +10,13 @@ export type WrapSampleMeta = {
   files?: string[]
 }
 
+export type WrapKernelPayload = {
+  source?: 'configured' | 'sample' | 'missing' | string
+  path?: string
+  size?: number
+  mtime?: string
+}
+
 export type WrapSample = {
   ok: boolean
   dir?: string
@@ -19,6 +26,9 @@ export type WrapSample = {
   code?: string
   error?: string
   meta?: WrapSampleMeta | null
+  kernel?: WrapKernelPayload | null
+  written?: string[]
+  sample_ok?: boolean
 }
 
 export type WrapSyncReport = {
@@ -78,4 +88,12 @@ export function repairWrapSample(id: string) {
     `/api/panel/vms/${encodeURIComponent(id)}/wrap-cli/repair`,
     { method: 'POST', body: JSON.stringify({}) }
   )
+}
+
+export function uploadKernelBinary(file: Blob) {
+  return api<WrapSample>('/api/panel/wrap-cli/kernel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  })
 }

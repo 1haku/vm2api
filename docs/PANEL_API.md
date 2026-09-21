@@ -45,11 +45,12 @@
 | GET/PUT | `/vms/:id/seed-settings` | 播种；强制保留 telemetry/bedrock/vertex 等 env |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`） |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
-| GET | `/wrap-cli` | wrap 母样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta` |
-| POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；可从指定槽拷 glibc shim |
-| POST | `/wrap-cli/sync` | `{ ids?, restart? }` 铺到槽 `.kin`（cli-node ELF + kernel.bin + 包装器）。1.2.5 升级用这条换槽内 CLI，**不是**重装整槽。`restart` 默认 true，rust 槽 bounce kernel |
-| POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升母样本，不复制凭证/SOCKS |
-| POST | `/vms/:id/wrap-cli/repair` | 单槽重装 wrap。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
+| GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
+| POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
+| POST | `/wrap-cli/kernel` | 原始 `application/octet-stream` linux amd64 ELF。替换仓内 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`。不自动同步槽位 |
+| POST | `/wrap-cli/sync` | `{ ids?, restart? }` 铺到槽 `.kin`（cli-node ELF + **最新** kernel.bin + 包装器）。kernel 优先仓内二进制，不被旧母样本盖回。`restart` 默认 true，rust 槽 bounce kernel |
+| POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升 wrap 文件，不复制凭证/SOCKS。下次 sync 仍优先仓内最新 kernel |
+| POST | `/vms/:id/wrap-cli/repair` | 单槽重装 kernel。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
 | POST | `/vms/:id/activate` | 标 active |
 | POST | `/vms/:id/reset` | 销毁容器与家目录，再按原槽位重建（保留 ID/代理/种子；凭证清空） |

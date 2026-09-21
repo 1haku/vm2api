@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { VIEW_TITLES } from '@/config/nav'
 import type { Vm } from '@/types/panel-vm'
 import { toast } from 'sonner'
+import { fmtBytes } from '@/lib/format'
 import { wrapSyncKernelFails } from '@/lib/wrap-health'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,9 +31,13 @@ import {
   promoteWrapSample,
   repairWrapSample,
   syncWrapSample,
+  uploadKernelBinary,
   wrapSampleQueryOptions,
+  type WrapKernelPayload,
   type WrapSyncReport,
 } from '@/features/wrap/queries'
+
+const MAX_KERNEL_UPLOAD_BYTES = 32 * 1024 * 1024
 
 function sampleDirLabel(dir?: string) {
   if (!dir) return 'share/wrap-cli'
@@ -40,6 +45,20 @@ function sampleDirLabel(dir?: string) {
   const i = parts.lastIndexOf('share')
   if (i >= 0) return parts.slice(i).join('/')
   return parts.slice(-2).join('/')
+}
+
+function kernelPathLabel(p?: string) {
+  if (!p) return '—'
+  const parts = p.replace(/\\/g, '/').split('/')
+  const i = Math.max(parts.lastIndexOf('bin'), parts.lastIndexOf('wrap-cli'))
+  if (i >= 0) return parts.slice(i).join('/')
+  return parts.slice(-2).join('/')
+}
+
+const KERNEL_SOURCE_LABEL: Record<string, string> = {
+  configured: '仓内最新 kernel',
+  sample: '母样本 kernel',
+  missing: '未找到 kernel',
 }
 
 function osOf(vm: Vm) {
@@ -57,10 +76,10 @@ function toastSync(report: WrapSyncReport) {
   const ok = report.ok_count ?? 0
   const failed = report.failed_count ?? 0
   const kernelFail = wrapSyncKernelFails(report.items)
-  if (failed > 0) toast.error(`wrap 母样本同步 ${ok}/${total}`)
+  if (failed > 0) toast.error(`kernel 重装 ${ok}/${total}`)
   else if (kernelFail > 0)
-    toast.error(`wrap 文件 ${ok}/${total}，kernel 未起来 ${kernelFail}`)
-  else toast.success(`wrap 母样本同步 ${ok}/${total}`)
+    toast.error(`kernel 文件 ${ok}/${total}，进程未起来 ${kernelFail}`)
+  else toast.success(`kernel 重装 ${ok}/${total}`)
 }
 
 function Flag({ ok, label }: { ok?: boolean; label: string }) {
@@ -70,6 +89,33 @@ function Flag({ ok, label }: { ok?: boolean; label: string }) {
       <span className={ok ? 'text-foreground' : 'text-destructive'}>
         {ok ? '有' : '缺'}
       </span>
+    </div>
+  )
+}
+
+function KernelPayload({ payload }: { payload?: WrapKernelPayload | null }) {
+  return (
+    <div className='space-y-2 text-sm'>
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>来源</span>
+        <span className='font-medium'>
+          {KERNEL_SOURCE_LABEL[payload?.source || 'missing'] || '未找到 kernel'}
+        </span>
+      </div>
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>文件</span>
+        <code className='text-xs'>{kernelPathLabel(payload?.path)}</code>
+      </div>
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>大小</span>
+        <span className='font-mono text-xs'>
+          {payload?.size ? fmtBytes(payload.size) : '—'}
+        </span>
+      </div>
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>mtime</span>
+        <span className='font-mono text-xs'>{payload?.mtime || '—'}</span>
+      </div>
     </div>
   )
 }
@@ -84,6 +130,8 @@ export function WrapSamplePage() {
   const [promoteId, setPromoteId] = useState<string | null>(null)
   const [makeOpen, setMakeOpen] = useState(false)
   const [glibcVm, setGlibcVm] = useState('')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const rustVms = useMemo(
     () => vms.filter((vm) => engineOf(vm) === 'rust'),
@@ -113,7 +161,7 @@ export function WrapSamplePage() {
   const promote = useMutation({
     mutationFn: (id: string) => promoteWrapSample(id),
     onSuccess: async (_data, id) => {
-      toast.success(`已从 ${id} 设为 wrap 母样本`)
+      toast.success(`已从 ${id} 晋升 wrap 文件`)
       setPromoteId(null)
       await invalidate()
     },
@@ -123,7 +171,7 @@ export function WrapSamplePage() {
   const make = useMutation({
     mutationFn: () => makeWrapSample({ glibc_vm: glibcVm || undefined }),
     onSuccess: async () => {
-      toast.success('已单独制作 wrap 母样本')
+      toast.success('已重整 wrap 文件')
       setMakeOpen(false)
       await invalidate()
     },
@@ -135,10 +183,18 @@ export function WrapSamplePage() {
     onSuccess: async (report, id) => {
       const kernelOk = report.kernel?.ok !== false
       toast[kernelOk ? 'success' : 'error'](
-        kernelOk
-          ? `${id} 已从此样本重装 wrap`
-          : `${id} wrap 文件已写入，kernel 未起来`
+        kernelOk ? `${id} 已重装 kernel` : `${id} kernel 文件已写入，进程未起来`
       )
+      await invalidate()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
+  const upload = useMutation({
+    mutationFn: (file: File) => uploadKernelBinary(file),
+    onSuccess: async () => {
+      toast.success('已替换仓内 kernel，请选择槽位重装')
+      setUploadFile(null)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -150,6 +206,19 @@ export function WrapSamplePage() {
     )
   }
 
+  const pickKernelFile = (file?: File) => {
+    if (!file) return
+    if (file.size > MAX_KERNEL_UPLOAD_BYTES) {
+      toast.error('kernel 不能超过 32MB')
+      return
+    }
+    if (!file.size) {
+      toast.error('kernel 文件为空')
+      return
+    }
+    setUploadFile(file)
+  }
+
   const data = sample.data
   const complete = data?.ok === true
 
@@ -158,6 +227,24 @@ export function WrapSamplePage() {
       title={VIEW_TITLES.wrap}
       extra={
         <div className='flex gap-2'>
+          <input
+            ref={fileRef}
+            type='file'
+            className='hidden'
+            onChange={(event) => {
+              pickKernelFile(event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+          <Button
+            size='sm'
+            variant='outline'
+            disabled={upload.isPending}
+            loading={upload.isPending}
+            onClick={() => fileRef.current?.click()}
+          >
+            上传 kernel
+          </Button>
           <Button
             size='sm'
             variant='outline'
@@ -165,7 +252,7 @@ export function WrapSamplePage() {
             loading={make.isPending}
             onClick={() => setMakeOpen(true)}
           >
-            制作母样本
+            重整 wrap 文件
           </Button>
           <Button
             size='sm'
@@ -173,7 +260,9 @@ export function WrapSamplePage() {
             loading={sync.isPending}
             onClick={() => sync.mutate()}
           >
-            {selected.length ? `同步所选 ${selected.length} 槽` : '全槽同步'}
+            {selected.length
+              ? `重装所选 ${selected.length} 槽`
+              : '全部重装 kernel'}
           </Button>
         </div>
       }
@@ -186,55 +275,33 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          母样本是唯一一份已验证的 wrap 运行时（patched Claude Code + kernel +
-          CONNECT 桥）。同步只覆盖槽内运行时目录，不改票、不改 SOCKS、不 docker
-          rm。Debian 12 靠样本里的 glibc 2.39 shim。
+          用仓内最新 linux amd64 <code>kin-kernel</code> 重装所选 VM 的槽内
+          kernel。不改凭证、不改 SOCKS、不 docker rm。wrap CLI（cli-node / glibc
+          shim）仍随同步铺到槽内。
         </p>
         <div className='grid gap-4 lg:grid-cols-2'>
           <Card>
             <CardHeader>
-              <CardTitle>当前母样本</CardTitle>
+              <CardTitle>当前 kernel</CardTitle>
             </CardHeader>
             <CardContent className='space-y-2'>
-              {complete ? (
-                <>
-                  <div className='flex items-center justify-between gap-2 text-sm'>
-                    <span className='text-muted-foreground'>目录</span>
-                    <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
-                  </div>
-                  <div className='flex items-center justify-between gap-2 text-sm'>
-                    <span className='text-muted-foreground'>来源</span>
-                    <span>
-                      {data?.meta?.source === 'manual'
-                        ? '单独制作'
-                        : data?.meta?.source_vm || '—'}
-                    </span>
-                  </div>
-                  <div className='flex items-center justify-between gap-2 text-sm'>
-                    <span className='text-muted-foreground'>捕获时间</span>
-                    <span className='font-mono text-xs'>
-                      {data?.meta?.captured_at || '—'}
-                    </span>
-                  </div>
-                  <Flag ok={data?.kernel_bin} label='kernel.bin' />
-                  <Flag ok={data?.wrapper} label='kernel wrapper' />
-                  <Flag ok={data?.glibc_shim} label='glibc 2.39 shim' />
-                </>
-              ) : (
-                <EmptyState
-                  reason={
-                    data?.error ||
-                    '还没有可用母样本。点「制作母样本」用 share/wrap-cli 现有文件重整，或从已停的 rust 槽晋升。不要对正在跑 wrap 的槽原地覆盖 bun。'
-                  }
-                />
-              )}
-              <label className='mt-3 flex items-center gap-2 text-sm'>
+              <KernelPayload payload={data?.kernel} />
+              <div className='flex items-center justify-between gap-2 text-sm'>
+                <span className='text-muted-foreground'>目录</span>
+                <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
+              </div>
+              <Flag ok={data?.kernel_bin} label='kernel.bin' />
+              <Flag ok={data?.wrapper} label='kernel wrapper' />
+              <Flag ok={data?.glibc_shim} label='glibc 2.39 shim' />
+              <div className='mt-3 flex items-center gap-2 text-sm'>
                 <Checkbox
                   checked={restart}
                   onCheckedChange={(v) => setRestart(v === true)}
                 />
-                同步后重启 rust kernel（默认开，让 CONNECT 桥跟着起来）
-              </label>
+                <label>
+                  同步后重启 rust kernel（默认开，让 CONNECT 桥跟着起来）
+                </label>
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -243,16 +310,17 @@ export function WrapSamplePage() {
             </CardHeader>
             <CardContent className='space-y-2 text-sm leading-relaxed text-muted-foreground'>
               <p>
-                1. 「制作母样本」只重整 <code>share/wrap-cli</code>
-                （补 kernel wrapper / shim），不从在跑槽拷贝。
+                1. 默认用仓内 <code>bin/kin-kernel</code>（
+                <code>KIN_KERNEL_BIN</code>
+                ）。旧母样本 ELF 不会盖回去。
               </p>
               <p>
-                2. 已验证的 rust 槽仍可「设为母样本」。全槽同步把这一份铺进每台{' '}
-                <code>.kin</code>。
+                2. 「上传
+                kernel」只替换仓内二进制。选槽再点重装，运行中的进程才会加载新文件。
               </p>
               <p>
-                3. 单槽「重装 wrap」只修这一台，不碰凭证。覆盖在跑的 bun 会先
-                unlink 再换上新文件。
+                3. 单槽「重装 kernel」只修这一台，不碰凭证。覆盖在跑的文件会先
+                unlink 再换上。
               </p>
             </CardContent>
           </Card>
@@ -273,7 +341,7 @@ export function WrapSamplePage() {
               <div className='overflow-x-auto'>
                 <table className='w-full text-sm'>
                   <thead className='text-left text-muted-foreground'>
-                    <tr className='border-b'>
+                    <tr>
                       <th className='w-8 py-2 font-medium'>选</th>
                       <th className='py-2 font-medium'>槽</th>
                       <th className='py-2 font-medium'>OS</th>
@@ -328,7 +396,7 @@ export function WrapSamplePage() {
                                 disabled={!rust || promote.isPending}
                                 onClick={() => setPromoteId(vm.id)}
                               >
-                                设为母样本
+                                晋升 wrap 文件
                               </Button>
                               <Button
                                 size='sm'
@@ -339,7 +407,7 @@ export function WrapSamplePage() {
                                 }
                                 onClick={() => repair.mutate(vm.id)}
                               >
-                                重装 wrap
+                                重装 kernel
                               </Button>
                             </div>
                           </td>
@@ -352,21 +420,20 @@ export function WrapSamplePage() {
             )}
             {rustVms.length === 0 ? (
               <p className='mt-3 text-xs text-muted-foreground'>
-                没有 wrap cli-hop 槽时仍可同步文件，但不会启动 wrap kernel。
+                没有 rust cli-hop 槽时仍可同步文件，但不会启动 wrap kernel。
               </p>
             ) : null}
           </CardContent>
         </Card>
       </QueryGate>
-
       <ConfirmDialog
         open={!!promoteId}
         onOpenChange={(open) => {
           if (!open) setPromoteId(null)
         }}
         title='覆盖 wrap 母样本？'
-        desc={`用 ${promoteId || ''} 槽内已验证的 .kin 覆盖 share/wrap-cli。不会复制凭证或 SOCKS。`}
-        confirmText='设为母样本'
+        desc={`用 ${promoteId || ''} 槽内已验证的 .kin 覆盖 share/wrap-cli。不会复制凭证或 SOCKS。下次重装仍优先仓内最新 kernel。`}
+        confirmText='晋升 wrap 文件'
         cancelBtnText='取消'
         isLoading={promote.isPending}
         handleConfirm={() => {
@@ -376,9 +443,9 @@ export function WrapSamplePage() {
       <ConfirmDialog
         open={makeOpen}
         onOpenChange={setMakeOpen}
-        title='单独制作 wrap 母样本？'
-        desc='用当前 share/wrap-cli 里已有的 bun / CLI / kernel 重整 wrapper 和 shim，不从正在运行的槽拷贝。缺文件会失败。Debian 12 可从一台 Ubuntu 槽拷 glibc 2.39 shim。'
-        confirmText='制作'
+        title='重整 wrap 文件？'
+        desc='用当前 share/wrap-cli 里已有的 cli-node，补 kernel wrapper / shim，并叠上仓内最新 kernel。缺 cli-node 会失败。Debian 12 可从一台 Ubuntu 槽拷 glibc 2.39 shim。'
+        confirmText='重整'
         cancelBtnText='取消'
         isLoading={make.isPending}
         handleConfirm={() => make.mutate()}
@@ -403,6 +470,20 @@ export function WrapSamplePage() {
           </Select>
         </div>
       </ConfirmDialog>
+      <ConfirmDialog
+        open={!!uploadFile}
+        onOpenChange={(open) => {
+          if (!open) setUploadFile(null)
+        }}
+        title='替换 kernel 二进制？'
+        desc={`将用 ${uploadFile?.name || '所选文件'}（${fmtBytes(uploadFile?.size || 0)}）覆盖仓内 bin/kin-kernel 与 share/wrap-cli/kin-kernel.bin。不会自动同步槽位。`}
+        confirmText='替换'
+        cancelBtnText='取消'
+        isLoading={upload.isPending}
+        handleConfirm={() => {
+          if (uploadFile) upload.mutate(uploadFile)
+        }}
+      />
     </PageHeader>
   )
 }

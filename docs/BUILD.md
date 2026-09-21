@@ -107,7 +107,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 1. `git pull` 或检出目标 tag。
 2. `npm ci`；有 web 改动则 `pnpm -C web install --frozen-lockfile && npm run build:web`。
-3. 换仓内 `bin/` 和 `share/wrap-cli` ELF（`install -m 755`），再调用 `POST /api/panel/wrap-cli/sync` 并传 `{"restart":true}`。
+3. 换仓内 `bin/` 和 `share/wrap-cli` ELF（`install -m 755`），再调用 `POST /api/panel/wrap-cli/sync` 并传 `{"restart":true}`。同步优先仓内 `bin/kin-kernel`。
 4. `node --check src/server.mjs`。
 5. `systemctl restart vm2api` **一次**。确认 `/health`。
 

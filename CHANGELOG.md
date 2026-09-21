@@ -1,5 +1,11 @@
 # Changelog
 
+
+## Unreleased
+
+- 内核页改名为 **kernel重装**；槽同步优先仓内最新 `bin/kin-kernel`（`KIN_KERNEL_BIN`），不再被旧 wrap 母样本 ELF 盖回去
+- 可上传 linux amd64 kernel 二进制替换仓内 kernel，再同步到所选 VM
+
 ## 1.3.9 — 2026-09-21
 
 - cache TTL 现在贯穿请求 header/body、Settings compatibility、Unix socket envelope 与 Rust kernel；请求级 `5m` / `1h` 覆盖不会通过共享 kernel 配置串值，官方 Claude Code 继续保留客户端自有断点

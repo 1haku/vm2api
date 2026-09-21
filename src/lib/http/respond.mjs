@@ -16,7 +16,7 @@ export function corsHeaders(extra = {}) {
   }
 }
 
-export function readBody(req, maxBytes) {
+function collectBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
@@ -49,21 +49,7 @@ export function readBody(req, maxBytes) {
     req.on('end', () => {
       if (settled) return
       settled = true
-      const raw = Buffer.concat(chunks).toString('utf8')
-      if (!raw) return resolve({})
-      try {
-        resolve(JSON.parse(raw))
-      } catch (e) {
-        reject(
-          makeError({
-            type: ErrorType.INVALID_REQUEST,
-            code: ErrorCode.INVALID_JSON,
-            message: 'Request body is not valid JSON: ' + (e.message || 'parse error'),
-            status: 400,
-            details: { parse_error: String(e.message || e) },
-          }),
-        )
-      }
+      resolve(Buffer.concat(chunks))
     })
     req.on('error', (e) =>
       fail(
@@ -76,6 +62,28 @@ export function readBody(req, maxBytes) {
       ),
     )
   })
+}
+
+export function readBody(req, maxBytes) {
+  return collectBody(req, maxBytes).then((buf) => {
+    const raw = buf.toString('utf8')
+    if (!raw) return {}
+    try {
+      return JSON.parse(raw)
+    } catch (e) {
+      throw makeError({
+        type: ErrorType.INVALID_REQUEST,
+        code: ErrorCode.INVALID_JSON,
+        message: 'Request body is not valid JSON: ' + (e.message || 'parse error'),
+        status: 400,
+        details: { parse_error: String(e.message || e) },
+      })
+    }
+  })
+}
+
+export function readRawBody(req, maxBytes) {
+  return collectBody(req, maxBytes)
 }
 
 export function applySseSocketTuning(res, { tcpNodelay = true } = {}) {
@@ -121,5 +129,5 @@ export function createRespond(cfg, options = {}) {
     applySseSocketTuning(res, { tcpNodelay: resolveNodelay() })
   }
 
-  return { json, writeSSEHeaders, readBody, corsHeaders }
+  return { json, writeSSEHeaders, readBody, readRawBody, corsHeaders }
 }
