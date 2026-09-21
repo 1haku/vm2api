@@ -16,7 +16,7 @@ import {
   vmCredDead,
   vmFailedAt,
 } from '@/lib/vm-status'
-import { vmCacheHitPct } from '@/lib/vm-usage'
+import { vmCacheHitPct, vmWindowCosts } from '@/lib/vm-usage'
 import { useNow } from '@/hooks/use-now'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,6 +42,7 @@ function UtilBar({
   label,
   value,
   sub,
+  cost,
   mutedClass,
   className,
 }: {
@@ -50,6 +51,8 @@ function UtilBar({
   value: number
   /** 窗口重置倒计时（分钟精度），null/undefined 不占位。 */
   sub?: string | null
+  /** 该窗口调用费用合计。 */
+  cost?: number | null
   mutedClass?: string
   className?: string
 }) {
@@ -61,7 +64,17 @@ function UtilBar({
           mutedClass ?? 'text-muted-foreground'
         )}
       >
-        <span className='truncate'>{label}</span>
+        <span className='flex min-w-0 items-baseline gap-1.5 truncate'>
+          <span className='truncate'>{label}</span>
+          {cost != null ? (
+            <span
+              className='shrink-0 font-mono text-[10.5px] tabular-nums'
+              title={`${label}调用费用合计`}
+            >
+              {fmtUsd(cost, 2)}
+            </span>
+          ) : null}
+        </span>
         <span className='flex shrink-0 items-baseline gap-1.5'>
           {sub ? <span className='opacity-75'>{sub}</span> : null}
           {/* 卡是分诊面：绿色数字铺满一屏就是噪声，颜色只留给越线的档。 */}
@@ -89,11 +102,13 @@ function UtilBar({
  */
 export function VmCards({
   vms,
+  accounts,
   onReset,
   onDelete,
   onClearCooldown,
 }: {
   vms: Vm[]
+  accounts?: UsageAccountRow[]
   /** 未传时不渲染对应按钮 —— cluster 页/vm 页按需传入，行为不受影响。 */
   onReset?: (vm: Vm) => void
   onDelete?: (vm: Vm) => void
@@ -105,6 +120,7 @@ export function VmCards({
         <VmCard
           key={vm.id}
           vm={vm}
+          accounts={accounts}
           onReset={onReset}
           onDelete={onDelete}
           onClearCooldown={onClearCooldown}
@@ -116,11 +132,13 @@ export function VmCards({
 
 function VmCard({
   vm,
+  accounts,
   onReset,
   onDelete,
   onClearCooldown,
 }: {
   vm: Vm
+  accounts?: UsageAccountRow[]
   onReset?: (vm: Vm) => void
   onDelete?: (vm: Vm) => void
   onClearCooldown?: (vm: Vm) => void
@@ -139,6 +157,7 @@ function VmCard({
   const hasActions = Boolean(onClearCooldown || onReset || onDelete)
   const fiveLabel = '5h 用量'
   const sevenLabel = '7d 用量'
+  const costs = vmWindowCosts(vm, accounts)
 
   return (
     <div
@@ -195,6 +214,7 @@ function VmCard({
                 label={fiveLabel}
                 value={u5}
                 sub={cd5}
+                cost={costs.h5}
                 mutedClass={skin.muted}
                 className='min-w-0'
               />
@@ -228,6 +248,7 @@ function VmCard({
               label={sevenLabel}
               value={u7}
               sub={cd7}
+              cost={costs.d7}
               mutedClass={skin.muted}
             />
           </div>
@@ -424,19 +445,26 @@ export function KindFilterChips({
   onChange: (kind: VmKindFilter) => void
 }) {
   let claude = 0
+  let openai = 0
   for (const vm of vms) {
-    if (!isCodexVm(vm)) claude += 1
+    if (isCodexVm(vm)) openai += 1
+    else claude += 1
   }
-  const chips = [['claude', 'claude', claude]] as const
+  const chips = [
+    ['claude', 'claude', claude, '筛选 Claude'],
+    ['gpt', 'codex', openai, '筛选 OpenAI'],
+  ] as const
   return (
     <>
-      {chips.map(([key, chipKind, n]) => (
+      {chips.map(([key, chipKind, n, label]) => (
         <Button
           key={key}
           size='sm'
           variant={kind === key ? 'default' : 'outline'}
           aria-pressed={kind === key}
-          className='gap-1.5'
+          aria-label={label}
+          title={label}
+          className='cursor-pointer gap-1.5 transition-colors duration-200'
           onClick={() => onChange(kind === key ? 'all' : key)}
         >
           <PlatformChip kind={chipKind} />

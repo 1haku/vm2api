@@ -186,3 +186,15 @@ export function vmWeekOutcome(
     cost: num(src.window_7d_cost ?? vm.window_7d_cost),
   }
 }
+
+/** 5h / 7d 窗口的官方调用费用合计。用量行有字段时优先，否则用槽位快照。 */
+export function vmWindowCosts(
+  vm: Vm,
+  accounts?: UsageAccountRow[]
+): { h5: number; d7: number } {
+  const acc = usageAccountForVm(vm, accounts)
+  return {
+    h5: num(acc?.window_5h_cost ?? vm.window_5h_cost),
+    d7: num(acc?.window_7d_cost ?? vm.window_7d_cost),
+  }
+}

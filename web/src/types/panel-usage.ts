@@ -11,6 +11,7 @@ export type UsageAccountRow = {
   today_output_tokens?: number
   today_cache_read_tokens?: number
   today_cache_creation_tokens?: number
+  window_5h_cost?: number
   window_7d_cost?: number
   window_7d_requests?: number
   window_7d_success?: number
