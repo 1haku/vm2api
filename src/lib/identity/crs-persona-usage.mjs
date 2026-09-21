@@ -409,7 +409,7 @@ function wipeOfficialCache(out) {
   }
 }
 
-export function hidePersonaUsage(usage, hideTokens = 0, cacheTtl = '5m') {
+export function hidePersonaUsage(usage, hideTokens = 0, cacheTtl = '1h') {
   if (!usage || typeof usage !== 'object') return usage
   const parsed = parseHideTokens(hideTokens)
   const { official, overlay, tools, wipeCache, inputHide } = parsed
@@ -444,7 +444,7 @@ export function hidePersonaUsage(usage, hideTokens = 0, cacheTtl = '5m') {
   return out
 }
 
-export function hidePersonaUsageInEvent(event, hideTokens = 0, cacheTtl = '5m') {
+export function hidePersonaUsageInEvent(event, hideTokens = 0, cacheTtl = '1h') {
   if (!event || typeof event !== 'object' || !hideTokens) return event
   const out = { ...event }
   if (out.usage) out.usage = hidePersonaUsage(out.usage, hideTokens, cacheTtl)
@@ -454,7 +454,7 @@ export function hidePersonaUsageInEvent(event, hideTokens = 0, cacheTtl = '5m') 
   return out
 }
 
-export function hidePersonaUsageInSseLine(line, hideTokens = 0, cacheTtl = '5m') {
+export function hidePersonaUsageInSseLine(line, hideTokens = 0, cacheTtl = '1h') {
   if (!hideTokens || line == null) return line
   const raw = String(line)
   const m = raw.match(/^(data:\s*)(.*)$/)
@@ -467,7 +467,7 @@ export function hidePersonaUsageInSseLine(line, hideTokens = 0, cacheTtl = '5m')
   }
 }
 
-export function hidePersonaUsageOnMessage(body, hideTokens = 0, cacheTtl = '5m') {
+export function hidePersonaUsageOnMessage(body, hideTokens = 0, cacheTtl = '1h') {
   if (!body || typeof body !== 'object' || !hideTokens || !body.usage) return body
   return { ...body, usage: hidePersonaUsage(body.usage, hideTokens, cacheTtl) }
 }

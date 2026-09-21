@@ -115,7 +115,7 @@ test('zero preset billing line is byte-identical to buildZeroBillingText', () =>
   assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.278', 's-2'))
   assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.equal(out[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
 test('zero prompt_version uses the compact Anthropic Claude identity', () => {
