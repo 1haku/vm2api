@@ -85,7 +85,7 @@ export class SessionLimitRegistry {
       return {
         ok: false,
         reason: 'session_limit',
-        detail: { ...snap, session_key: key },
+        detail: { ...snap, session_key: key, retry_at: this.nextIdleAt(accountId, { idleMin, now }) },
       }
     }
     return { ok: true, existing: false, detail: snap }
@@ -101,6 +101,19 @@ export class SessionLimitRegistry {
     return bag.size
   }
 
+  /** When the oldest occupied session goes idle and its slot can be reused. */
+  nextIdleAt(accountId, { idleMin = 5, now = Date.now() } = {}) {
+    const idleMs = Math.max(1, Number(idleMin) || 5) * 60_000
+    this.prune(accountId, idleMs, now)
+    const bag = this.byAccount.get(String(accountId || ''))
+    if (!bag || !bag.size) return now
+    let soonest = null
+    for (const entry of bag.values()) {
+      const freeAt = lastSeenOf(entry) + idleMs
+      if (soonest == null || freeAt < soonest) soonest = freeAt
+    }
+    return soonest || now
+  }
   release(accountId, sessionKey) {
     const id = String(accountId || '')
     const key = String(sessionKey || '')

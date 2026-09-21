@@ -100,6 +100,11 @@ function accountLimitUntil(reset, usage, now) {
   return reset || usageWindowReset(usage, now) || now + 5 * 60_000
 }
 
+/** Claude CLI wraps a full 5h/7d window as 502, not 429. */
+function isPlanLimitMessage(message) {
+  return /hit your limit|extra usage/i.test(String(message || ''))
+}
+
 export const FABLE_FAMILY_KEY = 'fable'
 
 function modelFamily(model) {
@@ -492,6 +497,15 @@ export function classifyUpstreamResult(
         scope: 'provider',
         reason: 'provider_timeout',
       })
+    }
+    if (isPlanLimitMessage(message)) {
+      return {
+        scope: 'account',
+        action: 'continue-and-cooldown',
+        reason: 'account_quota_exhausted',
+        cooldownUntil: accountLimitUntil(reset, usage, now),
+        retrySameAccount: false,
+      }
     }
     return {
       scope: 'account',

@@ -155,6 +155,26 @@ test('generic 502 pauses scheduling for one hour instead of failing over', () =>
   assert.equal(shouldContinue(policy), false)
 })
 
+test('a 502 plan-limit message switches accounts instead of pausing', () => {
+  const policy = classifyUpstreamResult(
+    {
+      status: 502,
+      body: {
+        error: {
+          type: 'api_error',
+          message: "provider error: You've hit your limit · resets 4:20pm (America/Los_Angeles)",
+        },
+      },
+    },
+    { now: 1_000, usage: { reset_5h: 1_790_032_800 } },
+  )
+  assert.equal(policy.action, 'continue-and-cooldown')
+  assert.equal(policy.reason, 'account_quota_exhausted')
+  assert.equal(policy.cooldownUntil, 1_790_032_800_000)
+  assert.equal(policy.rememberRefusal, undefined)
+  assert.equal(shouldContinue(policy), true)
+})
+
 test('transport timeout is not treated as a dead proxy', () => {
   const policy = classifyUpstreamResult(
     {
