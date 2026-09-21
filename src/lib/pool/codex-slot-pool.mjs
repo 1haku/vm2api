@@ -4,6 +4,7 @@
  * quota/auth before any SSE byte is committed.
  */
 import { isCodexVm } from '../vm/vm-kind.mjs'
+import { resolveSessionSlots } from '../vm/slot-engine.mjs'
 import { extraToCodexSnapshot, normalizeCodexLimits, codexQuotaPark } from '../protocol/codex-usage.mjs'
 import { isLeftoverQuotaScheduleOff, isQuotaWindowReason } from './availability.mjs'
 
@@ -104,6 +105,38 @@ export function pickCodexSlots(vms, { pin = null, now = Date.now() } = {}) {
     ids,
     ready: ready.map((vm) => vm.id),
     parked: parked.map((vm) => vm.id),
+  }
+}
+
+/**
+ * Platform pool for OpenAI. A bound session stays on its VM.
+ * A new session only lands on a VM that still has a free configured window.
+ * Failover ids follow, and only after that VM is actually unschedulable.
+ */
+export function orderCodexSessionSlots(
+  vms,
+  { pin = null, boundVmId = null, sessionKey = null, sessionLimit = null, idleMin = 5, now = Date.now() } = {},
+) {
+  const picked = pickCodexSlots(vms, { pin, now })
+  if (picked.error || pin) return { ...picked, sticky: false }
+  const list = Array.isArray(vms) ? vms : []
+  const byId = new Map(list.map((vm) => [vm.id, vm]))
+  const accepts = (id) => {
+    if (!sessionKey || typeof sessionLimit?.canAccept !== 'function') return true
+    const cap = resolveSessionSlots(byId.get(id) || {})
+    if (!cap) return true
+    return sessionLimit.canAccept(id, sessionKey, { max: cap, idleMin, now }).ok !== false
+  }
+  const ids = picked.ids.filter(accepts)
+  if (!ids.length) return { error: 'session_window_full', ids: [], ready: [], parked: [], sticky: false }
+  const sticky = !!(boundVmId && ids.includes(boundVmId))
+  const ordered = sticky ? [boundVmId, ...ids.filter((id) => id !== boundVmId)] : ids
+  return {
+    ...picked,
+    ids: ordered,
+    ready: (picked.ready || []).filter((id) => ordered.includes(id)),
+    parked: (picked.parked || []).filter((id) => ordered.includes(id)),
+    sticky,
   }
 }
 

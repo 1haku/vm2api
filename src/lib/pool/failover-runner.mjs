@@ -324,7 +324,14 @@ export class FailoverRunner {
     const bindKeys = uniqueStickyKeys(stickyKey, stickyKeys)
     const bindAll = (account, opts) => {
       if (!this.stickyRouter?.bind || !account) return
+      const sessions = this.scheduler?.accountQuota?.sessions
       for (const key of bindKeys) {
+        const prev = this.stickyRouter.resolve?.(key)
+        if (prev?.accountId && prev.accountId !== account.accountId) {
+          try {
+            sessions?.drop?.(prev.accountId, key)
+          } catch {}
+        }
         this.stickyRouter.bind(key, account, opts)
       }
     }

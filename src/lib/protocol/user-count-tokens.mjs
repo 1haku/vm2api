@@ -11,6 +11,7 @@ import { countTokensViaWorker } from '../transport/go-worker-client.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { listQuotaFromHeaders, publicUsageWindow, usageWindowsEmpty } from '../pool/quota-window.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
+import { detectInboundPlatform } from './platform-detect.mjs'
 
 export function countTokensUnsupportedError() {
   return makeError({
@@ -81,7 +82,11 @@ export async function peekCurrentAccount({
   signal,
   usersRepo = null,
 } = {}) {
-  const stickyKey = stickyRouter?.extractPoolKey?.(req, inbound) || null
+  const detected = detectInboundPlatform(model)
+  const stickyKey =
+    stickyRouter?.extractPoolKey?.(req, inbound, {
+      platform: detected.ok ? detected.platform : undefined,
+    }) || null
   if (!poolScheduler?.peekAccount) {
     return { ok: false, code: 'no_eligible_accounts' }
   }

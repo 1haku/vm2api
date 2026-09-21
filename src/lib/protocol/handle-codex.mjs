@@ -19,7 +19,7 @@ import { extractOpenaiUsage } from './openai-usage.mjs'
 import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
 import { boundProxyUrl } from '../vm/egress.mjs'
-import { pickCodexSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
+import { orderCodexSessionSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
 import { readCodexAccounts } from '../vm/codex-slot.mjs'
 import { applyCodexRotate, observeHopTurnState, scheduleCodexRotateCollect } from './codex-rotate.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
@@ -44,18 +44,29 @@ function pinnedVmId(req) {
   return isValidVmId(pinVmRaw) ? pinVmRaw : null
 }
 
-export function pickCodexCandidates(projectRoot, req) {
+export function pickCodexCandidates(projectRoot, req, { stickyRouter = null, sessions = null, body = null } = {}) {
   const pin = pinnedVmId(req)
   if (pin) {
     const vm = getVm(projectRoot, pin)
     if (!vm || !isCodexVm(vm)) return { error: 'platform_mismatch', pin, ids: [] }
-    return { ids: [vm.id], pin }
+    return { ids: [vm.id], pin, sticky: false, sessionKey: null, stickyKeys: [] }
   }
   for (const item of listVms(projectRoot)) {
     if (!isCodexVm(item)) continue
     syncCodexQuotaSchedule(projectRoot, getVm(projectRoot, item.id) || item)
   }
-  return pickCodexSlots(listVms(projectRoot))
+  const stickyKeys = stickyRouter?.collectPoolKeys?.(req, body || {}, { platform: 'openai' }) || []
+  const sessionKey = stickyRouter?.extractPoolKey?.(req, body || {}, { platform: 'openai' }) || stickyKeys[0] || null
+  const bound = sessionKey ? stickyRouter?.resolve?.(sessionKey) : null
+  const ordered = orderCodexSessionSlots(listVms(projectRoot), {
+    boundVmId: bound?.vmId || null,
+    sessionKey,
+    sessionLimit: sessions,
+  })
+  if (bound?.vmId && sessionKey && !ordered.sticky && !ordered.error) {
+    for (const key of stickyKeys.length ? stickyKeys : [sessionKey]) stickyRouter?.unbind?.(key)
+  }
+  return { ...ordered, sessionKey, stickyKeys }
 }
 
 function ingestCodexHop(projectRoot, vmId, result, now = Date.now()) {
@@ -128,6 +139,9 @@ export async function handleCodexProtocol({
   routing = {},
   projectRoot,
   ops = {},
+  stickyRouter = null,
+  sessions = null,
+  body = null,
 }) {
   const codex = normalizeCodexRouting(routing.codex)
   const allowed = isCodexProtocolAllowed(protocol, { codex })
@@ -176,7 +190,11 @@ export async function handleCodexProtocol({
     converted: converted.converted,
     outboundBody: converted.body,
   })
-  const picked = pickCodexCandidates(projectRoot, req)
+  const picked = pickCodexCandidates(projectRoot, req, {
+    stickyRouter,
+    sessions,
+    body: body || converted.body || inbound,
+  })
   if (picked.error === 'platform_mismatch') {
     stats.errors++
     logBag.via = 'codex-kernel'
@@ -189,13 +207,25 @@ export async function handleCodexProtocol({
       },
     })
   }
+  if (picked.error === 'session_window_full') {
+    stats.errors++
+    logBag.via = 'codex-kernel'
+    logBag.error_code = 'session_window_full'
+    return json(res, 503, {
+      error: {
+        type: 'api_error',
+        code: 'session_window_full',
+        message: 'OpenAI 号池的会话窗口已满',
+      },
+    })
+  }
   const candidateIds = (picked.ids || []).slice(0, CODEX_FAILOVER_MAX)
   if (!candidateIds.length) {
     stats.errors++
     logBag.via = 'codex-kernel'
-    logBag.error_code = 'no_codex_vm'
+    logBag.error_code = picked.error || 'no_codex_vm'
     return json(res, 503, {
-      error: { type: 'api_error', code: 'no_codex_vm', message: 'no Codex kernel VM is configured' },
+      error: { type: 'api_error', code: picked.error || 'no_codex_vm', message: 'no Codex kernel VM is configured' },
     })
   }
   logBag.via = 'codex-kernel'
@@ -209,6 +239,23 @@ export async function handleCodexProtocol({
   const writeCfg = ops.writeCodexKernelConfig || writeCodexKernelConfig
   const ensure = ops.ensureCodexKernel || ensureCodexKernel
   const anthropicSse = protocol === 'anthropic.messages' ? createAnthropicSseState() : null
+  const stickyKeys = picked.stickyKeys?.length ? picked.stickyKeys : picked.sessionKey ? [picked.sessionKey] : []
+  const bindSticky = (vm) => {
+    if (!picked.sessionKey) return
+    if (stickyRouter?.bind) {
+      for (const key of stickyKeys) stickyRouter.bind(key, { accountId: vm.id, vmId: vm.id })
+    }
+    try {
+      sessions?.touch?.(vm.id, picked.sessionKey)
+    } catch {}
+  }
+  const leaveSticky = (vm) => {
+    try {
+      sessions?.drop?.(vm.id, picked.sessionKey)
+    } catch {}
+    if (!stickyRouter?.unbind || !picked.sessionKey) return
+    for (const key of stickyKeys) stickyRouter.unbind(key)
+  }
   let last = null
   for (let i = 0; i < candidateIds.length; i++) {
     const vm = getVm(projectRoot, candidateIds[i])
@@ -232,7 +279,10 @@ export async function handleCodexProtocol({
           },
         },
       }
-      if (i + 1 < candidateIds.length && !res.headersSent) continue
+      if (i + 1 < candidateIds.length && !res.headersSent) {
+        leaveSticky(vm)
+        continue
+      }
       stats.errors++
       logBag.error_code = 'codex_kernel_unavailable'
       return json(res, 503, last.body)
@@ -306,6 +356,7 @@ export async function handleCodexProtocol({
     if (result?.transport_retried) logBag.transport_retried = true
     last = result
     if (result?.ok) {
+      bindSticky(vm)
       const usage = result.usage || result.body?.usage || result.body?.response?.usage || null
       const extracted = extractOpenaiUsage(usage)
       logBag.usage = usage
@@ -337,7 +388,10 @@ export async function handleCodexProtocol({
       logBag.upstream_status = result?.status || 0
       return res.end()
     }
-    if (i + 1 < candidateIds.length && isCodexFailoverError(result)) continue
+    if (i + 1 < candidateIds.length && isCodexFailoverError(result)) {
+      leaveSticky(vm)
+      continue
+    }
     break
   }
   stats.errors++
