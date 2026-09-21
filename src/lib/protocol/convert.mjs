@@ -647,6 +647,15 @@ export function applyClaudeSSELineToMessage(line, state) {
     if (evt.delta && Object.prototype.hasOwnProperty.call(evt.delta, 'stop_sequence')) {
       message.stop_sequence = evt.delta.stop_sequence
     }
+    if (evt.delta && Object.prototype.hasOwnProperty.call(evt.delta, 'stop_details')) {
+      message.stop_details = evt.delta.stop_details
+    }
+    if (evt.delta && Object.prototype.hasOwnProperty.call(evt.delta, 'safeguard_results')) {
+      message.safeguard_results = evt.delta.safeguard_results
+    }
+    if (evt.delta && Object.prototype.hasOwnProperty.call(evt.delta, 'diagnostics')) {
+      message.diagnostics = evt.delta.diagnostics
+    }
     if (evt.usage) message.usage = { ...(message.usage || {}), ...evt.usage }
   }
   return message

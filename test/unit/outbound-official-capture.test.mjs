@@ -1,7 +1,5 @@
-/**
- * Snapshot of unofficial mimicry header/body shape against official Claude Code 2.1.263
- * (vm-10 capture, 2026-09-06, no tokens).
- */
+/** Snapshot of unofficial mimicry header/body shape against official Claude Code 2.1.278. */
+/** Captured from the official Linux x64 binary with no tokens. */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -24,13 +22,12 @@ const CAPTURE_BETAS = [
   'context-management-2025-06-27',
   'prompt-caching-scope-2026-01-05',
   'mid-conversation-system-2026-04-07',
-  'advanced-tool-use-2025-11-20',
+  'mid-conversation-tool-changes-2026-07-01',
   'effort-2025-11-24',
-  'extended-cache-ttl-2025-04-11',
-  'cache-diagnosis-2026-04-07',
+  'fallback-credit-2026-06-01',
 ]
 
-test('unofficial outbound envelope matches official 2.1.263 capture keys', () => {
+test('unofficial outbound envelope matches official 2.1.278 capture keys', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cap-'))
   const identity = {
     vmId: 'vm-29',
@@ -39,7 +36,7 @@ test('unofficial outbound envelope matches official 2.1.263 capture keys', () =>
     timezone: 'America/Los_Angeles',
     locale: 'en_US.UTF-8',
     kernel: '7.0.0-14-generic',
-    userAgent: 'claude-cli/2.1.241 (external, sdk-cli)',
+    userAgent: 'claude-cli/2.1.278 (external, sdk-cli)',
     fingerprint: {
       x_app: 'cli',
       stainless_lang: 'js',
@@ -79,7 +76,7 @@ test('unofficial outbound envelope matches official 2.1.263 capture keys', () =>
     homeDir: dir,
   })
   const { headers, body } = envelope
-  assert.equal(headers['user-agent'], 'claude-cli/2.1.241 (external, sdk-cli)')
+  assert.equal(headers['user-agent'], 'claude-cli/2.1.278 (external, sdk-cli)')
   assert.equal(headers['anthropic-version'], '2023-06-01')
   assert.equal(headers['x-app'], 'cli')
   assert.equal(headers['anthropic-dangerous-direct-browser-access'], 'true')
@@ -95,7 +92,6 @@ test('unofficial outbound envelope matches official 2.1.263 capture keys', () =>
   assert.deepEqual(String(headers['anthropic-beta'] || '').split(','), CAPTURE_BETAS)
   assert.deepEqual(fullClaudeCodeMimicryBetas(), CAPTURE_BETAS)
   assert.doesNotMatch(String(headers['anthropic-beta'] || ''), /context-1m/)
-
   const uid = JSON.parse(body.metadata.user_id)
   assert.equal(uid.device_id, identity.deviceId)
   assert.equal(uid.account_uuid, identity.accountUuid)
@@ -103,7 +99,6 @@ test('unofficial outbound envelope matches official 2.1.263 capture keys', () =>
   assert.match(uid.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   assert.equal(uid.email, undefined)
   assert.equal(headers['x-claude-code-session-id'], uid.session_id)
-
   assert.equal(body.model, 'claude-sonnet-5')
   assert.equal(body.stream, true)
   assert.equal(body.max_tokens, 128000)

@@ -269,9 +269,7 @@ export async function handleCodexProtocol({
           body: hopBody,
           stream: true,
           session,
-          ...(applied.injected && hopBody.turn_state
-            ? { headers: { 'x-codex-turn-state': hopBody.turn_state } }
-            : {}),
+          ...(applied.injected && hopBody.turn_state ? { headers: { 'x-codex-turn-state': hopBody.turn_state } } : {}),
         },
       },
       onEvent: async (line) => {

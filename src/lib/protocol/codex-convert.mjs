@@ -3,11 +3,7 @@
  * Native openai.responses bodies pass through after identity strip.
  * Request/usage shapes follow codex-proxy-rs (system→developer, extract_usage).
  */
-import {
-  extractOpenaiUsage,
-  openaiAnthropicUsageFromExtract,
-  openaiChatUsageFromExtract,
-} from './openai-usage.mjs'
+import { extractOpenaiUsage, openaiAnthropicUsageFromExtract, openaiChatUsageFromExtract } from './openai-usage.mjs'
 
 const IDENTITY_KEYS = [
   'base_url',
