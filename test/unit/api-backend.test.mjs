@@ -114,11 +114,18 @@ test('API backend applies the global official_full persona setting', async () =>
   }
 })
 
-test('OAuth backend prepares an unofficial slot persona override without leaking the request', async () => {
+test('OAuth cli-hop applies the resolved Protocol custom persona template', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-persona-'))
   const routingFile = path.join(root, 'routing.json')
-  fs.writeFileSync(routingFile, JSON.stringify({ compatibility: { persona_preset: 'official' } }))
-  const vm = { id: 'vm-01', persona_preset: 'zero', claude: { mode: 'oauth' } }
+  const compatibility = {
+    persona_preset: 'custom',
+    persona_inject: 'rewrite',
+    persona_templates: {
+      custom: [{ id: 'custom', type: 'text', text: 'CUSTOM_PERSONA {{timezone}}' }],
+    },
+  }
+  fs.writeFileSync(routingFile, JSON.stringify({ compatibility }))
+  const vm = { id: 'vm-01', claude: { mode: 'oauth' } }
   const selected = {
     vmId: vm.id,
     accountId: 'account-1',
@@ -159,7 +166,7 @@ test('OAuth backend prepares an unofficial slot persona override without leaking
     apiEndpointStore: {},
     stats,
     routingConfigPath: routingFile,
-    routingConfig: { compatibility: { persona_preset: 'official' }, failover: {} },
+    routingConfig: { compatibility, failover: {} },
     failoverRunner: {
       async run(opts) {
         prepared = await opts.applyAttempt(opts.canonicalBody, selected)
@@ -186,7 +193,79 @@ test('OAuth backend prepares an unofficial slot persona override without leaking
     await handler.handleProtocol(req, response, 'anthropic.messages', '/v1/messages')
     assert.equal(response.status, 503)
     assert.ok(prepared?.body)
-    assert.equal(prepared.body.system, undefined)
+    assert.equal(prepared.body.system.length, 1)
+    assert.equal(prepared.body.system[0].text, 'CUSTOM_PERSONA UTC')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('OpenAI chat carrying claude-opus-4-8 uses the Claude pool', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-opus-platform-'))
+  const routingFile = path.join(root, 'routing.json')
+  fs.writeFileSync(routingFile, JSON.stringify({ compatibility: { persona_preset: 'zero' } }))
+  let poolCalls = 0
+  let requestedModel = null
+  const response = { headersSent: false, on() {}, write() {}, end() {} }
+  const handler = createHandleProtocol({
+    json: (_res, status, body) => {
+      response.status = status
+      response.body = body
+      return body
+    },
+    writeSSEHeaders() {},
+    readBody: async () => ({
+      model: 'claude-opus-4-8',
+      stream: false,
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+    requireAuth: () => true,
+    cfg: {
+      rewrite: { enabled: false },
+      intercept: { rules: [] },
+      distill: { enabled: false },
+      limits: { max_body_bytes: 1024 * 1024, upstream_timeout_ms: 2000, stream_idle_timeout_ms: 2000 },
+      paths: { data: root, project: root },
+    },
+    requestLog: { start: () => ({ request_id: 'opus-platform-test' }), finish() {} },
+    stickyRouter: { extractPoolKey: () => 'opus-session', collectPoolKeys: () => ['opus-session'] },
+    accountQuota: {},
+    apiKeyStore: {},
+    apiScheduler: {},
+    apiEndpointStore: {},
+    stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
+    routingConfigPath: routingFile,
+    routingConfig: { compatibility: { persona_preset: 'zero' }, failover: {} },
+    failoverRunner: {
+      async run(opts) {
+        poolCalls += 1
+        requestedModel = opts.model
+        return {
+          ok: false,
+          status: 503,
+          body: { error: { type: 'server_error', code: 'pool_probe', message: 'Claude pool selected' } },
+          headers: {},
+        }
+      },
+    },
+    groupsRepo: { rateMultiplier: () => 1 },
+  })
+  const req = {
+    method: 'POST',
+    url: '/v1/chat/completions',
+    headers: { authorization: 'Bearer master', 'user-agent': 'OpenAI/Node' },
+    apiKeyKind: 'master',
+    once() {},
+    off() {},
+  }
+
+  try {
+    await handler.handleProtocol(req, response, 'openai.chat', '/v1/chat/completions')
+    assert.equal(poolCalls, 1)
+    assert.equal(requestedModel, 'claude-opus-4-8')
+    assert.equal(response.status, 503)
+    assert.equal(response.body.error.message, 'Claude pool selected')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
