@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,11 +26,17 @@ import {
 
 type Props = {
   pol: ModelPolicy
+  claudePool?: boolean
   onCatalogMode: (mode: CatalogMode) => void
   onDefaults: (patch: Partial<PolicyDefaults>) => void
 }
 
-export function ModelAdvanced({ pol, onCatalogMode, onDefaults }: Props) {
+export function ModelAdvanced({
+  pol,
+  claudePool = true,
+  onCatalogMode,
+  onDefaults,
+}: Props) {
   const defs = pol.defaults || {}
   const mode = isCatalogMode(pol.catalog_mode)
     ? pol.catalog_mode
@@ -37,9 +44,10 @@ export function ModelAdvanced({ pol, onCatalogMode, onDefaults }: Props) {
   const whitelistText = context1mWhitelist(pol).join('\n')
 
   return (
-    <Collapsible className='mt-4 rounded-lg border border-border/60'>
-      <CollapsibleTrigger className='flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium'>
-        高级：目录模式 · 未入库通配 · 默认参数
+    <Collapsible className='mt-4 rounded-lg border border-border/70 bg-card'>
+      <CollapsibleTrigger className='flex w-full cursor-pointer items-center justify-between px-3 py-2.5 text-left text-sm font-medium transition-colors duration-200 hover:bg-muted/40'>
+        <span>高级：目录模式 · 默认参数</span>
+        <ChevronDown className='size-4 text-muted-foreground' />
       </CollapsibleTrigger>
       <CollapsibleContent className='space-y-3 border-t border-border/40 px-3 py-3 text-sm'>
         <Row label='目录模式'>
@@ -61,17 +69,20 @@ export function ModelAdvanced({ pol, onCatalogMode, onDefaults }: Props) {
             </SelectContent>
           </Select>
         </Row>
-        <Row label='过滤 1M beta'>
-          <div className='flex items-center gap-2'>
-            <Switch
-              checked={defs.strip_context_1m !== false}
-              onCheckedChange={(on) => onDefaults({ strip_context_1m: on })}
-            />
-            <span className='text-xs text-muted-foreground'>
-              {defs.strip_context_1m !== false ? '已开启' : '已关闭'}
-            </span>
-          </div>
-        </Row>
+        {claudePool ? (
+          <Row label='过滤 1M beta'>
+            <div className='flex items-center gap-2'>
+              <Switch
+                checked={defs.strip_context_1m !== false}
+                onCheckedChange={(on) => onDefaults({ strip_context_1m: on })}
+                aria-label='过滤 1M beta'
+              />
+              <span className='text-xs text-muted-foreground'>
+                {defs.strip_context_1m !== false ? '已开启' : '已关闭'}
+              </span>
+            </div>
+          </Row>
+        ) : null}
         <div className='space-y-1'>
           <Label>未入库通配</Label>
           <Textarea

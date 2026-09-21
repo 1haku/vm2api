@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -26,6 +27,7 @@ type Props = {
   live: boolean
   pol: ModelPolicy
   open: boolean
+  showBeta?: boolean
   onToggleOpen: () => void
   onToggleEnabled: (on: boolean) => void
   onParam: (key: keyof ModelParams, value: string | number) => void
@@ -37,6 +39,7 @@ export function ModelRow({
   live,
   pol,
   open,
+  showBeta = true,
   onToggleOpen,
   onToggleEnabled,
   onParam,
@@ -63,7 +66,7 @@ export function ModelRow({
   return (
     <div className={cn(!on && 'opacity-60')}>
       <div
-        className='flex cursor-pointer items-center border-b border-border/40 text-sm'
+        className='flex cursor-pointer items-center border-b border-border/50 text-sm transition-colors duration-200 hover:bg-muted/40'
         onClick={onToggleOpen}
       >
         <div
@@ -83,48 +86,51 @@ export function ModelRow({
             {model.aliases?.length ? ` · ${model.aliases.join(', ')}` : ''}
           </div>
         </div>
-        <div className='min-w-[70px] flex-[0.6] px-1.5 text-xs'>
+        <div className='min-w-[70px] flex-[0.6] px-1.5 text-xs tabular-nums'>
           {win.text}
           {win.native1m ? (
-            <span className='ml-1 text-muted-foreground'>原生窗</span>
+            <span className='ml-1 text-muted-foreground'>原生</span>
           ) : null}
         </div>
-        <div
-          className='min-w-[140px] flex-[0.9] px-1.5'
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Select
-            value={mode}
-            onValueChange={(v) => {
-              if (v === 'true' || v === 'false' || v === 'inherit') onPass1m(v)
-            }}
+        {showBeta ? (
+          <div
+            className='min-w-[140px] flex-[0.9] px-1.5'
+            onClick={(e) => e.stopPropagation()}
           >
-            <SelectTrigger
-              className={cn(
-                'h-8 w-[132px] text-xs',
-                inheritHit && 'text-primary'
-              )}
-              title={
-                inheritHit
-                  ? '未设开关，命中回退通配'
-                  : mode === 'true'
-                    ? '矩阵指定透传'
-                    : mode === 'false'
-                      ? '矩阵指定剥离'
-                      : '未设，走回退通配'
-              }
+            <Select
+              value={mode}
+              onValueChange={(v) => {
+                if (v === 'true' || v === 'false' || v === 'inherit')
+                  onPass1m(v)
+              }}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='true'>透传</SelectItem>
-              <SelectItem value='false'>剥离</SelectItem>
-              <SelectItem value='inherit'>
-                {effective ? '通配 → 透传' : '通配 → 剥离'}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+              <SelectTrigger
+                className={cn(
+                  'h-8 w-[132px] text-xs',
+                  inheritHit && 'text-primary'
+                )}
+                title={
+                  inheritHit
+                    ? '未设开关，命中回退通配'
+                    : mode === 'true'
+                      ? '矩阵指定透传'
+                      : mode === 'false'
+                        ? '矩阵指定剥离'
+                        : '未设，走回退通配'
+                }
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='true'>透传</SelectItem>
+                <SelectItem value='false'>剥离</SelectItem>
+                <SelectItem value='inherit'>
+                  {effective ? '通配 → 透传' : '通配 → 剥离'}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         <div
           className='min-w-[110px] flex-[0.9] px-1.5 text-xs'
           title={caps.thinking_mode || ''}
@@ -141,15 +147,21 @@ export function ModelRow({
         <div className='w-10 shrink-0 pr-2 text-right'>
           <Button
             type='button'
-            size='sm'
+            size='icon'
             variant='ghost'
+            className='size-8 cursor-pointer'
+            aria-expanded={open}
             aria-label={open ? '收起' : '展开'}
             onClick={(e) => {
               e.stopPropagation()
               onToggleOpen()
             }}
           >
-            {open ? '▴' : '▾'}
+            {open ? (
+              <ChevronUp className='size-4' />
+            ) : (
+              <ChevronDown className='size-4' />
+            )}
           </Button>
         </div>
       </div>

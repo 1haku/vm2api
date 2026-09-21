@@ -2,10 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   pickCodexSlots,
+  orderCodexSessionSlots,
   isCodexSlotParked,
   isCodexFailoverError,
   evaluateCodexQuotaSchedule,
 } from '../../src/lib/pool/codex-slot-pool.mjs'
+import { SessionLimitRegistry } from '../../src/lib/pool/session-limit.mjs'
 
 function gpt(id, patch = {}) {
   return {
@@ -148,4 +150,25 @@ test('elapsed 5h reset is not a live park', () => {
     ),
     false,
   )
+})
+
+test('a bound OpenAI session stays on its VM and a full window is skipped', () => {
+  const sessions = new SessionLimitRegistry()
+  const vms = [
+    gpt('vm-a', { utilization_5h: 0.1, policy: { sessionSlots: 1 } }),
+    gpt('vm-b', { utilization_5h: 0.2, policy: { sessionSlots: 1 } }),
+  ]
+  sessions.touch('vm-a', 'conv-a')
+  const again = orderCodexSessionSlots(vms, {
+    boundVmId: 'vm-a',
+    sessionKey: 'conv-a',
+    sessionLimit: sessions,
+  })
+  assert.equal(again.sticky, true)
+  assert.equal(again.ids[0], 'vm-a')
+  const fresh = orderCodexSessionSlots(vms, { sessionKey: 'conv-b', sessionLimit: sessions })
+  assert.deepEqual(fresh.ids, ['vm-b'])
+  sessions.touch('vm-b', 'conv-b')
+  const full = orderCodexSessionSlots(vms, { sessionKey: 'conv-c', sessionLimit: sessions })
+  assert.equal(full.error, 'session_window_full')
 })

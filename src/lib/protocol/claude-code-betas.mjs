@@ -16,6 +16,7 @@ export const BETA_PROMPT_CACHING_SCOPE = 'prompt-caching-scope-2026-01-05'
 export const BETA_MID_CONVERSATION_SYSTEM = 'mid-conversation-system-2026-04-07'
 export const BETA_MID_CONVERSATION_TOOL_CHANGES = 'mid-conversation-tool-changes-2026-07-01'
 export const BETA_ADVANCED_TOOL_USE = 'advanced-tool-use-2025-11-20'
+export const BETA_THINKING_BINDING_CONTROLS = 'thinking-binding-controls-2026-08-01'
 export const BETA_EFFORT = 'effort-2025-11-24'
 export const BETA_CONTEXT_MANAGEMENT = 'context-management-2025-06-27'
 export const BETA_FALLBACK_CREDIT = 'fallback-credit-2026-06-01'
@@ -23,7 +24,11 @@ export const BETA_CONTEXT_1M = 'context-1m-2025-08-07'
 
 export const HAIKU_BETA_HEADER = `${BETA_OAUTH},${BETA_INTERLEAVED}`
 
-/** Claude Code 2.1.278 official main-session order (no context-1m). */
+/**
+ * Claude Code 2.1.278 official main Messages order (no context-1m).
+ * 2.1.272→2.1.278 replaced advanced-tool-use with thinking-binding-controls
+ * and kept the other tokens in their original order.
+ */
 export function fullClaudeCodeMimicryBetas() {
   return [
     BETA_CLAUDE_CODE,
@@ -33,6 +38,7 @@ export function fullClaudeCodeMimicryBetas() {
     BETA_CONTEXT_MANAGEMENT,
     BETA_PROMPT_CACHING_SCOPE,
     BETA_MID_CONVERSATION_SYSTEM,
+    BETA_THINKING_BINDING_CONTROLS,
     BETA_MID_CONVERSATION_TOOL_CHANGES,
     BETA_EFFORT,
     BETA_FALLBACK_CREDIT,

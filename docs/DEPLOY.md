@@ -1,6 +1,6 @@
 # 部署
 
-推荐 **Docker Compose**。仓库放在 `/opt/vm2api`。
+推荐 **Docker Compose**，**拉预构建镜像**，不在你的机器上构建。安装目录任意（下文用 `/opt/vm2api`）。
 
 ## 机器
 
@@ -26,7 +26,7 @@ VM2API_DB_SECRET='再一串'
 
 不是一个父容器里多个子进程。
 
-仓库必须在 `/opt/vm2api`（槽的 `-v` 路径由宿主机 Docker 解释）。挂 `docker.sock`，`network_mode: host`。
+挂 `docker.sock`，`network_mode: host`。安装目录不再限定 `/opt/vm2api`：控制面自省 `docker inspect vm2api` 的 Mounts，把槽的 `-v` 源换算成宿主路径；也可用 `VM2API_HOST_ROOT` 显式指定。
 
 ## 安装
 
@@ -36,7 +36,7 @@ VM2API_DB_SECRET='再一串'
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
 ```
 
-脚本会 clone 到 `/opt/vm2api`、补全 `.env`（`chmod 600`）、`docker compose up -d --build`。`.env` 缺失或 `VM2API_ADMIN_PASSWORD` 为空时写入默认管理台 **`admin` / `123456`**（已有密码不覆盖）。空的 `VM2API_API_KEY` / `VM2API_DB_SECRET` 会生成随机值。登录：`http://<ip>:8787/cc#/login`。以后：
+脚本只下载 `docker-compose.yml` / `.env.example` / `VERSION`（不 clone 仓库），补全 `.env`（`chmod 600`），然后 `docker compose pull && up -d`。`.env` 缺失或 `VM2API_ADMIN_PASSWORD` 为空时写入默认管理台 **`admin` / `123456`**（已有密码不覆盖）。空的 `VM2API_API_KEY` / `VM2API_DB_SECRET` 会生成随机值。登录：`http://<ip>:8787/cc#/login`。以后：
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
@@ -46,20 +46,32 @@ sudo bash /opt/vm2api/deploy/install.sh changelog
 
 保留 `.env` / `vms/` / `data/`。不要 `docker rm` 槽。一键更新会自动把新版 `share/wrap-cli`（包括 `kin-kernel.bin`）同步到所有槽并重启槽内 dataplane；如需暂时跳过可加 `--no-sync-wrap`。管理台 **设置 → 关于** 可复制同一条命令、看 changelog。指定版本：`--version v1.2.22`。
 
-**手动：**
+**手动（同样只拉镜像）：**
 
 ```bash
-git clone https://github.com/dofastted/vm2api.git /opt/vm2api
-cd /opt/vm2api
-cp .env.example .env
+mkdir -p /opt/vm2api && cd /opt/vm2api
+curl -sSLO https://raw.githubusercontent.com/dofastted/vm2api/main/docker-compose.yml
+curl -sSL -o .env https://raw.githubusercontent.com/dofastted/vm2api/main/.env.example
 chmod 600 .env
 # 空密码默认 admin / 123456；API key / DB secret 为空时入口会生成
 
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 curl -sS --noproxy '*' http://127.0.0.1:8787/health
 ```
 
-二进制在仓内 `bin/`，Compose 会拷到挂载目录。`bin/kin-*` 必须 **755**。缺槽位系统镜像时会编 `kin-os/ubuntu:24.04`。
+`bin/` 与 `share/wrap-cli` 由镜像入口写入挂载目录，`src/config` 缺文件时用镜像内默认值补齐。
+槽位系统镜像优先 `docker pull ghcr.io/dofastted/kin-os-*`，拉不到时在建槽阶段用仓内 Dockerfile 兜底构建（启动不阻塞）。
+
+**源码模式（自己改代码时）：**
+
+```bash
+git clone https://github.com/dofastted/vm2api.git /opt/vm2api
+cd /opt/vm2api && cp .env.example .env && chmod 600 .env
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+一键脚本对应 `--from-source`；目录里有 `.git` 时 `upgrade` 自动走源码分支。二进制在仓内 `bin/`，必须 **755**。
 
 升级到 **v1.2.22** 见下面「已部署机升级到 1.2.22」。更新控制面和槽内 kernel，但不要 `docker rm` 槽。
 
