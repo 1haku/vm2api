@@ -186,6 +186,8 @@ Console API endpoint  →  原样回传给调用方
 
 | 目录 | 做什么 |
 |---|---|
+| `src/config/routing.json` | 控制面开关。设置页只写这里 |
+| `vms/<id>/run/kernel.json` | 槽内 kernel 热读副本。只投影人设、`system_layout`、缓存 TTL、时区 |
 | `src/` | Node 控制面、`/v1`、面板 API |
 | `web/` | Vite 管理台，构建后 `GET /console` |
 | `bin/kin-kernel` | Claude Code 槽内核（预编译 ELF） |
@@ -215,11 +217,11 @@ VM2API_DB_SECRET=       # 库加密
 
 ## 版本与构建
 
-当前发布：**v1.2.22**
+当前发布：**v1.3.14**
 
 ```bash
-git tag -a v1.2.22 -m "vm2api v1.2.22"
-git push origin v1.2.22
+git tag -a v1.3.14 -m "vm2api v1.3.14"
+git push origin v1.3.14
 ```
 
 `v*` tag 会触发 [Release 工作流](.github/workflows/release.yml)，再挂一份 linux amd64 ELF。仓内 `bin/` 已可直接部署。步骤：[BUILD.md](docs/BUILD.md)
