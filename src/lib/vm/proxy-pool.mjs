@@ -391,14 +391,17 @@ export class ProxyPool {
   importParsed(records = [], extra = {}) {
     const added = []
     const skipped = []
-    const existing = new Set(this.state.proxies.map((p) => `${p.host}:${p.port}:${p.username || ''}`))
+    // Credentials can select distinct proxies at the same endpoint. Encode a
+    // tuple so colons inside credentials cannot collide with field separators.
+    const proxyKey = (p) => JSON.stringify([p.host, p.port, p.username || '', p.password || ''])
+    const existing = new Set(this.state.proxies.map(proxyKey))
     for (const parsed of records) {
       if (!parsed || parsed.__invalid || !parsed.host || !parsed.port) {
         const label = parsed?.__invalid || ''
         if (label) skipped.push({ line: label, reason: 'parse_failed' })
         continue
       }
-      const key = `${parsed.host}:${parsed.port}:${parsed.username || ''}`
+      const key = proxyKey(parsed)
       if (existing.has(key)) {
         skipped.push({ line: `${parsed.host}:${parsed.port}`, reason: 'duplicate' })
         continue
