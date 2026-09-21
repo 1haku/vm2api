@@ -68,8 +68,7 @@ import {
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
-import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
-import { DEFAULT_CACHE_TTL } from './cache-ttl.mjs'
+import { prepareOutboundEnvelope, prepareCliHopBody, CLI_HOP_CACHE_TTL } from './outbound-attempt.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import { extractCallerSession, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
@@ -749,7 +748,7 @@ export function createHandleProtocol(deps) {
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
-            cacheTtl = requestedCacheTtl || DEFAULT_CACHE_TTL
+            cacheTtl = CLI_HOP_CACHE_TTL
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             if (!officialTraffic) {
