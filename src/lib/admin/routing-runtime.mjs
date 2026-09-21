@@ -85,7 +85,7 @@ export function createRoutingRuntime(ctx) {
     const applied = { updated: 0, skipped: 0 }
     for (const vm of listVms(ctx.cfg.paths.project)) {
       if (vm.codex_kernel || vm.platform === 'openai' || vm.family === 'codex') continue
-      if (vm.session_slots_override) {
+      if (vm.session_slots_override === true) {
         applied.skipped += 1
         continue
       }
@@ -281,9 +281,9 @@ export function createRoutingRuntime(ctx) {
         concurrency: applyRoutingTierConcurrency(routingConfig.tiers),
         rpm: applyRoutingTierRpm(routingConfig.tiers),
         session_slots:
-          previousSessionSlots === nextSessionSlots
-            ? { updated: 0, skipped: 0 }
-            : applyRoutingSessionSlots(nextSessionSlots),
+          body.inference && Object.prototype.hasOwnProperty.call(body.inference, 'session_slots')
+            ? applyRoutingSessionSlots(nextSessionSlots)
+            : { updated: 0, skipped: 0 },
       }
     } catch (err) {
       console.error(

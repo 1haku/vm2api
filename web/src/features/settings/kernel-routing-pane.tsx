@@ -35,14 +35,17 @@ export function KernelRoutingPane(props: {
         <SettingRow label='预开 native 位'>
           <span className='text-sm tabular-nums'>20（固定）</span>
         </SettingRow>
-        <SettingRow label='默认 session 槽位'>
+        <SettingRow
+          label='默认 session 槽位'
+          desc='限制每个 Claude 槽可占用的 CLI 执行位；与同时请求数独立'
+        >
           <Select
             value={String(configured)}
             onValueChange={(value) =>
               props.onChange({ ...props.value, session_slots: Number(value) })
             }
           >
-            <SelectTrigger className='w-28'>
+            <SelectTrigger className='w-40'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -54,10 +57,6 @@ export function KernelRoutingPane(props: {
             </SelectContent>
           </Select>
         </SettingRow>
-        <p className='py-3 text-xs text-muted-foreground'>
-          session 槽位限制每个 Claude 槽可占用的 CLI
-          执行位；并发只限制同时请求数，二者独立。
-        </p>
       </CardContent>
     </Card>
   )
