@@ -99,6 +99,7 @@ export class StickyRouter {
     this.db = resolveStoreDb({ db, dataDir })
     this.repo = new StickyRepo(this.db)
     this.config = mergeStickyConfig(config)
+    this.repo.dropAliasKeys()
   }
 
   /** Kept for API compat + post-restore hook (state lives in DB). */
@@ -174,7 +175,7 @@ export class StickyRouter {
     return this.isolateKey(`dev:${device}`, req)
   }
 
-  /** Ordered aliases for one logical conversation. Strongest identity first. */
+  /** Ordered aliases for one logical conversation. A caller session is the only key. */
   collectPoolKeys(req, body = {}, opts = {}) {
     if (!this.config.enabled) return []
     const keys = []
@@ -183,20 +184,19 @@ export class StickyRouter {
       const scoped = scopeStickyKey(key, platform)
       if (scoped && !keys.includes(scoped)) keys.push(scoped)
     }
+    const caller = extractCallerSession({ inbound: body, body, headers: req?.headers || {} })
+    if (caller && !EPHEMERAL_STICKY_KEYS.has(String(caller).toLowerCase())) {
+      add(this.isolateKey(caller, req))
+      return keys
+    }
     const mode = this.config.mode || 'conversation'
     if (mode === 'conversation' && isPersistableEnvelope(body)) {
       const id = req?.apiKeyRecord?.id
       if (id != null && id !== '') add(`k${id}:envelope`)
+      if (keys.length) return keys
     }
-    // Parent and child hops share device_id. That is the one session window.
-    add(this.extractOfficialFamilyKey(req, body))
-    // Explicit session is the lock when the caller has no family device.
-    // Fingerprints only bridge a protocol that dropped the session id.
-    add(this.extractKey(req, body))
-    if (mode === 'conversation') {
-      const fingerprint = firstUserFingerprint(body)
-      if (fingerprint) add(this.isolateKey(`ch:${fingerprint}`, req))
-    }
+    const fingerprint = firstUserFingerprint(body)
+    if (fingerprint) add(this.isolateKey(`ch:${fingerprint}`, req))
     return keys
   }
 
@@ -232,10 +232,11 @@ export class StickyRouter {
     if (!key || !this.config.enabled) return
     const ttl = (this.config.ttl_seconds || 86400) * 1000
     const prev = this.repo.get(key) || {}
+    const locked = prev.vm_id && vmId && prev.vm_id !== vmId
     this.repo.upsert(key, {
-      account_id: accountId,
-      vm_id: vmId,
-      session_id: sessionId || prev.session_id || null,
+      account_id: locked ? prev.account_id : accountId,
+      vm_id: locked ? prev.vm_id : vmId,
+      session_id: prev.session_id || sessionId || null,
       bound_at: Date.now(),
       expires_at: Date.now() + ttl,
       hits: (prev.hits || 0) + (countHit ? 1 : 0),

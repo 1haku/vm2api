@@ -34,6 +34,15 @@ export class StickyRepo {
     this._delete = db.prepare('DELETE FROM sticky_sessions WHERE key = ?')
     this._deleteByAccount = db.prepare('DELETE FROM sticky_sessions WHERE account_id = ? OR vm_id = ?')
     this._purge = db.prepare('DELETE FROM sticky_sessions WHERE expires_at < ?')
+    this._dropAlias = db.prepare(`
+      DELETE FROM sticky_sessions
+      WHERE key = 'envelope'
+        OR key LIKE 'ch:%'
+        OR key LIKE 'dev:%'
+        OR key LIKE '%:envelope'
+        OR key LIKE '%:ch:%'
+        OR key LIKE '%:dev:%'
+    `)
     this._all = db.prepare('SELECT * FROM sticky_sessions')
     this._count = db.prepare('SELECT COUNT(*) c FROM sticky_sessions')
   }
@@ -65,6 +74,11 @@ export class StickyRepo {
 
   purgeExpired(now = Date.now()) {
     return this._purge.run(now).changes
+  }
+
+  /** Content fingerprints and device aliases are not conversation slots. */
+  dropAliasKeys() {
+    return this._dropAlias.run().changes
   }
 
   all() {

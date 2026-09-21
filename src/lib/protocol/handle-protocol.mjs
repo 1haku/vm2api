@@ -72,6 +72,7 @@ import { prepareOutboundEnvelope, prepareCliHopBody, CLI_HOP_CACHE_TTL } from '.
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
+  applyCrsIdentityReplace,
   extractCallerSession,
   resolveOutboundSessionId,
   sessionContextDiscriminator,
@@ -218,16 +219,20 @@ export function createHandleProtocol(deps) {
 
   function rememberRefusal({ inbound, body, result, logBag, requestId }) {
     if (!refusalEnabled()) return
-    if (!isUpstreamRefusal(result, logBag)) return
+    const contentRefusal = isUpstreamRefusal(result, logBag)
+    const timed = result?.policy?.rememberRefusal === true
+    if (!contentRefusal && !timed) return
     const repo = refusalRepo()
     if (!repo) return
     try {
+      const ttl = Number(result?.policy?.refusalTtlMs) || 0
       repo.remember({
         fingerprint: refusalFingerprint(body, inbound),
         model: body?.model || inbound?.model || '',
         requestId,
         errorMessage: logBag.error_message || result?.body?.error?.message || null,
         preview: refusalPreview(body, inbound),
+        expiresAt: contentRefusal || ttl <= 0 ? null : new Date(Date.now() + ttl).toISOString(),
       })
     } catch {}
   }
@@ -810,6 +815,15 @@ export function createHandleProtocol(deps) {
               unofficial: !officialTraffic,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
+            if (identity) {
+              hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
+                officialClient: officialTraffic,
+                sessionId: attemptSessionId,
+                accountId: selected.accountId,
+                boundSessionId: stickyBound?.sessionId || '',
+                boundAccountId: stickyBound?.accountId || '',
+              })
+            }
             if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
 
             const cliHide = personaHideForCliZero(personaIn, hopBody, {
