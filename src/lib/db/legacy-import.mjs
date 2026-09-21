@@ -26,6 +26,7 @@ import { StickyRepo } from './repos/sticky-repo.mjs'
 import { ProxiesRepo } from './repos/proxies-repo.mjs'
 import { VmsRepo } from './repos/vms-repo.mjs'
 import { UsageLogsRepo } from './repos/usage-logs-repo.mjs'
+import { isVmRecordFile } from '../vm/vm-file.mjs'
 
 const IMPORT_FLAG = 'legacy_import_done'
 
@@ -189,7 +190,7 @@ export function runLegacyImport({ dataDir, projectRoot, db = null, retainDays = 
       const vmsDir = projectRoot ? path.join(projectRoot, 'vms') : null
       if (vmsDir && fs.existsSync(vmsDir)) {
         for (const f of fs.readdirSync(vmsDir)) {
-          if (!/^vm-.*\.json$/.test(f) || f.endsWith('-chat.json')) continue
+          if (!isVmRecordFile(f)) continue
           try {
             const file = path.join(vmsDir, f)
             const vm = JSON.parse(fs.readFileSync(file, 'utf8'))

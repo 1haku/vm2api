@@ -122,7 +122,7 @@ import {
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
 import * as panel from './panel-api.mjs'
 import { GATEWAY_CAPABILITIES } from '../vm/execution-context.mjs'
-import { withVmLock, atomicWriteJson } from '../vm/vm-file.mjs'
+import { withVmLock, atomicWriteJson, isValidVmId } from '../vm/vm-file.mjs'
 import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
@@ -1791,7 +1791,7 @@ export function createPanelHandler(ctx) {
       // DELETE /api/panel/vms/:id — remove VM record, cli-home, unbind proxy
       if (req.method === 'DELETE' && /^\/api\/panel\/vms\/[^/]+$/.test(p)) {
         const id = p.split('/')[4]
-        if (!id || id === 'create' || id === 'import') {
+        if (!isValidVmId(id)) {
           return json(res, 400, { ok: false, error: { message: 'invalid vm id' } })
         }
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
@@ -2104,7 +2104,7 @@ export function createPanelHandler(ctx) {
         const idx = nextNumericIndex(existing)
         const rawId = body.id || 'vm-' + padVm(idx)
         const id = String(rawId).replace(/[^a-zA-Z0-9_-]/g, '')
-        if (!id) return json(res, 400, { ok: false, error: { message: 'invalid id' } })
+        if (!isValidVmId(id)) return json(res, 400, { ok: false, error: { message: 'invalid id' } })
         const vmsDir = path.join(cfg.paths.project, 'vms')
         fs.mkdirSync(vmsDir, { recursive: true })
         const vmPath = path.join(vmsDir, id + '.json')

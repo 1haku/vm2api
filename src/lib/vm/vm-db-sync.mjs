@@ -21,7 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { isDbOpen, getDb } from '../db/database.mjs'
 import { VmsRepo } from '../db/repos/vms-repo.mjs'
-import { setVmWriteHook, atomicWriteJson } from './vm-file.mjs'
+import { setVmWriteHook, atomicWriteJson, isVmRecordFile } from './vm-file.mjs'
 
 let _repo = null
 let _watcher = null
@@ -38,7 +38,7 @@ export function isVmJsonPath(filePath) {
   const base = path.basename(String(filePath || ''))
   const dir = path.basename(path.dirname(String(filePath || '')))
   if (dir !== 'vms') return false
-  return (/^vm-.*\.json$/.test(base) && !base.endsWith('-chat.json')) || base === 'active.json'
+  return isVmRecordFile(base) || base === 'active.json'
 }
 
 /** Mirror one vms/*.json file into the DB (safe no-op without DB). */
@@ -84,7 +84,7 @@ export function reconcileVms(projectRoot) {
 
   if (fs.existsSync(dir)) {
     for (const f of fs.readdirSync(dir)) {
-      if (!/^vm-.*\.json$/.test(f) || f.endsWith('-chat.json')) continue
+      if (!isVmRecordFile(f)) continue
       const file = path.join(dir, f)
       try {
         const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -183,7 +183,7 @@ function reconcileVmsChangesOnly(projectRoot, r) {
   const dir = path.join(projectRoot, 'vms')
   if (!fs.existsSync(dir)) return
   for (const f of fs.readdirSync(dir)) {
-    if (!/^vm-.*\.json$/.test(f) || f.endsWith('-chat.json')) continue
+    if (!isVmRecordFile(f)) continue
     const file = path.join(dir, f)
     try {
       const st = fs.statSync(file)
