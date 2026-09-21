@@ -19,11 +19,8 @@ type VmEnvironmentCardProps = {
 }
 
 /**
- * 槽位环境设置。目前只有时区：它同时决定容器 `TZ`、persona 的
- * `# Environment - Timezone` 和工作站指纹，所以改它等于改槽位对上游的自述。
- *
- * 改动即时写档并在下次 worker 重载后生效；容器内的 `TZ` 环境变量要等重建
- * 容器才会换，卡片里直接写明，免得运维以为没生效。
+ * 槽位环境设置。目前只有时区：kernel.json 的 timezone 热读，不必重启内核。
+ * 容器进程环境变量 TZ 仍要换容器才变。
  */
 export function VmEnvironmentCard({
   vm,
@@ -50,8 +47,8 @@ export function VmEnvironmentCard({
         <CardTitle className='text-sm'>环境</CardTitle>
       </CardHeader>
       <p className='px-6 pb-2 text-xs text-muted-foreground'>
-        时区写进容器 TZ、persona 的 Environment 段和工作站指纹。换容器后 TZ
-        才会在槽内生效，persona 下一次请求就跟上。
+        时区写入 kernel.json，kernel 热读，persona 的 Environment
+        段随下一次请求生效。容器环境变量 TZ 要换容器才变。
       </p>
       <CardContent className='divide-y pt-0'>
         <Field label='当前时区'>

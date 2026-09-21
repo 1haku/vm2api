@@ -16,7 +16,7 @@ import { cleanPersonaRules, personaRulesFromCompat } from '@/lib/persona-rules'
 import {
   personaInjectFromPreset,
   personaPresetFromCompat,
-  personaPresetLabel,
+  protocolPersonaSaveToast,
 } from '@/lib/persona-template'
 import { cn } from '@/lib/utils'
 import { isCodexVm } from '@/lib/vm-kind'
@@ -113,13 +113,15 @@ export function SettingsPage() {
           fallback_to_go: false,
         }
       }
-      return api('/api/panel/routing', {
+      return api<RoutingSaveResult>('/api/panel/routing', {
         method: 'PUT',
         body: JSON.stringify(body),
       })
     },
-    onSuccess: async () => {
-      const compat = draft.compatibility as Record<string, unknown> | undefined
+    onSuccess: async (saved) => {
+      const compat =
+        saved?.compatibility ||
+        (draft.compatibility as Record<string, unknown> | undefined)
       let inherited = 0
       if (tab === 'protocol') {
         try {
@@ -147,7 +149,9 @@ export function SettingsPage() {
           )
         }
       }
-      toast.success(settingsSaveToast(tab, compat, inherited))
+      toast.success(
+        settingsSaveToast(tab, compat, inherited, saved?.kernel_persona)
+      )
       await Promise.all([
         qc.invalidateQueries({ queryKey: routingQueryOptions().queryKey }),
         qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
@@ -427,13 +431,11 @@ export function SettingsPage() {
 function settingsSaveToast(
   tab: SettingsTabId,
   compat: Record<string, unknown> | undefined,
-  inherited: number
+  inherited: number,
+  kernel?: { updated?: number } | null
 ) {
-  if (tab === 'protocol') {
-    const label = personaPresetLabel(personaPresetFromCompat(compat))
-    if (!inherited) return `已保存 · ${label}`
-    return `已保存 · ${label} · ${inherited} 个槽位改为跟随全局`
-  }
+  if (tab === 'protocol')
+    return protocolPersonaSaveToast(compat, inherited, kernel)
   if (tab === 'whitelist') {
     const count = cleanPersonaRules(personaRulesFromCompat(compat)).length
     return `已保存 · ${count} 条规则`
@@ -446,4 +448,9 @@ function protocolFollowError(message: string) {
     return 'wrap 配置缺失，先到 Wrap 页同步母样本，再切 rust cli-hop'
   }
   return message
+}
+
+type RoutingSaveResult = {
+  compatibility?: Record<string, unknown>
+  kernel_persona?: { updated?: number; skipped?: number } | null
 }

@@ -4,6 +4,8 @@ import {
   PERSONA_PRESET_OPTIONS,
   PERSONA_PRESETS,
   overlayDisabledByPersona,
+  personaInjectFromPreset,
+  protocolPersonaSaveToast,
   presetSeed,
   templateOrFollowPreset,
   validatePersonaTemplate,
@@ -71,5 +73,29 @@ describe('persona template contract', () => {
       )
     ).toEqual([])
     expect(validatePersonaTemplate(DEFAULT_PERSONA_TEMPLATES.zero)).toEqual([])
+  })
+
+  it('writes the three persona switches back as their own inject values', () => {
+    expect(personaInjectFromPreset('official', 'rewrite')).toBe(
+      'official_prompt'
+    )
+    expect(personaInjectFromPreset('official_full', 'rewrite')).toBe(
+      'official_full'
+    )
+    expect(personaInjectFromPreset('zero', 'rewrite')).toBe('zero')
+    expect(personaInjectFromPreset('custom', 'append')).toBe('append')
+  })
+
+  it('save toast names the stored preset and the kernel hot update', () => {
+    expect(
+      protocolPersonaSaveToast({ persona_preset: 'official_full' }, 0, {
+        updated: 2,
+      })
+    ).toBe('已保存 · 官方完整提示词 · 人设与缓存 TTL 已热更新 2 个槽')
+    expect(
+      protocolPersonaSaveToast({ persona_preset: 'zero' }, 1, { updated: 0 })
+    ).toBe(
+      '已保存 · 0注入 · 1 个槽位改为跟随全局 · 人设与缓存 TTL 的 kernel 配置已一致'
+    )
   })
 })
