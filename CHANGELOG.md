@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `VERSION` 成为唯一应用版本源；控制台从运行态 `/api/panel/me` 显示版本，Release 校验 tag，HostDzire 打包自动重建前端，避免旧构建版本漂移
+
 ## 1.3.8 — 2026-09-21
 
 - cli-hop 固定以 5m 写入多轮会话断点，避免 wrap 的 ttl-less 5m 断点后出现 1h 而被上游 400；覆盖 `/v1/chat/completions` 入站转换

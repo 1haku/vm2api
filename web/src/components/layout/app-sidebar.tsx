@@ -20,7 +20,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
       <SidebarHeader>
-        <AppTitle />
+        <AppTitle version={me?.version} />
       </SidebarHeader>
       <SidebarContent>
         {groups.map((group) => (

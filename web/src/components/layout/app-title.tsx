@@ -10,7 +10,7 @@ import {
 import { BrandPlatforms } from '@/components/platform-chip'
 import { Button } from '../ui/button'
 
-export function AppTitle() {
+export function AppTitle({ version }: { version?: string }) {
   const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenu>
@@ -28,7 +28,7 @@ export function AppTitle() {
             >
               <span className='truncate font-bold'>vm2api</span>
               <span className='mt-0.5 text-[10px] font-medium tracking-wide text-sidebar-foreground/55 tabular-nums'>
-                v{__APP_VERSION__}
+                v{version || '—'}
               </span>
               <BrandPlatforms className='mt-1.5' />
             </Link>
