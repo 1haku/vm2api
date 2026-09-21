@@ -80,7 +80,7 @@ test('official preset renders billing + identity byte-identical to the legacy bu
   const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-1' })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
   assert.equal(out.length, 2)
-  assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', '2.1.263', 's-1') })
+  assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', '2.1.278', 's-1') })
   assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_SYSTEM })
 })
 
@@ -112,7 +112,7 @@ test('zero preset billing line is byte-identical to buildZeroBillingText', () =>
   const vars = personaTemplateVars({ firstUserText: 'ping', sessionId: 's-2', env })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.zero, vars)
   assert.equal(out.length, 3)
-  assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.263', 's-2'))
+  assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.278', 's-2'))
   assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.equal(out[2].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '5m' })

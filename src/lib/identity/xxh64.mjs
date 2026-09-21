@@ -21,7 +21,7 @@ function round(acc, input) {
 
 function mergeRound(acc, val) {
   acc ^= round(0n, val)
-  return ((acc * PRIME64_1) + PRIME64_4) & MASK
+  return (acc * PRIME64_1 + PRIME64_4) & MASK
 }
 
 function asBuffer(input) {

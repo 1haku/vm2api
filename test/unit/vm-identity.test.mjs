@@ -115,15 +115,15 @@ test('telemetry off writes kill-switch keys; telemetry on deletes them', () => {
   assert.equal(id.settings.env.DO_NOT_TRACK, undefined)
 })
 
-test('loadVmIdentity pins outbound UA to capture CLI 2.1.263', () => {
+test('loadVmIdentity pins outbound UA to capture CLI 2.1.278', () => {
   const id = loadVmIdentity({
     vmId: 'vm-29',
     homeDir: '/tmp/does-not-exist-kin',
     vm: { id: 'vm-29', timezone: 'America/Los_Angeles', locale: 'en_US.UTF-8' },
   })
-  assert.equal(id.cliVersion, '2.1.263')
-  assert.equal(id.userAgent, 'claude-cli/2.1.263 (external, sdk-cli)')
-  assert.equal(id.fingerprint.user_agent, 'claude-cli/2.1.263 (external, sdk-cli)')
+  assert.equal(id.cliVersion, '2.1.278')
+  assert.equal(id.userAgent, 'claude-cli/2.1.278 (external, sdk-cli)')
+  assert.equal(id.fingerprint.user_agent, 'claude-cli/2.1.278 (external, sdk-cli)')
   assert.equal(id.fingerprint.stainless_runtime_version, 'v26.3.0')
   assert.equal(id.fingerprint.stainless_package_version, '0.112.1')
   assert.equal(id.fingerprint.stainless_lang, 'js')

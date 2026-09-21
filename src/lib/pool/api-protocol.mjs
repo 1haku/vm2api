@@ -1,12 +1,6 @@
 import { officialMessagesBody } from '../protocol/anthropic-messages.mjs'
 import { forwardApi, readApiJson } from '../transport/api-kernel-client.mjs'
-import {
-  messagesUrl,
-  normalizeProtocol,
-  resolvePreset,
-  responsesUrl,
-  upstreamAuthHeaders,
-} from './api-presets.mjs'
+import { messagesUrl, normalizeProtocol, resolvePreset, responsesUrl, upstreamAuthHeaders } from './api-presets.mjs'
 import { claudeToOpenAIResponsesRequest } from './api-openai.mjs'
 import {
   assembleCodexBodyFromSse,
