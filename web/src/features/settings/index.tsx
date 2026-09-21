@@ -101,6 +101,10 @@ export function SettingsPage() {
           persona_rules: rules,
         }
       }
+      if (tab === 'init') {
+        const official = (body.official_cc as Record<string, unknown>) || {}
+        body.official_cc = { ...official, inference: 'cli-hop' }
+      }
       if (tab === 'protocol') {
         const inference = (body.inference as Record<string, unknown>) || {}
         body.inference = {

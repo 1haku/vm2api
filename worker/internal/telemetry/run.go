@@ -21,12 +21,14 @@ const (
 )
 
 type Deps struct {
-	HTTP      *Client
-	Store     *credential.Store
-	Now       func() time.Time
-	Sleep     func(ctx context.Context, d time.Duration) bool
-	RetryWait time.Duration
-	TouchPath string
+	HTTP       *Client
+	Store      *credential.Store
+	Now        func() time.Time
+	Sleep      func(ctx context.Context, d time.Duration) bool
+	RetryWait  time.Duration
+	TouchPath  string
+	ConfigPath string
+	LoadConfig func(path string) (config.TelemetryConfig, error)
 }
 
 func defaultSleep(ctx context.Context, d time.Duration) bool {
@@ -69,10 +71,10 @@ func lastActivity(path string, fallback time.Time) time.Time {
 // /v1 (or worker start) activates a 10-minute session.
 // Every 10s: event_logging/batch tengu_api_success.
 // Every 6h (first immediate): GrowthBook /api/eval.
+// worker.json telemetry is re-read when the file mtime moves, so identity,
+// betas, headers, env, and enabled flip without bouncing the process.
+// A disabled config with no file still returns immediately.
 func Run(ctx context.Context, cfg config.Config, deps Deps) error {
-	if !cfg.Telemetry.Enabled {
-		return nil
-	}
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
@@ -81,6 +83,41 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	if deps.TouchPath == "" {
 		deps.TouchPath = TouchPath(cfg)
+	}
+	tel := cfg.Telemetry
+	configPath := strings.TrimSpace(deps.ConfigPath)
+	if configPath == "" {
+		configPath = strings.TrimSpace(cfg.ConfigPath)
+	}
+	loadTelemetry := deps.LoadConfig
+	if loadTelemetry == nil {
+		loadTelemetry = config.LoadTelemetry
+	}
+	var seen time.Time
+	var loadedKey string
+	refresh := func() {
+		if configPath == "" {
+			return
+		}
+		info, err := os.Stat(configPath)
+		if err != nil {
+			return
+		}
+		if !seen.IsZero() && !info.ModTime().After(seen) {
+			return
+		}
+		next, err := loadTelemetry(configPath)
+		if err != nil {
+			log.Printf("telemetry sidecar: reload skipped")
+			seen = info.ModTime()
+			return
+		}
+		tel = next
+		seen = info.ModTime()
+	}
+	refresh()
+	if !tel.Enabled && configPath == "" {
+		return nil
 	}
 	started := deps.Now()
 	var lastBatch time.Time
@@ -93,7 +130,20 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		refresh()
 		now := deps.Now()
+		if !tel.Enabled {
+			loadedKey = ""
+			sentInit = false
+			if !deps.Sleep(ctx, tickInterval) {
+				return nil
+			}
+			continue
+		}
+		if key := telemetryKey(tel); key != loadedKey {
+			sentInit = false
+			loadedKey = key
+		}
 		activity := lastActivity(deps.TouchPath, started)
 		if now.Sub(activity) > sessionTTL {
 			if !deps.Sleep(ctx, tickInterval) {
@@ -101,7 +151,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			}
 			continue
 		}
-		identity := overlayIdentity(cfg.Telemetry.Identity, credOrEmpty(deps))
+		identity := overlayIdentity(tel.Identity, credOrEmpty(deps))
+		if strings.TrimSpace(identity.Betas) == "" {
+			identity.Betas = strings.TrimSpace(tel.Betas)
+		}
 		token := accessToken(deps)
 		if token == "" {
 			if !deps.Sleep(ctx, tickInterval) {
@@ -109,10 +162,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			}
 			continue
 		}
+		live := cfg
+		live.Telemetry = tel
 
 		if !sentInit {
 			ev := InitEvent(identity, now)
-			if err := postBatch(ctx, deps, cfg, token, ev); err != nil {
+			if err := postBatch(ctx, deps, live, token, ev); err != nil {
 				if stopOn4xx(err) {
 					return nil
 				}
@@ -124,7 +179,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		if batchOK && (lastBatch.IsZero() || now.Sub(lastBatch) >= eventBatchInterval) {
 			uptime := now.Sub(started).Seconds()
 			ev := SuccessEvent(identity, now, uptime, "")
-			if err := postBatch(ctx, deps, cfg, token, ev); err != nil {
+			if err := postBatch(ctx, deps, live, token, ev); err != nil {
 				if stopOn4xx(err) {
 					batchOK = false
 				}
@@ -134,7 +189,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		}
 
 		if evalOK && (lastGrowthbook.IsZero() || now.Sub(lastGrowthbook) >= growthbookInterval) {
-			if err := postEval(ctx, deps, cfg, token, GrowthbookEval(identity)); err != nil {
+			if err := postEval(ctx, deps, live, token, GrowthbookEval(identity)); err != nil {
 				if stopOn4xx(err) {
 					evalOK = false
 				}
@@ -147,6 +202,19 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			return nil
 		}
 	}
+}
+
+func telemetryKey(tel config.TelemetryConfig) string {
+	id := tel.Identity
+	return strings.Join([]string{
+		id.DeviceID,
+		id.UserID,
+		id.SessionID,
+		id.CLIVersion,
+		id.Source,
+		tel.Betas,
+		id.Betas,
+	}, "|")
 }
 
 func credOrEmpty(deps Deps) credential.Credential {
