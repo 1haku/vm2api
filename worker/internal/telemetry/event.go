@@ -24,13 +24,17 @@ type BatchRequest struct {
 }
 
 const (
-	eventTenguInit    = "tengu_init"
-	eventTenguSuccess = "tengu_api_success"
-	eventTypeInternal = "ClaudeCodeInternalEvent"
-	defaultUserType   = "external"
-	defaultClientType = "cli"
-	defaultTerminal   = "unknown"
-	defaultPlatform   = "linux"
+	eventTenguInit     = "tengu_init"
+	eventTenguSuccess  = "tengu_api_success"
+	eventTypeInternal  = "ClaudeCodeInternalEvent"
+	defaultUserType    = "external"
+	defaultClientType  = "cli"
+	defaultTerminal    = "unknown"
+	defaultPlatform    = "linux"
+	officialCLIVersion = "2.1.278"
+	// Claude Code 2.1.278 official main Messages order, no context-1m.
+	// Lockstep with fullClaudeCodeMimicryBetas() in claude-code-betas.mjs.
+	officialMainBetas = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,thinking-binding-controls-2026-08-01,mid-conversation-tool-changes-2026-07-01,effort-2025-11-24,fallback-credit-2026-06-01"
 )
 
 func InitEvent(id Identity, now time.Time) Event {
@@ -49,6 +53,10 @@ func namedEvent(id Identity, name string, now time.Time, uptimeSecs float64, mod
 	if entrypoint == "" {
 		entrypoint = "cli"
 	}
+	betas := strings.TrimSpace(id.Betas)
+	if betas == "" {
+		betas = officialMainBetas
+	}
 	data := map[string]any{
 		"event_name":          name,
 		"event_id":            newEventID(),
@@ -57,7 +65,7 @@ func namedEvent(id Identity, name string, now time.Time, uptimeSecs float64, mod
 		"is_interactive":      name != eventTenguInit,
 		"client_type":         defaultClientType,
 		"user_type":           defaultUserType,
-		"betas":               "",
+		"betas":               betas,
 		"agent_sdk_version":   "",
 		"additional_metadata": "",
 	}
@@ -86,7 +94,7 @@ func GrowthbookEval(id Identity) map[string]any {
 	}
 	version := strings.TrimSpace(id.CLIVersion)
 	if version == "" {
-		version = "2.1.241"
+		version = officialCLIVersion
 	}
 	platform := strings.TrimSpace(id.Platform)
 	if platform == "" {
@@ -117,6 +125,13 @@ func authBlock(id Identity) map[string]any {
 }
 
 func envBlock(id Identity) map[string]any {
+	if len(id.Env) > 0 {
+		out := make(map[string]any, len(id.Env))
+		for key, value := range id.Env {
+			out[key] = value
+		}
+		return out
+	}
 	platform := strings.TrimSpace(id.Platform)
 	if platform == "" {
 		platform = defaultPlatform
@@ -126,6 +141,9 @@ func envBlock(id Identity) map[string]any {
 		raw = platform
 	}
 	version := strings.TrimSpace(id.CLIVersion)
+	if version == "" {
+		version = officialCLIVersion
+	}
 	terminal := strings.TrimSpace(id.Terminal)
 	if terminal == "" {
 		terminal = defaultTerminal

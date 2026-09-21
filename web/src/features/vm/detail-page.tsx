@@ -55,6 +55,7 @@ import { QueryGate } from '@/components/query-gate'
 import { StatusMark } from '@/components/status-mark'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { proxiesQueryOptions } from '@/features/proxies/queries'
+import { routingQueryOptions } from '@/features/settings/queries'
 import { VmAccountTab } from '@/features/vm/detail-account-tab'
 import { VmOpsTab } from '@/features/vm/detail-ops-tab'
 import { VmOverviewTab } from '@/features/vm/detail-overview-tab'
@@ -88,6 +89,7 @@ export function VmDetailPage() {
   const proxies = useQuery(proxiesQueryOptions())
   const detail = useQuery(vmQueryOptions(id))
   const seed = useQuery(vmSeedQueryOptions(id))
+  const routing = useQuery(routingQueryOptions())
   const testModels = useQuery(testModelsQueryOptions(id))
   const [tab, setTab] = useState('overview')
   const [prompt, setPrompt] = useState('hello')
@@ -216,6 +218,9 @@ export function VmDetailPage() {
   })
   const pol =
     (seed.data?.seed_policy as Record<string, unknown> | undefined) || {}
+  const syncTelemetry =
+    (routing.data?.official_cc as { sync_telemetry?: boolean } | undefined)
+      ?.sync_telemetry !== false
   const quotaSrc = {
     utilization_5h: acc.utilization_5h ?? vm.utilization_5h,
     utilization_7d: acc.utilization_7d ?? vm.utilization_7d,
@@ -462,6 +467,7 @@ export function VmDetailPage() {
             <SeedPolicyCard
               policy={pol}
               saving={saveSeed.isPending}
+              syncTelemetry={syncTelemetry}
               onSave={(next) => saveSeed.mutate(next)}
             />
           </TabsContent>
