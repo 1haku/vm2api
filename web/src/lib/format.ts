@@ -46,6 +46,12 @@ export function fmtUsd(n: unknown, digits?: number): string {
   return `$${v.toFixed(d)}`
 }
 
+function nestedCached(usage: Record<string, unknown>, key: string): unknown {
+  const details = usage[key]
+  if (!details || typeof details !== 'object') return undefined
+  return (details as Record<string, unknown>).cached_tokens
+}
+
 export function fmtTok(
   row: Record<string, unknown> | null | undefined
 ): string {
@@ -53,7 +59,12 @@ export function fmtTok(
   const usage = (row.usage as Record<string, unknown> | undefined) || {}
   const inn = row.input_tokens ?? usage.input_tokens
   const out = row.output_tokens ?? usage.output_tokens
-  const cr = row.cache_read_tokens ?? usage.cache_read_input_tokens
+  // OpenAI/Codex rows may only carry the cache read nested under *_tokens_details.
+  const cr =
+    row.cache_read_tokens ??
+    usage.cache_read_input_tokens ??
+    nestedCached(usage, 'input_tokens_details') ??
+    nestedCached(usage, 'prompt_tokens_details')
   const cc = row.cache_creation_tokens ?? usage.cache_creation_input_tokens
   if (inn == null && out == null && cr == null && cc == null) return '—'
   let s = `${inn || 0}/${out || 0}`
