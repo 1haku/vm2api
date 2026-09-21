@@ -33,6 +33,7 @@ TARGET_VERSION=""
 ASSUME_YES=0
 NO_START=0
 SYNC_WRAP=1
+FROM_SOURCE=0
 DEFAULT_ADMIN_USER="admin"
 DEFAULT_ADMIN_PASSWORD="123456"
 WROTE_DEFAULT_PASSWORD=0
@@ -71,6 +72,7 @@ usage() {
   --yes                非交互
   --no-start           只拉代码，不 compose up
   --no-sync-wrap       升级后不自动替换并重启槽内 CLI / kernel
+  --from-source        clone 仓库并在本机构建镜像（默认拉预构建镜像）
   -h, --help           帮助
 EOF
 }
@@ -383,6 +385,46 @@ raise SystemExit(0 if d.get("ok") and failed == 0 else 1)'
   ok "槽内 wrap CLI / kernel 已同步"
 }
 
+RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}"
+
+# 有 .git 就是源码安装（本机构建），否则是镜像安装（只拉预构建镜像）。
+install_mode() {
+  if [ -d "${INSTALL_DIR}/.git" ]; then
+    echo source
+  else
+    echo image
+  fi
+}
+
+fetch_file() {
+  local tag="$1" rel="$2" dest="$3" optional="${4:-0}"
+  if curl -fsSL --connect-timeout 10 --max-time 60 "${RAW_BASE}/${tag}/${rel}" -o "${dest}.new"; then
+    mv -f "${dest}.new" "$dest"
+    return 0
+  fi
+  rm -f "${dest}.new"
+  if [ "$optional" = 1 ]; then
+    return 0
+  fi
+  err "下载失败: ${RAW_BASE}/${tag}/${rel}"
+  exit 1
+}
+
+# 镜像安装：只落部署文件，不 clone 仓库，不在本机构建。
+fetch_release_files() {
+  local tag="$1"
+  mkdir -p "${INSTALL_DIR}/deploy"
+  info "下载部署文件 ${tag} → ${INSTALL_DIR}"
+  fetch_file "$tag" docker-compose.yml "${INSTALL_DIR}/docker-compose.yml"
+  fetch_file "$tag" .env.example "${INSTALL_DIR}/.env.example"
+  fetch_file "$tag" VERSION "${INSTALL_DIR}/VERSION"
+  fetch_file "$tag" CHANGELOG.md "${INSTALL_DIR}/CHANGELOG.md" 1
+  fetch_file "$tag" deploy/install.sh "${INSTALL_DIR}/deploy/install.sh" 1
+  chmod +x "${INSTALL_DIR}/deploy/install.sh" 2>/dev/null || true
+  mkdir -p "${INSTALL_DIR}/vms" "${INSTALL_DIR}/data" "${INSTALL_DIR}/bin" \
+    "${INSTALL_DIR}/share" "${INSTALL_DIR}/src/config"
+}
+
 checkout_tag() {
   local tag="$1"
   cd "${INSTALL_DIR}"
@@ -429,16 +471,30 @@ fresh_clone() {
 }
 
 start_stack() {
-  ensure_build_context
+  local mode auto_sync_wrap log
+  mode="$(install_mode)"
   if [ "$NO_START" = 1 ]; then
     warn "--no-start：跳过 compose up"
     return
   fi
   cd "${INSTALL_DIR}"
-  info "docker compose up -d --build（只重建控制面，不 docker rm 槽）"
-  local log auto_sync_wrap
-  log="$(mktemp)"
   auto_sync_wrap="${KIN_AUTO_SYNC_WRAP:-0}"
+  if [ "$mode" = image ]; then
+    info "docker compose pull && up -d（拉预构建镜像，本机不构建）"
+    if ! compose pull; then
+      err "拉取控制面镜像失败。检查网络与 registry 可达性，或用 --from-source 走本机构建。"
+      exit 1
+    fi
+    if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d; then
+      wait_health || true
+      return
+    fi
+    err "docker compose 失败。日志: docker logs ${SERVICE_NAME}"
+    exit 1
+  fi
+  ensure_build_context
+  info "docker compose up -d --build（源码模式；只重建控制面，不 docker rm 槽）"
+  log="$(mktemp)"
   if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d --build >"$log" 2>&1; then
     cat "$log"
     rm -f "$log"
@@ -479,9 +535,15 @@ cmd_install() {
   tag="${TARGET_VERSION:-$(latest_release_tag)}"
   tag="$(normalize_tag "$tag")"
   info "目标版本 ${tag}"
-  fresh_clone "$tag"
-  ensure_git_safe
-  ensure_env
+  if [ "$FROM_SOURCE" = 1 ] || [ -d "${INSTALL_DIR}/.git" ]; then
+    fresh_clone "$tag"
+    ensure_git_safe
+    ensure_env
+  else
+    fetch_release_files "$tag"
+    ensure_env
+    env_set VM2API_IMAGE_TAG "$tag"
+  fi
   start_stack
   ok "安装完成  ${INSTALL_DIR}  @ $(local_version)"
   if [ "$NO_START" = 0 ] && [ "$SYNC_WRAP" = 1 ]; then
@@ -496,7 +558,7 @@ cmd_upgrade() {
   need_root
   require_cmds
   print_banner
-  if [ ! -d "${INSTALL_DIR}/.git" ]; then
+  if [ ! -f "${INSTALL_DIR}/docker-compose.yml" ]; then
     err "未安装。先: curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash"
     exit 1
   fi
@@ -506,11 +568,17 @@ cmd_upgrade() {
   tag="$(normalize_tag "$tag")"
   info "当前 ${current}  →  目标 ${tag}"
   if [ "v${current}" = "$tag" ]; then
-    ok "已经是 ${tag}，仍会重建控制面镜像以对齐仓内文件"
+    ok "已经是 ${tag}，仍会对齐镜像与部署文件"
   fi
-  checkout_tag "$tag"
-  ensure_git_safe
-  ensure_env
+  if [ "$(install_mode)" = source ]; then
+    checkout_tag "$tag"
+    ensure_git_safe
+    ensure_env
+  else
+    fetch_release_files "$tag"
+    ensure_env
+    env_set VM2API_IMAGE_TAG "$tag"
+  fi
   echo ""
   info "本版 changelog"
   print_changelog_slice "${INSTALL_DIR}/CHANGELOG.md" "$current" "$(version_of_tag "$tag")" || true
@@ -638,6 +706,10 @@ while [ $# -gt 0 ]; do
       ;;
     --no-sync-wrap)
       SYNC_WRAP=0
+      shift
+      ;;
+    --from-source)
+      FROM_SOURCE=1
       shift
       ;;
     -h|--help)

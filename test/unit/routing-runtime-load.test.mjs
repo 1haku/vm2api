@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createRoutingRuntime } from '../../src/lib/admin/routing-runtime.mjs'
+import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
 
 function runtimeFor(file) {
   return createRoutingRuntime({ routingConfigPath: file })
@@ -149,6 +150,49 @@ test('persistRoutingPatch writes compatibility cache_ttl into Claude kernel conf
 
     const kernel = JSON.parse(fs.readFileSync(path.join(vms, 'vm-claude', 'run', 'kernel.json'), 'utf8'))
     assert.equal(kernel.default_cache_ttl, '5m')
+    assert.equal(fs.existsSync(path.join(vms, 'vm-codex', 'run', 'kernel.json')), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('persistRoutingPatch writes persona_preset into Claude kernel system_layout', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-persona-kernel-'))
+  const vms = path.join(root, 'vms')
+  const routingFile = path.join(root, 'routing.json')
+  fs.mkdirSync(vms, { recursive: true })
+  fs.writeFileSync(path.join(vms, 'vm-claude.json'), JSON.stringify({ id: 'vm-claude', claude: {} }))
+  fs.writeFileSync(
+    path.join(vms, 'vm-codex.json'),
+    JSON.stringify({ id: 'vm-codex', platform: 'openai', family: 'codex', codex: {} }),
+  )
+  const routingConfig = {
+    compatibility: { cache_ttl: '1h', persona_preset: 'official_full' },
+    concurrency: {},
+    tiers: {},
+  }
+  fs.writeFileSync(routingFile, JSON.stringify(routingConfig))
+  try {
+    const runtime = createRoutingRuntime({
+      cfg: { paths: { project: root } },
+      routingConfigPath: routingFile,
+      routingConfig,
+      stickyRouter: { reloadConfig() {} },
+      accountQuota: {
+        reloadConfig() {},
+        applyTierConcurrency() {},
+        applyTierRpm() {},
+        repo: { get: () => null },
+      },
+      requestLog: { setConfig() {} },
+    })
+
+    runtime.persistRoutingPatch({ compatibility: { persona_preset: 'zero' } })
+
+    const kernel = JSON.parse(fs.readFileSync(path.join(vms, 'vm-claude', 'run', 'kernel.json'), 'utf8'))
+    assert.equal(kernel.system_layout, 'zero')
+    assert.equal(kernel.default_cache_ttl, '1h')
+    assert.equal(kernel.cli_version, OFFICIAL_CLI_VERSION)
     assert.equal(fs.existsSync(path.join(vms, 'vm-codex', 'run', 'kernel.json')), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
