@@ -217,7 +217,7 @@ function canRetrySameAccount(policy, used, config, hopMs) {
 }
 
 function applyCooldown(scheduler, selected, policy, model, stickyRouter = null, { diagnosticPin = false } = {}) {
-  if (policy?.action !== 'continue-and-cooldown' && policy?.action !== 'disable') return
+  if (policy?.action !== 'continue-and-cooldown' && policy?.action !== 'disable' && policy?.action !== 'pause') return
   // VM / master pin is a diagnostic. A 401 from the wrong inbound class
   // must not forever-park a Setup Token that has no refresh by design.
   if (diagnosticPin && (policy.reason === 'oauth_no_refresh' || policy.reason === 'oauth_revoked')) {
@@ -235,9 +235,9 @@ function applyCooldown(scheduler, selected, policy, model, stickyRouter = null, 
         ? 'disabled'
         : 'cooldown',
   })
-  // Account-level cooldown must drop every conversation pin, otherwise the
-  // next request waits on the cooling slot and never rotates.
-  if (policy.scope === 'account') {
+  // A 5xx pause keeps the conversation pin. Dropping it is how one session
+  // lands on the next VM. Auth and quota cooldowns still rotate.
+  if (policy.scope === 'account' && policy.action !== 'pause') {
     stickyRouter?.unbindByAccount?.({
       accountId: selected?.accountId,
       vmId: selected?.vmId,
