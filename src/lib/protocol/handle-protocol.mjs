@@ -428,6 +428,13 @@ export function createHandleProtocol(deps) {
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, errorResult.status, errorResult.body)
     }
+    // Codex returns before conversion. Scan here so distill / refusal never reach a slot.
+    if (applyDistillGuard({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
+      return
+    }
+    if (applyRefusalGuard({ inbound, body: ctx.body, logBag, requestId: logCtx.request_id, res })) {
+      return
+    }
     if (platform.platform === 'openai') {
       const routing = getRouting() || {}
       const codexSticky = {

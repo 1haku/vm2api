@@ -31,11 +31,13 @@ export function DistillCard() {
   const q = useQuery(distillQueryOptions())
   const [draft, setDraft] = useState<DistillRules | null>(null)
   const [needlesText, setNeedlesText] = useState('')
+  const [patternsText, setPatternsText] = useState('')
   const [fpText, setFpText] = useState('')
   useEffect(() => {
     if (!q.data) return
     setDraft({ ...q.data, skip_zero: q.data.skip_zero !== false })
     setNeedlesText(q.data.needles.join('\n'))
+    setPatternsText((q.data.patterns || []).join('\n'))
     setFpText(q.data.fingerprints.join('\n---\n'))
   }, [q.data])
 
@@ -46,6 +48,7 @@ export function DistillCard() {
         body: JSON.stringify({
           ...draft,
           needles: linesOf(needlesText),
+          patterns: linesOf(patternsText),
           fingerprints: fingerprintsOf(fpText),
         }),
       }),
@@ -53,6 +56,7 @@ export function DistillCard() {
       toast.success('已保存蒸馏拦截')
       setDraft(data)
       setNeedlesText(data.needles.join('\n'))
+      setPatternsText((data.patterns || []).join('\n'))
       setFpText(data.fingerprints.join('\n---\n'))
       await qc.invalidateQueries({ queryKey: distillQueryOptions().queryKey })
     },
@@ -70,6 +74,7 @@ export function DistillCard() {
     JSON.stringify({
       ...draft,
       needles: linesOf(needlesText),
+      patterns: linesOf(patternsText),
       fingerprints: fingerprintsOf(fpText),
     }) !== JSON.stringify(q.data)
   const patch = (next: Partial<DistillRules>) => setDraft({ ...draft, ...next })
@@ -93,7 +98,7 @@ export function DistillCard() {
       <CardContent className='divide-y'>
         <SettingRow
           label='拦截蒸馏请求'
-          desc='命中后直接 403，不打凭证、不 hop 槽位'
+          desc='命中后返回下面配置的错误码，默认 403 distill_blocked。不打凭证、不 hop 槽位'
         >
           <Switch
             checked={draft.enabled}
@@ -102,7 +107,7 @@ export function DistillCard() {
         </SettingRow>
         <SettingRow
           label='官方 Claude Code 放行'
-          desc='官方客户端（含工具、长 system）不拦。走代理的蒸馏请求仍拦'
+          desc='官方客户端不拦普通针。收割包装和蒸馏/思维链正则仍然拦截'
         >
           <Switch
             checked={draft.skip_official}
@@ -196,6 +201,20 @@ export function DistillCard() {
             className='min-h-36 font-mono text-xs'
             value={needlesText}
             onChange={(e) => setNeedlesText(e.target.value)}
+          />
+        </div>
+        <div className='space-y-1.5 py-3'>
+          <Label htmlFor='distill-patterns'>硬正则（每行一条）</Label>
+          <p className='text-xs text-muted-foreground'>
+            蒸馏和提取思维链。官方、0
+            注入也拦。删掉内置规则保存后会补回。不要写单独的
+            distill，会误伤化学题。
+          </p>
+          <Textarea
+            id='distill-patterns'
+            className='min-h-36 font-mono text-xs'
+            value={patternsText}
+            onChange={(e) => setPatternsText(e.target.value)}
           />
         </div>
         <div className='space-y-1.5 py-3'>

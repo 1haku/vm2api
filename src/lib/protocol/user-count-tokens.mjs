@@ -3,6 +3,16 @@
  * Peek only — never bind/unbind sticky or bill tokens_in.
  */
 import { makeError, rewritePoolErrorForClient, ErrorType, ErrorCode } from '../core/errors.mjs'
+import { detectDistill, distillBlockError } from '../core/distill-detect.mjs'
+import { isRefusalGuardEnabled, refusalFingerprint, refusalGuardError } from '../core/refusal-guard.mjs'
+import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
+import { SettingsRepo } from '../db/repos/settings-repo.mjs'
+import { readRoutingConfigFile } from '../core/config.mjs'
+import {
+  detectProxiedOfficialCcFromRouting,
+  isOfficialClaudeCodeTraffic,
+  isProxiedOfficialClaudeCode,
+} from '../identity/crs-persona.mjs'
 import { canCountTokens, canOfficialUsage, credentialModeOfVm, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
@@ -12,7 +22,6 @@ import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { listQuotaFromHeaders, publicUsageWindow, usageWindowsEmpty } from '../pool/quota-window.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import { detectInboundPlatform } from './platform-detect.mjs'
-
 export function countTokensUnsupportedError() {
   return makeError({
     type: ErrorType.INVALID_REQUEST,
@@ -97,7 +106,6 @@ export async function peekCurrentAccount({
     ownerScope: ownerScopeFromRequest(req, usersRepo),
   })
 }
-
 function poolFail(peeked) {
   return rewritePoolErrorForClient(
     makeError({
@@ -107,6 +115,60 @@ function poolFail(peeked) {
       status: 503,
     }),
   )
+}
+
+function distillContext(req, inbound) {
+  let routing = null
+  try {
+    routing = readRoutingConfigFile()
+  } catch {
+    routing = null
+  }
+  const official =
+    isOfficialClaudeCodeTraffic(req?.headers || {}, inbound) ||
+    (detectProxiedOfficialCcFromRouting(routing || {}) && isProxiedOfficialClaudeCode(inbound))
+  const inject = String(routing?.compatibility?.persona_inject || '')
+    .trim()
+    .toLowerCase()
+  const preset = String(routing?.compatibility?.persona_preset || '')
+    .trim()
+    .toLowerCase()
+  return { official, zeroInject: inject === 'zero' || preset === 'zero' }
+}
+
+function refusalEnabled(deps) {
+  try {
+    const settings = deps.settings || new SettingsRepo()
+    return isRefusalGuardEnabled((key, fallback) => settings.get(key, fallback))
+  } catch {
+    return isRefusalGuardEnabled()
+  }
+}
+
+function refusalRepo(deps) {
+  if (deps.refusalGuards) return deps.refusalGuards
+  try {
+    return new RefusalGuardsRepo()
+  } catch {
+    return null
+  }
+}
+
+/** Distill and refusal-cache hits return before peek or worker hop. */
+export function blockCountTokensBeforeHop(req, inbound, deps = {}) {
+  const hit = detectDistill({ inbound, body: inbound, ...distillContext(req, inbound) }, deps.cfg?.distill)
+  if (hit.action === 'block') return distillBlockError(deps.cfg?.distill)
+  if (!refusalEnabled(deps)) return null
+  const repo = refusalRepo(deps)
+  if (!repo) return null
+  const row = repo.get(refusalFingerprint(inbound, inbound))
+  if (!row) return null
+  try {
+    repo.hit(row.fingerprint)
+  } catch {
+    /* counter is best-effort; the response still must not hop */
+  }
+  return refusalGuardError()
 }
 
 export async function handleUserCountTokens(req, res, deps) {
@@ -130,6 +192,8 @@ export async function handleUserCountTokens(req, res, deps) {
   }
   const parsed = parseCountTokensBody(inbound)
   if (!parsed.ok) return json(res, parsed.error.status, parsed.error.body)
+  const blocked = blockCountTokensBeforeHop(req, parsed.body, deps)
+  if (blocked) return json(res, blocked.status, blocked.body)
   const peeked = await peekCurrentAccount({
     poolScheduler: typeof deps.getPoolScheduler === 'function' ? deps.getPoolScheduler() : deps.poolScheduler,
     stickyRouter: deps.stickyRouter,
