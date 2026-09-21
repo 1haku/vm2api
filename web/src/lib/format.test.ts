@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pct, remainPct, usedPctOf } from '@/lib/format'
+import { fmtTok, pct, remainPct, usedPctOf } from '@/lib/format'
 
 describe('usedPctOf', () => {
   it('prefers Codex used_percent and does not scale it', () => {
@@ -44,5 +44,36 @@ describe('pct', () => {
 
   it('treats 0-1 utilization as a fraction', () => {
     expect(pct(0.12)).toBe(12)
+  })
+})
+
+describe('fmtTok', () => {
+  it('reads the OpenAI cache read from nested token details', () => {
+    expect(
+      fmtTok({
+        input_tokens: 120,
+        output_tokens: 9,
+        usage: { input_tokens_details: { cached_tokens: 8 } },
+      })
+    ).toBe('120/9 · c8/0')
+    expect(
+      fmtTok({
+        input_tokens: 120,
+        output_tokens: 9,
+        usage: { prompt_tokens_details: { cached_tokens: 5 } },
+      })
+    ).toBe('120/9 · c5/0')
+  })
+
+  it('keeps the top-level column authoritative', () => {
+    expect(
+      fmtTok({
+        input_tokens: 120,
+        output_tokens: 9,
+        cache_read_tokens: 8,
+        cache_creation_tokens: 2,
+        usage: { input_tokens_details: { cached_tokens: 999 } },
+      })
+    ).toBe('120/9 · c8/2')
   })
 })
