@@ -97,3 +97,44 @@ test('clearVmCooldown drops runtime leftover and usage 429 flag', () => {
   assert.ok(unbound.some((item) => item.accountId === 'acct-11' && item.vmId === 'vm-11'))
   assert.equal(woken, 1)
 })
+
+test('clearVmCooldown drops the on-disk park and refreshes a rejected 5h window', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cool-'))
+  const rec = seedVm(project)
+  rec.claude.temp_unschedulable_until = Date.now() + 60_000
+  rec.claude.temp_unschedulable_reason = 'quota_5h_header'
+  rec.temp_unschedulable_until = rec.claude.temp_unschedulable_until
+  rec.temp_unschedulable_reason = 'quota_5h_header'
+  fs.writeFileSync(path.join(project, 'vms', 'vm-11.json'), JSON.stringify(rec))
+  const accounts = new Map()
+  accounts.set('acct-11', {
+    account_id: 'acct-11',
+    vm_id: 'vm-11',
+    unified: {
+      headers: {
+        '5h': { utilization: 1, status: 'rejected', reset: '1790032800' },
+      },
+    },
+  })
+  const out = clearVmCooldown({
+    cfg: { paths: { project } },
+    id: 'vm-11',
+    accountQuota: {
+      repo: {
+        get: (id) => accounts.get(id) || null,
+        save: (row) => {
+          accounts.set(row.account_id, row)
+          return row
+        },
+      },
+    },
+  })
+  const saved = JSON.parse(fs.readFileSync(path.join(project, 'vms', 'vm-11.json'), 'utf8'))
+  assert.equal(out.ok, true)
+  assert.equal(out.data.refreshed, true)
+  assert.equal(out.data.headers_refreshed, 1)
+  assert.equal(out.data.temp_unschedulable_reason, null)
+  assert.equal(saved.claude.temp_unschedulable_reason, undefined)
+  assert.equal(accounts.get('acct-11').unified.headers['5h'].status, 'allowed')
+  assert.equal(accounts.get('acct-11').unified.headers['5h'].stale_reason, 'operator_clear')
+})

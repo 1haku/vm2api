@@ -18,6 +18,7 @@ import {
   isCodexVm,
   setVmSchedulable,
 } from '../vm/vm-registry.mjs'
+import { clearRecoverableVmCooldown } from '../oauth/oauth-credentials.mjs'
 import { resolveInferenceEngine, resolveSessionSlots, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
 import { queryOpenaiQuota, resetOpenaiQuota } from '../oauth/openai-quota.mjs'
@@ -156,36 +157,81 @@ export function clearVmCooldown({ cfg, accountQuota, stickyRouter = null, poolSc
   const repo = accountQuota?.runtimeRepo
   let runtimeCleared = 0
   let usageFlagCleared = 0
+  let headersRefreshed = 0
   for (const key of keys) {
     try {
       if (repo?.clearAccountCooldown?.(key, { vmId: vm.id })) runtimeCleared += 1
     } catch {}
     try {
       const row = accountQuota?.repo?.get?.(key)
-      if (row?.unified && (row.unified.usage_rate_limited_until || row.unified.last_probe?.rate_limited)) {
+      if (!row?.unified) continue
+      let changed = false
+      if (row.unified.usage_rate_limited_until || row.unified.last_probe?.rate_limited) {
         delete row.unified.usage_rate_limited_until
         if (row.unified.last_probe?.rate_limited) {
           row.unified.last_probe = { ...row.unified.last_probe, rate_limited: false }
         }
-        accountQuota.repo.save(row)
+        changed = true
         usageFlagCleared += 1
       }
+      if (releaseStaleHeaderBlock(row.unified)) {
+        changed = true
+        headersRefreshed += 1
+      }
+      if (changed) accountQuota.repo.save(row)
     } catch {}
     try {
       stickyRouter?.unbindByAccount?.({ accountId: key, vmId: vm.id })
     } catch {}
   }
+  const vmPath = path.join(cfg.paths.project, 'vms', `${vm.id}.json`)
   try {
-    poolScheduler?.notifyCapacity?.()
+    clearRecoverableVmCooldown(vmPath)
   } catch {}
+  const live = getVm(cfg.paths.project, vm.id) || vm
+  try {
+    poolScheduler?.syncQuotaSchedule?.(live, acc)
+  } catch {}
+  try {
+    poolScheduler?.notifyCapacity?.(acc?.account_id || vm.claude?.account_uuid || vm.id)
+  } catch {}
+  const refreshed = getVm(cfg.paths.project, vm.id) || live
   return ok({
     id: vm.id,
     cleared: true,
+    refreshed: true,
     cooldown_until: null,
     cooldown_reason: null,
+    temp_unschedulable_until: refreshed.temp_unschedulable_until || refreshed.claude?.temp_unschedulable_until || null,
+    temp_unschedulable_reason: refreshed.temp_unschedulable_reason || refreshed.claude?.temp_unschedulable_reason || null,
     runtime_cleared: runtimeCleared,
     usage_flag_cleared: usageFlagCleared,
+    headers_refreshed: headersRefreshed,
   })
+}
+
+/** A stored 100% / rejected window would re-park the slot on the next schedule. */
+function releaseStaleHeaderBlock(unified) {
+  const headers = unified?.headers
+  if (!headers || typeof headers !== 'object') return false
+  let changed = false
+  for (const key of ['5h', '7d']) {
+    const window = headers[key]
+    if (!window || typeof window !== 'object') continue
+    const status = String(window.status || '').toLowerCase()
+    const util = Number(window.utilization)
+    const blocked = status === 'rejected' || status === 'rate_limited' || (Number.isFinite(util) && util >= 1)
+    if (!blocked) continue
+    headers[key] = {
+      utilization: 0,
+      status: 'allowed',
+      reset: window.reset ?? null,
+      stale: true,
+      stale_reason: 'operator_clear',
+    }
+    changed = true
+  }
+  return changed
 }
 
 /**
