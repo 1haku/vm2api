@@ -98,7 +98,7 @@ unixTest('callGoWorker sends envelope over authenticated Unix socket', async () 
   }
 })
 
-unixTest('streamGoWorker forwards SSE and audits terminal state', async () => {
+unixTest('streamGoWorker rejects terminal-only SSE even when worker reports verified', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.setHeader('trailer', 'x-kin-terminal-state')
@@ -114,16 +114,16 @@ unixTest('streamGoWorker forwards SSE and audits terminal state', async () => {
       body: { model: 'claude-test', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: (line) => lines.push(line),
     })
-    assert.equal(result.ok, true)
-    assert.equal(result.terminalState, 'verified')
-    assert.equal(result.committed, true)
-    assert.ok(lines.some((line) => line.includes('message_stop')))
+    assert.equal(result.ok, false)
+    assert.equal(result.terminalState, 'incomplete')
+    assert.equal(result.committed, false)
+    assert.equal(lines.length, 0)
   } finally {
     await fx.close()
   }
 })
 
-unixTest('streamGoWorker parses usage/model/stop_reason trailers and measures ttft', async () => {
+unixTest('streamGoWorker requires visible output in addition to stop_reason trailers', async () => {
   const fx = await fixture((req, res) => {
     assert.equal(req.headers.te, 'trailers')
     res.setHeader('content-type', 'text/event-stream')
@@ -132,13 +132,7 @@ unixTest('streamGoWorker parses usage/model/stop_reason trailers and measures tt
     res.write('data: {"type":"message_stop"}\n\n')
     res.addTrailers({
       'x-kin-terminal-state': 'verified',
-      'x-kin-usage': JSON.stringify({
-        input_tokens: 12,
-        output_tokens: 4,
-        cache_read_input_tokens: 3,
-        cache_creation_input_tokens: 5,
-        cache_creation: { ephemeral_5m_input_tokens: 5 },
-      }),
+      'x-kin-usage': JSON.stringify({ input_tokens: 12, output_tokens: 0 }),
       'x-kin-model': 'claude-haiku-4-5-20251001',
       'x-kin-stop-reason': 'end_turn',
     })
@@ -150,10 +144,9 @@ unixTest('streamGoWorker parses usage/model/stop_reason trailers and measures tt
       body: { model: 'claude-haiku-4-5-20251001', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.ok, true)
+    assert.equal(result.ok, false)
+    assert.equal(result.terminalState, 'incomplete')
     assert.equal(result.usage.input_tokens, 12)
-    assert.equal(result.usage.cache_read_input_tokens, 3)
-    assert.equal(result.usage.cache_creation.ephemeral_5m_input_tokens, 5)
     assert.equal(result.model, 'claude-haiku-4-5-20251001')
     assert.equal(result.stopReason, 'end_turn')
     assert.ok(result.ttftMs != null && result.ttftMs >= 0)
@@ -162,7 +155,7 @@ unixTest('streamGoWorker parses usage/model/stop_reason trailers and measures tt
   }
 })
 
-unixTest('streamGoWorker unpacks wrap Extra rate-limit trailers', async () => {
+unixTest('streamGoWorker keeps rate-limit trailers on an incomplete response', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.setHeader('trailer', 'x-kin-terminal-state, x-kin-rate-limit-headers')
@@ -183,7 +176,8 @@ unixTest('streamGoWorker unpacks wrap Extra rate-limit trailers', async () => {
       body: { model: 'claude-sonnet-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.ok, true)
+    assert.equal(result.ok, false)
+    assert.equal(result.terminalState, 'incomplete')
     assert.equal(result.headers['anthropic-ratelimit-unified-5h-utilization'], '0.81')
     assert.equal(result.headers['set-cookie'], undefined)
   } finally {
@@ -197,6 +191,8 @@ unixTest('streamGoWorker scrapes usage from SSE when trailers are missing', asyn
     res.write(
       'data: {"type":"message_start","message":{"model":"claude-sonnet-5","usage":{"input_tokens":80,"cache_read_input_tokens":20}}}\n\n',
     )
+    res.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}\n\n')
+
     res.write('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}\n\n')
     res.write('data: {"type":"message_stop"}\n\n')
     res.end()
@@ -247,11 +243,11 @@ unixTest('streamGoWorker merges SSE cache details into a totals-only usage trail
   }
 })
 
-test('message_start is not a downstream commit', () => {
+test('terminal metadata is not a downstream commit', () => {
   assert.equal(isDownstreamCommitEvent({ type: 'message_start', message: {} }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'error', error: { message: 'Connection error' } }), false)
-  assert.equal(isDownstreamCommitEvent({ type: 'message_stop' }), true)
-  assert.equal(isDownstreamCommitEvent({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }), true)
+  assert.equal(isDownstreamCommitEvent({ type: 'message_stop' }), false)
+  assert.equal(isDownstreamCommitEvent({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'message_delta', delta: {} }), false)
   assert.equal(
     isDownstreamCommitEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } }),

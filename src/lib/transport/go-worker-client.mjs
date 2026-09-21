@@ -177,13 +177,13 @@ function mergeUsage(current, next) {
   return out
 }
 
-/** First user-visible token or a real terminal — not message_start / HTTP 200. */
+/** First user-visible assistant output — never transport/terminal metadata alone. */
 export function isDownstreamCommitEvent(event) {
   if (!event || typeof event !== 'object') return false
   const t = String(event.type || '')
   if (t === 'error' || t === 'message_start' || t === 'kin_response_headers') return false
-  if (t === 'message_stop' || t === 'response.completed' || t === 'response.done') return true
-  if (t === 'message_delta') return !!event.delta?.stop_reason
+  if (t === 'message_stop' || t === 'response.completed' || t === 'response.done' || t === 'message_delta') return false
+
   if (t === 'content_block_delta') {
     const d = event.delta || {}
     return !!(d.text || d.thinking || d.partial_json || d.refusal || d.signature)
@@ -450,7 +450,6 @@ export async function streamGoWorker({
     }
     let buffer = ''
     let lastError = null
-    let sawTerminal = false
     let dataBuf = ''
     let sseUsage = null
     let sseModel = null
@@ -488,8 +487,6 @@ export async function streamGoWorker({
       if (event.type === 'kin_response_headers' && event.headers && typeof event.headers === 'object') {
         sseRateHeaders = { ...sseRateHeaders, ...event.headers }
       }
-      if (event.type === 'message_stop' || event.type === 'response.completed' || event.type === 'response.done')
-        sawTerminal = true
       if (event.type === 'error') lastError = event
       const evUsage = usageFromSseEvent(event)
       if (evUsage) sseUsage = mergeUsage(sseUsage, evUsage)
@@ -562,13 +559,13 @@ export async function streamGoWorker({
       const stopReason = meta.stopReason || sseStop || assembled?.stop_reason || null
       const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason })
       if (!committed && complete) await flushCommit()
-      const headerState = trailers['x-kin-terminal-state'] || headers['x-kin-terminal-state']
-      const terminalState = complete ? 'verified' : headerState || (sawTerminal ? 'verified' : 'incomplete')
+      const terminalState = complete ? 'verified' : 'incomplete'
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
       return {
-        ok: response.statusCode === 200 && !lastError && (terminalState === 'verified' || complete),
+        ok: response.statusCode === 200 && !lastError && complete,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
+
         body: lastError || assembled || { type: 'message', role: 'assistant', content: [] },
         headers: rateHeaders,
         // Trailer stays authoritative, but it may carry totals only (Codex/Responses hops).
