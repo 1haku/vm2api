@@ -22,6 +22,7 @@ const CAPTURE_BETAS = [
   'context-management-2025-06-27',
   'prompt-caching-scope-2026-01-05',
   'mid-conversation-system-2026-04-07',
+  'thinking-binding-controls-2026-08-01',
   'mid-conversation-tool-changes-2026-07-01',
   'effort-2025-11-24',
   'fallback-credit-2026-06-01',

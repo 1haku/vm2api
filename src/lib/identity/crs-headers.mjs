@@ -39,6 +39,7 @@ const KEEP = [
   'x-claude-code-request-class',
   'x-claude-code-agent-type',
   'x-claude-code-prev-tool-durations',
+  'x-claude-code-compaction',
   'x-claude-code-context-compacted',
   'accept-language',
   'sec-fetch-mode',
@@ -63,6 +64,7 @@ const DEVICE_HEADER_KEYS = [
   'x-claude-code-request-class',
   'x-claude-code-agent-type',
   'x-claude-code-prev-tool-durations',
+  'x-claude-code-compaction',
   'x-claude-code-context-compacted',
   'accept-language',
   'sec-fetch-mode',
@@ -71,6 +73,7 @@ const CONDITIONAL_HEADERS = [
   'x-claude-code-request-class',
   'x-claude-code-agent-type',
   'x-claude-code-prev-tool-durations',
+  'x-claude-code-compaction',
   'x-claude-code-context-compacted',
 ]
 
