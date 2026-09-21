@@ -440,7 +440,8 @@ export function createHandleProtocol(deps) {
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, errorResult.status, errorResult.body)
     }
-    // Codex returns before conversion. Scan here so distill / refusal never reach a slot.
+    // Codex returns before conversion. Distill does not apply to OpenAI platform models.
+    // Refusal still scans here so a cached refusal never reaches a slot.
     if (applyDistillGuard({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
       return
     }
