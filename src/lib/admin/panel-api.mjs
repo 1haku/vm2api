@@ -18,7 +18,7 @@ import {
   isCodexVm,
   setVmSchedulable,
 } from '../vm/vm-registry.mjs'
-import { resolveInferenceEngine, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
+import { resolveInferenceEngine, resolveSessionSlots, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
 import { queryOpenaiQuota, resetOpenaiQuota } from '../oauth/openai-quota.mjs'
 import { canOfficialUsage, credentialModeOfVm } from '../oauth/credential-mode.mjs'
@@ -1340,6 +1340,8 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     seed_policy: v.seed_policy || null,
     max_concurrency: v.max_concurrency,
     max_rpm: acc?.max_rpm ?? v.max_rpm ?? 0,
+    session_slots: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
+    session_slots_override: isCodex ? false : v.session_slots_override === true,
     rpm: acc?.rpm ?? 0,
     allowed_models: Array.isArray(v.allowed_models) ? v.allowed_models : null,
     weight: v.weight ?? 1,

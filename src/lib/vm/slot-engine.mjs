@@ -16,6 +16,26 @@ export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero'])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
 
+export const KERNEL_NATIVE_SLOT_COUNT = 20
+export const SESSION_SLOT_MIN = 1
+export const SESSION_SLOT_MAX = KERNEL_NATIVE_SLOT_COUNT
+
+export function normalizeSessionSlots(value, fallback = SESSION_SLOT_MAX) {
+  const fallbackValue = Number(fallback)
+  const safeFallback =
+    Number.isFinite(fallbackValue) && fallbackValue >= SESSION_SLOT_MIN && fallbackValue <= SESSION_SLOT_MAX
+      ? Math.round(fallbackValue)
+      : SESSION_SLOT_MAX
+  if (value == null || value === '') return safeFallback
+  const n = Number(value)
+  if (!Number.isFinite(n)) return safeFallback
+  return Math.min(SESSION_SLOT_MAX, Math.max(SESSION_SLOT_MIN, Math.round(n)))
+}
+
+export function resolveSessionSlots(vm, routing = {}) {
+  return normalizeSessionSlots(vm?.policy?.sessionSlots ?? vm?.session_slots, routing?.inference?.session_slots)
+}
+
 export function normalizeInferenceEngine(value, { inherit = false } = {}) {
   const raw = String(value ?? '')
     .trim()
@@ -74,6 +94,7 @@ export function normalizeInferenceConfig(raw = {}) {
     eager_start: optionalBool(raw.eager_start, true),
     health_ttl_ms: optionalTtlMs(raw.health_ttl_ms, 2000),
     tcp_nodelay: optionalBool(raw.tcp_nodelay, true),
+    session_slots: normalizeSessionSlots(raw.session_slots),
   }
 }
 
@@ -255,6 +276,12 @@ export function validateInferenceRoutingPatch(body = {}) {
     typeof body.inference.tcp_nodelay !== 'boolean'
   ) {
     errors.push('inference.tcp_nodelay 必须是布尔值')
+  }
+  if (Object.prototype.hasOwnProperty.call(body.inference, 'session_slots')) {
+    const n = Number(body.inference.session_slots)
+    if (!Number.isInteger(n) || n < SESSION_SLOT_MIN || n > SESSION_SLOT_MAX) {
+      errors.push(`inference.session_slots 必须是 ${SESSION_SLOT_MIN}–${SESSION_SLOT_MAX} 的整数`)
+    }
   }
   if (Object.prototype.hasOwnProperty.call(body.inference, 'health_ttl_ms')) {
     const n = Number(body.inference.health_ttl_ms)

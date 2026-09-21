@@ -40,6 +40,7 @@ import { KernelFeatTags } from '@/features/vm/kernel-feat-tags'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
 import { OpenaiQuotaPanel } from '@/features/vm/openai-quota-panel'
 import { proxyHealthOf } from '@/features/vm/proxy-health'
+import { SessionSlotsEditor } from '@/features/vm/session-slots-editor'
 
 type Props = {
   vm: Vm
@@ -337,6 +338,16 @@ export function VmStatusBoard(props: Props) {
                 <ConcRpmEditor vm={vm} />
               </div>
             </Field>
+            {isCodexVm(vm) ? null : (
+              <Field label='Session 槽位' compact>
+                <div className='flex items-center gap-1'>
+                  <span className='tabular-nums'>
+                    {Number(vm.session_slots ?? 20)}/20
+                  </span>
+                  <SessionSlotsEditor vm={vm} />
+                </div>
+              </Field>
+            )}
             {isCodexVm(vm) ? null : (
               <>
                 <Field label='5h 重置' compact>

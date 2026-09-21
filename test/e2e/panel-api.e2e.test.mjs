@@ -126,6 +126,29 @@ test('panel VM schedule level validates, persists, and returns to auto', async (
   }
 })
 
+test('panel session slots validate, persist, and stay independent from concurrency', async () => {
+  const gw = await startGateway()
+  try {
+    const vmPath = path.join(gw.project, 'vms', 'vm-sim-01.json')
+    const before = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+    const invalid = await api(gw, 'PATCH', '/api/panel/vms/vm-sim-01', { body: { session_slots: 21 } })
+    assert.equal(invalid.status, 400, invalid.text)
+
+    const updated = await api(gw, 'PATCH', '/api/panel/vms/vm-sim-01', { body: { session_slots: 4 } })
+    assert.equal(updated.status, 200, updated.text)
+    assert.equal(updated.json.data.vm.session_slots, 4)
+    assert.equal(updated.json.data.vm.session_slots_override, true)
+
+    const saved = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+    assert.equal(saved.policy.sessionSlots, 4)
+    assert.equal(saved.policy.sessionSlotsOverride, true)
+    assert.equal(saved.policy.maxConcurrency, before.policy.maxConcurrency)
+    assert.equal(saved.policy.maxRpm, before.policy.maxRpm)
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('sessionKey import without SOCKS5 is rejected', async () => {
   const gw = await startGateway()
   try {

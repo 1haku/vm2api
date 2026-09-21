@@ -34,6 +34,7 @@ import { slotAllowsModel } from './slot-model-gate.mjs'
 import { resolveCredentialScheduleLevel } from './credential-weight.mjs'
 import { PLATFORM_SCOPE, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { rustKernelBusy, rustKernelProcessUp, rustKernelReachable } from '../transport/rust-kernel-client.mjs'
+import { resolveSessionSlots } from '../vm/slot-engine.mjs'
 
 const WAIT_TIMEOUT_MIN_MS = 1000
 const WAIT_TIMEOUT_MAX_MS = 120000
@@ -117,6 +118,10 @@ function parseConcurrency(value, fallback) {
 
 function maxConcurrencyOf(vm, fallback = 2) {
   return parseConcurrency(vm?.policy?.maxConcurrency, fallback)
+}
+
+function sessionSlotsOf(vm, fallback = 20) {
+  return resolveSessionSlots(vm, { inference: { session_slots: fallback } })
 }
 
 function vmTierOf(vm) {
@@ -369,6 +374,7 @@ export class PoolScheduler {
         weight: weightOf(vm, state),
         inflight,
         maxConcurrency,
+        sessionSlots: sessionSlotsOf(vm, this.config.default_session_slots),
         loadRatio: inflight / maxConcurrency,
         lastUsedAt: this.lastUsed.get(accountId) || state?.last_used_at || 0,
         workerStatus: eligibility.workerStatus,
@@ -532,6 +538,8 @@ export class PoolScheduler {
       }
     }
     const inflight = this.inflight.get(accountId) || 0
+    const sessionSlots = sessionSlotsOf(vm, this.config.default_session_slots)
+    if (inflight >= sessionSlots) markWait('slot_busy')
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
     const fableCap = Number(this.config.fable_max_per_account)
     if (isFableModel(modelKey) && Number.isFinite(fableCap) && fableCap > 0) {
@@ -817,6 +825,7 @@ export class PoolScheduler {
   reserve(candidate, { sessionKey = null, skipQuota = false } = {}) {
     const current = this.inflight.get(candidate.accountId) || 0
     if (!candidate.maxConcurrency || current >= candidate.maxConcurrency) return null
+    if (current >= candidate.sessionSlots) return null
     const family = isFableModel(candidate.model) ? FABLE_FAMILY_KEY : null
     const fableCap = Number(this.config.fable_max_per_account)
     if (
@@ -953,7 +962,10 @@ export class PoolScheduler {
   isReservable(candidate) {
     if (!candidate) return false
     if (!candidate.busy) return true
-    return candidate.waitReason === 'slot_busy' && (candidate.inflight || 0) < (candidate.maxConcurrency || 0)
+    return (
+      candidate.waitReason === 'slot_busy' &&
+      (candidate.inflight || 0) < Math.min(candidate.maxConcurrency || 0, candidate.sessionSlots || 0)
+    )
   }
 
   makeWaitPlan(candidate, { sticky = false, requestDeadline = null } = {}) {

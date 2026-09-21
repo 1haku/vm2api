@@ -15,7 +15,7 @@ import {
 } from './rust-kernel-client.mjs'
 import { OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { setVmSchedulable } from '../vm/vm-registry.mjs'
-import { resolveCliSystemLayout } from '../vm/slot-engine.mjs'
+import { KERNEL_NATIVE_SLOT_COUNT, resolveCliSystemLayout } from '../vm/slot-engine.mjs'
 import { ensureOfficialCredentialLink, slotUidGidFromHomeDir } from '../oauth/oauth-credentials.mjs'
 
 const starts = new Map()
@@ -24,7 +24,7 @@ const CONTAINER_KERNEL_CONFIG = '/run/kin/kernel.json'
 export const CONTAINER_CLAUDE_BIN = '/home/kincli/.kin/cli-node'
 
 export const WRAP_SLOT_MIN = 1
-export const WRAP_SLOT_MAX = 2
+export const WRAP_SLOT_MAX = KERNEL_NATIVE_SLOT_COUNT
 export const WEDGED_READY_WAIT_MS = 3000
 
 /** Pre-open native slots. 20 multiplexed CLI streams over one residential SOCKS incomplete-storm. */

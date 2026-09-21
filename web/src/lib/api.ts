@@ -128,6 +128,7 @@ export type VmPatch = {
   persona_preset?: string
   max_concurrency?: number
   max_rpm?: number
+  session_slots?: number
   allowed_models?: string[]
   auth_scheme?: string
   schedule_level?: number | 'auto' | null

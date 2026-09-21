@@ -1,10 +1,23 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SettingRow } from '@/components/setting-row'
 
-export function KernelRoutingPane(_props: {
+const SESSION_SLOT_STEPS = [1, 2, 4, 8, 12, 16, 20]
+
+export function KernelRoutingPane(props: {
   value: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
 }) {
+  const configured = Number(props.value.session_slots ?? 20)
+  const options = SESSION_SLOT_STEPS.includes(configured)
+    ? SESSION_SLOT_STEPS
+    : [...SESSION_SLOT_STEPS, configured].sort((a, b) => a - b)
   return (
     <Card>
       <CardHeader>
@@ -19,6 +32,32 @@ export function KernelRoutingPane(_props: {
             宿主机写 credentials.json，槽内 kernel / CLI 只读
           </span>
         </SettingRow>
+        <SettingRow label='预开 native 位'>
+          <span className='text-sm tabular-nums'>20（固定）</span>
+        </SettingRow>
+        <SettingRow label='默认 session 槽位'>
+          <Select
+            value={String(configured)}
+            onValueChange={(value) =>
+              props.onChange({ ...props.value, session_slots: Number(value) })
+            }
+          >
+            <SelectTrigger className='w-28'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((value) => (
+                <SelectItem key={value} value={String(value)}>
+                  {value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <p className='py-3 text-xs text-muted-foreground'>
+          session 槽位限制每个 Claude 槽可占用的 CLI
+          执行位；并发只限制同时请求数，二者独立。
+        </p>
       </CardContent>
     </Card>
   )

@@ -1728,6 +1728,36 @@ test('account concurrency is not clamped to ready_slots', async (t) => {
   for (const item of held) item.release()
 })
 
+test('session slots cap native reservations independently from concurrency', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const file = path.join(root, 'vms', 'vm-01.json')
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.policy.maxConcurrency = 8
+  vm.policy.sessionSlots = 4
+  fs.writeFileSync(file, JSON.stringify(vm))
+  const pool = scheduler(root)
+  const held = []
+  for (let i = 0; i < 4; i++) {
+    const selected = await pool.selectAndReserve({
+      model: 'claude-test',
+      excluded: new Set(['account-2']),
+      allowWait: false,
+    })
+    assert.equal(selected.ok, true, `reserve ${i}`)
+    held.push(selected)
+  }
+  const fifth = await pool.selectAndReserve({
+    model: 'claude-test',
+    excluded: new Set(['account-2']),
+    allowWait: false,
+  })
+  assert.equal(fifth.ok, false)
+  assert.equal(fifth.reason, 'all_accounts_busy')
+  assert.deepEqual(fifth.wait_reasons, ['slot_busy'])
+  for (const item of held) item.release()
+})
+
 test('sticky slot_busy stays on the bound account', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
