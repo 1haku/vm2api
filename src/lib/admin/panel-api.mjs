@@ -203,7 +203,8 @@ export function clearVmCooldown({ cfg, accountQuota, stickyRouter = null, poolSc
     cooldown_until: null,
     cooldown_reason: null,
     temp_unschedulable_until: refreshed.temp_unschedulable_until || refreshed.claude?.temp_unschedulable_until || null,
-    temp_unschedulable_reason: refreshed.temp_unschedulable_reason || refreshed.claude?.temp_unschedulable_reason || null,
+    temp_unschedulable_reason:
+      refreshed.temp_unschedulable_reason || refreshed.claude?.temp_unschedulable_reason || null,
     runtime_cleared: runtimeCleared,
     usage_flag_cleared: usageFlagCleared,
     headers_refreshed: headersRefreshed,
