@@ -34,13 +34,11 @@ import {
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
 import {
-  DEFAULT_CACHE_TTL,
   applyCacheTtlToBody,
   applyCacheBreakpoints,
   enforceCacheTtlOrder,
   forceEphemeralCacheTtl,
   normalizeCacheBreakpoints,
-  normalizeCacheTtl,
   stripIllegalCacheControlFields,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
@@ -84,8 +82,9 @@ export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   messages: 'rewrite',
 })
 
-/** Fallback when a caller passes no console TTL. Same value as DEFAULT_CACHE_TTL. */
-export const CLI_HOP_CACHE_TTL = DEFAULT_CACHE_TTL
+/** Wrap CLI tools/system omit ttl, which Anthropic treats as 5m and processes first.
+ * A later message 1h is the messages.N 400, so the hop wire value is 5m. */
+export const CLI_HOP_CACHE_TTL = '5m'
 
 function dropNodeCacheControl(node) {
   if (!node || typeof node !== 'object' || !node.cache_control) return node
@@ -165,7 +164,7 @@ export function prepareCliHopBody(
   }
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
-  const ttl = cacheTtl == null ? DEFAULT_CACHE_TTL : normalizeCacheTtl(cacheTtl)
+  const ttl = CLI_HOP_CACHE_TTL
   if (cacheTtl == null) return forceEphemeralCacheTtl(body, ttl)
   body = stripIllegalCacheControlFields(body)
   // Node owns the stable previous-user boundary; the kernel receives the same
