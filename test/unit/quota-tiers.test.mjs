@@ -186,6 +186,33 @@ test('saving Pro 5h=80% lands on policyFor limit_5h', () => {
   assert.equal(q.canAccept('pro-80').reason, 'quota_5h_safety')
 })
 
+test('Pro 95% blocks at the line and refuses a second in-flight call inside 5 points', () => {
+  const q = new AccountQuota({
+    dataDir: tmpDir(),
+    config: {
+      quota: { block_on_5h: true, block_on_7d: true },
+      tiers: normalizeTiers({
+        pro: { limit_5h: 0.95, limit_7d: 0.95, max_concurrency: 4, max_sessions: 0 },
+      }),
+    },
+  })
+  q.ensure({ account_id: 'pro-95' })
+  q.setAccountTier('pro-95', 'pro')
+  q.ingestHeaders('pro-95', {
+    'anthropic-ratelimit-unified-5h-utilization': '0.9',
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+  })
+  assert.equal(q.canAccept('pro-95').ok, true)
+  q.inflight.set('pro-95', 1)
+  assert.equal(q.canAccept('pro-95').reason, 'quota_5h_safety')
+  q.inflight.set('pro-95', 0)
+  q.ingestHeaders('pro-95', {
+    'anthropic-ratelimit-unified-5h-utilization': '0.96',
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+  })
+  assert.equal(q.canAccept('pro-95').reason, 'quota_5h_safety')
+})
+
 test('reloadConfig applies conc rpm sessions without rewriting account rows', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
