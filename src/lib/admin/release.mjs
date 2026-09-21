@@ -7,12 +7,12 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { toHostPath } from '../vm/host-path.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MODULE_PROJECT = path.resolve(__dirname, '..', '..', '..')
 
 export const GITHUB_REPO = 'dofastted/vm2api'
-export const DEFAULT_HOST_ROOT = '/opt/vm2api'
 export const INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh`
 export const DOCKER_SOCK = '/var/run/docker.sock'
 
@@ -266,7 +266,7 @@ export async function buildUpdateStatus({ projectRoot: root, fetchImpl, now, cac
     changelog: newer,
     needs_wrap_cli_sync: needsWrap,
     upgrade_command: upgradeCommand(updateAvailable ? latest : ''),
-    check_command: `sudo bash ${DEFAULT_HOST_ROOT}/deploy/install.sh check`,
+    check_command: `sudo bash ${hostRoot(root)}/deploy/install.sh check`,
     repo: GITHUB_REPO,
     source_error: remote.error,
   }
@@ -288,8 +288,14 @@ function which(cmd) {
   return null
 }
 
-export function hostRoot() {
-  return process.env.VM2API_HOST_ROOT || DEFAULT_HOST_ROOT
+/**
+ * Host path of the install dir. Explicit env wins, otherwise derived from the
+ * control-plane container's own mounts; identity when running natively.
+ */
+export function hostRoot(root) {
+  const explicit = String(process.env.VM2API_HOST_ROOT || process.env.KIN_HOST_ROOT || '').trim()
+  if (explicit) return explicit
+  return toHostPath(projectRoot(root), { projectRoot: projectRoot(root) })
 }
 
 export function canSpawnHostUpgrade({ dockerBin = which('docker'), sock = DOCKER_SOCK } = {}) {
@@ -349,17 +355,30 @@ export async function startHostUpgrade({
       data: { ...status, started: false, target, command },
     }
   }
-  const rootDir = hostRoot()
+  const rootDir = hostRoot(root)
+  // Image install (no .git): flip the tag in .env and pull. Source install: keep the git flow.
   const script = [
-    'set -euo pipefail',
-    'export GIT_TERMINAL_PROMPT=0',
-    'command -v git >/dev/null || apk add --no-cache git >/dev/null',
-    `git config --global --add safe.directory ${rootDir} || true`,
-    'git fetch --tags origin',
-    `git checkout -f ${target}`,
-    'chmod 755 bin/kin-* 2>/dev/null || true',
-    'grep -q "!CHANGELOG.md" .dockerignore 2>/dev/null || echo "!CHANGELOG.md" >> .dockerignore',
-    'docker compose up -d --build',
+    'set -eu',
+    `TAG=${target}`,
+    'if [ -d .git ]; then',
+    '  export GIT_TERMINAL_PROMPT=0',
+    '  command -v git >/dev/null || apk add --no-cache git >/dev/null',
+    `  git config --global --add safe.directory ${rootDir} || true`,
+    '  git fetch --tags origin',
+    '  git checkout -f "$TAG"',
+    '  chmod 755 bin/kin-* 2>/dev/null || true',
+    '  grep -q "!CHANGELOG.md" .dockerignore 2>/dev/null || echo "!CHANGELOG.md" >> .dockerignore',
+    '  docker compose up -d --build',
+    'else',
+    '  touch .env',
+    '  if grep -q "^VM2API_IMAGE_TAG=" .env; then',
+    '    sed -i "s|^VM2API_IMAGE_TAG=.*|VM2API_IMAGE_TAG=$TAG|" .env',
+    '  else',
+    '    printf "VM2API_IMAGE_TAG=%s\\n" "$TAG" >> .env',
+    '  fi',
+    '  docker compose pull',
+    '  docker compose up -d',
+    'fi',
   ].join('\n')
   const child = spawnImpl(
     dockerBin,
