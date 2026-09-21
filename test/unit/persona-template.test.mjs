@@ -324,6 +324,7 @@ test('hop mode official_full is a template preset, not overwrite', () => {
   assert.equal(personaPresetFromHopMode('official_full'), 'official_full')
   assert.equal(personaPresetFromHopMode('official_prompt'), 'official')
   assert.equal(personaPresetFromHopMode('zero'), 'zero')
+  assert.equal(personaPresetFromHopMode('custom'), 'custom')
   withRoutingFile({ persona_preset: 'zero', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(
       { messages: [{ role: 'user', content: 'hello' }] },
