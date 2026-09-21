@@ -59,6 +59,8 @@ export const ErrorCode = {
   UPSTREAM_OVERLOADED: 'upstream_overloaded',
   UPSTREAM_TIMEOUT: 'upstream_timeout',
   UPSTREAM_ERROR: 'upstream_error',
+  FABLE_REQUIRES_MAX: 'fable_requires_max',
+
   INCOMPLETE_RESPONSE: 'incomplete_response',
   // protocol
   PROTOCOL_UNSUPPORTED: 'protocol_unsupported',
@@ -250,6 +252,15 @@ export function mapUpstreamError(status, body, headers = {}) {
     (upType ? body?.message : null) ||
     body?.raw ||
     null
+  if (inboundCode === ErrorCode.FABLE_REQUIRES_MAX) {
+    return makeError({
+      type: ErrorType.RATE_LIMIT,
+      code: ErrorCode.FABLE_REQUIRES_MAX,
+      message: String(msg || 'Fable requires an available Max account'),
+      status: 429,
+    })
+  }
+
   if (GATEWAY_OVERLOAD_CODES.has(String(inboundCode || '')) || isPoolCapacityError(inboundCode, msg)) {
     return makeError({
       type: ErrorType.OVERLOADED,

@@ -49,6 +49,22 @@ test('rewritePoolErrorForClient strips leftover pool details', () => {
   assert.equal(rewritten.body.error.details, undefined)
 })
 
+test('fable_requires_max remains a dedicated HTTP 429', () => {
+  const mapped = mapUpstreamError(429, {
+    type: 'error',
+    error: {
+      type: 'rate_limit_error',
+      code: 'fable_requires_max',
+      message: 'Fable requires an available Max account',
+    },
+  })
+  const rewritten = rewritePoolErrorForClient(mapped)
+  assert.equal(rewritten.status, 429)
+  assert.equal(rewritten.body.error.type, 'rate_limit_error')
+  assert.equal(rewritten.body.error.code, 'fable_requires_max')
+  assert.equal(rewritten.body.error.message, 'Fable requires an available Max account')
+})
+
 test('incomplete upstream stream maps to 502, not api_error 500', () => {
   const mapped = mapUpstreamError(200, {
     type: 'error',
