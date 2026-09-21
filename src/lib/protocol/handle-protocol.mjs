@@ -741,17 +741,21 @@ export function createHandleProtocol(deps) {
           let hopBody = body
           if (cliHop) {
             const repaired = extra.repaired === true
-            const inject = String(routingNow?.compatibility?.persona_inject ?? '')
-              .trim()
-              .toLowerCase()
-            const cliAppliesNodePersona =
-              !officialTraffic &&
-              Boolean(inject) &&
-              inject !== 'none' &&
-              inject !== 'off' &&
-              inject !== 'false' &&
-              inject !== 'zero'
-            hopBody = prepareCliHopBody(repaired ? body : cliAppliesNodePersona ? body : personaIn, {
+            const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
+            if (!officialTraffic) {
+              hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
+                officialClient: false,
+                routingFile: routingConfigPath,
+                mode: resolvedPersona,
+                headers: req.headers,
+                sessionId: outboundSessionId,
+                model: personaIn?.model,
+                cliVersion: OFFICIAL_CLI_VERSION,
+                identity,
+              })
+            }
+            const cliAppliesNodePersona = !officialTraffic && resolvedPersona !== 'zero'
+            hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheBreakpoints,
@@ -759,6 +763,8 @@ export function createHandleProtocol(deps) {
               unofficial: !officialTraffic,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
+            if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
+
             const cliHide = personaHideForCliZero(personaIn, hopBody, {
               officialClient: officialTraffic,
               timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
