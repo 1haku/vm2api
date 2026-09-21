@@ -14,6 +14,8 @@ import {
 } from '../oauth/oauth-credentials.mjs'
 import { refreshSlotCredentialIfNeeded } from '../oauth/host-token-refresh.mjs'
 import { hostCountTokens, hostModels, hostOauthUsage } from '../oauth/host-anthropic.mjs'
+import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
+import { isCompleteAssistantMessage } from '../core/errors.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
 
@@ -181,13 +183,25 @@ export function isDownstreamCommitEvent(event) {
   const t = String(event.type || '')
   if (t === 'error' || t === 'message_start' || t === 'kin_response_headers') return false
   if (t === 'message_stop' || t === 'response.completed' || t === 'response.done') return true
+  if (t === 'message_delta') return !!event.delta?.stop_reason
   if (t === 'content_block_delta') {
     const d = event.delta || {}
-    return !!(d.text || d.thinking || d.partial_json)
+    return !!(d.text || d.thinking || d.partial_json || d.refusal || d.signature)
   }
   if (t === 'content_block_start') {
     const b = event.content_block || {}
-    return !!(b.type === 'text' || b.type === 'thinking' || b.type === 'tool_use' || b.text || b.thinking)
+    const kind = String(b.type || '')
+    return (
+      kind === 'text' ||
+      kind === 'thinking' ||
+      kind === 'redacted_thinking' ||
+      kind === 'refusal' ||
+      kind === 'tool_use' ||
+      kind === 'server_tool_use' ||
+      kind === 'mcp_tool_use' ||
+      kind.endsWith('_tool_use') ||
+      !!(b.text || b.thinking)
+    )
   }
   return t.startsWith('response.output_')
 }
@@ -442,6 +456,7 @@ export async function streamGoWorker({
     let sseModel = null
     let sseStop = null
     let sseRateHeaders = {}
+    const assembler = createClaudeMessageAssembler()
     const pendingLines = []
     const takeSseEvent = () => {
       try {
@@ -509,6 +524,7 @@ export async function streamGoWorker({
         while ((newline = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, newline).replace(/\r$/, '')
           buffer = buffer.slice(newline + 1)
+          applyClaudeSSELineToMessage(line, assembler)
           if (line.startsWith('data:')) {
             const piece = line.slice(5).trim()
             if (piece && piece !== '[DONE]') {
@@ -532,25 +548,34 @@ export async function streamGoWorker({
           await emitLine(line)
         }
       }
-      if (buffer) await emitLine(buffer)
+      if (buffer) {
+        applyClaudeSSELineToMessage(buffer, assembler)
+        await emitLine(buffer)
+      }
       if (dataBuf) {
         const event = observeSseEvent(takeSseEvent())
         if (isDownstreamCommitEvent(event)) await flushCommit()
       }
       const trailers = mergeRateLimitHeaders(publicHeaders(response.trailers))
-      const terminalState =
-        trailers['x-kin-terminal-state'] || headers['x-kin-terminal-state'] || (sawTerminal ? 'verified' : 'incomplete')
       const meta = streamMetaFromHeaders({ ...headers, ...trailers })
+      const assembled = assembler.message
+      const stopReason = meta.stopReason || sseStop || assembled?.stop_reason || null
+      const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason })
+      if (!committed && complete) await flushCommit()
+      const headerState = trailers['x-kin-terminal-state'] || headers['x-kin-terminal-state']
+      const terminalState = complete
+        ? 'verified'
+        : headerState || (sawTerminal ? 'verified' : 'incomplete')
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
       return {
-        ok: response.statusCode === 200 && !lastError && terminalState === 'verified',
+        ok: response.statusCode === 200 && !lastError && (terminalState === 'verified' || complete),
         status: response.statusCode || 0,
         via: 'go-worker-stream',
-        body: lastError || { type: 'message', role: 'assistant', content: [] },
+        body: lastError || assembled || { type: 'message', role: 'assistant', content: [] },
         headers: rateHeaders,
-        usage: meta.usage || sseUsage,
-        model: meta.model || sseModel,
-        stopReason: meta.stopReason || sseStop,
+        usage: meta.usage || sseUsage || assembled?.usage || null,
+        model: meta.model || sseModel || assembled?.model || null,
+        stopReason,
         ttftMs,
         committed,
         terminalState,

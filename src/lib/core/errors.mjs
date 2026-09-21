@@ -175,9 +175,11 @@ export function assistantVisibleOutput(body) {
   const content = body?.content || body?.message?.content
   if (!Array.isArray(content)) return false
   for (const block of content) {
-    if (block?.type === 'text' && String(block.text || '').trim()) return true
-    if (block?.type === 'tool_use') return true
-    if (block?.type === 'refusal' && String(block.refusal || block.text || '').trim()) return true
+    const kind = String(block?.type || '')
+    if (kind === 'text' && String(block.text || '').trim()) return true
+    if (kind === 'tool_use' || kind === 'server_tool_use' || kind === 'mcp_tool_use') return true
+    if (kind.endsWith('_tool_use')) return true
+    if (kind === 'refusal' && String(block.refusal || block.text || '').trim()) return true
   }
   return false
 }
