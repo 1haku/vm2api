@@ -497,6 +497,31 @@ export function clearVmQuotaRestriction(vmPath) {
   return vm
 }
 
+function isRecoverableCooldownReason(reason) {
+  const text = String(reason || '')
+  if (!text) return true
+  if (/oauth_revoked|oauth_invalid_grant|invalid_grant|token has been revoked|credential_refresh_failed/i.test(text)) {
+    return false
+  }
+  return true
+}
+
+/** Operator recovery: drop quota, RPM, and provider cooldown. Dead grants stay parked. */
+export function clearRecoverableVmCooldown(vmPath) {
+  if (!vmPath || !fs.existsSync(vmPath)) return null
+  const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+  const reason = vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason
+  if (!isRecoverableCooldownReason(reason)) return vm
+  vm.claude = { ...(vm.claude || {}) }
+  delete vm.claude.temp_unschedulable_until
+  delete vm.claude.temp_unschedulable_reason
+  delete vm.temp_unschedulable_until
+  delete vm.temp_unschedulable_reason
+  vm.updated_at = new Date().toISOString()
+  atomicWriteJson(vmPath, vm)
+  return vm
+}
+
 /** First messages 401: park the slot without burning the grant. */
 export function markVmAuthCooldown(
   vmPath,

@@ -236,8 +236,9 @@ function applyCooldown(scheduler, selected, policy, model, stickyRouter = null, 
         : 'cooldown',
   })
   // A 5xx pause keeps the conversation pin. Dropping it is how one session
-  // lands on the next VM. Auth and quota cooldowns still rotate.
-  if (policy.scope === 'account' && policy.action !== 'pause') {
+  // lands on the next VM. RPM cooldown waits on the same slot. Auth and
+  // quota cooldowns still rotate.
+  if (policy.scope === 'account' && policy.action !== 'pause' && policy.reason !== 'rate_limited') {
     stickyRouter?.unbindByAccount?.({
       accountId: selected?.accountId,
       vmId: selected?.vmId,

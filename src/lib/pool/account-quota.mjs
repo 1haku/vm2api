@@ -555,10 +555,10 @@ export class AccountQuota {
 
     const w5 = headerWindowOrEmpty(acc.unified, '5h')
     const w7 = headerWindowOrEmpty(acc.unified, '7d')
-    const u5 = Number(w5.utilization || 0)
-    const u7 = Number(w7.utilization || 0)
+    const u5 = asUtilRatio(w5.utilization)
+    const u7 = asUtilRatio(w7.utilization)
 
-    if (this.config.block_on_5h && u5 >= ratio) {
+    if (this.config.block_on_5h && safetyTripped(u5, ratio, inflight)) {
       acc.last_blocked = { at: new Date().toISOString(), window: '5h', utilization: u5, status: w5.status }
       this.repo.save(acc)
       return {
@@ -568,13 +568,14 @@ export class AccountQuota {
           utilization: u5,
           safety_ratio: ratio,
           limit_5h: ratio,
+          inflight,
           reset: w5.reset,
           message: `5h usage ${(u5 * 100).toFixed(1)}% ≥ safety ${(ratio * 100).toFixed(0)}%; request blocked to protect quota`,
         },
       }
     }
 
-    if (this.config.block_on_7d && u7 >= weeklyRatio) {
+    if (this.config.block_on_7d && safetyTripped(u7, weeklyRatio, inflight)) {
       acc.last_blocked = { at: new Date().toISOString(), window: '7d', utilization: u7, status: w7.status }
       this.repo.save(acc)
       return {
@@ -1073,6 +1074,26 @@ function num(v) {
   if (v == null || v === '') return null
   const n = Number(v)
   return Number.isFinite(n) ? n : null
+}
+
+/** Header samples are 0–1; a leftover official reading can still be 0–100. */
+function asUtilRatio(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return n > 1.5 ? n / 100 : n
+}
+
+/**
+ * The 5h/7d header is the previous response, so calls already in flight are
+ * not in it. At the configured line, stop. Inside the last 5 points, don't
+ * admit a second call or the account lands on upstream 100%.
+ */
+function safetyTripped(util, ratio, inflight) {
+  const u = asUtilRatio(util)
+  const limit = asUtilRatio(ratio)
+  if (!(limit > 0) || !(u > 0)) return false
+  if (u >= limit) return true
+  return Number(inflight) > 0 && u >= limit - 0.05
 }
 
 function isUnifiedRejected(h = {}) {
