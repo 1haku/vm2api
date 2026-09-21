@@ -12,6 +12,15 @@ test('detectInboundPlatform maps gpt prefix to openai', () => {
   assert.equal(detectInboundPlatform('sonnet').platform, 'anthropic')
 })
 
+test('claude-opus-4-8 always selects the Anthropic platform', () => {
+  assert.deepEqual(detectInboundPlatform('claude-opus-4-8'), {
+    ok: true,
+    platform: 'anthropic',
+    model: 'claude-opus-4-8',
+  })
+  assert.equal(detectInboundPlatform('openrouter/anthropic/claude-opus-4-8').platform, 'anthropic')
+})
+
 test('detectInboundPlatform fail-closes unknown and non-chat gpt', () => {
   assert.equal(detectInboundPlatform('o3').ok, false)
   assert.equal(detectInboundPlatform('codex-auto-review').ok, false)
