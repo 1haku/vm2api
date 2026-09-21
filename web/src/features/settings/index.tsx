@@ -342,8 +342,7 @@ export function SettingsPage() {
                 <>
                   <GptPane
                     value={
-                      (draft.codex as Record<string, unknown> | undefined) ||
-                      {}
+                      (draft.codex as Record<string, unknown> | undefined) || {}
                     }
                     onChange={(next) => setDraft({ ...draft, codex: next })}
                   />

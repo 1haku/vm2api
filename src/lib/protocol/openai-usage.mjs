@@ -73,9 +73,7 @@ export function extractOpenaiUsage(body) {
 
   const total_tokens =
     asU64(usage.total_tokens) ??
-    (input_tokens != null || output_tokens != null
-      ? (input_tokens || 0) + (output_tokens || 0)
-      : undefined)
+    (input_tokens != null || output_tokens != null ? (input_tokens || 0) + (output_tokens || 0) : undefined)
 
   const out = {}
   if (input_tokens != null) out.input_tokens = input_tokens
