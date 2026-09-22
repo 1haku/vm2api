@@ -163,6 +163,43 @@ test('extractKey ignores x-client-request-id and hashes first user', () => {
   assert.equal(a, b)
 })
 
+test('later blocks of the first user message stay on one session slot', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key_f041' }, headers: {} }
+  const first = {
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'stable preamble' },
+          { type: 'text', text: 'turn-1 transcript that grows' },
+        ],
+      },
+    ],
+  }
+  const next = {
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'stable preamble' },
+          { type: 'text', text: 'turn-2 a different transcript' },
+        ],
+      },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'continue' },
+    ],
+  }
+  const other = {
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'a different conversation' }] }],
+  }
+  const a = r.extractPoolKey(req, first, { platform: 'anthropic' })
+  const b = r.extractPoolKey(req, next, { platform: 'anthropic' })
+  assert.equal(a, b)
+  assert.equal(r.collectPoolKeys(req, next, { platform: 'anthropic' }).length, 1)
+  assert.notEqual(a, r.extractPoolKey(req, other, { platform: 'anthropic' }))
+})
+
 test('extractKey mode=ip uses forwarded address', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, mode: 'ip' } } })
   const key = r.extractKey({ headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } }, {})
