@@ -38,6 +38,10 @@ const SETTINGS_KEY = 'model_policy'
 const CONTEXT_1M = CONTEXT_1M_BETA
 const FABLE_51_ID = 'claude-fable-5-1'
 const FABLE_51_LEGACY_ID = 'claude-fable-5.1'
+const OPUS_55_ID = 'claude-opus-5-5'
+const OPUS_55_LEGACY_ID = 'claude-opus-5.5'
+const OPUS_55_COMPUTER_FROM = 'computer_20251124'
+const OPUS_55_COMPUTER_TO = 'computer_toolset_20260801'
 
 const CAP_HAIKU = {
   context_window: 200000,
@@ -115,6 +119,7 @@ function entry(partial) {
       thinking_fallback_budget: partial.params?.thinking_fallback_budget ?? 4096,
       on_adaptive: partial.params?.on_adaptive || 'passthrough',
       on_enabled: partial.params?.on_enabled || 'passthrough',
+      ...(partial.params?.default_effort ? { default_effort: partial.params.default_effort } : {}),
     },
     aliases: partial.aliases || [],
   }
@@ -262,6 +267,24 @@ export function seedDefaultPolicy() {
     aliases: ['opus'],
   })
 
+  // Claude Code 2.1.280. ID is hyphenated. Dotted claude-opus-5.5 is only an alias.
+  // Thinking cannot be disabled and budget_tokens 400s; default effort is medium, not Opus 5's high.
+  add(OPUS_55_ID, {
+    display_name: 'Opus 5.5',
+    family: 'opus',
+    sort: 36,
+    capabilities: CAP_ADAPTIVE_ONLY,
+    betas: { pass_context_1m: true },
+    params: {
+      max_tokens_default: 128000,
+      max_tokens_cap: 128000,
+      on_adaptive: 'passthrough',
+      on_enabled: 'convert_to_adaptive',
+      default_effort: 'medium',
+    },
+    aliases: [OPUS_55_LEGACY_ID],
+  })
+
   add('claude-fable-5', {
     display_name: 'Fable 5',
     family: 'fable',
@@ -315,6 +338,7 @@ export function seedDefaultPolicy() {
       'claude-3-5-haiku-latest': 'claude-haiku-4-5-20251001',
       fable: 'claude-fable-5',
       [FABLE_51_LEGACY_ID]: FABLE_51_ID,
+      [OPUS_55_LEGACY_ID]: OPUS_55_ID,
     },
     catalog_mode: 'policy_only',
   }
@@ -349,8 +373,9 @@ export function normalizePolicy(raw) {
     // Old releases stored the unsupported dotted id. Preserve its overrides;
     // an explicitly configured canonical entry wins field-by-field below.
     models[FABLE_51_ID] = deepMergeEntry(models[FABLE_51_ID], raw.models[FABLE_51_LEGACY_ID])
+    models[OPUS_55_ID] = deepMergeEntry(models[OPUS_55_ID], raw.models[OPUS_55_LEGACY_ID])
     for (const [id, cfg] of Object.entries(raw.models)) {
-      if (!id || id === FABLE_51_LEGACY_ID) continue
+      if (!id || id === FABLE_51_LEGACY_ID || id === OPUS_55_LEGACY_ID) continue
       const base =
         models[id] ||
         entry({
@@ -378,8 +403,17 @@ export function normalizePolicy(raw) {
     ]),
   ]
   if ('id' in models[FABLE_51_ID]) models[FABLE_51_ID].id = FABLE_51_ID
+  models[OPUS_55_ID].aliases = [
+    ...new Set([
+      OPUS_55_LEGACY_ID,
+      ...[raw.models?.[OPUS_55_LEGACY_ID]?.aliases, raw.models?.[OPUS_55_ID]?.aliases].flatMap((aliases) =>
+        Array.isArray(aliases) ? aliases : [],
+      ),
+    ]),
+  ]
+  if ('id' in models[OPUS_55_ID]) models[OPUS_55_ID].id = OPUS_55_ID
   for (const [id, cfg] of Object.entries(models)) {
-    if (cfg.params?.on_enabled === 'convert_to_adaptive') {
+    if (cfg.params?.on_enabled === 'convert_to_adaptive' && id !== OPUS_55_ID) {
       cfg.params = { ...cfg.params, on_enabled: 'passthrough' }
     }
     if (typeof cfg.betas?.pass_context_1m !== 'boolean') {
@@ -395,9 +429,12 @@ export function normalizePolicy(raw) {
   const hasWhitelist = Object.prototype.hasOwnProperty.call(rawDefaults, 'context_1m_whitelist')
   const aliases = { ...seed.aliases, ...(raw.aliases || {}) }
   for (const [alias, target] of Object.entries(aliases)) {
-    if (String(target).trim().toLowerCase() === FABLE_51_LEGACY_ID) aliases[alias] = FABLE_51_ID
+    const normalized = String(target).trim().toLowerCase()
+    if (normalized === FABLE_51_LEGACY_ID) aliases[alias] = FABLE_51_ID
+    if (normalized === OPUS_55_LEGACY_ID) aliases[alias] = OPUS_55_ID
   }
   aliases[FABLE_51_LEGACY_ID] = FABLE_51_ID
+  aliases[OPUS_55_LEGACY_ID] = OPUS_55_ID
   return {
     version: Number(raw.version) || 1,
     updated_at: raw.updated_at || new Date().toISOString(),
@@ -443,7 +480,8 @@ export function loadModelPolicy({ force = false } = {}) {
     const repo = new SettingsRepo()
     const stored = repo.get(SETTINGS_KEY, null)
     if (stored) {
-      policy = normalizePolicy(stored)
+      const persisted = persistOpus55Model(repo, stored)
+      policy = normalizePolicy(persisted)
       policy.source = policy.source || 'settings'
     } else {
       policy = seedDefaultPolicy()
@@ -454,6 +492,36 @@ export function loadModelPolicy({ force = false } = {}) {
   }
   loaded = true
   return policy
+}
+
+/** Append Opus 5.5 onto an existing settings row. Does not reset other models. */
+function persistOpus55Model(repo, stored) {
+  if (!stored || typeof stored !== 'object') return stored
+  const seed = seedDefaultPolicy()
+  const models = stored.models && typeof stored.models === 'object' ? { ...stored.models } : {}
+  let dirty = false
+  if (models[OPUS_55_LEGACY_ID]) {
+    const fromLegacy = deepMergeEntry(seed.models[OPUS_55_ID], models[OPUS_55_LEGACY_ID])
+    models[OPUS_55_ID] = deepMergeEntry(fromLegacy, models[OPUS_55_ID])
+    delete models[OPUS_55_LEGACY_ID]
+    dirty = true
+  } else if (!models[OPUS_55_ID]) {
+    models[OPUS_55_ID] = seed.models[OPUS_55_ID]
+    dirty = true
+  }
+  const aliases = { ...(stored.aliases || {}) }
+  if (aliases[OPUS_55_LEGACY_ID] !== OPUS_55_ID) {
+    aliases[OPUS_55_LEGACY_ID] = OPUS_55_ID
+    dirty = true
+  }
+  if (!dirty) return stored
+  const next = { ...stored, models, aliases }
+  try {
+    repo.set(SETTINGS_KEY, next)
+  } catch {
+    return next
+  }
+  return next
 }
 
 export function getModelPolicy() {
@@ -600,6 +668,12 @@ export function clampEnabledThinkingBudget(body = {}) {
   return body
 }
 
+function adaptiveOnlyThinking(thinking) {
+  const display = thinking && typeof thinking === 'object' ? thinking.display : undefined
+  if (display != null && String(display).trim() !== '') return { type: 'adaptive', display }
+  return { type: 'adaptive' }
+}
+
 export function normalizeThinkingByPolicy(body = {}) {
   if (!loaded) loadModelPolicy()
   if (!body || typeof body !== 'object') return body
@@ -612,6 +686,12 @@ export function normalizeThinkingByPolicy(body = {}) {
   const type = String(thinking.type || '').toLowerCase()
   const params = entry.params || {}
   const caps = entry.capabilities || {}
+  const adaptiveOnly = params.on_enabled === 'convert_to_adaptive'
+
+  if (adaptiveOnly && (type === 'disabled' || type === 'enabled' || type === 'adaptive')) {
+    body.thinking = adaptiveOnlyThinking(thinking)
+    return body
+  }
 
   if (type === 'adaptive') {
     const action = params.on_adaptive || (caps.supports_adaptive ? 'passthrough' : 'convert_to_enabled')
@@ -639,6 +719,55 @@ export function normalizeThinkingByPolicy(body = {}) {
   }
 
   return clampEnabledThinkingBudget(body)
+}
+
+export function isOpus55Model(model = '') {
+  const bare = String(model || '')
+    .split('[')[0]
+    .split('/')
+    .filter(Boolean)
+    .pop()
+  return /^claude-opus-5(?:-5|\.5)(?=-|$)/i.test(bare || '')
+}
+
+/**
+ * Claude Code 2.1.280 Opus 5.5 wire rules.
+ * disabled thinking and budget_tokens 400 at every effort.
+ * tool_choice any/tool 400. computer_20251124 400.
+ * The patched CLI forwards caller fields, so this has to happen before the hop.
+ */
+export function applyOpus55RequestRules(body = {}) {
+  if (!body || typeof body !== 'object' || !isOpus55Model(body.model)) return body
+  const canonical = resolvePolicyModelId(body.model)
+  if (canonical === OPUS_55_ID) body.model = OPUS_55_ID
+  if (body.thinking && typeof body.thinking === 'object') {
+    const type = String(body.thinking.type || '').toLowerCase()
+    if (type === 'disabled' || type === 'enabled' || body.thinking.budget_tokens != null) {
+      body.thinking = adaptiveOnlyThinking(body.thinking)
+    }
+  }
+  if (Array.isArray(body.tools)) {
+    body.tools = body.tools.map((tool) => {
+      if (!tool || typeof tool !== 'object') return tool
+      if (tool.type !== OPUS_55_COMPUTER_FROM) return tool
+      return { ...tool, type: OPUS_55_COMPUTER_TO }
+    })
+  }
+  const choice = body.tool_choice
+  const choiceType =
+    typeof choice === 'string'
+      ? choice.toLowerCase()
+      : choice && typeof choice === 'object'
+        ? String(choice.type || '').toLowerCase()
+        : ''
+  if (choiceType === 'any' || choiceType === 'tool' || choiceType === 'required') {
+    const name = choice && typeof choice === 'object' ? choice.name : ''
+    if (choiceType === 'tool' && name && Array.isArray(body.tools)) {
+      body.tools = body.tools.map((tool) => (tool?.name === name ? { ...tool, strict: true } : tool))
+    }
+    body.tool_choice = { type: 'auto' }
+  }
+  return body
 }
 
 function stripTokens(header, tokens) {
@@ -696,7 +825,13 @@ export function filterPublicModelIds(workerIds = []) {
   if (!loaded) loadModelPolicy()
   const mode = policy.catalog_mode || 'policy_only'
   const ids = [
-    ...new Set((workerIds || []).filter(Boolean).map((id) => (id === FABLE_51_LEGACY_ID ? FABLE_51_ID : id))),
+    ...new Set(
+      (workerIds || []).filter(Boolean).map((id) => {
+        if (id === FABLE_51_LEGACY_ID) return FABLE_51_ID
+        if (id === OPUS_55_LEGACY_ID) return OPUS_55_ID
+        return id
+      }),
+    ),
   ]
 
   if (mode === 'worker_only') return ids
@@ -716,7 +851,7 @@ export function syncWorkerModelsIntoPolicy(workerIds = []) {
   if (!loaded) loadModelPolicy()
   let changed = false
   for (const workerId of workerIds || []) {
-    const id = workerId === FABLE_51_LEGACY_ID ? FABLE_51_ID : workerId
+    const id = workerId === FABLE_51_LEGACY_ID ? FABLE_51_ID : workerId === OPUS_55_LEGACY_ID ? OPUS_55_ID : workerId
     if (!id || !isCatalogModelId(id)) continue
     if (/^gpt/i.test(id)) continue
     if (policy.models[id]) continue

@@ -60,6 +60,13 @@ test('legacy Fable 5.1 allowlists accept the corrected id without allowing Fable
   })
 })
 
+test('Opus 5.5 does not match an Opus 5 allowlist', () => {
+  assert.equal(modelMatchesAllowlist('claude-opus-5-5', ['claude-opus-5']), false)
+  assert.equal(modelMatchesAllowlist('claude-opus-5', ['claude-opus-5-5']), false)
+  assert.equal(modelMatchesAllowlist('claude-opus-5.5', ['claude-opus-5-5']), true)
+  assert.deepEqual(parseAllowedModelsPatch(['claude-opus-5.5']), { ok: true, value: ['claude-opus-5-5'] })
+})
+
 test('parseAllowedModelsPatch rejects unknown ids', () => {
   const bad = parseAllowedModelsPatch(['not-a-claude-model'])
   assert.equal(bad.ok, false)

@@ -58,6 +58,14 @@ test('Fable 5.1 display names support canonical and legacy model IDs', () => {
   assert.equal(displayNameForModel('claude-fable-5'), 'Fable 5')
 })
 
+test('Opus 5.5 display names support canonical and legacy model IDs', () => {
+  for (const modelId of ['claude-opus-5-5', 'claude-opus-5.5']) {
+    assert.equal(displayNameForModel(modelId), 'Opus 5.5')
+    assert.equal(displayNameForModel(`${modelId}[1m]`), 'Opus 5.5')
+  }
+  assert.equal(displayNameForModel('claude-opus-5'), 'Opus 5')
+})
+
 function withRoutingFile(compatibility, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tpl-'))
   const file = path.join(dir, 'routing.json')
