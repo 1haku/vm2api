@@ -254,7 +254,7 @@ test('cli-hop rewrite wins over routing fill when inbound already stamped last u
   )
   assert.equal(body.messages[0].content[0].cache_control, undefined)
   assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[4].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[4].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
 test('cli-hop rewrite writes 5m on the Node-owned boundary', () => {
@@ -273,7 +273,7 @@ test('cli-hop rewrite writes 5m on the Node-owned boundary', () => {
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('cli-hop rewrites a console 1h boundary to 5m so it cannot follow wrap tools', () => {
+test('cli-hop writes the console 1h onto Node markers', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -290,8 +290,8 @@ test('cli-hop rewrites a console 1h boundary to 5m so it cannot follow wrap tool
     },
     { cacheTtl: '1h' },
   )
-  assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[2].content[0].cache_control, undefined)
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
@@ -315,7 +315,7 @@ test('cli-hop writes the Node-owned boundary at 5m when the console asks for 5m'
   assert.equal(body.messages[4].content[0].cache_control, undefined)
 })
 
-test('official cli-hop collapses mixed client breakpoints to 5m', () => {
+test('missing console TTL defaults mixed client breakpoints to 1h', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
@@ -329,9 +329,9 @@ test('official cli-hop collapses mixed client breakpoints to 5m', () => {
     },
     { cacheTtl: null },
   )
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
 test('cli-hop rewrite keeps sub2api penultimate user after dropping CLI last-user stamp', () => {
@@ -346,7 +346,7 @@ test('cli-hop rewrite keeps sub2api penultimate user after dropping CLI last-use
     ],
   })
   assert.equal(body.messages[0].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages[3].content[0].cache_control, undefined)
 })
 
@@ -475,8 +475,8 @@ test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {
   })
   const asstBlocks = body.messages[1].content
   const userBlocks = body.messages[2].content
-  assert.deepEqual(asstBlocks.find((b) => b.type === 'tool_use')?.cache_control, { type: 'ephemeral' })
-  assert.deepEqual(userBlocks.find((b) => b.type === 'tool_result')?.cache_control, { type: 'ephemeral' })
+  assert.deepEqual(asstBlocks.find((b) => b.type === 'tool_use')?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(userBlocks.find((b) => b.type === 'tool_result')?.cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
 test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe tests', () => {
