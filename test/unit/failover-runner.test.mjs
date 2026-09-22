@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
+import { SessionLimitRegistry } from '../../src/lib/pool/session-limit.mjs'
 
 class Scheduler {
   constructor(candidates) {
@@ -215,6 +216,32 @@ test('committed realtime stream failure never switches accounts', async () => {
   assert.equal(result.finalState, 'incomplete')
   assert.equal(result.attemptCount, 1)
   assert.equal(scheduler.selectCalls, 1)
+})
+
+test('committed incomplete hop drops the session window immediately', async () => {
+  const sessions = new SessionLimitRegistry()
+  sessions.touch('account-1', 'conversation-1')
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  scheduler.accountQuota = { sessions }
+  const runner = new FailoverRunner({ scheduler })
+  const result = await runner.run({
+    requestId: 'req-committed-incomplete-session',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: 'conversation-1',
+    callAttempt: ({ onCommit }) => {
+      onCommit()
+      return {
+        ok: false,
+        status: 200,
+        committed: true,
+        terminalState: 'incomplete',
+        body: { error: { message: 'stream closed' } },
+      }
+    },
+  })
+  assert.equal(result.finalState, 'incomplete')
+  assert.equal(sessions.snapshot('account-1').active, 0)
 })
 
 test('cloudflare 403 does not trigger SOCKS disconnect', async () => {

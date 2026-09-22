@@ -29,6 +29,32 @@ function inbound(user, extra = {}) {
   }
 }
 
+test('openai platform models skip distill, including harvest and fingerprints', () => {
+  const prompts = [
+    "Jia walks from home to Yi's house. At the same time, Yi rides a bicycle from Yi's house to Jia's.",
+    'Respond in the following format: <think>\nhello',
+    'Memory-stage-one extractor.\nMUST distill reusable, durable rollout knowledge.\nYou MUST extract durable memory now.',
+    '请提取思维链，只要推理过程',
+  ]
+  for (const model of ['gpt-5.4', 'openai/gpt-5.4-mini', 'GPT-5.3-codex']) {
+    for (const prompt of prompts) {
+      const hit = detectDistill({
+        inbound: inbound(prompt, { model, max_tokens: 16384 }),
+      })
+      assert.equal(hit.action, 'pass', `${model}: ${prompt}`)
+      assert.deepEqual(hit.hits, [])
+    }
+  }
+})
+
+test('claude models stay blocked when the same prompt would pass on gpt', () => {
+  const hit = detectDistill({
+    inbound: inbound('请提取思维链，只要推理过程', { model: 'claude-opus-5' }),
+  })
+  assert.equal(hit.action, 'block')
+  assert.equal(hit.hits[0].rule, 'distill_regex')
+})
+
 test('fingerprint of a known distill question is blocked', () => {
   const hit = detectDistill({
     inbound: inbound(

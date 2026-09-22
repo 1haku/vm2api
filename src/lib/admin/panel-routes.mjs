@@ -150,7 +150,14 @@ import {
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
 import { writeSlotSeedFiles } from '../vm/slot-seed.mjs'
-import { egressEnabled, ensureProxyEgress, stopProxyEgress, boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
+import {
+  egressEnabled,
+  ensureProxyEgress,
+  stopProxyEgress,
+  boundProxyUrl,
+  hasBoundExit,
+  isLocalEgressProxy,
+} from '../vm/egress.mjs'
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
 import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../identity/official-fingerprint.mjs'
 import {
@@ -1899,7 +1906,7 @@ export function createPanelHandler(ctx) {
           try {
             invalidateLiveCredentialCache()
           } catch {}
-          if (!vm.proxy?.url) {
+          if (!hasBoundExit(vm.proxy)) {
             try {
               const allocated = proxyPool.allocateForVm(id)
               if (allocated) {
@@ -1909,7 +1916,7 @@ export function createPanelHandler(ctx) {
               }
             } catch {}
           }
-          if (!vm.proxy?.url) {
+          if (!hasBoundExit(vm.proxy)) {
             vm.status = 'stopped'
             vm.schedulable = false
             vm.schedule_disabled_reason = 'slot SOCKS5 proxy is required'

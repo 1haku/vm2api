@@ -22,6 +22,30 @@ export function isLocalEgressProxy(proxy) {
   return id === LOCAL_EGRESS_ID || scheme === 'local' || host === 'local'
 }
 
+/** Remote SOCKS (url or host:port) or local egress. Empty URL is not "unbound". */
+export function hasBoundExit(proxy) {
+  if (isLocalEgressProxy(proxy)) return true
+  if (!proxy || typeof proxy !== 'object') return false
+  if (proxy.url) return true
+  return !!(proxy.host && proxy.port)
+}
+
+/** Docker masquerade net for a local row. null when the row is not local egress. */
+export function localEgressStatus(proxyOrId, run = docker) {
+  const proxy = typeof proxyOrId === 'string' ? { id: proxyOrId } : proxyOrId
+  if (!isLocalEgressProxy(proxy)) return null
+  const id = String((typeof proxyOrId === 'string' ? proxyOrId : proxy?.id) || LOCAL_EGRESS_ID).trim()
+  const net = inspectEgressNetwork(id || LOCAL_EGRESS_ID, run)
+  if (net?.subnet) return { ok: true, mode: 'local', ...net }
+  return { ok: false, reason: 'local_network_missing' }
+}
+
+export function proxyEgressReady(proxy, projectRoot, timeoutMs = 400) {
+  const local = localEgressStatus(proxy)
+  if (local) return local
+  return egressListening(projectRoot, proxy?.id, timeoutMs)
+}
+
 export function egressEnabled(_env = process.env) {
   return true
 }
@@ -285,11 +309,8 @@ export function inspectEgressProcess(projectRoot, proxyId) {
 }
 
 export function egressListening(projectRoot, proxyId, timeoutMs = 400) {
-  if (String(proxyId || '').trim() === LOCAL_EGRESS_ID) {
-    const net = inspectEgressNetwork(proxyId)
-    if (net?.subnet) return { ok: true, mode: 'local', ...net }
-    return { ok: false, reason: 'local_network_missing' }
-  }
+  const local = localEgressStatus(proxyId)
+  if (local) return local
   const st = inspectEgressProcess(projectRoot, proxyId)
   if (!st.ok) return st
   const spec = String(st.listen_tcp || '')
