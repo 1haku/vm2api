@@ -7,6 +7,7 @@ export const LOADTEST_TABS = [
 export type LoadtestTabId = (typeof LOADTEST_TABS)[number][0]
 
 export const LT_MODELS = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
@@ -31,6 +32,7 @@ export const LT_TURNS = [
 
 /** 探针专属模型列表，与研报 tab 的 `LT_MODELS` 是不同的一份（index.html `PROBE_MODELS`）。 */
 export const PROBE_MODELS = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },

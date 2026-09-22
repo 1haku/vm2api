@@ -501,3 +501,41 @@ test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe test
   })
   assert.equal(normal.max_tokens, 4096)
 })
+
+test('cli-hop makes Opus 5.5 acceptable to Claude Code 2.1.280', () => {
+  const body = prepareCliHopBody({
+    model: 'claude-opus-5.5',
+    thinking: { type: 'enabled', budget_tokens: 8000, display: 'summarized' },
+    output_config: { effort: 'high' },
+    tool_choice: { type: 'tool', name: 'get_weather' },
+    tools: [
+      { name: 'get_weather', input_schema: { type: 'object' } },
+      { type: 'computer_20251124', name: 'computer' },
+    ],
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(body.model, 'claude-opus-5-5')
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+  assert.equal(body.thinking.budget_tokens, undefined)
+  assert.equal(body.output_config.effort, 'high')
+  assert.deepEqual(body.tool_choice, { type: 'auto' })
+  assert.equal(body.tools.find((tool) => tool.name === 'get_weather').strict, true)
+  assert.equal(body.tools.find((tool) => tool.name === 'computer').type, 'computer_toolset_20260801')
+
+  const filled = prepareCliHopBody({
+    model: 'claude-opus-5-5',
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(filled.thinking.type, 'adaptive')
+  assert.equal(filled.thinking.budget_tokens, undefined)
+  assert.equal(filled.output_config.effort, 'medium')
+
+  const opus5 = prepareCliHopBody({
+    model: 'claude-opus-5',
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(opus5.thinking.type, 'disabled')
+  assert.equal(opus5.output_config.effort, 'high')
+})
