@@ -7,8 +7,8 @@ import { opsSince } from '@/lib/ops-window'
 import { Button } from '@/components/ui/button'
 import { logStatsQueryOptions } from '@/features/logs/queries'
 import { dashboardQueryOptions } from '@/features/overview/queries'
-import { LogsStream, type LogsStreamFilters } from './logs-stream'
 import type { HideableLogColumn } from './column-visibility'
+import { LogsStream, type LogsStreamFilters } from './logs-stream'
 
 const LIVE_POLL_MS = 3000
 

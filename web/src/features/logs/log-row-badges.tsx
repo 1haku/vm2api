@@ -68,13 +68,7 @@ export function RedirectBadge({ row }: { row: RequestLogItem }) {
   )
 }
 
-export function CacheBadge({
-  write,
-  read,
-}: {
-  write: number
-  read: number
-}) {
+export function CacheBadge({ write, read }: { write: number; read: number }) {
   if (write <= 0 && read <= 0) return null
   const text = write > 0 && read > 0 ? '读写' : write > 0 ? '写' : '读'
   return (

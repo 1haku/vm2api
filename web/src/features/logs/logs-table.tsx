@@ -9,8 +9,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { SlotIdentity } from '@/components/platform-chip'
 import { ModelVendorIcon } from '@/components/model-vendor-icon'
+import { SlotIdentity } from '@/components/platform-chip'
 import { columnVisible, type HideableLogColumn } from './column-visibility'
 import { rowCost, showModelRedirect, statusBadge } from './log-badges'
 import {
@@ -138,7 +138,8 @@ export function LogRow({
   const cacheWrite = Number(row.cache_creation_tokens) || 0
   const cacheRead = Number(row.cache_read_tokens) || 0
   const cost = rowCost(row)
-  const failed = statusBadge(row.status).tone === 'bad' || Boolean(row.error_class)
+  const failed =
+    statusBadge(row.status).tone === 'bad' || Boolean(row.error_class)
   const open = () => {
     if (rid) onOpenDetail(rid)
   }

@@ -42,25 +42,25 @@ import {
   requestLogQueryOptions,
 } from '@/features/logs/queries'
 import { routingQueryOptions } from '@/features/settings/queries'
+import {
+  readHiddenLogColumns,
+  writeHiddenLogColumns,
+  type HideableLogColumn,
+} from './column-visibility'
+import { ColumnVisibilityMenu } from './column-visibility-menu'
 import { ErrorCollectionPanel } from './error-collection-panel'
 import {
   ExportDialog,
   type ExportOptions,
   type ExportWindow,
 } from './export-dialog'
+import { showModelRedirect } from './log-badges'
 import { LogDetailSheet } from './log-detail-sheet'
 import { LogPager } from './log-pager'
 import { LogsFullscreen } from './logs-fullscreen'
-import { showModelRedirect } from './log-badges'
 import { LogsStatsStrip } from './logs-stats-strip'
 import { LogsStream } from './logs-stream'
 import { LogsTable } from './logs-table'
-import { ColumnVisibilityMenu } from './column-visibility-menu'
-import {
-  readHiddenLogColumns,
-  writeHiddenLogColumns,
-  type HideableLogColumn,
-} from './column-visibility'
 import {
   QuickFiltersBar,
   type LogKindFilter,
@@ -99,8 +99,8 @@ export function LogsPage() {
   const [mutedOverride, setMutedOverride] = useState<string[] | null>(null)
   const [viewMode, setViewMode] = useState<'stream' | 'pager'>('stream')
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [hiddenColumns, setHiddenColumns] = useState<HideableLogColumn[]>(
-    () => readHiddenLogColumns()
+  const [hiddenColumns, setHiddenColumns] = useState<HideableLogColumn[]>(() =>
+    readHiddenLogColumns()
   )
   const [logWindow, setLogWindow] = useState<'1h' | '24h'>('1h')
   const [modelDraft, setModelDraft] = useState('')
@@ -440,7 +440,9 @@ export function LogsPage() {
             </Select>
             <Select
               value={logWindow}
-              onValueChange={(value) => setLogWindow(value === '24h' ? '24h' : '1h')}
+              onValueChange={(value) =>
+                setLogWindow(value === '24h' ? '24h' : '1h')
+              }
             >
               <SelectTrigger className='w-32'>
                 <SelectValue />
