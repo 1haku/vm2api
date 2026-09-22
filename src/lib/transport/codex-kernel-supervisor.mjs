@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { boundProxyUrl } from '../vm/egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
 import { codexKernelHealth, codexKernelPaths } from './codex-kernel-client.mjs'
 
 const starts = new Map()
@@ -49,8 +49,9 @@ export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxy
   }
   if (!secret) secret = crypto.randomBytes(24).toString('hex')
   fs.writeFileSync(tokenPath, secret + '\n', { mode: 0o600 })
-  const proxy = String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
-  const required = proxyRequired == null ? !!proxy : !!proxyRequired
+  const local = isLocalEgressProxy(vm?.proxy)
+  const proxy = local ? '' : String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
+  const required = local ? false : proxyRequired == null ? !!proxy : !!proxyRequired
   const deviceId = String(vm.device_id || vm.fingerprint?.device_id || vm.id).trim() || vm.id
   const config = {
     vm_id: vm.id,

@@ -82,6 +82,16 @@ test('resolveVmProxyUrl stays off unless proxy_cli_enabled', () => {
   )
 })
 
+test('resolveVmProxyUrl treats local egress as a direct exit', () => {
+  assert.equal(
+    resolveVmProxyUrl({
+      proxy_cli_enabled: true,
+      proxy: { id: 'px-local', scheme: 'local', host: 'local', port: 0, url: null },
+    }),
+    '',
+  )
+})
+
 test('snapshotOauth reads the scheduled record only', () => {
   const s = snapshotOauth({
     claude: { access_token: 'x', email: 'a@b.c', org_uuid: 'org' },

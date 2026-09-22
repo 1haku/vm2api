@@ -45,3 +45,16 @@ test('writeCodexKernelConfig fail-closes proxy_required without a URL', () => {
   assert.equal(cfg.proxy_url, '')
   fs.rmSync(root, { recursive: true, force: true })
 })
+
+test('writeCodexKernelConfig treats local egress as a direct exit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-'))
+  const written = writeCodexKernelConfig(
+    root,
+    { id: 'vm-codex', proxy: { id: 'px-local', scheme: 'local', host: 'local', port: 0 } },
+    { token: 'secret', proxyUrl: 'socks5h://127.0.0.1:1080', proxyRequired: true },
+  )
+  const cfg = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+  assert.equal(cfg.proxy_required, false)
+  assert.equal(cfg.proxy_url, '')
+  fs.rmSync(root, { recursive: true, force: true })
+})

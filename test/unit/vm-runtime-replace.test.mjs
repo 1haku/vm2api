@@ -8,7 +8,9 @@ import {
   proxyEndpointFromUrl,
   proxyEndpointFromVm,
   readWorkerProxyEndpoint,
+  readWorkerEgressMode,
   isSlotProxyDesynced,
+  reloadSlotWorker,
 } from '../../src/lib/vm/vm-runtime.mjs'
 
 const running = { running: true, networkMode: 'host', image: 'kin-os/ubuntu:24.04' }
@@ -88,5 +90,22 @@ test('isSlotProxyDesynced compares worker.json to vm.json', () => {
   fs.rmSync(path.join(root, 'vms', 'vm-02', 'run', 'worker.json'))
   assert.equal(readWorkerProxyEndpoint(root, 'vm-02'), undefined)
   assert.equal(isSlotProxyDesynced(vm, root), false)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('reload writes transparent egress for local exit without a SOCKS url', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-reload-local-'))
+  const vm = {
+    id: 'vm-09',
+    proxy_cli_enabled: true,
+    proxy: { id: 'px-local', scheme: 'local', host: 'local', port: 0, url: null },
+  }
+  const result = reloadSlotWorker(vm, root, { routing: {} })
+  const doc = JSON.parse(fs.readFileSync(path.join(root, 'vms', 'vm-09', 'run', 'worker.json'), 'utf8'))
+  assert.equal(doc.proxy_url, '')
+  assert.equal(doc.proxy_required, false)
+  assert.equal(doc.egress_mode, 'transparent')
+  assert.equal(readWorkerEgressMode(root, 'vm-09'), 'transparent')
+  assert.notEqual(result.error, 'slot SOCKS5 proxy is required')
   fs.rmSync(root, { recursive: true, force: true })
 })

@@ -7,6 +7,7 @@
  * Runtime: one Docker container + one long-lived Go slot worker per VM.
  */
 import path from 'node:path'
+import { hasBoundExit, isLocalEgressProxy } from './egress.mjs'
 import { getVm, listVms, getActiveVmId, isVmScheduleReady } from './vm-registry.mjs'
 
 export const GATEWAY_CAPABILITIES = {
@@ -37,6 +38,7 @@ export function resolveVmProxyUrl(vm) {
   if (!vm?.proxy_cli_enabled) return null
   const p = vm.proxy
   if (!p) return null
+  if (isLocalEgressProxy(p)) return ''
   if (p.url) return String(p.url)
   if (p.host && p.port) {
     const auth = p.username ? `${encodeURIComponent(p.username)}:${encodeURIComponent(p.password || '')}@` : ''
@@ -60,7 +62,7 @@ export function pickSchedulableVmId(projectRoot, preferredId = null) {
     const vm = getVm(projectRoot, id)
     if (!vm) continue
     if (!isVmScheduleReady(vm)) continue
-    if (!vm.proxy_cli_enabled || !vm.proxy?.url) continue
+    if (!vm.proxy_cli_enabled || !hasBoundExit(vm.proxy)) continue
     return id
   }
   return null
