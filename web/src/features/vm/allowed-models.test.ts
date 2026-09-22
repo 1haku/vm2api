@@ -45,4 +45,16 @@ describe('slot model allowlist compatibility', () => {
       fable5,
     ])
   })
+
+  it('keeps Opus 5 and Opus 5.5 independently selectable', () => {
+    expect(matchesAllowedModel('claude-opus-5-5', 'claude-opus-5.5')).toBe(true)
+    expect(matchesAllowedModel('claude-opus-5.5', 'claude-opus-5')).toBe(false)
+    expect(matchesAllowedModel('claude-opus-5', 'claude-opus-5-5')).toBe(false)
+    expect(
+      matchesAllowedModel('claude-opus-5-5', 'claude-opus-5-5-20260922')
+    ).toBe(true)
+    expect(
+      toggleAllowedModel(['claude-opus-5.5'], 'claude-opus-5-5', true)
+    ).toEqual(['claude-opus-5-5'])
+  })
 })
