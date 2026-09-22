@@ -75,7 +75,7 @@ export function zeroFieldsFromBlocks(blocks: RawBlock[]): ZeroFields {
     identityHide: identity.hide === true,
     agentText: typeof agent.text === 'string' ? agent.text : '',
     agentHide: agent.hide === true,
-    agentCacheTtl: cacheTtl(agent) || '5m',
+    agentCacheTtl: cacheTtl(agent) || '1h',
     callerText: typeof caller.text === 'string' ? caller.text : '',
     callerHide: caller.hide === true,
     callerDropIfEmpty: caller.drop_if_empty === true,
