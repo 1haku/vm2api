@@ -207,7 +207,7 @@ export async function fetchChatgptModelCatalog(opts = {}) {
   const proxyUrl = String(opts.proxyUrl || '')
     .trim()
     .replace(/^socks5:\/\//i, 'socks5h://')
-  if (!proxyUrl && !opts.fetchImpl) return { ok: false, error: 'proxy_required', ids: [], models: [] }
+  if (!proxyUrl && !opts.fetchImpl && !opts.direct) return { ok: false, error: 'proxy_required', ids: [], models: [] }
 
   const headers = {
     accept: 'application/json',

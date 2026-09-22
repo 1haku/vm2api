@@ -77,7 +77,7 @@ export function publicAllocatedProxy(proxyPool, bound) {
   return {
     id: bound.id || null,
     host: bound.host || null,
-    port: bound.port || null,
+    port: bound.port ?? null,
     has_auth: !!(bound.username || bound.password || bound.has_auth),
     status: bound.status ?? null,
     enabled: bound.enabled ?? null,
@@ -1226,7 +1226,7 @@ function mergeVmProxy(v, poolSnap) {
     proxy: {
       id: hit?.id || base.id || v.proxy_id || null,
       host: hit?.host || base.host || null,
-      port: hit?.port || base.port || null,
+      port: hit?.port ?? base.port ?? null,
       scheme: hit?.scheme || base.scheme || (hit?.id === 'px-local' || base.id === 'px-local' ? 'local' : 'socks5'),
       has_auth: hit?.has_auth ?? !!(base.url && /\/\/[^/@]+@/.test(base.url)),
       status: hit?.status ?? null,

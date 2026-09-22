@@ -9,10 +9,12 @@ import {
   bridgeName,
   chainName,
   egressEnabled,
+  hasBoundExit,
   inspectEgressNetwork,
   inspectEgressProcess,
   iptablesPlan,
   isLocalEgressProxy,
+  localEgressStatus,
   networkName,
   portsForProxy,
   slotNetworkForVm,
@@ -84,4 +86,26 @@ test('inspectEgressProcess reports missing pid as not_running', () => {
   assert.equal(st.ok, false)
   assert.equal(st.reason, 'not_running')
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('local egress is a bound exit even when the SOCKS url is empty', () => {
+  assert.equal(hasBoundExit({ id: LOCAL_EGRESS_ID, host: 'local', port: 0, url: null }), true)
+  assert.equal(hasBoundExit({ scheme: 'local', host: '10.0.0.8', port: 1080 }), true)
+  assert.equal(hasBoundExit({ host: '10.0.0.1', port: 1080 }), true)
+  assert.equal(hasBoundExit({ host: '10.0.0.1' }), false)
+  assert.equal(hasBoundExit(null), false)
+})
+
+test('local egress health follows the masquerade net for any local row', () => {
+  const hit = localEgressStatus({ id: 'px-other', scheme: 'local' }, () => ({
+    ok: true,
+    stdout: '192.168.144.0/20|192.168.144.1',
+  }))
+  assert.equal(hit.ok, true)
+  assert.equal(hit.mode, 'local')
+  assert.equal(hit.name, 'kin-eg-px-other')
+  const miss = localEgressStatus({ id: LOCAL_EGRESS_ID }, () => ({ ok: false, stderr: 'not found' }))
+  assert.equal(miss.ok, false)
+  assert.equal(miss.reason, 'local_network_missing')
+  assert.equal(localEgressStatus({ id: 'px-socks', host: '10.0.0.1', port: 1080 }), null)
 })
