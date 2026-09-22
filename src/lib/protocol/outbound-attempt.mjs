@@ -37,7 +37,6 @@ import {
 import {
   applyCacheTtlToBody,
   enforceCacheTtlOrder,
-  fillAbsentMessageBreakpoints,
   injectToolsTailBreakpoint,
   normalizeCacheTtl,
   stripIllegalCacheControlFields,
@@ -74,14 +73,14 @@ export function stripCliOwnedSystem(system) {
   return kept.length ? kept : undefined
 }
 
-/** cli-hop placement is fixed. Routing `messages: rewrite` is the HTTP hop.
- * Here an existing message anchor stays; a body with none is filled. */
+/** sub2api default: keep the caller's system and message anchors. Node only
+ * fills the last non-deferred tool, which is the stable tools prefix. */
 export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   enabled: true,
   preserve_client: true,
   system_tail: false,
   tools_tail: true,
-  messages: 'fill',
+  messages: 'off',
 })
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
@@ -227,16 +226,13 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
-  // One TTL for the whole hop: the settings value, not a second constant.
-  // apply last so a caller 5m cannot pull a settings 1h back down.
+  // Menu cache_ttl (default 1h). Do not pin a second value here.
+  const ttl = normalizeCacheTtl(cacheTtl)
   if (cacheBreakpoints?.enabled !== false) {
-    const ttl = normalizeCacheTtl(cacheTtl)
     body = injectToolsTailBreakpoint(body, ttl)
-    body = fillAbsentMessageBreakpoints(body, ttl)
     body = applyCacheTtlToBody(body, ttl)
-  } else {
-    body = enforceCacheTtlOrder(body)
   }
+  body = enforceCacheTtlOrder(body)
   enforceCacheLimit(body, cacheControlLimit)
   return body
 }

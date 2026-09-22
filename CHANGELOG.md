@@ -1,13 +1,5 @@
 # Changelog
 
-## 1.3.26 — 2026-09-22
-
-- cli-hop 整包只用设置 → 协议的一个缓存 TTL（`5m` 或 `1h`），不再和 wrap 的无 ttl 断点混用。调用方留下的另一种 TTL 在出站前改成这一个值
-- 没有调用方消息断点时，Node 补上一条 user 和当前尾。已有消息断点保持原位
-- kernel 给 cli-node 带上 `wireMessages`，wrap 跳过 `addCacheBreakpoints`，不再往 tools 前面塞被当成 `5m` 的断点。设置页是 `1h` 时不再出现 `messages.0` 的 1h 跟在 5m 后面的 400
-
-已部署机升级：`bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 有变，必须 `wrap-cli/sync` 并重启槽内 dataplane。不要 `docker rm` 槽。
-
 ## 1.3.25 — 2026-09-22
 
 - OpenAI 号池按权重、会话粘滞和 smart 分数选槽，不再按额度压力排序（#80）
