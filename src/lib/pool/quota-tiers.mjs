@@ -139,6 +139,12 @@ export function accountTierKey(acc) {
   return resolveTierKey(acc?.unified?.account_tier || acc?.account_tier)
 }
 
+function utilRatio(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return n > 1.5 ? n / 100 : n
+}
+
 export function isNearLimit(acc, policy) {
   const p = policy || resolveTierPolicy({}, accountTierKey(acc))
   const limit5 = Number(p.limit_5h ?? p.safety_ratio ?? 0.85)
@@ -146,7 +152,5 @@ export function isNearLimit(acc, policy) {
   const u = acc?.unified || {}
   const w5 = u.official?.['5h'] || u['5h'] || {}
   const w7 = u.official?.['7d'] || u['7d'] || {}
-  const u5 = Number(w5.utilization || 0)
-  const u7 = Number(w7.utilization || 0)
-  return u5 >= limit5 || u7 >= limit7
+  return utilRatio(w5.utilization) >= limit5 || utilRatio(w7.utilization) >= limit7
 }

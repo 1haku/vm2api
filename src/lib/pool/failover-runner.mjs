@@ -569,6 +569,12 @@ export class FailoverRunner {
         // state, not account health. One same-slot recovery is useful; replaying
         // the same conversation across the pool breaks affinity and multiplies cost.
         if (policy.reason === 'incomplete_assistant') {
+          const sessions = this.scheduler?.accountQuota?.sessions
+          for (const key of bindKeys) {
+            try {
+              sessions?.drop?.(selected.accountId, key)
+            } catch {}
+          }
           return {
             ...incompleteAssistantClientError(result),
             via: result?.via || 'pool-failover',
