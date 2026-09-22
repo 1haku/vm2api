@@ -410,6 +410,49 @@ test('cli-hop lifts trailing system constraints so the hop ends with a user turn
   assert.ok(later.system.every((block) => block.cache_control == null))
 })
 
+test('cli-hop freezes the lifted 2.1.278 context budget so the next turn can read', () => {
+  const budget = (n) => `<system-reminder>\n<total_tokens>${n} tokens left</total_tokens>\n</system-reminder>`
+  const stable = budget(15000000)
+  const first = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    system: [{ type: 'text', text: 'persona' }],
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+      { role: 'system', content: budget(14955783) },
+    ],
+  })
+  const second = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    system: [{ type: 'text', text: 'persona' }],
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+      { role: 'system', content: budget(14955783) },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u3' },
+      { role: 'system', content: budget(14947383) },
+    ],
+  })
+  assert.equal(first.system.at(-1).text, stable)
+  assert.equal(second.system.at(-1).text, stable)
+  assert.deepEqual(
+    first.system.map((block) => block.text),
+    second.system.map((block) => block.text),
+  )
+  assert.equal(second.messages[3].role, 'system')
+  assert.equal(second.messages[3].content[0].text, budget(14955783))
+  assert.deepEqual(second.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.deepEqual(
+    second.messages.slice(0, 3).map((message) => message.content[0].text),
+    first.messages.map((message) => message.content[0].text),
+  )
+})
+
 test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {
   const body = prepareCliHopBody({
     model: 'claude-sonnet-5',
@@ -457,4 +500,3 @@ test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe test
   })
   assert.equal(normal.max_tokens, 4096)
 })
-
