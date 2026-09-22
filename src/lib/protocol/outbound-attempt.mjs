@@ -100,19 +100,6 @@ function dropCliOwnedBreakpoints(body) {
   return out
 }
 
-/** Kernel restamps the current tail, so keep only Node's stable previous-user marker. */
-function dropLastMessageBreakpoint(body) {
-  const messages = body?.messages
-  if (!Array.isArray(messages) || messages.length === 0) return body
-  const idx = messages.length - 1
-  const last = messages[idx]
-  if (!last || !Array.isArray(last.content)) return body
-  const content = last.content.map(dropNodeCacheControl)
-  const next = messages.slice()
-  next[idx] = { ...last, content }
-  return { ...body, messages: next }
-}
-
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
 const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
@@ -147,6 +134,77 @@ function stabilizeSystemBudget(body) {
     return { ...block, text }
   })
   return changed ? { ...body, system } : body
+}
+
+function stabilizeBlockBudget(block) {
+  if (typeof block === 'string') return stabilizeOfficialContextBudget(block)
+  if (!block || typeof block !== 'object') return block
+  let next = block
+  if (typeof block.text === 'string') {
+    const text = stabilizeOfficialContextBudget(block.text)
+    if (text !== block.text) next = { ...next, text }
+  }
+  if (typeof block.content === 'string') {
+    const content = stabilizeOfficialContextBudget(block.content)
+    if (content !== block.content) next = { ...next, content }
+  }
+  return next
+}
+
+/** Historical role=system reminders sit inside the next lookup prefix. */
+function stabilizeMessageBudgets(body) {
+  if (!Array.isArray(body?.messages)) return body
+  let changed = false
+  const messages = body.messages.map((message) => {
+    const content = message?.content
+    if (typeof content === 'string') {
+      const text = stabilizeOfficialContextBudget(content)
+      if (text === content) return message
+      changed = true
+      return { ...message, content: text }
+    }
+    if (!Array.isArray(content)) return message
+    let touched = false
+    const next = content.map((block) => {
+      const stabilized = stabilizeBlockBudget(block)
+      if (stabilized !== block) touched = true
+      return stabilized
+    })
+    if (!touched) return message
+    changed = true
+    return { ...message, content: next }
+  })
+  return changed ? { ...body, messages } : body
+}
+
+function lastNonThinkingIndex(content) {
+  if (!Array.isArray(content)) return -1
+  for (let i = content.length - 1; i >= 0; i--) {
+    if (content[i]?.type === 'thinking') continue
+    return i
+  }
+  return -1
+}
+
+/** Node owns the tail marker. Put it on the last non-thinking block and leave it there. */
+function retargetCliHopTail(body, ttl) {
+  const messages = body?.messages
+  if (!Array.isArray(messages) || messages.length === 0) return body
+  const idx = messages.length - 1
+  const last = messages[idx]
+  if (!last || !Array.isArray(last.content) || last.content.length === 0) return body
+  const target = lastNonThinkingIndex(last.content)
+  if (target < 0) return body
+  const content = last.content.map((block, i) => {
+    if (!block || typeof block !== 'object') return block
+    if (i === target) return { ...block, cache_control: { type: 'ephemeral', ttl } }
+    if (!block.cache_control) return block
+    const { cache_control: _drop, ...rest } = block
+    return rest
+  })
+  const next = messages.slice()
+  next[idx] = { ...last, content }
+  return { ...body, messages: next }
 }
 
 /** A CLI hop must end on a conversational user/assistant turn. Preserve older
@@ -203,6 +261,7 @@ export function prepareCliHopBody(
   if (leftover == null) delete body.system
   else body.system = leftover
   body = liftTrailingSystemMessages(body)
+  body = stabilizeMessageBudgets(body)
 
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
@@ -216,8 +275,7 @@ export function prepareCliHopBody(
   const ttl = CLI_HOP_CACHE_TTL
   if (cacheTtl == null) return forceEphemeralCacheTtl(body, ttl)
   body = stripIllegalCacheControlFields(body)
-  // Node owns the stable previous-user boundary; the kernel receives the same
-  // resolved TTL and owns the current tail plus wrap-owned markers.
+  // Previous tail stays on that block. This tail is stamped here. Kernel does not restamp.
   if (cacheBreakpoints) {
     const cfg = normalizeCacheBreakpoints(cacheBreakpoints)
     body = applyCacheBreakpoints(body, {
@@ -233,7 +291,7 @@ export function prepareCliHopBody(
     })
   }
   body = dropCliOwnedBreakpoints(body)
-  body = dropLastMessageBreakpoint(body)
+  if (cacheBreakpoints?.enabled !== false) body = retargetCliHopTail(body, ttl)
   body = forceEphemeralCacheTtl(enforceCacheTtlOrder(body), ttl)
   enforceCacheLimit(body, cacheControlLimit)
   return body
