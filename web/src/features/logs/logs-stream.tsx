@@ -17,7 +17,9 @@ import {
   logsStreamQueryKey,
   logsStreamQueryOptions,
 } from '@/features/logs/queries'
+import { showModelRedirect } from './log-badges'
 import { LogRow, LogsTableHeader, logRowId } from './logs-table'
+import type { HideableLogColumn } from './column-visibility'
 import type { LogKindFilter } from './quick-filters-bar'
 
 const ROW_HEIGHT = 52
@@ -28,6 +30,9 @@ export type LogsStreamFilters = {
   kind: LogKindFilter
   errorClass: string
   muted: string[]
+  since?: string
+  model?: string
+  mismatchOnly?: boolean
 }
 
 function streamFilterQs(filters: LogsStreamFilters): string {
@@ -37,6 +42,8 @@ function streamFilterQs(filters: LogsStreamFilters): string {
   else if (filters.muted.length) {
     qs.set('exclude_error_class', filters.muted.join(','))
   }
+  if (filters.since) qs.set('since', filters.since)
+  if (filters.model) qs.set('model', filters.model)
   return qs.toString()
 }
 
@@ -71,6 +78,7 @@ export function LogsStream({
   vms,
   onOpenDetail,
   showIngress,
+  hidden,
   pollMs = POLL_MS,
   viewportClassName = 'h-[600px]',
 }: {
@@ -78,6 +86,7 @@ export function LogsStream({
   vms?: Map<string, Vm>
   onOpenDetail: (id: string) => void
   showIngress?: boolean
+  hidden?: readonly HideableLogColumn[]
   /** 轮询间隔；全屏值班模式收紧到 3s。 */
   pollMs?: number
   /** 滚动视口高度；全屏值班模式改为撑满屏幕。 */
@@ -104,7 +113,11 @@ export function LogsStream({
     error,
   } = useInfiniteQuery(queryOptions)
 
-  const allLogs = useMemo(() => flattenPages(data?.pages), [data?.pages])
+  const allLogs = useMemo(() => {
+    const rows = flattenPages(data?.pages)
+    if (!filters.mismatchOnly) return rows
+    return rows.filter((row) => showModelRedirect(row))
+  }, [data?.pages, filters.mismatchOnly])
 
   const {
     parentRef,
@@ -171,8 +184,8 @@ export function LogsStream({
     >
       <div className='relative overflow-hidden rounded-lg border border-border/60'>
         <div className='overflow-x-auto'>
-          <div className='min-w-[900px]'>
-            <LogsTableHeader showIngress={showIngress} />
+          <div className='min-w-[960px]'>
+            <LogsTableHeader showIngress={showIngress} hidden={hidden} />
             {allLogs.length === 0 ? (
               <div className='flex h-24 items-center justify-center text-sm text-muted-foreground'>
                 没有匹配的请求
@@ -230,6 +243,7 @@ export function LogsStream({
                           }
                           onOpenDetail={onOpenDetail}
                           showIngress={showIngress}
+                          hidden={hidden}
                           highlighted={newIds.has(rid)}
                           className='border-b border-border/40'
                         />

@@ -51,8 +51,16 @@ import {
 import { LogDetailSheet } from './log-detail-sheet'
 import { LogPager } from './log-pager'
 import { LogsFullscreen } from './logs-fullscreen'
+import { showModelRedirect } from './log-badges'
+import { LogsStatsStrip } from './logs-stats-strip'
 import { LogsStream } from './logs-stream'
 import { LogsTable } from './logs-table'
+import { ColumnVisibilityMenu } from './column-visibility-menu'
+import {
+  readHiddenLogColumns,
+  writeHiddenLogColumns,
+  type HideableLogColumn,
+} from './column-visibility'
 import {
   QuickFiltersBar,
   type LogKindFilter,
@@ -91,6 +99,13 @@ export function LogsPage() {
   const [mutedOverride, setMutedOverride] = useState<string[] | null>(null)
   const [viewMode, setViewMode] = useState<'stream' | 'pager'>('stream')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [hiddenColumns, setHiddenColumns] = useState<HideableLogColumn[]>(
+    () => readHiddenLogColumns()
+  )
+  const [logWindow, setLogWindow] = useState<'1h' | '24h'>('1h')
+  const [modelDraft, setModelDraft] = useState('')
+  const [modelQuery, setModelQuery] = useState('')
+  const [mismatchOnly, setMismatchOnly] = useState(false)
 
   // 切筛选/模式后旧页码可能越界，回到第一页。
   useEffect(() => {
@@ -99,7 +114,7 @@ export function LogsPage() {
 
   const isDebug = mode === 'debug'
   const usePager = isDebug || viewMode === 'pager'
-  const since = opsSince('1h')
+  const since = opsSince(logWindow)
   const stats = useQuery(logStatsQueryOptions(since))
   // 服务端屏蔽列表读 stats 响应，**不读 `GET /routing`** ——
   // panel-acl 只给 admin 放行 routing（非 admin 会吃 403），
@@ -114,9 +129,13 @@ export function LogsPage() {
   // 传了 error_class 时后端会丢弃 exclude（分支 1），不必也不该同时发。
   else if (muted.length) qs.set('exclude_error_class', muted.join(','))
   if (isDebug) qs.set('mode', 'debug')
+  else qs.set('since', since)
+  if (modelQuery) qs.set('model', modelQuery)
   const logs = useQuery(logsQueryOptions(qs.toString(), usePager))
   const detail = useQuery(requestLogQueryOptions(openId, !!openId))
-  const items = logs.data?.items || []
+  const items = (logs.data?.items || []).filter((row) =>
+    mismatchOnly ? showModelRedirect(row) : true
+  )
   const total = Number(logs.data?.total ?? 0)
   const window_ = stats.data?.window
   const errorCollection = (window_?.error_collection || {}) as ErrorCollection
@@ -124,7 +143,10 @@ export function LogsPage() {
   const activeFilterCount =
     (kind === 'error' ? 1 : 0) +
     (errorClass ? 1 : 0) +
-    (mode === 'debug' ? 1 : 0)
+    (mode === 'debug' ? 1 : 0) +
+    (modelQuery ? 1 : 0) +
+    (mismatchOnly ? 1 : 0) +
+    (logWindow === '24h' ? 1 : 0)
 
   const saveMuted = useMutation({
     mutationFn: (next: string[]) =>
@@ -138,6 +160,16 @@ export function LogsPage() {
     },
     onError: (error: Error) => toast.error(error.message || '保存失败'),
   })
+
+  function toggleColumn(id: HideableLogColumn) {
+    setHiddenColumns((prev) => {
+      const next = prev.includes(id)
+        ? prev.filter((col) => col !== id)
+        : [...prev, id]
+      writeHiddenLogColumns(next)
+      return next
+    })
+  }
 
   function setErrorClass(next: string) {
     void navigate({
@@ -334,6 +366,10 @@ export function LogsPage() {
               <Download className='size-3.5' />
               导出
             </Button>
+            <ColumnVisibilityMenu
+              hidden={hiddenColumns}
+              onToggle={toggleColumn}
+            />
             <Button
               variant='ghost'
               size='icon'
@@ -358,6 +394,12 @@ export function LogsPage() {
             )}
             {isDebug ? null : (
               <div className='ml-1 flex items-center gap-1.5 border-l border-border/40 pl-2'>
+                {viewMode === 'stream' ? (
+                  <span className='relative flex size-1.5'>
+                    <span className='absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75' />
+                    <span className='relative inline-flex size-1.5 rounded-full bg-emerald-500' />
+                  </span>
+                ) : null}
                 <Switch
                   checked={viewMode === 'stream'}
                   onCheckedChange={(on) => setViewMode(on ? 'stream' : 'pager')}
@@ -396,9 +438,46 @@ export function LogsPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select
+              value={logWindow}
+              onValueChange={(value) => setLogWindow(value === '24h' ? '24h' : '1h')}
+            >
+              <SelectTrigger className='w-32'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='1h'>近 1 小时</SelectItem>
+                <SelectItem value='24h'>近 24 小时</SelectItem>
+              </SelectContent>
+            </Select>
+            <input
+              value={modelDraft}
+              placeholder='模型名'
+              aria-label='模型名'
+              className='h-8 w-40 rounded-md border border-input bg-transparent px-2 text-xs'
+              onChange={(event) => setModelDraft(event.target.value)}
+              onBlur={() => setModelQuery(modelDraft.trim())}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') setModelQuery(modelDraft.trim())
+              }}
+            />
+            <Button
+              size='sm'
+              variant={mismatchOnly ? 'default' : 'outline'}
+              aria-pressed={mismatchOnly}
+              onClick={() => setMismatchOnly((on) => !on)}
+            >
+              仅模型重定向
+            </Button>
           </div>
         </CollapsibleContent>
       </Collapsible>
+      <LogsStatsStrip
+        loading={stats.isLoading}
+        error={stats.error}
+        windowLabel={logWindow === '24h' ? '近 24 小时' : '近 1 小时'}
+        window={window_}
+      />
       {usePager ? (
         <QueryGate
           loading={logs.isLoading}
@@ -415,6 +494,7 @@ export function LogsPage() {
               vms={vms}
               onOpenDetail={setOpenId}
               showIngress={errorClass === 'auth'}
+              hidden={hiddenColumns}
             />
             {isDebug ? null : (
               <div className='border-t border-border/60 bg-muted/20'>
@@ -433,10 +513,18 @@ export function LogsPage() {
         </QueryGate>
       ) : (
         <LogsStream
-          filters={{ kind, errorClass, muted }}
+          filters={{
+            kind,
+            errorClass,
+            muted,
+            since,
+            model: modelQuery,
+            mismatchOnly,
+          }}
           vms={vms}
           onOpenDetail={setOpenId}
           showIngress={errorClass === 'auth'}
+          hidden={hiddenColumns}
         />
       )}
       <LogDetailSheet
@@ -459,9 +547,17 @@ export function LogsPage() {
       />
       {isFullscreen ? (
         <LogsFullscreen
-          filters={{ kind, errorClass, muted }}
+          filters={{
+            kind,
+            errorClass,
+            muted,
+            since,
+            model: modelQuery,
+            mismatchOnly,
+          }}
           vms={vms}
           showIngress={errorClass === 'auth'}
+          hidden={hiddenColumns}
           onOpenDetail={setOpenId}
           onExit={exitFullscreen}
         />
