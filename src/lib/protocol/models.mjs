@@ -168,6 +168,12 @@ export function resolveCatalogModel(raw, ids = cache.ids) {
   const lower = bare.toLowerCase()
   if (FAMILY_ALIASES.has(lower)) {
     const fam = FAMILY_ALIASES.get(lower)
+    // Bare `opus` stays on the policy target. Rank would promote claude-opus-5-5;
+    // 2.1.280 uses that id only when the caller names it.
+    if (lower === 'opus') {
+      const pinned = resolvePolicyAliasToCatalog(lower, ids)
+      if (pinned) return { ok: true, model: pinned, alias: fam, want1m }
+    }
     const latest = latestIdForFamily(fam, ids)
     if (latest) return { ok: true, model: latest, alias: fam, want1m }
   }
@@ -193,7 +199,11 @@ export function setModelCatalog(ids, { source = 'go-slot-worker' } = {}) {
     ids: [
       ...new Set(
         (ids || [])
-          .map((id) => (id === 'claude-fable-5.1' ? 'claude-fable-5-1' : id))
+          .map((id) => {
+            if (id === 'claude-fable-5.1') return 'claude-fable-5-1'
+            if (id === 'claude-opus-5.5') return 'claude-opus-5-5'
+            return id
+          })
           .filter((id) => isCatalogModelId(id)),
       ),
     ],

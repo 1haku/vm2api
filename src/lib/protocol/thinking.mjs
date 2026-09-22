@@ -169,13 +169,19 @@ export function stripUnsupportedEffort(body = {}) {
   return { ...body, output_config: next }
 }
 
-/** Official 2.1.241 unofficial fill: missing output_config.effort. Never overwrite. Skip models that reject effort. */
+/** Official fill: missing output_config.effort. Never overwrite. Opus 5.5 defaults to medium. */
 export function ensureUnofficialEffortHigh(body = {}) {
   if (!body || typeof body !== 'object') return body
   if (!modelSupportsEffort(body.model)) return stripUnsupportedEffort(body)
+  let effort = 'high'
+  try {
+    effort = getModelParams(body.model)?.default_effort || 'high'
+  } catch {
+    effort = 'high'
+  }
   if (body.output_config && typeof body.output_config === 'object') {
     if (body.output_config.effort != null && body.output_config.effort !== '') return body
-    return { ...body, output_config: { ...body.output_config, effort: 'high' } }
+    return { ...body, output_config: { ...body.output_config, effort } }
   }
-  return { ...body, output_config: { effort: 'high' } }
+  return { ...body, output_config: { effort } }
 }

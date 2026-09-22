@@ -45,6 +45,27 @@ test('Opus 5 official: $5 / $25 / cache 5m $6.25 / 1h $10 / read $0.50 per MTok'
   assert.equal(c.total_cost, 46.75)
 })
 
+test('Opus 5.5 official: $4 / $20 / cache read $0.20 per MTok', () => {
+  assert.equal(resolvePricingKey('claude-opus-5-5'), 'opus-5.5')
+  assert.equal(resolvePricingKey('claude-opus-5.5'), 'opus-5.5')
+  assert.equal(resolvePricingKey('claude-opus-5'), 'opus-5')
+  const c = calculateCost(
+    {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_creation_5m_tokens: 1_000_000,
+      cache_creation_1h_tokens: 1_000_000,
+    },
+    'claude-opus-5-5',
+  )
+  assert.equal(c.input_cost, 4)
+  assert.equal(c.output_cost, 20)
+  assert.equal(c.cache_read_cost, 0.2)
+  assert.equal(c.cache_creation_5m_cost, 5)
+  assert.equal(c.cache_creation_1h_cost, 8)
+})
+
 test('Sonnet 5 official: $2 / $10 (standard, not the old $3/$15 intro)', () => {
   const c = calculateCost({ input_tokens: 1_000_000, output_tokens: 1_000_000 }, 'claude-sonnet-5')
   assert.equal(c.input_cost, 2)
