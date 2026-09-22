@@ -20,6 +20,7 @@ import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
 import { boundProxyUrl } from '../vm/egress.mjs'
 import { orderCodexSessionSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
+import { acquireOpenAISlot, releaseOpenAISlot, reportOpenAIAttempt } from '../pool/openai-account-runtime.mjs'
 import { readCodexAccounts } from '../vm/codex-slot.mjs'
 import { applyCodexRotate, observeHopTurnState, scheduleCodexRotateCollect } from './codex-rotate.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
@@ -207,15 +208,21 @@ export async function handleCodexProtocol({
       },
     })
   }
-  if (picked.error === 'session_window_full') {
+  if (picked.error === 'session_window_full' || picked.error === 'quota_exhausted' || picked.error === 'capacity_unavailable') {
     stats.errors++
     logBag.via = 'codex-kernel'
-    logBag.error_code = 'session_window_full'
+    logBag.error_code = picked.error
+    const message =
+      picked.error === 'session_window_full'
+        ? 'OpenAI 号池的会话窗口已满'
+        : picked.error === 'quota_exhausted'
+          ? 'OpenAI 号池额度已耗尽'
+          : 'OpenAI 号池并发已满'
     return json(res, 503, {
       error: {
         type: 'api_error',
-        code: 'session_window_full',
-        message: 'OpenAI 号池的会话窗口已满',
+        code: picked.error,
+        message,
       },
     })
   }
@@ -287,6 +294,9 @@ export async function handleCodexProtocol({
       logBag.error_code = 'codex_kernel_unavailable'
       return json(res, 503, last.body)
     }
+    acquireOpenAISlot(vm.id)
+    let attemptKind = 'failed'
+    try {
     const account = firstCodexAccount(projectRoot, vm.id)
     const applied = applyCodexRotate({
       body: outboundBody,
@@ -356,6 +366,7 @@ export async function handleCodexProtocol({
     if (result?.transport_retried) logBag.transport_retried = true
     last = result
     if (result?.ok) {
+      attemptKind = 'succeeded'
       bindSticky(vm)
       const usage = result.usage || result.body?.usage || result.body?.response?.usage || null
       const extracted = extractOpenaiUsage(usage)
@@ -370,6 +381,7 @@ export async function handleCodexProtocol({
         usage?.cache_creation_tokens ??
         null
       logBag.first_token_ms = result.ttftMs ?? null
+      reportOpenAIAttempt(vm.id, 'succeeded', result.ttftMs ?? null)
       logBag.final_state = result.terminalState || 'verified'
       logBag.upstream_model = converted.body.model
       if (i > 0) logBag.codex_failed_over = true
@@ -383,16 +395,22 @@ export async function handleCodexProtocol({
       return res.end()
     }
     if (res.headersSent) {
+      reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
       stats.errors++
       logBag.error_code = result?.body?.error?.code || 'codex_upstream'
       logBag.upstream_status = result?.status || 0
       return res.end()
     }
     if (i + 1 < candidateIds.length && isCodexFailoverError(result)) {
+      reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
       leaveSticky(vm)
       continue
     }
+    reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
     break
+    } finally {
+      releaseOpenAISlot(vm.id)
+    }
   }
   stats.errors++
   logBag.error_code = last?.body?.error?.code || 'codex_upstream'
