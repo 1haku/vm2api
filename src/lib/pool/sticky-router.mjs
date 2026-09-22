@@ -71,6 +71,10 @@ export function isPersistableEnvelope(body = {}, inbound = null) {
   return ENVELOPE_NEEDLES.some((item) => hay.includes(String(item).toLowerCase()))
 }
 
+/** First text block only. Later blocks of the same user message change every
+ * turn and must not open another VM session slot. This matches
+ * extractFirstUserText, which already seeds the outbound session id.
+ */
 export function firstUserFingerprint(body = {}) {
   const msgs = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : []
   const user = msgs.find((m) => String(m?.role || m?.type || '').toLowerCase() === 'user') || msgs[0]
@@ -79,7 +83,16 @@ export function firstUserFingerprint(body = {}) {
     const c = user.content ?? user.text ?? user.input
     if (typeof c === 'string') text = c
     else if (Array.isArray(c)) {
-      text = c.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('\n')
+      for (const part of c) {
+        if (typeof part === 'string' && part) {
+          text = part
+          break
+        }
+        if (part?.type === 'text' && typeof part.text === 'string' && part.text) {
+          text = part.text
+          break
+        }
+      }
     }
   } else if (typeof body?.input === 'string') {
     text = body.input
