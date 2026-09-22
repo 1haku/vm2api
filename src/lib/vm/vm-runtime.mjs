@@ -14,7 +14,7 @@ import { runtimeKind } from './runtime-kind.mjs'
 import { buildWorkerTelemetry } from './worker-telemetry.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference } from './slot-engine.mjs'
-import { ensureSlotClaudeOwnership } from '../oauth/oauth-credentials.mjs'
+import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureProxyEgress, isLocalEgressProxy, slotNetworkForVm } from './egress.mjs'
@@ -280,7 +280,7 @@ export function syncWorkerTelemetry(vm, projectRoot) {
   }
   if (!doc || typeof doc !== 'object') return { wrote: false }
   doc.telemetry = buildWorkerTelemetry(vm, projectRoot)
-  fs.writeFileSync(paths.config, JSON.stringify(doc, null, 2) + '\n', { mode: 0o600 })
+  replaceSlotOwnedFile(paths.config, JSON.stringify(doc, null, 2) + '\n', vm)
   return { wrote: true, enabled: doc.telemetry.enabled === true }
 }
 
@@ -329,7 +329,7 @@ function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
     token = fs.readFileSync(paths.token, 'utf8').trim()
   } catch {}
   if (!token) token = crypto.randomBytes(32).toString('hex')
-  fs.writeFileSync(paths.token, token + '\n', { mode: 0o600 })
+  replaceSlotOwnedFile(paths.token, token + '\n', vm)
   const onEgress =
     transparent === true ||
     (transparent !== false && String(inspectContainer(containerName(vm.id))?.networkMode || '').startsWith('kin-eg-'))
@@ -363,7 +363,7 @@ function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
     if (anthropicBaseUrl) workerConfig.anthropic_base_url = anthropicBaseUrl
     if (oauthTokenUrl) workerConfig.oauth_token_url = oauthTokenUrl
   }
-  fs.writeFileSync(paths.config, JSON.stringify(workerConfig, null, 2) + '\n', { mode: 0o600 })
+  replaceSlotOwnedFile(paths.config, JSON.stringify(workerConfig, null, 2) + '\n', vm)
   const resolvedRouting = routing != null ? routing : readProjectRouting(projectRoot)
   const allowed = assertCliHopAllowed(vm, resolvedRouting)
   if (!allowed.ok) throw new Error(allowed.error)
@@ -375,12 +375,10 @@ function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
     timezone: vm.timezone || '',
     routing: resolvedRouting,
   })
-  try {
-    fs.chownSync(paths.runDir, uid, gid)
-    fs.chownSync(paths.token, uid, gid)
-    fs.chownSync(paths.config, uid, gid)
-    if (kernel?.configPath) fs.chownSync(kernel.configPath, uid, gid)
-  } catch {}
+  chownSlotRuntimeFile(paths.runDir, vm)
+  chownSlotRuntimeFile(paths.token, vm)
+  chownSlotRuntimeFile(paths.config, vm)
+  if (kernel?.configPath) chownSlotRuntimeFile(kernel.configPath, vm)
   ensureSlotClaudeOwnership(path.join(projectRoot, 'vms', vm.id, 'cli-home'), uid, gid)
   return { ...paths, kernelSocket: kernel?.socketPath || paths.kernelSocket }
 }

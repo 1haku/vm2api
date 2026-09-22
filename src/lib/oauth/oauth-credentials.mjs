@@ -212,6 +212,56 @@ export function readWorkerCredentialFile(homeDir) {
 }
 const SLOT_CLAUDE_FILES = ['credentials.json', 'credentials.json.lock', '.credentials.json']
 
+function slotIndexFromText(value) {
+  const s = String(value || '')
+  const m = s.match(/^vm-(\d+)$/i) || s.match(/^0*(\d+)$/)
+  return m ? Number(m[1]) : null
+}
+
+/** Container --user. Non-numeric ids share index 1, matching socksUidFor. */
+export function slotRuntimeOwner(vm) {
+  const n = slotIndexFromText(vm?.id) || slotIndexFromText(vm?.name) || 1
+  const base = Number(process.env.KIN_VM_UID_BASE || 10000)
+  const gid = Number(process.env.KIN_VM_GID || 987)
+  return {
+    uid: (Number.isFinite(base) ? base : 10000) + n,
+    gid: Number.isFinite(gid) ? gid : 987,
+  }
+}
+
+/** Best-effort. Non-root tests cannot chown; the write must still publish. */
+export function chownSlotRuntimeFile(filePath, vm) {
+  if (!filePath || !vm?.id) return false
+  const { uid, gid } = slotRuntimeOwner(vm)
+  try {
+    const st = fs.statSync(filePath)
+    if (st.uid === uid && st.gid === gid) return false
+    fs.chownSync(filePath, uid, gid)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Temp + rename drops the previous inode. chown the temp first so the
+ * published 0600 file is already the slot uid. Otherwise kin-kernel
+ * (container PID 1) gets EACCES and docker --restart loops.
+ */
+export function replaceSlotOwnedFile(filePath, body, vm) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  try {
+    fs.writeFileSync(tempPath, body, { mode: 0o600 })
+    chownSlotRuntimeFile(tempPath, vm)
+    fs.renameSync(tempPath, filePath)
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true })
+    } catch {}
+    throw error
+  }
+}
+
 export function slotUidGidFromHomeDir(homeDir) {
   const m = String(homeDir || '')
     .replace(/\\/g, '/')

@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import fs from 'node:fs'
@@ -36,6 +36,8 @@ import {
 } from '../../src/lib/transport/rust-kernel-supervisor.mjs'
 import { rustKernelPaths, isNeedsRefreshResult } from '../../src/lib/transport/rust-kernel-client.mjs'
 import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
+import { slotRuntimeOwner } from '../../src/lib/oauth/oauth-credentials.mjs'
+import { socksUidFor } from '../../src/lib/vm/vm-runtime.mjs'
 
 const unix = process.platform !== 'win32'
 const unixTest = unix ? test : test.skip
@@ -645,6 +647,52 @@ test('writeKernelConfig uses identity when official_full has no persona_inject',
   const overridden = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
   assert.equal(overridden.persona_preset, 'zero')
   assert.equal(overridden.system_layout, 'zero')
+})
+
+test('kernel.json rename chowns the new inode to the slot uid before publish', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-owner-'))
+  const vm = { id: 'vm-01', inference_engine: 'rust' }
+  const owner = slotRuntimeOwner(vm)
+  const calls = []
+  const chown = mock.method(fs, 'chownSync', (file, uid, gid) => {
+    calls.push({ file, uid, gid })
+  })
+  const kernelOwned = () => calls.filter((call) => String(call.file).includes(`${path.sep}kernel.json`))
+  try {
+    assert.equal(owner.uid, Number(process.env.KIN_VM_UID_BASE || 10000) + 1)
+    assert.equal(owner.gid, Number(process.env.KIN_VM_GID || 987))
+    assert.equal(String(owner.uid), socksUidFor(vm))
+    const zero = { compatibility: { persona_preset: 'zero', cache_ttl: '5m' } }
+    const full = { compatibility: { persona_preset: 'official_full', cache_ttl: '5m' } }
+    const first = writeKernelConfig(root, vm, { token: 'tok', routing: zero })
+    assert.ok(
+      calls.some((call) => call.file === first.tokenPath || String(call.file).startsWith(`${first.tokenPath}.`)),
+    )
+    calls.length = 0
+    const changed = writeKernelConfig(root, vm, { token: 'tok', routing: full })
+    assert.equal(changed.changed, true)
+    const published = kernelOwned()
+    assert.ok(published.length >= 1)
+    assert.ok(
+      published.every((call) => call.uid === owner.uid && call.gid === owner.gid),
+      JSON.stringify(published),
+    )
+    assert.ok(
+      published.some(
+        (call) => call.file !== changed.configPath && String(call.file).startsWith(`${changed.configPath}.`),
+      ),
+    )
+    calls.length = 0
+    const again = writeKernelConfig(root, vm, { token: 'tok', routing: full })
+    assert.equal(again.changed, false)
+    assert.equal(fs.readFileSync(again.configPath, 'utf8').includes('"persona_preset": "official_full'), true)
+    assert.ok(
+      kernelOwned().some((call) => call.file === again.configPath && call.uid === owner.uid && call.gid === owner.gid),
+    )
+  } finally {
+    chown.mock.restore()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('routing.json mtime projects persona_preset into Claude kernel.json only', () => {

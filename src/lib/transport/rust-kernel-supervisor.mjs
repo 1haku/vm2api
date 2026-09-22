@@ -18,7 +18,12 @@ import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mj
 import { setVmSchedulable, listVms, getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { KERNEL_NATIVE_SLOT_COUNT, resolveCliSystemLayout, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
-import { ensureOfficialCredentialLink, slotUidGidFromHomeDir } from '../oauth/oauth-credentials.mjs'
+import {
+  ensureOfficialCredentialLink,
+  slotUidGidFromHomeDir,
+  chownSlotRuntimeFile,
+  replaceSlotOwnedFile,
+} from '../oauth/oauth-credentials.mjs'
 
 const starts = new Map()
 const CONTAINER_KERNEL_BIN = '/home/kincli/.kin/kin-kernel'
@@ -505,21 +510,17 @@ function kernelConfigText(config) {
   return JSON.stringify(config, null, 2) + '\n'
 }
 
-function writeKernelJsonAtomically(configPath, config) {
+function writeKernelJsonAtomically(configPath, config, vm) {
   const body = kernelConfigText(config)
+  let same = false
   try {
-    if (fs.readFileSync(configPath, 'utf8') === body) return false
+    same = fs.readFileSync(configPath, 'utf8') === body
   } catch {}
-  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`
-  try {
-    fs.writeFileSync(tempPath, body, { mode: 0o600 })
-    fs.renameSync(tempPath, configPath)
-  } catch (error) {
-    try {
-      fs.rmSync(tempPath, { force: true })
-    } catch {}
-    throw error
+  if (same) {
+    chownSlotRuntimeFile(configPath, vm)
+    return false
   }
+  replaceSlotOwnedFile(configPath, body, vm)
   return true
 }
 
@@ -547,7 +548,7 @@ export function writeKernelConfig(
     } catch {}
   }
   if (!secret) secret = String(previous.internal_token || '').trim()
-  if (secret) fs.writeFileSync(tokenPath, secret + '\n', { mode: 0o600 })
+  if (secret) replaceSlotOwnedFile(tokenPath, secret + '\n', vm)
   const testEndpoints = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1'
   const claudeBin = String(process.env.KIN_CLAUDE_BIN || '').trim() || CONTAINER_CLAUDE_BIN
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
@@ -589,7 +590,7 @@ export function writeKernelConfig(
     if (anthropicBaseUrl) config.anthropic_base_url = anthropicBaseUrl
     if (oauthTokenUrl) config.oauth_token_url = oauthTokenUrl
   }
-  const changed = writeKernelJsonAtomically(configPath, config)
+  const changed = writeKernelJsonAtomically(configPath, config, vm)
   return {
     runDir,
     socketPath,
