@@ -756,8 +756,8 @@ export class AccountQuota {
     const weeklyRatio = Number(policy.limit_7d ?? policy.weekly_safety_ratio ?? 0.8)
     const w5 = headerWindowOrEmpty(acc.unified, '5h')
     const w7 = headerWindowOrEmpty(acc.unified, '7d')
-    const u5 = Number(w5.utilization || 0)
-    const u7 = Number(w7.utilization || 0)
+    const u5 = officialUtilToExtra(w5.utilization) || 0
+    const u7 = officialUtilToExtra(w7.utilization) || 0
     if (u5 >= 1 || u5 >= ratio) return false
     if (u7 >= 1 || u7 >= weeklyRatio) return false
     return true
@@ -1124,10 +1124,13 @@ function officialUtilToExtra(value) {
 }
 
 function officialLooksLimited(window = {}) {
+  const raw = window.utilization
+  const ratio = officialUtilToExtra(raw)
+  const percent = Number(raw) > 1.5
+  if (percent && ratio != null && ratio < 1) return false
   const s = String(window.status || '').toLowerCase()
   if (s === 'rejected' || s === 'rate_limited') return true
-  const n = Number(window.utilization)
-  return Number.isFinite(n) && n >= 1
+  return ratio != null && ratio >= 1
 }
 
 function officialLooksOpen(window = {}) {
@@ -1266,11 +1269,7 @@ function writeOfficialWindow(acc, key, incoming = {}) {
 }
 
 function officialOpen(window = {}) {
-  const u = Number(window.utilization)
-  const s = String(window.status || '').toLowerCase()
-  if (s === 'rejected' || s === 'rate_limited') return false
-  if (Number.isFinite(u) && u >= 1) return false
-  return true
+  return !officialLooksLimited(window)
 }
 
 function clearHeaderExhaustIfOfficialOpen(acc) {
@@ -1296,23 +1295,31 @@ function clearHeaderExhaustIfOfficialOpen(acc) {
 }
 
 function statusFromUtil(u) {
-  if (u >= 1) return 'rate_limited'
-  if (u >= 0.85) return 'warning'
+  const ratio = officialUtilToExtra(u) || 0
+  if (ratio >= 1) return 'rate_limited'
+  if (ratio >= 0.85) return 'warning'
   return 'active'
 }
 
 function windowIsFull(status, utilization) {
-  if (utilization != null && Number.isFinite(Number(utilization))) return Number(utilization) >= 1
+  const ratio = officialUtilToExtra(utilization)
+  const percent = Number(utilization) > 1.5
+  if (percent && ratio != null && ratio < 1) return false
+  if (ratio != null && ratio >= 1) return true
   const s = String(status || '').toLowerCase()
   return s === 'rejected' || s === 'rate_limited'
 }
 
 function statusFromProbeWindow(utilization, incomingStatus) {
-  if (utilization != null && Number.isFinite(Number(utilization))) {
-    if (Number(utilization) >= 1) return 'rejected'
+  const ratio = officialUtilToExtra(utilization)
+  const percent = Number(utilization) > 1.5
+  if (ratio != null) {
+    if (ratio >= 1) return 'rejected'
     const s = String(incomingStatus || '').toLowerCase()
     if (s === 'allowed' || s === 'allowed_warning' || s === 'active') return incomingStatus
-    return statusFromUtil(Number(utilization))
+    if (percent && (s === 'rejected' || s === 'rate_limited')) return 'allowed'
+    if (s === 'rejected' || s === 'rate_limited') return incomingStatus
+    return statusFromUtil(ratio)
   }
   return incomingStatus || null
 }
@@ -1322,11 +1329,12 @@ export function applyOfficialWindow(incoming = {}) {
   if (incoming.utilization == null && !incoming.status && !incoming.resets_at && !incoming.reset) {
     return null
   }
-  const utilization = incoming.utilization != null ? Number(incoming.utilization) || 0 : null
+  const raw = incoming.utilization != null ? Number(incoming.utilization) : null
+  const utilization = raw != null && Number.isFinite(raw) ? officialUtilToExtra(raw) : null
   return {
     utilization,
     reset: incoming.resets_at || incoming.reset || null,
-    status: statusFromProbeWindow(utilization, incoming.status) || 'allowed',
+    status: statusFromProbeWindow(raw, incoming.status) || 'allowed',
     ...(incoming.stale ? { stale: true, stale_reason: incoming.stale_reason || null } : {}),
   }
 }
