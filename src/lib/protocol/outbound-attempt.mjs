@@ -34,7 +34,14 @@ import {
   CRS_AGENT_EXPANSION,
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
-import { enforceCacheTtlOrder, injectToolsTailBreakpoint, stripIllegalCacheControlFields } from './cache-ttl.mjs'
+import {
+  applyCacheTtlToBody,
+  enforceCacheTtlOrder,
+  fillAbsentMessageBreakpoints,
+  injectToolsTailBreakpoint,
+  normalizeCacheTtl,
+  stripIllegalCacheControlFields,
+} from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
 
@@ -67,19 +74,15 @@ export function stripCliOwnedSystem(system) {
   return kept.length ? kept : undefined
 }
 
-/** sub2api default: keep the caller's system and message anchors. Node only
- * fills the last non-deferred tool, which is the stable tools prefix. */
+/** cli-hop placement is fixed. Routing `messages: rewrite` is the HTTP hop.
+ * Here an existing message anchor stays; a body with none is filled. */
 export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   enabled: true,
   preserve_client: true,
   system_tail: false,
   tools_tail: true,
-  messages: 'off',
+  messages: 'fill',
 })
-
-/** Wrap CLI tools/system omit ttl, which Anthropic treats as 5m and processes first.
- * A later message 1h is the messages.N 400, so the hop wire value is 5m. */
-export const CLI_HOP_CACHE_TTL = '5m'
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
@@ -196,6 +199,7 @@ export function prepareCliHopBody(
     repaired = false,
     cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
     cacheControlLimit = 4,
+    cacheTtl = null,
     unofficial: _unofficial = false,
   } = {},
 ) {
@@ -223,10 +227,16 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
-  // sub2api rewrite_message_cache_control defaults off: do not move or delete
-  // message breakpoints. A sliding delete changes the prefix that was written.
-  if (cacheBreakpoints?.enabled !== false) body = injectToolsTailBreakpoint(body, CLI_HOP_CACHE_TTL)
-  body = enforceCacheTtlOrder(body)
+  // One TTL for the whole hop: the settings value, not a second constant.
+  // apply last so a caller 5m cannot pull a settings 1h back down.
+  if (cacheBreakpoints?.enabled !== false) {
+    const ttl = normalizeCacheTtl(cacheTtl)
+    body = injectToolsTailBreakpoint(body, ttl)
+    body = fillAbsentMessageBreakpoints(body, ttl)
+    body = applyCacheTtlToBody(body, ttl)
+  } else {
+    body = enforceCacheTtlOrder(body)
+  }
   enforceCacheLimit(body, cacheControlLimit)
   return body
 }

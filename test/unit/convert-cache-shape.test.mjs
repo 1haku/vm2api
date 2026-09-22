@@ -131,10 +131,10 @@ test('unofficial cli-hop of converted openai.chat matches converted messages sta
     { unofficial: true },
   )
   assert.deepEqual(stampMap(fromChat), stampMap(fromMessages))
-  assert.deepEqual(stampMap(fromChat), [])
+  assert.deepEqual(stampMap(fromChat), ['messages[2].content[0]', 'messages[4].content[0]'])
 })
 
-test('openai.chat multi-turn cli-hop does not invent a message breakpoint', () => {
+test('openai.chat multi-turn cli-hop fills the previous user and the current tail', () => {
   const chat = toClaudeMessages('openai.chat', {
     model: MODEL,
     max_tokens: 256,
@@ -147,6 +147,6 @@ test('openai.chat multi-turn cli-hop does not invent a message breakpoint', () =
     ],
   }).claude
   const body = prepareCliHopBody(chat, { unofficial: true })
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.equal(body.messages[4].content[0].cache_control, undefined)
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(body.messages[4].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
 })

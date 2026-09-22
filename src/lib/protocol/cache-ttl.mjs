@@ -557,6 +557,48 @@ export function applyMessageBreakpoints(body, ttl = DEFAULT_CACHE_TTL, mode = DE
   return messages === body.messages ? body : { ...body, messages }
 }
 
+function isThinkingBlock(block) {
+  return block?.type === 'thinking' || block?.type === 'redacted_thinking'
+}
+
+/** Claude Code hangs the tail marker on the last block that is not thinking. */
+function stampMessageCacheableTail(messages, idx, ttl) {
+  const message = messages[idx]
+  if (!message || typeof message !== 'object') return messages
+  const content = message.content
+  if (typeof content === 'string') return stampMessageTail(messages, idx, ttl)
+  if (!Array.isArray(content) || content.length === 0) return messages
+  let target = -1
+  for (let i = content.length - 1; i >= 0; i--) {
+    if (isThinkingBlock(content[i])) continue
+    target = i
+    break
+  }
+  if (target < 0) return messages
+  const stamped = stampNode(content[target], ttl)
+  if (stamped === content[target]) return messages
+  const nextContent = content.slice()
+  nextContent[target] = stamped
+  const next = messages.slice()
+  next[idx] = { ...message, content: nextContent }
+  return next
+}
+
+/**
+ * cli-hop placement. Caller message anchors stay where they are.
+ * A body with none gets the previous user (when messages.length >= 4) and the
+ * current tail, so the next turn can read the prefix this turn writes.
+ */
+export function fillAbsentMessageBreakpoints(body, ttl = DEFAULT_CACHE_TTL) {
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return body
+  if (hasMessageBreakpoint(body.messages)) return body
+  const target = normalizeCacheTtl(ttl)
+  let messages = stampMessageCacheableTail(body.messages, body.messages.length - 1, target)
+  const prevUser = penultimateUserIndex(messages)
+  if (prevUser >= 0) messages = stampMessageCacheableTail(messages, prevUser, target)
+  return messages === body.messages ? body : { ...body, messages }
+}
+
 /**
  * tools → system → messages matches the order Anthropic evaluates breakpoints,
  * so a uniform ttl never produces an illegal 1h-after-5m sequence.
