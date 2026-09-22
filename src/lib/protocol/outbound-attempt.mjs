@@ -34,14 +34,7 @@ import {
   CRS_AGENT_EXPANSION,
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
-import {
-  applyCacheTtlToBody,
-  applyCacheBreakpoints,
-  enforceCacheTtlOrder,
-  forceEphemeralCacheTtl,
-  normalizeCacheBreakpoints,
-  stripIllegalCacheControlFields,
-} from './cache-ttl.mjs'
+import { enforceCacheTtlOrder, injectToolsTailBreakpoint, stripIllegalCacheControlFields } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
 
@@ -74,31 +67,19 @@ export function stripCliOwnedSystem(system) {
   return kept.length ? kept : undefined
 }
 
-/** Wrap CLI owns tools + system + current tail; Node owns the stable previous-user boundary. */
+/** sub2api default: keep the caller's system and message anchors. Node only
+ * fills the last non-deferred tool, which is the stable tools prefix. */
 export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   enabled: true,
   preserve_client: true,
   system_tail: false,
-  tools_tail: false,
-  messages: 'rewrite',
+  tools_tail: true,
+  messages: 'off',
 })
 
 /** Wrap CLI tools/system omit ttl, which Anthropic treats as 5m and processes first.
  * A later message 1h is the messages.N 400, so the hop wire value is 5m. */
 export const CLI_HOP_CACHE_TTL = '5m'
-
-function dropNodeCacheControl(node) {
-  if (!node || typeof node !== 'object' || !node.cache_control) return node
-  const { cache_control: _drop, ...rest } = node
-  return rest
-}
-
-function dropCliOwnedBreakpoints(body) {
-  const out = { ...body }
-  if (Array.isArray(out.tools)) out.tools = out.tools.map(dropNodeCacheControl)
-  if (Array.isArray(out.system)) out.system = out.system.map(dropNodeCacheControl)
-  return out
-}
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
@@ -177,36 +158,6 @@ function stabilizeMessageBudgets(body) {
   return changed ? { ...body, messages } : body
 }
 
-function lastNonThinkingIndex(content) {
-  if (!Array.isArray(content)) return -1
-  for (let i = content.length - 1; i >= 0; i--) {
-    if (content[i]?.type === 'thinking') continue
-    return i
-  }
-  return -1
-}
-
-/** Node owns the tail marker. Put it on the last non-thinking block and leave it there. */
-function retargetCliHopTail(body, ttl) {
-  const messages = body?.messages
-  if (!Array.isArray(messages) || messages.length === 0) return body
-  const idx = messages.length - 1
-  const last = messages[idx]
-  if (!last || !Array.isArray(last.content) || last.content.length === 0) return body
-  const target = lastNonThinkingIndex(last.content)
-  if (target < 0) return body
-  const content = last.content.map((block, i) => {
-    if (!block || typeof block !== 'object') return block
-    if (i === target) return { ...block, cache_control: { type: 'ephemeral', ttl } }
-    if (!block.cache_control) return block
-    const { cache_control: _drop, ...rest } = block
-    return rest
-  })
-  const next = messages.slice()
-  next[idx] = { ...last, content }
-  return { ...body, messages: next }
-}
-
 /** A CLI hop must end on a conversational user/assistant turn. Preserve older
  * role=system leftovers in place, but lift only a trailing run to system[]. */
 function liftTrailingSystemMessages(body) {
@@ -245,7 +196,6 @@ export function prepareCliHopBody(
     repaired = false,
     cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
     cacheControlLimit = 4,
-    cacheTtl = CLI_HOP_CACHE_TTL,
     unofficial: _unofficial = false,
   } = {},
 ) {
@@ -272,27 +222,11 @@ export function prepareCliHopBody(
   }
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
-  const ttl = CLI_HOP_CACHE_TTL
-  if (cacheTtl == null) return forceEphemeralCacheTtl(body, ttl)
   body = stripIllegalCacheControlFields(body)
-  // Previous tail stays on that block. This tail is stamped here. Kernel does not restamp.
-  if (cacheBreakpoints) {
-    const cfg = normalizeCacheBreakpoints(cacheBreakpoints)
-    body = applyCacheBreakpoints(body, {
-      ttl,
-      config: {
-        enabled: cfg.enabled,
-        preserve_client: cfg.preserve_client,
-        system_tail: false,
-        tools_tail: false,
-        messages: cfg.enabled ? 'rewrite' : 'off',
-      },
-      inbound: body,
-    })
-  }
-  body = dropCliOwnedBreakpoints(body)
-  if (cacheBreakpoints?.enabled !== false) body = retargetCliHopTail(body, ttl)
-  body = forceEphemeralCacheTtl(enforceCacheTtlOrder(body), ttl)
+  // sub2api rewrite_message_cache_control defaults off: do not move or delete
+  // message breakpoints. A sliding delete changes the prefix that was written.
+  if (cacheBreakpoints?.enabled !== false) body = injectToolsTailBreakpoint(body, CLI_HOP_CACHE_TTL)
+  body = enforceCacheTtlOrder(body)
   enforceCacheLimit(body, cacheControlLimit)
   return body
 }
