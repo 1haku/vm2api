@@ -155,6 +155,21 @@ test('cli rate_limit_event blocks via status', () => {
   assert.equal(gate.reason, 'quota_5h_cli')
 })
 
+test('official 26 percent does not trip the quota gate', () => {
+  const q = new AccountQuota({
+    dataDir: tmpDir(),
+    config: { quota: { safety_ratio: 0.85, block_on_5h: true, block_on_7d: true } },
+  })
+  q.ingestHeaders('pct-26', {
+    'anthropic-ratelimit-unified-5h-utilization': '26',
+    'anthropic-ratelimit-unified-5h-status': 'rejected',
+    'anthropic-ratelimit-unified-5h-reset': futureReset(4 * 3600_000),
+  })
+  const gate = q.canAccept('pct-26')
+  assert.equal(gate.ok, true)
+  assert.equal(q.headerUnderSafety(q.repo.get('pct-26')), true)
+})
+
 test('extraHeadersFromLimitError fills Extra 5h when wrap omits headers', () => {
   const filled = extraHeadersFromLimitError(
     "provider error: You've hit your limit · resets 7:50pm (America/New_York)",

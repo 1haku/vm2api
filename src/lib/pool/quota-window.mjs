@@ -209,20 +209,38 @@ function isRejectedStatus(status) {
   return s === 'rejected' || s === 'rate_limited'
 }
 
-/** True 429 / CLI rejected on headers, until reset or official /usage clears it. */
+/** Header samples are 0–1. Official Settings leftovers are 0–100. */
+function utilRatio(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return null
+  return n > 1.5 ? n / 100 : n
+}
+
+function isPercentReading(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 1.5
+}
+
+/** True 429 / CLI rejected on headers, until reset or official /usage clears it.
+ * Percent 26 stored next to a rejected flag is 26%, not a full window.
+ */
 export function headerHardBlocked(unified = {}, key = '5h', now = Date.now()) {
   const h = headerWindow(unified, key)
   if (!isRejectedStatus(h.status)) return false
+  const ratio = utilRatio(h.utilization)
+  if (isPercentReading(h.utilization) && ratio != null && ratio < 1) return false
   const resetMs = parseResetMs(h.reset)
   if (Number.isFinite(resetMs) && resetMs <= now) return false
   return true
 }
 
 function isLimited(status, utilization) {
+  const ratio = utilRatio(utilization)
+  if (isPercentReading(utilization) && ratio != null && ratio < 1) return false
   const s = String(status || '').toLowerCase()
   if (s === 'rejected' || s === 'rate_limited') return true
-  const n = Number(utilization)
-  return Number.isFinite(n) && n >= 1
+  return ratio != null && ratio >= 1
 }
 
 /** Live Extra that is still allowed. Elapsed reset or rejected/100% is not live. */

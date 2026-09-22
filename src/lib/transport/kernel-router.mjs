@@ -131,15 +131,22 @@ function isDeadWrapHop(result) {
   return /connection error/i.test(msg)
 }
 
-/** Incomplete / Connection error leaves kernel slots occupied. Bounce after the last sibling hop. */
-function recycleLeakedWrap(exec, recycleWrap) {
+/** Incomplete hop occupied a kernel CLI slot. Release it now; do not wait out the recycle cooldown. */
+function releaseLeakedSlots(exec, recycleWrap) {
   clearRustHealthCache(cacheKey(exec))
-  const recycle = recycleWrap || scheduleWrapRecycle
-  if (wrapHopInflight(exec) > 0) {
-    deferWrapRecycle(exec, recycle)
+  if (typeof recycleWrap === 'function') {
+    recycleWrap(exec)
     return
   }
-  recycle(exec)
+  scheduleWrapRecycle(exec, { cooldownMs: 0 })
+}
+
+function recycleLeakedWrap(exec, recycleWrap) {
+  if (wrapHopInflight(exec) > 0) {
+    deferWrapRecycle(exec, (item) => releaseLeakedSlots(item, recycleWrap))
+    return
+  }
+  releaseLeakedSlots(exec, recycleWrap)
 }
 
 function rustUnavailableResult(ready) {
@@ -260,6 +267,7 @@ async function runHop({ mode, opts }) {
     if (ready?.ok) {
       reason = ready.reason || 'configured_rust'
     } else {
+      if (ready?.reason === 'slot_busy') releaseLeakedSlots(opts.exec, opts.recycleWrap)
       return {
         ...rustUnavailableResult(ready),
         wanted_engine: 'rust',

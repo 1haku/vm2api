@@ -483,6 +483,13 @@ export function classifyUpstreamResult(
     }
   }
   if (status === 408 || status === 502 || status === 503 || status === 504 || status >= 500) {
+    if (workerCode === 'slot_busy' || /no free slot|slot_busy/i.test(hay)) {
+      return continueWithoutCooldown({
+        scope: 'worker',
+        reason: 'slot_busy',
+        retrySameAccount: false,
+      })
+    }
     if (isFableModel(model) && (status === 408 || status === 504 || /timeout/i.test(message))) {
       return {
         scope: 'model',
