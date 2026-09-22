@@ -19,8 +19,8 @@ export function readJsonSafe(p, fallback = null) {
   }
 }
 
-/** Official Claude Code 2.1.278 capture. Outbound UA/billing stay on this. */
-export const OFFICIAL_CLI_VERSION = '2.1.278'
+/** Official Claude Code version Anthropic checks on the model. 2.1.278 is rejected for current models. */
+export const OFFICIAL_CLI_VERSION = '2.1.280'
 export const OFFICIAL_CLAUDE_CLI_UA = `claude-cli/${OFFICIAL_CLI_VERSION} (external, sdk-cli)`
 export const OFFICIAL_STAINLESS = Object.freeze({
   stainless_lang: 'js',
