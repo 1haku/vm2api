@@ -113,13 +113,49 @@ function dropLastMessageBreakpoint(body) {
   return { ...body, messages: next }
 }
 
+/** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
+const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
+const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
+
+function stabilizeOfficialContextBudget(text) {
+  const raw = String(text ?? '')
+  if (!raw.includes('<total_tokens>')) return raw
+  return raw.replace(VOLATILE_CONTEXT_BUDGET, OFFICIAL_CONTEXT_BUDGET)
+}
+
+/** system[] is before every message breakpoint. A per-turn token counter there
+ * makes the next turn rewrite the whole prefix instead of reading it. */
+function stabilizeSystemBudget(body) {
+  if (!body || body.system == null) return body
+  if (typeof body.system === 'string') {
+    const text = stabilizeOfficialContextBudget(body.system)
+    return text === body.system ? body : { ...body, system: text }
+  }
+  if (!Array.isArray(body.system)) return body
+  let changed = false
+  const system = body.system.map((block) => {
+    if (typeof block === 'string') {
+      const text = stabilizeOfficialContextBudget(block)
+      if (text === block) return block
+      changed = true
+      return text
+    }
+    if (!block || typeof block !== 'object' || typeof block.text !== 'string') return block
+    const text = stabilizeOfficialContextBudget(block.text)
+    if (text === block.text) return block
+    changed = true
+    return { ...block, text }
+  })
+  return changed ? { ...body, system } : body
+}
+
 /** A CLI hop must end on a conversational user/assistant turn. Preserve older
  * role=system leftovers in place, but lift only a trailing run to system[]. */
 function liftTrailingSystemMessages(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   let firstTrailing = messages.length
   while (firstTrailing > 0 && messages[firstTrailing - 1]?.role === 'system') firstTrailing--
-  if (firstTrailing === messages.length) return body
+  if (firstTrailing === messages.length) return stabilizeSystemBudget(body)
   const lifted = messages.slice(firstTrailing).flatMap((message) => {
     const content = message?.content
     if (typeof content === 'string') return content.trim() ? [{ type: 'text', text: content }] : []
@@ -128,13 +164,19 @@ function liftTrailingSystemMessages(body) {
       .map((block) => (typeof block === 'string' ? { type: 'text', text: block } : block))
       .filter((block) => block?.type === 'text' && String(block.text || '').trim())
   })
-  if (!lifted.length) return { ...body, messages: messages.slice(0, firstTrailing) }
+  if (!lifted.length) {
+    return stabilizeSystemBudget({ ...body, messages: messages.slice(0, firstTrailing) })
+  }
   const system = Array.isArray(body.system)
     ? body.system
     : body.system == null
       ? []
       : [{ type: 'text', text: String(body.system) }]
-  return { ...body, system: [...system, ...lifted], messages: messages.slice(0, firstTrailing) }
+  return stabilizeSystemBudget({
+    ...body,
+    system: [...system, ...lifted],
+    messages: messages.slice(0, firstTrailing),
+  })
 }
 
 /** Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks. */
