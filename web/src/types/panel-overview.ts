@@ -73,6 +73,8 @@ export type OpsWindow = {
   output_tokens?: number
   cache_read_tokens?: number
   cache_creation_tokens?: number
+  /** 窗口内官方费用合计。`windowStats` 已返回，类型原先漏了。 */
+  total_cost?: number
   cache_hit_rate?: number | null
   sticky?: { selections?: number; hits?: number; rate?: number | null }
   qps?: { current?: number; peak?: number; avg?: number }

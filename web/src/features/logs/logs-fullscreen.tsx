@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { logStatsQueryOptions } from '@/features/logs/queries'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { LogsStream, type LogsStreamFilters } from './logs-stream'
+import type { HideableLogColumn } from './column-visibility'
 
 const LIVE_POLL_MS = 3000
 
@@ -52,12 +53,14 @@ export function LogsFullscreen({
   filters,
   vms,
   showIngress,
+  hidden,
   onOpenDetail,
   onExit,
 }: {
   filters: LogsStreamFilters
   vms?: Map<string, Vm>
   showIngress?: boolean
+  hidden?: readonly HideableLogColumn[]
   onOpenDetail: (id: string) => void
   onExit: () => void
 }) {
@@ -123,6 +126,7 @@ export function LogsFullscreen({
           vms={vms}
           onOpenDetail={onOpenDetail}
           showIngress={showIngress}
+          hidden={hidden}
           pollMs={LIVE_POLL_MS}
           viewportClassName='h-[calc(100dvh-56px-24px-32px-28px)]'
         />
