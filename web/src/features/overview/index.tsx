@@ -39,8 +39,8 @@ import {
   dashboardQueryOptions,
   usageQueryOptions,
 } from '@/features/overview/queries'
+import { StatisticsChartCard } from '@/features/overview/statistics-chart-card'
 import { TrafficOps } from '@/features/overview/traffic-ops'
-import { TrendChart } from '@/features/overview/trend-chart'
 
 type AlertTone = 'caution' | 'warn' | 'bad'
 
@@ -75,9 +75,6 @@ export function OverviewPage() {
   const usage = useQuery(usageQueryOptions())
   const since = opsSince('1h')
   const stats = useQuery(logStatsQueryOptions(since))
-  // 趋势图要 24 个小时桶；1h 窗口只覆盖 1–2 桶，画不成趋势。
-  const since24 = opsSince('24h')
-  const stats24 = useQuery(logStatsQueryOptions(since24))
   const d = dash.data || {}
   const vms: Vm[] = d.vms || []
   const summary = (d.summary || {}) as Record<string, unknown>
@@ -188,12 +185,7 @@ export function OverviewPage() {
           <PoolQuota vms={vms} />
 
           <div className='grid gap-3 xl:grid-cols-3'>
-            <TrendChart
-              className='xl:col-span-2'
-              buckets={stats24.data?.buckets || []}
-              loading={stats24.isLoading}
-              error={stats24.error ? String(stats24.error) : undefined}
-            />
+            <StatisticsChartCard className='xl:col-span-2' />
             <div className='grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-1'>
               <KpiCard
                 icon={ShieldCheck}

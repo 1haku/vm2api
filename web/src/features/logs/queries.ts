@@ -89,12 +89,16 @@ export function logsStreamQueryOptions({
   })
 }
 
-export function logStatsQueryOptions(since: string, refetchInterval?: number) {
+export function logStatsQueryOptions(
+  since: string,
+  refetchInterval?: number,
+  bucket: 'hour' | 'day' = 'hour'
+) {
   return queryOptions({
-    queryKey: ['panel', 'request-logs-stats', since] as const,
+    queryKey: ['panel', 'request-logs-stats', bucket, since] as const,
     queryFn: () =>
       api<RequestLogStats>(
-        `/api/panel/request-logs/stats?bucket=hour&since=${encodeURIComponent(since)}`
+        `/api/panel/request-logs/stats?bucket=${bucket}&since=${encodeURIComponent(since)}`
       ),
     ...(refetchInterval
       ? { refetchInterval, refetchOnWindowFocus: false }
