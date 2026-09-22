@@ -105,6 +105,10 @@ function isPlanLimitMessage(message) {
   return /hit your limit|extra usage/i.test(String(message || ''))
 }
 
+function isUsagePolicyMessage(message) {
+  return /usage policy|violate our usage policy/i.test(String(message || ''))
+}
+
 export const FABLE_FAMILY_KEY = 'fable'
 
 function modelFamily(model) {
@@ -514,14 +518,23 @@ export function classifyUpstreamResult(
         retrySameAccount: false,
       }
     }
+    if (isUsagePolicyMessage(message)) {
+      return {
+        scope: 'account',
+        action: 'pause',
+        reason: 'provider_pause',
+        cooldownUntil: now + PROVIDER_PAUSE_MS,
+        retrySameAccount: false,
+        rememberRefusal: true,
+        refusalTtlMs: PROVIDER_PAUSE_MS,
+      }
+    }
     return {
-      scope: 'account',
-      action: 'pause',
-      reason: 'provider_pause',
-      cooldownUntil: now + PROVIDER_PAUSE_MS,
+      scope: 'provider',
+      action: 'continue-and-cooldown',
+      reason: 'provider_overloaded',
+      cooldownUntil: now + 15_000,
       retrySameAccount: false,
-      rememberRefusal: true,
-      refusalTtlMs: PROVIDER_PAUSE_MS,
     }
   }
   return { scope: 'request', action: 'stop', reason: `http_${status}`, cooldownUntil: null }
