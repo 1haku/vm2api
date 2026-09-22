@@ -6,6 +6,7 @@ export type WrapSampleMeta = {
   source_vm?: string
   captured_at?: string
   kernel?: string
+  release_tag?: string
   glibc_shim?: boolean
   files?: string[]
 }
@@ -88,6 +89,20 @@ export function repairWrapSample(id: string) {
     `/api/panel/vms/${encodeURIComponent(id)}/wrap-cli/repair`,
     { method: 'POST', body: JSON.stringify({}) }
   )
+}
+export type WrapReleaseUpdate = {
+  release?: { tag?: string; version?: string; asset?: string; size?: number }
+  kernel?: WrapSample
+  sync?: WrapSyncReport
+}
+
+export function installReleaseKernel(
+  body: { ids?: string[]; restart?: boolean } = {}
+) {
+  return api<WrapReleaseUpdate>('/api/panel/wrap-cli/kernel/release', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export function uploadKernelBinary(file: Blob) {

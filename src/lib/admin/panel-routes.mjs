@@ -127,6 +127,7 @@ import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
 import { readLocalVersion, loadChangelog, buildUpdateStatus, startHostUpgrade } from './release.mjs'
+import { downloadReleaseKernel, kernelReleaseHttpStatus } from './release-kernel.mjs'
 import { removeVmFromDb } from '../vm/vm-db-sync.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
 import { reloadActiveVm } from '../core/config.mjs'
@@ -218,6 +219,39 @@ async function commitImportedCodexVm({ cfg, vmPath, existing, account }) {
     platform: 'openai',
     catalog: catalog && catalog.ok ? { synced: catalog.synced, ids: catalog.ids } : catalog,
   }
+}
+
+async function syncInstalledKernels({ project, routingConfig, body = {} }) {
+  const all = listVms(project)
+  const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
+  const vms = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
+  const report = syncWrapSample(project, vms)
+  if (body.restart !== false) {
+    for (const item of report.items || []) {
+      if (!item.ok) continue
+      const vm = getVm(project, item.id)
+      if (!vm || vm.status !== 'running') {
+        item.kernel = { ok: true, skipped: true, reason: 'vm_stopped' }
+        continue
+      }
+      if (resolveInferenceEngine(vm, routingConfig) !== 'rust') continue
+      const exec = slotExec(project, vm)
+      item.kernel = await restartRustKernel(exec).catch((e) => ({
+        ok: false,
+        error: String(e?.message || e).slice(0, 200),
+      }))
+      if (!item.kernel?.ok) {
+        item.ok = false
+        item.code = 'kernel_restart_failed'
+        item.error = item.kernel?.error || item.kernel?.reason || 'kernel restart failed'
+      }
+    }
+  }
+  const failed = (report.items || []).filter((item) => !item.ok)
+  report.ok = failed.length === 0
+  report.ok_count = report.items.length - failed.length
+  report.failed_count = failed.length
+  return report
 }
 
 export function createPanelHandler(ctx) {
@@ -1245,6 +1279,49 @@ export function createPanelHandler(ctx) {
         }
         return json(res, 200, panel.ok(made))
       }
+      if (req.method === 'POST' && p === '/api/panel/wrap-cli/kernel/release') {
+        const body = await readBody(req, 8 * 1024).catch(() => ({}))
+        const downloaded = await downloadReleaseKernel({
+          tag: body.tag,
+          fetchImpl: ctx.fetchImpl,
+        })
+        if (!downloaded.ok) {
+          return json(res, kernelReleaseHttpStatus(downloaded.code), {
+            ok: false,
+            error: { code: downloaded.code, message: downloaded.error },
+          })
+        }
+        const replaced = replaceKernelBinary(cfg.paths.project, downloaded.bytes, {
+          source: 'github',
+          release_tag: downloaded.tag,
+        })
+        if (!replaced.ok) {
+          return json(res, 400, { ok: false, error: { code: replaced.code, message: replaced.error } })
+        }
+        const report = await syncInstalledKernels({
+          project: cfg.paths.project,
+          routingConfig: ctx.routingConfig,
+          body,
+        })
+        const release = {
+          tag: downloaded.tag,
+          version: downloaded.version,
+          asset: downloaded.asset,
+          size: downloaded.size,
+        }
+        if (!report.ok) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              code: 'kernel_sync_failed',
+              message: `已写入 ${downloaded.tag}，槽同步 ${report.ok_count}/${report.total} 失败`,
+            },
+            data: { release, kernel: replaced, sync: report },
+          })
+        }
+        return json(res, 200, panel.ok({ release, kernel: replaced, sync: report }))
+      }
+
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/kernel') {
         let buf
         try {
@@ -1267,35 +1344,11 @@ export function createPanelHandler(ctx) {
 
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/sync') {
         const body = await readBody(req, 32 * 1024).catch(() => ({}))
-        const all = listVms(cfg.paths.project)
-        const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
-        const vms = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
-        const report = syncWrapSample(cfg.paths.project, vms)
-        if (body.restart !== false) {
-          for (const item of report.items || []) {
-            if (!item.ok) continue
-            const vm = getVm(cfg.paths.project, item.id)
-            if (vm.status !== 'running') {
-              item.kernel = { ok: true, skipped: true, reason: 'vm_stopped' }
-              continue
-            }
-            if (resolveInferenceEngine(vm, ctx.routingConfig) !== 'rust') continue
-            const exec = slotExec(cfg.paths.project, vm)
-            item.kernel = await restartRustKernel(exec).catch((e) => ({
-              ok: false,
-              error: String(e?.message || e).slice(0, 200),
-            }))
-            if (!item.kernel?.ok) {
-              item.ok = false
-              item.code = 'kernel_restart_failed'
-              item.error = item.kernel?.error || item.kernel?.reason || 'kernel restart failed'
-            }
-          }
-        }
-        const failed = (report.items || []).filter((item) => !item.ok)
-        report.ok = failed.length === 0
-        report.ok_count = report.items.length - failed.length
-        report.failed_count = failed.length
+        const report = await syncInstalledKernels({
+          project: cfg.paths.project,
+          routingConfig: ctx.routingConfig,
+          body,
+        })
         return json(res, report.ok ? 200 : 400, panel.ok(report))
       }
       if (req.method === 'POST' && p === '/api/panel/vms/slot-policy') {

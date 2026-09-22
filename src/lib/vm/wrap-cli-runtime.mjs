@@ -471,10 +471,18 @@ function kernelWriteTargets(projectRoot) {
   return targets
 }
 
-export function replaceKernelBinary(projectRoot, buf) {
+export function replaceKernelBinary(projectRoot, buf, extra = {}) {
   const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || [])
   const check = inspectLinuxAmd64Elf(bytes)
   if (!check.ok) return check
+  const metaExtra = extra && typeof extra === 'object' ? extra : {}
+  const source =
+    String(metaExtra.source || 'upload')
+      .trim()
+      .slice(0, 32) || 'upload'
+  const releaseTag = /^v\d+\.\d+\.\d+$/.test(String(metaExtra.release_tag || '').trim())
+    ? String(metaExtra.release_tag).trim()
+    : ''
   const destDir = wrapCliTemplateDir(projectRoot)
   if (!destDir) {
     return { ok: false, code: 'wrap_cli_template_missing', error: 'wrap CLI template dir unset' }
@@ -495,11 +503,12 @@ export function replaceKernelBinary(projectRoot, buf) {
     JSON.stringify(
       {
         ...meta,
-        source: 'upload',
+        source,
         captured_at: new Date().toISOString(),
         files: WRAP_CLI_FILES.slice(),
         kernel: WRAP_KERNEL_BIN,
         glibc_shim: isDir(path.join(destDir, WRAP_GLIBC_DIR)),
+        ...(releaseTag ? { release_tag: releaseTag } : { release_tag: undefined }),
       },
       null,
       2,
