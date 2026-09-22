@@ -187,11 +187,11 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_slot',
-        note: '与 official_full 第 3 块同槽：占 5m 缓存断点，不写 agent 全文',
+        note: '与 official_full 第 3 块同槽：占 1h 缓存断点，不写 agent 全文',
         hide: true,
         type: 'text',
         text: '\u200b',
-        cache_control: { type: 'ephemeral', ttl: '5m' },
+        cache_control: { type: 'ephemeral', ttl: '1h' },
       },
       {
         id: 'caller_system',
