@@ -7,6 +7,8 @@ import { isCodexVm } from '../vm/vm-kind.mjs'
 import { resolveSessionSlots } from '../vm/slot-engine.mjs'
 import { extraToCodexSnapshot, normalizeCodexLimits, codexQuotaPark } from '../protocol/codex-usage.mjs'
 import { isLeftoverQuotaScheduleOff, isQuotaWindowReason } from './availability.mjs'
+import { orderOpenAIAccounts } from './openai-account-selector.mjs'
+import { bumpOpenAICursor, openAIRuntimeSignals, readOpenAICursor } from './openai-account-runtime.mjs'
 
 export const CODEX_FAILOVER_MAX = 4
 
@@ -108,14 +110,80 @@ export function pickCodexSlots(vms, { pin = null, now = Date.now() } = {}) {
   }
 }
 
+function quotaRemainingRank(vm) {
+  const u5 = Number(vm?.utilization_5h)
+  const u7 = Number(vm?.utilization_7d)
+  let used = null
+  if (Number.isFinite(u5) || Number.isFinite(u7)) {
+    used = Math.max(Number.isFinite(u5) ? u5 : 0, Number.isFinite(u7) ? u7 : 0)
+  } else {
+    const limits = normalizeCodexLimits(extraToCodexSnapshot(extraFromSummary(vm)))
+    const p5 = Number(limits.used_5h_percent)
+    const p7 = Number(limits.used_7d_percent)
+    if (Number.isFinite(p5) || Number.isFinite(p7)) {
+      used = Math.max(Number.isFinite(p5) ? p5 / 100 : 0, Number.isFinite(p7) ? p7 / 100 : 0)
+    }
+  }
+  if (used == null) return null
+  return Math.round((1 - Math.min(1, Math.max(0, used))) * 10_000)
+}
+
+function quotaResetAt(vm) {
+  const extra = extraFromSummary(vm)
+  const limits = normalizeCodexLimits(extraToCodexSnapshot(extra))
+  const resets = [limits.reset_5h_at, limits.reset_7d_at, vm?.reset_5h, vm?.reset_7d]
+    .map((value) => Date.parse(value || ''))
+    .filter((value) => Number.isFinite(value))
+  if (!resets.length) return null
+  return Math.min(...resets)
+}
+
+export function codexAccountStatus(vm, now = Date.now()) {
+  if (!vm || !isCodexVm(vm)) return 'error'
+  if (vm.schedulable === false && !isLeftoverQuotaScheduleOff(vm)) return 'disabled'
+  const status = String(vm.status || '').toLowerCase()
+  if (status === 'disabled') return 'disabled'
+  if (status === 'dead' || status === 'error') return 'error'
+  if (!vm.has_token) return 'error'
+  if (isCodexSlotParked(vm, now) || codexQuotaWindowReason(vm, now)) return 'quota_exhausted'
+  return 'normal'
+}
+
+export function codexAccountCandidate(vm, now = Date.now(), signals = null) {
+  const runtime = signals || openAIRuntimeSignals(vm?.id, now)
+  const concurrency = Number(vm?.policy?.maxConcurrency)
+  return {
+    id: vm.id,
+    weight: Number(vm?.policy?.weight ?? vm?.weight ?? 1) || 1,
+    concurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 2,
+    status: codexAccountStatus(vm, now),
+    inFlight: runtime.inFlight || 0,
+    lastStartedAt: runtime.lastStartedAt ?? null,
+    quotaResetAt: quotaResetAt(vm),
+    quotaRemainingRank: quotaRemainingRank(vm),
+    failureRateBps: runtime.failureRateBps || 0,
+    firstOutputLatencyMs: runtime.firstOutputLatencyMs ?? null,
+  }
+}
+
 /**
- * Platform pool for OpenAI. A bound session stays on its VM.
- * A new session only lands on a VM that still has a free configured window.
- * Failover ids follow, and only after that VM is actually unschedulable.
+ * OpenAI pool order. Session affinity is a preferred account.
+ * Remaining ids are the same decision with that account excluded.
+ * Quota-exhausted slots stay out of the hop list.
  */
 export function orderCodexSessionSlots(
   vms,
-  { pin = null, boundVmId = null, sessionKey = null, sessionLimit = null, idleMin = 5, now = Date.now() } = {},
+  {
+    pin = null,
+    boundVmId = null,
+    sessionKey = null,
+    sessionLimit = null,
+    idleMin = 5,
+    now = Date.now(),
+    strategy = 'smart',
+    requestIntervalMs = 0,
+    roundRobinCursor = null,
+  } = {},
 ) {
   const picked = pickCodexSlots(vms, { pin, now })
   if (picked.error || pin) return { ...picked, sticky: false }
@@ -129,14 +197,38 @@ export function orderCodexSessionSlots(
   }
   const ids = picked.ids.filter(accepts)
   if (!ids.length) return { error: 'session_window_full', ids: [], ready: [], parked: [], sticky: false }
-  const sticky = !!(boundVmId && ids.includes(boundVmId))
-  const ordered = sticky ? [boundVmId, ...ids.filter((id) => id !== boundVmId)] : ids
+  const cursor = roundRobinCursor == null ? readOpenAICursor() : roundRobinCursor
+  const ordered = orderOpenAIAccounts(
+    ids.map((id) => codexAccountCandidate(byId.get(id), now)),
+    {
+      strategy,
+      now,
+      requestIntervalMs,
+      preferredAccountId: boundVmId && ids.includes(boundVmId) ? boundVmId : null,
+      preferredOverridesWeight: true,
+      roundRobinCursor: cursor,
+    },
+  )
+  if (!ordered.ids.length) {
+    const statuses = ids.map((id) => codexAccountStatus(byId.get(id), now))
+    const quotaExhausted = statuses.length > 0 && statuses.every((status) => status === 'quota_exhausted')
+    return {
+      error: quotaExhausted ? 'quota_exhausted' : 'capacity_unavailable',
+      ids: [],
+      ready: [],
+      parked: picked.parked || [],
+      sticky: false,
+    }
+  }
+  if (roundRobinCursor == null) bumpOpenAICursor()
+  const sticky = ordered.preferred === 'hit' && ordered.ids[0] === boundVmId
   return {
     ...picked,
-    ids: ordered,
-    ready: (picked.ready || []).filter((id) => ordered.includes(id)),
-    parked: (picked.parked || []).filter((id) => ordered.includes(id)),
+    ids: ordered.ids,
+    ready: ordered.ids.filter((id) => (picked.ready || []).includes(id)),
+    parked: (picked.parked || []).filter((id) => ordered.ids.includes(id)),
     sticky,
+    strategy,
   }
 }
 
