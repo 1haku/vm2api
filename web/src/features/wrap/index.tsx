@@ -27,6 +27,7 @@ import {
   normalizeInferenceEngine,
 } from '@/features/vm/engine-contract'
 import {
+  installReleaseKernel,
   makeWrapSample,
   promoteWrapSample,
   repairWrapSample,
@@ -131,6 +132,7 @@ export function WrapSamplePage() {
   const [makeOpen, setMakeOpen] = useState(false)
   const [glibcVm, setGlibcVm] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [releaseOpen, setReleaseOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const rustVms = useMemo(
@@ -199,6 +201,25 @@ export function WrapSamplePage() {
     },
     onError: (error: Error) => toast.error(error.message),
   })
+  const releaseUpdate = useMutation({
+    mutationFn: () =>
+      installReleaseKernel({
+        ids: selected.length ? selected : undefined,
+        restart,
+      }),
+    onSuccess: async (result) => {
+      setReleaseOpen(false)
+      const tag = result.release?.tag || 'Release'
+      const total = result.sync?.total ?? 0
+      const ok = result.sync?.ok_count ?? 0
+      const kernelFail = wrapSyncKernelFails(result.sync?.items)
+      if (kernelFail > 0) toast.error(`已写入 ${tag}，进程未起来 ${kernelFail}`)
+      else if (total === 0) toast.success(`已写入 ${tag}，没有槽位需要同步`)
+      else toast.success(`已用 ${tag} 热更新 kernel ${ok}/${total}`)
+      await invalidate()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
 
   const toggle = (id: string, on: boolean) => {
     setSelected((cur) =>
@@ -226,7 +247,7 @@ export function WrapSamplePage() {
     <PageHeader
       title={VIEW_TITLES.wrap}
       extra={
-        <div className='flex gap-2'>
+        <div className='flex flex-wrap gap-2'>
           <input
             ref={fileRef}
             type='file'
@@ -236,6 +257,14 @@ export function WrapSamplePage() {
               event.target.value = ''
             }}
           />
+          <Button
+            size='sm'
+            disabled={releaseUpdate.isPending || sync.isPending}
+            loading={releaseUpdate.isPending}
+            onClick={() => setReleaseOpen(true)}
+          >
+            下载并热更新
+          </Button>
           <Button
             size='sm'
             variant='outline'
@@ -286,6 +315,14 @@ export function WrapSamplePage() {
             </CardHeader>
             <CardContent className='space-y-2'>
               <KernelPayload payload={data?.kernel} />
+              {data?.meta?.release_tag ? (
+                <div className='flex items-center justify-between gap-2 text-sm'>
+                  <span className='text-muted-foreground'>GitHub</span>
+                  <span className='font-mono text-xs'>
+                    {data.meta.release_tag}
+                  </span>
+                </div>
+              ) : null}
               <div className='flex items-center justify-between gap-2 text-sm'>
                 <span className='text-muted-foreground'>目录</span>
                 <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
@@ -315,8 +352,10 @@ export function WrapSamplePage() {
                 ）。旧母样本 ELF 不会盖回去。
               </p>
               <p>
-                2. 「上传
-                kernel」只替换仓内二进制。选槽再点重装，运行中的进程才会加载新文件。
+                2. 「下载并热更新」拉取 GitHub 最新 Release 的 linux amd64
+                <code>kin-kernel</code>
+                ，写入仓内后同步所选槽。未选槽则全部。不 docker rm。「上传
+                kernel」只替换仓内二进制，不自动同步。
               </p>
               <p>
                 3. 单槽「重装 kernel」只修这一台，不碰凭证。覆盖在跑的文件会先
@@ -483,6 +522,16 @@ export function WrapSamplePage() {
         handleConfirm={() => {
           if (uploadFile) upload.mutate(uploadFile)
         }}
+      />
+      <ConfirmDialog
+        open={releaseOpen}
+        onOpenChange={setReleaseOpen}
+        title='从 GitHub 热更新 kernel？'
+        desc={`下载最新 Release 的 linux amd64 kin-kernel，覆盖仓内 bin/kin-kernel 与 share/wrap-cli/kin-kernel.bin，再同步${selected.length ? `所选 ${selected.length} 槽` : '全部槽'}并${restart ? '重启' : '不重启'}槽内 dataplane。不 docker rm，不改凭证和 SOCKS。`}
+        confirmText='下载并热更新'
+        cancelBtnText='取消'
+        isLoading={releaseUpdate.isPending}
+        handleConfirm={() => releaseUpdate.mutate()}
       />
     </PageHeader>
   )

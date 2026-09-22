@@ -142,3 +142,106 @@ test('kernel upload rejects non-ELF payloads', async () => {
     fs.rmSync(project, { recursive: true, force: true })
   }
 })
+
+function releaseFetch(elf, { assetBytes = elf, status = 200 } = {}) {
+  return async (url) => {
+    const href = String(url)
+    if (href.endsWith('/releases/latest')) {
+      return new Response(
+        JSON.stringify({
+          tag_name: 'v1.2.3',
+          assets: [
+            {
+              name: 'kin-kernel',
+              size: assetBytes.length,
+              url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/9',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    if (href.endsWith('/releases/assets/9')) {
+      return new Response(assetBytes, {
+        status,
+        headers: { 'content-length': String(assetBytes.length) },
+      })
+    }
+    throw new Error(`unexpected ${href}`)
+  }
+}
+
+function panelFor(project, { readBody, readRawBody, fetchImpl } = {}) {
+  const response = {}
+  const handlePanel = createPanelHandler({
+    cfg: { paths: { project } },
+    routingConfig: {},
+    fetchImpl,
+    requireAuth(req) {
+      req.apiKeyKind = 'master'
+      req.panelRole = 'admin'
+      return true
+    },
+    json(_res, status, payload) {
+      response.status = status
+      response.body = payload
+      return true
+    },
+    readBody: readBody || (async () => ({ restart: true })),
+    readRawBody,
+  })
+  return { response, handlePanel }
+}
+
+test('github kernel release replaces host kernel and syncs stopped slots', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-panel-kernel-release-'))
+  const elf = fakeElf64Amd64('github-kernel')
+  try {
+    seedWrapTemplate(project)
+    const vmDir = path.join(project, 'vms')
+    fs.mkdirSync(vmDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(vmDir, 'legacy-slot.json'),
+      JSON.stringify({ id: 'legacy-slot', name: 'legacy-slot', status: 'stopped' }),
+    )
+    const { response, handlePanel } = panelFor(project, { fetchImpl: releaseFetch(elf) })
+    await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/wrap-cli/kernel/release'))
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    assert.equal(response.body.data.release.tag, 'v1.2.3')
+    assert.equal(response.body.data.sync.items[0].kernel.reason, 'vm_stopped')
+    assert.ok(fs.readFileSync(path.join(project, 'bin', 'kin-kernel')).equals(elf))
+    assert.ok(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'kin-kernel.bin')).equals(elf))
+    assert.ok(
+      fs.readFileSync(path.join(project, 'vms', 'legacy-slot', 'cli-home', '.kin', 'kin-kernel.bin')).equals(elf),
+    )
+    const meta = JSON.parse(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'SAMPLE.json'), 'utf8'))
+    assert.equal(meta.source, 'github')
+    assert.equal(meta.release_tag, 'v1.2.3')
+
+    const uploaded = fakeElf64Amd64('manual-kernel')
+    const upload = panelFor(project, { readRawBody: async () => uploaded })
+    await upload.handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/wrap-cli/kernel'))
+    assert.equal(upload.response.status, 200, JSON.stringify(upload.response.body))
+    const cleared = JSON.parse(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'SAMPLE.json'), 'utf8'))
+    assert.equal(cleared.source, 'upload')
+    assert.equal(cleared.release_tag, undefined)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('github kernel release does not write a non-ELF payload', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-panel-kernel-release-bad-'))
+  try {
+    seedWrapTemplate(project)
+    const { response, handlePanel } = panelFor(project, {
+      fetchImpl: releaseFetch(Buffer.alloc(0), { assetBytes: Buffer.alloc(64, 0x41) }),
+    })
+    await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/wrap-cli/kernel/release'))
+    assert.equal(response.status, 400)
+    assert.equal(response.body.error.code, 'kernel_not_elf')
+    assert.equal(fs.existsSync(path.join(project, 'bin', 'kin-kernel')), false)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
