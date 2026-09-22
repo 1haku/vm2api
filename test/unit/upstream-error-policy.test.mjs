@@ -155,6 +155,23 @@ test('generic 502 pauses scheduling for one hour instead of failing over', () =>
   assert.equal(shouldContinue(policy), false)
 })
 
+test('slot_busy 503 does not park the account', () => {
+  const policy = classifyUpstreamResult(
+    {
+      status: 503,
+      body: {
+        type: 'error',
+        error: { type: 'worker_error', code: 'slot_busy', message: 'rust kernel has no free slot' },
+      },
+    },
+    { now: 1000 },
+  )
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'slot_busy')
+  assert.equal(policy.cooldownUntil, null)
+  assert.equal(policy.retrySameAccount, false)
+})
+
 test('a 502 plan-limit message switches accounts instead of pausing', () => {
   const policy = classifyUpstreamResult(
     {

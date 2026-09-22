@@ -4,6 +4,7 @@ import {
   effectiveRateWindow,
   officialWindow,
   headerWindow,
+  headerHardBlocked,
   WINDOW_5H_MS,
   toPercentUsed,
   usageWindowsEmpty,
@@ -122,4 +123,24 @@ test('toPercentUsed converts Extra 0-1 once and keeps 0-100', () => {
     true,
   )
   assert.equal(usageWindowsEmpty({ '5h': { utilization: 0.1, status: 'active' }, '7d': {} }), false)
+})
+
+test('26 percent with a rejected flag is not a hard block', () => {
+  const now = Date.parse('2026-08-24T12:00:00.000Z')
+  const reset = new Date(now + 3600_000).toISOString()
+  assert.equal(
+    headerHardBlocked({ headers: { '5h': { utilization: 26, status: 'rejected', reset } } }, '5h', now),
+    false,
+  )
+  assert.equal(
+    headerHardBlocked({ headers: { '5h': { utilization: 0.26, status: 'rejected', reset } } }, '5h', now),
+    true,
+  )
+  assert.equal(headerHardBlocked({ headers: { '5h': { utilization: 1, status: 'rejected', reset } } }, '5h', now), true)
+  const w = effectiveRateWindow(
+    { utilization: 26, status: 'rejected', reset },
+    { now, source: 'headers', durationMs: WINDOW_5H_MS },
+  )
+  assert.equal(w.utilization, 26)
+  assert.equal(w.stale, false)
 })
