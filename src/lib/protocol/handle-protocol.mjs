@@ -94,7 +94,7 @@ import {
   personaHideForUnofficial,
   personaHideForCliZero,
 } from '../identity/crs-persona-usage.mjs'
-import { applyCacheTtlToUsage, cacheBreakpointsFromRoutingFile, cacheTtlFromRouting, resolveCacheTtl } from './cache-ttl.mjs'
+import { applyCacheTtlToUsage, cacheBreakpointsFromRoutingFile, resolveCacheTtl } from './cache-ttl.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
 import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
@@ -794,7 +794,6 @@ export function createHandleProtocol(deps) {
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
-            if (cacheTtl == null) cacheTtl = cacheTtlFromRouting(routingNow)
             preserveCacheBreakpoints = true
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
