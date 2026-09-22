@@ -170,15 +170,19 @@ export function defaultUpgradeCommand() {
   return upgradeCommand()
 }
 
-function githubHeaders() {
+export function githubApiHeaders(accept = 'application/vnd.github+json') {
   const headers = {
-    Accept: 'application/vnd.github+json',
+    Accept: accept,
     'User-Agent': 'vm2api-release-check',
     'X-GitHub-Api-Version': '2022-11-28',
   }
   const token = process.env.GITHUB_TOKEN || process.env.VM2API_GITHUB_TOKEN
   if (token) headers.Authorization = `Bearer ${token}`
   return headers
+}
+
+function githubHeaders() {
+  return githubApiHeaders()
 }
 
 export function publicRelease(payload) {
