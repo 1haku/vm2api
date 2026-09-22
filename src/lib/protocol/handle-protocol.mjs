@@ -247,6 +247,7 @@ export function createHandleProtocol(deps) {
     deliveryMode,
     toolNames = {},
     want1m = false,
+    preserveCacheBreakpoints = false,
     routing = {},
     noGoFallback = false,
   }) {
@@ -262,6 +263,7 @@ export function createHandleProtocol(deps) {
       deliveryMode,
       want1m,
       routing,
+      preserveCacheBreakpoints,
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
@@ -580,6 +582,7 @@ export function createHandleProtocol(deps) {
       officialTraffic,
     })
     let cacheTtl = requestedCacheTtl
+    let preserveCacheBreakpoints = false
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
     const openaiCompat = String(protocol || '').startsWith('openai.')
     syncClaudeKernelConfigsFromFile(cfg.paths?.project, routingConfigPath)
@@ -792,6 +795,7 @@ export function createHandleProtocol(deps) {
           let hopBody = body
           if (cliHop) {
             cacheTtl = CLI_HOP_CACHE_TTL
+            preserveCacheBreakpoints = true
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             if (!officialTraffic) {
@@ -904,6 +908,7 @@ export function createHandleProtocol(deps) {
               deliveryMode: attemptDelivery,
               toolNames: attemptMeta?.toolNames || {},
               cacheTtl,
+              preserveCacheBreakpoints,
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
@@ -932,6 +937,7 @@ export function createHandleProtocol(deps) {
             return await dispatchStreamInference({
               exec: candidate.exec,
               cacheTtl,
+              preserveCacheBreakpoints,
               body,
               reqHeaders: req.headers,
               timeoutMs: cfg.limits.upstream_timeout_ms,
