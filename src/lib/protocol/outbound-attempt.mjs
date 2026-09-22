@@ -34,7 +34,13 @@ import {
   CRS_AGENT_EXPANSION,
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
-import { enforceCacheTtlOrder, injectToolsTailBreakpoint, stripIllegalCacheControlFields } from './cache-ttl.mjs'
+import {
+  applyCacheTtlToBody,
+  enforceCacheTtlOrder,
+  injectToolsTailBreakpoint,
+  normalizeCacheTtl,
+  stripIllegalCacheControlFields,
+} from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
 
@@ -76,10 +82,6 @@ export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
   tools_tail: true,
   messages: 'off',
 })
-
-/** Wrap CLI tools/system omit ttl, which Anthropic treats as 5m and processes first.
- * A later message 1h is the messages.N 400, so the hop wire value is 5m. */
-export const CLI_HOP_CACHE_TTL = '5m'
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
@@ -196,6 +198,7 @@ export function prepareCliHopBody(
     repaired = false,
     cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
     cacheControlLimit = 4,
+    cacheTtl = null,
     unofficial: _unofficial = false,
   } = {},
 ) {
@@ -223,9 +226,12 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
-  // sub2api rewrite_message_cache_control defaults off: do not move or delete
-  // message breakpoints. A sliding delete changes the prefix that was written.
-  if (cacheBreakpoints?.enabled !== false) body = injectToolsTailBreakpoint(body, CLI_HOP_CACHE_TTL)
+  // Menu cache_ttl (default 1h). Do not pin a second value here.
+  const ttl = normalizeCacheTtl(cacheTtl)
+  if (cacheBreakpoints?.enabled !== false) {
+    body = injectToolsTailBreakpoint(body, ttl)
+    body = applyCacheTtlToBody(body, ttl)
+  }
   body = enforceCacheTtlOrder(body)
   enforceCacheLimit(body, cacheControlLimit)
   return body
