@@ -17,9 +17,9 @@ import {
   logsStreamQueryKey,
   logsStreamQueryOptions,
 } from '@/features/logs/queries'
+import type { HideableLogColumn } from './column-visibility'
 import { showModelRedirect } from './log-badges'
 import { LogRow, LogsTableHeader, logRowId } from './logs-table'
-import type { HideableLogColumn } from './column-visibility'
 import type { LogKindFilter } from './quick-filters-bar'
 
 const ROW_HEIGHT = 52

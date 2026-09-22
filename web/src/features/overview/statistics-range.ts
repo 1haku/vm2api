@@ -72,7 +72,11 @@ export function fillStatsSeries(
     since.getUTCMonth(),
     since.getUTCDate()
   )
-  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const end = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate()
+  )
   for (let t = start; t <= end; t += DAY_MS) {
     const at = new Date(t)
     const key = at.toISOString().slice(0, 10)
