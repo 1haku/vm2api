@@ -25,7 +25,7 @@ import {
   destroyVmRuntime,
 } from './vm-runtime.mjs'
 import { inspectWrapCliDir, materializeWrapCli, wrapCliHomeDir } from './wrap-cli-runtime.mjs'
-import { boundProxyUrl } from './egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy } from './egress.mjs'
 
 export { runtimeKind }
 
@@ -108,9 +108,10 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
     if (!eager) return { ok: true, skipped: true, reason: 'eager_start_off', engine: 'codex' }
     const write = opts.ops?.writeCodexKernelConfig || writeCodexKernelConfig
     const start = opts.ops?.ensureCodexKernel || ensureCodexKernel
+    const localExit = isLocalEgressProxy(vm?.proxy)
     write(projectRoot, vm, {
-      proxyUrl: boundProxyUrl(vm?.proxy),
-      proxyRequired: true,
+      proxyUrl: localExit ? '' : boundProxyUrl(vm?.proxy),
+      proxyRequired: !localExit,
     })
     const kernel = await start(slotExec(projectRoot, vm), { timeoutMs: opts.timeoutMs })
     if (!kernel?.ok) {

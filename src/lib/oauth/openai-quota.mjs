@@ -6,7 +6,7 @@
 import crypto from 'node:crypto'
 import { getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
-import { boundProxyUrl } from '../vm/egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
 import { readCodexAccounts, upsertCodexAccount, persistCodexQuotaSnapshot } from '../vm/codex-slot.mjs'
 import { buildCodexUsageView, extraToCodexSnapshot, normalizeCodexLimits } from '../protocol/codex-usage.mjs'
 import { CODEX_OAUTH_ORIGINATOR, makeSocksFetch, refreshCodexAccessToken } from '../protocol/codex-models.mjs'
@@ -249,12 +249,13 @@ async function loadSlot(projectRoot, vmId) {
     refresh,
     accountId: firstString(first.chatgpt_account_id, vm.codex?.chatgpt_account_id),
     proxyUrl,
+    direct: isLocalEgressProxy(vm.proxy),
   }
 }
 
-async function quotaFetch(url, { method = 'GET', headers, body, proxyUrl, fetchImpl, timeoutMs } = {}) {
+async function quotaFetch(url, { method = 'GET', headers, body, proxyUrl, fetchImpl, timeoutMs, direct = false } = {}) {
   const fetchFn = fetchImpl || makeSocksFetch(proxyUrl, timeoutMs || OPENAI_QUOTA_TIMEOUT_MS)
-  if (!fetchImpl && !proxyUrl)
+  if (!fetchImpl && !proxyUrl && !direct)
     return { ok: false, error: 'proxy_required', message: 'GPT 槽未绑定 SOCKS5', status: 400 }
   try {
     const res = await fetchFn(url, {
@@ -307,7 +308,7 @@ function publicUsage(extra, resetCredits, usagePayload = {}) {
 }
 
 async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId } = {}) {
-  if (!slot.proxyUrl && !fetchImpl) {
+  if (!slot.proxyUrl && !fetchImpl && !slot.direct) {
     return fail('proxy_required', 'GPT 槽未绑定 SOCKS5', 400)
   }
   let current = slot
@@ -318,6 +319,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
       headers: headersOf(access),
       proxyUrl: current.proxyUrl,
       fetchImpl,
+      direct: current.direct,
     })
     if (!usage.ok && usage.error) return usage
     if (usage.status === 401 || usage.status === 403) {
@@ -332,6 +334,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
       headers: headersOf(access),
       proxyUrl: current.proxyUrl,
       fetchImpl,
+      direct: current.direct,
     })
     return { usage, details }
   }
@@ -387,7 +390,7 @@ export async function queryOpenaiQuota({ projectRoot, vmId, fetchImpl, rotate = 
 export async function resetOpenaiQuota({ projectRoot, vmId, fetchImpl, rotate = true } = {}) {
   const slot = await loadSlot(projectRoot, vmId)
   if (!slot.ok) return slot
-  if (!slot.proxyUrl && !fetchImpl) return fail('proxy_required', 'GPT 槽未绑定 SOCKS5', 400)
+  if (!slot.proxyUrl && !fetchImpl && !slot.direct) return fail('proxy_required', 'GPT 槽未绑定 SOCKS5', 400)
 
   let current = slot
   const headersOf = (access) => ({
@@ -403,6 +406,7 @@ export async function resetOpenaiQuota({ projectRoot, vmId, fetchImpl, rotate = 
       body: JSON.stringify({ redeem_request_id: redeemId }),
       proxyUrl: current.proxyUrl,
       fetchImpl,
+      direct: current.direct,
     })
 
   let res = await consume(current.access)

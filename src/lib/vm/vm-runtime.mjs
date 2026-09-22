@@ -293,7 +293,8 @@ export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   const paths = workerPaths(projectRoot, vm.id)
   let worker
   try {
-    if (vm.proxy_required !== false && !workerProxyUrl(vm)) throw new Error('slot SOCKS5 proxy is required')
+    if (!isLocalEgressProxy(vm.proxy) && vm.proxy_required !== false && !workerProxyUrl(vm))
+      throw new Error('slot SOCKS5 proxy is required')
     worker = writeWorkerFiles(vm, projectRoot, { routing })
   } catch (error) {
     if (!fs.existsSync(paths.config) || !fs.existsSync(paths.token)) {

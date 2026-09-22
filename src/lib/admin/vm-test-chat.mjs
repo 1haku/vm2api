@@ -17,7 +17,7 @@ import { readRoutingConfigFile } from '../core/config.mjs'
 import { getVm, vmHasClaudeCredential } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { summarizeCodexSlot, readCodexAccounts, upsertCodexAccount } from '../vm/codex-slot.mjs'
-import { boundProxyUrl } from '../vm/egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
 import { loadVmIdentity } from '../identity/vm-identity.mjs'
 import { snapshotOauth } from '../vm/execution-context.mjs'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
@@ -137,8 +137,9 @@ export async function syncCodexCatalog({ projectRoot, vmId, fetchImpl, rotate = 
   if (!target) {
     return { ok: false, error: 'no_codex_slot', message: '没有可用的 GPT OAuth 槽', ids: [], synced: 0 }
   }
+  const direct = isLocalEgressProxy(target.proxy)
   const proxyUrl = boundProxyUrl(target.proxy)
-  if (!proxyUrl && !fetchImpl) {
+  if (!proxyUrl && !fetchImpl && !direct) {
     return {
       ok: false,
       error: 'proxy_required',
@@ -158,6 +159,7 @@ export async function syncCodexCatalog({ projectRoot, vmId, fetchImpl, rotate = 
       accountId,
       proxyUrl,
       fetchImpl,
+      direct,
     })
 
   let live = await fetchOnce()

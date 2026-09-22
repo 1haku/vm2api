@@ -62,7 +62,7 @@ import {
 import { makeError, ErrorType, ErrorCode } from './lib/core/errors.mjs'
 import * as panel from './lib/admin/panel-api.mjs'
 import { ProxyPool } from './lib/vm/proxy-pool.mjs'
-import { egressListening, ensureProxyEgress } from './lib/vm/egress.mjs'
+import { ensureProxyEgress, proxyEgressReady } from './lib/vm/egress.mjs'
 import { GATEWAY_CAPABILITIES } from './lib/vm/execution-context.mjs'
 import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/telemetry-rewrite.mjs'
 import { openDatabase, closeDatabase } from './lib/db/database.mjs'
@@ -320,7 +320,7 @@ proxyPool = new ProxyPool({
     if (!why.includes(`proxy=${proxyId}`) && !/egress_down|proxy_probe_failed/.test(why)) return
     setVmSchedulable(cfg.paths.project, vmId, true)
   },
-  egressCheck: (proxy) => egressListening(cfg.paths.project, proxy?.id),
+  egressCheck: (proxy) => proxyEgressReady(proxy, cfg.paths.project),
   repairEgress: (proxy) => ensureProxyEgress(cfg.paths.project, proxy),
 })
 proxyPool.startScheduler()
