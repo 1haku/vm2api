@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.20 — 2026-09-22
+
+- 本机出口即使没有 SOCKS URL 也视为已绑定直连出口；重置、worker reload、Codex kernel 配置与 GPT host hop 不再误判为未绑定
+- incomplete 在下游已经 commit 或 transport 异常时同样立即释放全部粘滞会话键，不再占住 session window
+- GPT / OpenAI 平台模型不再进入 Claude 蒸馏拦截；Claude 模型仍保留原有 harvest、指纹和思维链提取规则
+
+已部署机升级：只更新控制面并重启一次。不必 `wrap-cli/sync`。
+
 ## 1.3.19 — 2026-09-22
 
 - 半截请求不再占会话槽：incomplete 立刻丢掉这次对话键，并马上回收内核槽，不再等 30 秒回收冷却
