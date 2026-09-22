@@ -434,3 +434,27 @@ test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {
   assert.equal(asstBlocks.find((b) => b.type === 'tool_use')?.cache_control, undefined)
   assert.equal(userBlocks.find((b) => b.type === 'tool_result')?.cache_control, undefined)
 })
+
+test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe tests', () => {
+  const probe1 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 1,
+    messages: [{ role: 'user', content: '.' }],
+  })
+  assert.equal(probe1.max_tokens, 1024)
+
+  const probe32 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 32,
+    messages: [{ role: 'user', content: 'ping' }],
+  })
+  assert.equal(probe32.max_tokens, 1024)
+
+  const normal = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(normal.max_tokens, 4096)
+})
+
