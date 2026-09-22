@@ -126,6 +126,18 @@ function sessionSlotsOf(vm, fallback = 20) {
   return resolveSessionSlots(vm, { inference: { session_slots: fallback } })
 }
 
+/** Distinct conversation window. 0 = off. Not the native seat cap. */
+function maxSessionsOf(vm, accountQuota, account) {
+  const fromVm = Number(vm?.policy?.maxSessions)
+  if (Number.isFinite(fromVm) && fromVm > 0) return Math.round(fromVm)
+  try {
+    const policy = accountQuota?.policyFor?.(account, { tier: vmTierOf(vm) })
+    const configured = Number(policy?.max_sessions ?? account?.max_sessions)
+    if (Number.isFinite(configured) && configured > 0) return Math.round(configured)
+  } catch {}
+  return 0
+}
+
 function vmTierOf(vm) {
   return vm?.claude?.account_tier || vm?.account_tier || null
 }
@@ -149,7 +161,7 @@ function stickyShouldWait(waitReason, cooldownReason = null) {
     waitReason === 'fable_concurrency' ||
     waitReason === 'rpm_limit' ||
     waitReason === 'slot_busy' ||
-    waitReason === 'session_window_full'
+    waitReason === 'session_slots_full'
   ) {
     return true
   }
@@ -259,7 +271,6 @@ export class PoolScheduler {
       })
       const available = candidates.filter((candidate) => this.isReservable(candidate))
       let selected = this.pick(available, { model, stickyKey, eligible: candidates })
-      if (this.lastStickyHeld) return fail('provider_pause', candidates, available)
       if (this.lastStickyCleared) stickyCleared = true
       const reserveMisses = []
       const attempted = new Set()
@@ -270,7 +281,6 @@ export class PoolScheduler {
         // Dropping the key here is how one conversation lands on a second session.
         reserveMisses.push({ ...selected, busy: true, waitReason: selected.waitReason || 'concurrency_limit' })
         attempted.add(selected.accountId)
-        if (selected.selectionReason === 'sticky') break
         const remaining = available.filter(
           (candidate) =>
             !attempted.has(candidate.accountId) && !blocked.has(candidate.accountId) && !blocked.has(candidate.vmId),
@@ -307,6 +317,16 @@ export class PoolScheduler {
         stickyCleared,
         requestDeadline: loopDeadline,
       })
+      if (waitPlan?.queueFull && waitPlan.sticky) {
+        if (stickyKey) {
+          try {
+            this.stickyRouter?.unbind?.(stickyKey)
+          } catch {}
+        }
+        stickyCleared = true
+        if (waitPlan.accountId) blocked.add(waitPlan.accountId)
+        continue
+      }
       const waitDeadline = waitPlan?.deadline || loopDeadline
       if (wakeAts.length && Math.min(...wakeAts) >= waitDeadline && !concurrencyWait) {
         return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
@@ -564,13 +584,17 @@ export class PoolScheduler {
         const configured = Number(policy?.session_idle_min)
         if (Number.isFinite(configured) && configured > 0) idleMin = configured
       } catch {}
-      const windowGate = this.accountQuota.sessions.canAccept(accountId, sessionKey, {
-        max: sessionSlots,
-        idleMin,
-      })
-      if (!windowGate.ok) markWait('session_window_full', windowGate.detail?.retry_at || now + 5_000)
+      const maxSessions = maxSessionsOf(vm, this.accountQuota, account)
+      if (maxSessions > 0) {
+        const windowGate = this.accountQuota.sessions.canAccept(accountId, sessionKey, {
+          max: maxSessions,
+          idleMin,
+        })
+        if (!windowGate.ok) return { ok: false, reason: 'session_limit' }
+      }
     }
 
+    if (inflight >= sessionSlots) markWait('session_slots_full')
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
     const fableCap = Number(this.config.fable_max_per_account)
     if (isFableModel(modelKey) && Number.isFinite(fableCap) && fableCap > 0) {
@@ -719,7 +743,6 @@ export class PoolScheduler {
 
   pick(candidates, { model, stickyKey, eligible = candidates } = {}) {
     this.lastStickyCleared = false
-    this.lastStickyHeld = false
     if (!candidates.length && !eligible?.length) return null
     const bound = stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null
     if (bound) {
@@ -730,11 +753,11 @@ export class PoolScheduler {
         this.lastStickyCleared = true
       } else if (this.isReservable(amongEligible)) {
         return { ...amongEligible, selectionReason: 'sticky' }
-      } else if (amongEligible.busy && stickyShouldWait(amongEligible.waitReason, amongEligible.cooldownReason)) {
-        // RPM / concurrency stays on this session. A full queue does not open another slot.
-        return null
-      } else if (amongEligible.cooldownReason === 'provider_pause') {
-        this.lastStickyHeld = true
+      } else if (
+        amongEligible.busy &&
+        stickyShouldWait(amongEligible.waitReason, amongEligible.cooldownReason) &&
+        this.waiterCount(amongEligible.accountId) < this.maxWaiters()
+      ) {
         return null
       } else {
         this.stickyRouter?.unbind?.(stickyKey)
@@ -860,6 +883,7 @@ export class PoolScheduler {
   reserve(candidate, { sessionKey = null, skipQuota = false } = {}) {
     const current = this.inflight.get(candidate.accountId) || 0
     if (!candidate.maxConcurrency || current >= candidate.maxConcurrency) return null
+    if (candidate.sessionSlots > 0 && current >= candidate.sessionSlots) return null
     const family = isFableModel(candidate.model) ? FABLE_FAMILY_KEY : null
     const fableCap = Number(this.config.fable_max_per_account)
     if (
@@ -995,11 +1019,13 @@ export class PoolScheduler {
 
   isReservable(candidate) {
     if (!candidate) return false
+    const inflight = candidate.inflight || 0
+    const seats = Number(candidate.sessionSlots) || 0
+    const conc = Number(candidate.maxConcurrency) || 0
+    if (seats > 0 && inflight >= seats) return false
+    if (conc > 0 && inflight >= conc) return false
     if (!candidate.busy) return true
-    return (
-      candidate.waitReason === 'slot_busy' &&
-      (candidate.inflight || 0) < Math.min(candidate.maxConcurrency || 0, candidate.sessionSlots || 0)
-    )
+    return candidate.waitReason === 'slot_busy'
   }
 
   makeWaitPlan(candidate, { sticky = false, requestDeadline = null } = {}) {
