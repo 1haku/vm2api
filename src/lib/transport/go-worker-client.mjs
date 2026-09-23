@@ -238,17 +238,21 @@ function dumpSessionEnvelope(envelope) {
   } catch {}
 }
 
-export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m = false }) {
+/**
+ * `cliHop`: the slot cli-node builds the wire and always sends
+ * mid-conversation-system; the kernel drops these envelope headers. Gating the
+ * body on the VM's HTTP betas would lift every role=system turn into system[],
+ * so system grows each turn and no cached prefix is ever read.
+ */
+export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m = false, cliHop = false }) {
   const model = body?.model || ''
   const credMode = credentialModeFromOauth(exec?.vm?.claude || {})
   const headers = prepareOutboundHeaders(reqHeaders, exec?.homeDir, identity, model, {
     credentialMode: credMode,
     want1m: want1m === true,
   })
-  return {
-    headers,
-    body: sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(body, headers?.['anthropic-beta'] || '')),
-  }
+  const gated = cliHop ? body : sanitizeAnthropicBodyForBetaTokens(body, headers?.['anthropic-beta'] || '')
+  return { headers, body: sealClaudeCodeCch(gated) }
 }
 
 function workerEnvelope({
@@ -261,8 +265,9 @@ function workerEnvelope({
   want1m = false,
   cacheTtl = null,
   preserveCacheBreakpoints = null,
+  cliHop = false,
 } = {}) {
-  const finalized = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m })
+  const finalized = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
   const envelope = {
     body: finalized.body,
     headers: finalized.headers,
@@ -296,9 +301,10 @@ export async function callGoWorker({
   preserveCacheBreakpoints = null,
   requestPath = '/internal/v1/messages',
   envelope = null,
+  cliHop = false,
 } = {}) {
   if (isCrsMock()) {
-    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m })
+    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
     writeCrsTrace({ body: outboundBody, headers, stream: false })
     const mock = mockCrsPayload({ scenario: mockScenario(exec) })
     return {
@@ -316,7 +322,17 @@ export async function callGoWorker({
       requestPath,
       body:
         envelope ||
-        workerEnvelope({ body, reqHeaders, exec, identity, stream: false, want1m, cacheTtl, preserveCacheBreakpoints }),
+        workerEnvelope({
+          body,
+          reqHeaders,
+          exec,
+          identity,
+          stream: false,
+          want1m,
+          cacheTtl,
+          preserveCacheBreakpoints,
+          cliHop,
+        }),
       signal,
       timeoutMs,
     })
@@ -371,9 +387,10 @@ export async function streamGoWorker({
   preserveCacheBreakpoints = null,
   requestPath = '/internal/v1/messages',
   envelope = null,
+  cliHop = false,
 } = {}) {
   if (isCrsMock()) {
-    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m })
+    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
     writeCrsTrace({ body: outboundBody, headers, stream: true })
     const scenario = mockScenario(exec)
     const mockStartedAt = Date.now()
@@ -458,6 +475,7 @@ export async function streamGoWorker({
           want1m,
           cacheTtl,
           preserveCacheBreakpoints,
+          cliHop,
         }),
       signal,
       timeoutMs,

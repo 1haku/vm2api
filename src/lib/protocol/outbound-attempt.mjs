@@ -10,7 +10,9 @@ import {
   ensureClearThinkingContextManagement,
   stripInvalidThinkingBlocks,
   alignSamplingWithThinking,
+  modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
+import { liftMidConversationSystemMessages } from './sanitize.mjs'
 import { ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh, normalizeThinkingForModel } from './thinking.mjs'
 import {
   applyCrsIdentityReplace,
@@ -149,8 +151,8 @@ function stabilizeMessageBudgets(body) {
   return changed ? { ...body, messages } : body
 }
 
-/** A CLI hop must end on a conversational user/assistant turn. Preserve older
- * role=system leftovers in place, but lift only a trailing run to system[]. */
+/** Third-party hops end on a user/assistant turn: a trailing role=system run is
+ * lifted to system[]. Official Claude Code skips this (see prepareCliHopBody). */
 function liftTrailingSystemMessages(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   let firstTrailing = messages.length
@@ -179,8 +181,16 @@ function liftTrailingSystemMessages(body) {
   })
 }
 
-/** Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks. */
-export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false } = {}) {
+/**
+ * Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks.
+ *
+ * `officialClient`: Claude Code ends most turns with a role=system reminder and
+ * sends it that way itself. Lifting it would put a different text into the
+ * cached system block on every turn whose reminder changes (turn 2 always:
+ * SessionStart context, then `<total_tokens>`), so the whole prefix misses.
+ * Left in place, it becomes history on the next turn and the prefix only grows.
+ */
+export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false, officialClient = false } = {}) {
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   // Wrap CLI (Claude Code) throws a fatal "max_output_tokens" error if response reaches max_tokens.
@@ -192,8 +202,11 @@ export function prepareCliHopBody(canonicalBody, { stream = true, repaired = fal
   const leftover = stripCliOwnedSystem(body.system)
   if (leftover == null) delete body.system
   else body.system = leftover
-  body = liftTrailingSystemMessages(body)
+  body = officialClient ? stabilizeSystemBudget(body) : liftTrailingSystemMessages(body)
   body = stabilizeMessageBudgets(body)
+  // cli-node sends mid-conversation-system, so role=system turns stay in place and
+  // the cached prefix only grows. Only models that reject the role need the lift.
+  if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
 
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
