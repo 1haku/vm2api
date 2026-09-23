@@ -151,46 +151,18 @@ function stabilizeMessageBudgets(body) {
   return changed ? { ...body, messages } : body
 }
 
-/** Third-party hops end on a user/assistant turn: a trailing role=system run is
- * lifted to system[]. Official Claude Code skips this (see prepareCliHopBody). */
-function liftTrailingSystemMessages(body) {
-  const messages = Array.isArray(body?.messages) ? body.messages : []
-  let firstTrailing = messages.length
-  while (firstTrailing > 0 && messages[firstTrailing - 1]?.role === 'system') firstTrailing--
-  if (firstTrailing === messages.length) return stabilizeSystemBudget(body)
-  const lifted = messages.slice(firstTrailing).flatMap((message) => {
-    const content = message?.content
-    if (typeof content === 'string') return content.trim() ? [{ type: 'text', text: content }] : []
-    if (!Array.isArray(content)) return []
-    return content
-      .map((block) => (typeof block === 'string' ? { type: 'text', text: block } : block))
-      .filter((block) => block?.type === 'text' && String(block.text || '').trim())
-  })
-  if (!lifted.length) {
-    return stabilizeSystemBudget({ ...body, messages: messages.slice(0, firstTrailing) })
-  }
-  const system = Array.isArray(body.system)
-    ? body.system
-    : body.system == null
-      ? []
-      : [{ type: 'text', text: String(body.system) }]
-  return stabilizeSystemBudget({
-    ...body,
-    system: [...system, ...lifted],
-    messages: messages.slice(0, firstTrailing),
-  })
-}
-
 /**
  * Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks.
  *
- * `officialClient`: Claude Code ends most turns with a role=system reminder and
- * sends it that way itself. Lifting it would put a different text into the
- * cached system block on every turn whose reminder changes (turn 2 always:
- * SessionStart context, then `<total_tokens>`), so the whole prefix misses.
- * Left in place, it becomes history on the next turn and the prefix only grows.
+ * role=system turns stay where the caller put them, including a trailing one:
+ * Claude Code ends most turns with a reminder (SessionStart context, then
+ * `<total_tokens>`). Moving it into system[] puts a different text in the
+ * cached system block whenever the reminder changes, so the whole prefix
+ * misses. In place, it is history on the next turn and the prefix only grows.
+ * This must not depend on client classification: relays strip the billing
+ * block and rewrite the UA, so relayed Claude Code looks third-party.
  */
-export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false, officialClient = false } = {}) {
+export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false } = {}) {
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   // Wrap CLI (Claude Code) throws a fatal "max_output_tokens" error if response reaches max_tokens.
@@ -202,10 +174,9 @@ export function prepareCliHopBody(canonicalBody, { stream = true, repaired = fal
   const leftover = stripCliOwnedSystem(body.system)
   if (leftover == null) delete body.system
   else body.system = leftover
-  body = officialClient ? stabilizeSystemBudget(body) : liftTrailingSystemMessages(body)
+  body = stabilizeSystemBudget(body)
   body = stabilizeMessageBudgets(body)
-  // cli-node sends mid-conversation-system, so role=system turns stay in place and
-  // the cached prefix only grows. Only models that reject the role need the lift.
+  // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
   if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
 
   if (!repaired) {
