@@ -107,6 +107,17 @@ export function describeKernelPayload(projectRoot) {
     mtime: info?.mtime || '',
   }
 }
+export function describeCliNodePayload(projectRoot) {
+  const dir = wrapCliTemplateDir(projectRoot)
+  const chosen = path.join(dir, 'cli-node')
+  const info = fileInfo(chosen)
+  return {
+    source: info ? 'sample' : 'missing',
+    path: info?.path || '',
+    size: info?.size || 0,
+    mtime: info?.mtime || '',
+  }
+}
 
 export function inspectLinuxAmd64Elf(buf) {
   const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || [])
@@ -385,7 +396,13 @@ export function describeWrapSample(projectRoot) {
   try {
     meta = JSON.parse(fs.readFileSync(path.join(dir, 'SAMPLE.json'), 'utf8'))
   } catch {}
-  return { ...inspect, dir, meta, kernel: describeKernelPayload(projectRoot) }
+  return {
+    ...inspect,
+    dir,
+    meta,
+    kernel: describeKernelPayload(projectRoot),
+    cli_node: describeCliNodePayload(projectRoot),
+  }
 }
 
 export function makeWrapSample(projectRoot, { glibcFromDir = '' } = {}) {
@@ -516,6 +533,18 @@ export function replaceKernelBinary(projectRoot, buf, extra = {}) {
   )
   const described = describeWrapSample(projectRoot)
   return { ...described, ok: true, sample_ok: described.ok, written }
+}
+export function replaceCliNodeBinary(projectRoot, buf) {
+  const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || [])
+  const check = inspectLinuxAmd64Elf(bytes)
+  if (!check.ok)
+    return { ok: false, code: 'cli_node_not_elf', error: check.error || 'cli-node binary is not a linux amd64 ELF' }
+  const destDir = wrapCliTemplateDir(projectRoot)
+  if (!destDir) return { ok: false, code: 'wrap_cli_template_missing', error: 'wrap CLI template dir unset' }
+  fs.mkdirSync(destDir, { recursive: true })
+  const dest = path.join(destDir, 'cli-node')
+  writeKernelBytes(dest, bytes)
+  return { ok: true, written: [dest], size: bytes.length }
 }
 
 export function syncWrapSample(projectRoot, vms, { uidOf } = {}) {
