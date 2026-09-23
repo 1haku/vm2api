@@ -56,8 +56,12 @@ test('sidecar enables with official ~/.claude.json IDs', () => {
   assert.equal(out.identity.cli_version, '2.1.280')
   assert.equal(out.identity.env.version, '2.1.280')
   assert.match(out.betas, /thinking-binding-controls-2026-08-01/)
+  assert.match(out.betas, /advanced-tool-use-2025-11-20/)
+  assert.match(out.betas, /mid-conversation-system-clear-at-2026-08-21/)
+  assert.match(out.betas, /extended-cache-ttl-2025-04-11/)
+  assert.doesNotMatch(out.betas, /fallback-credit-2026-06-01/)
+  assert.doesNotMatch(out.betas, /context-1m/)
   assert.equal(out.identity.betas, out.betas)
-  assert.doesNotMatch(out.betas, /advanced-tool-use-2025-11-20/)
   fs.rmSync(root, { recursive: true, force: true })
 })
 
