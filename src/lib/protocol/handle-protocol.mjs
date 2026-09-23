@@ -106,7 +106,7 @@ import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { formatPoolSelectionSummary } from '../pool/pool-scheduler.mjs'
-import { extraHeadersFromLimitError } from '../pool/account-quota.mjs'
+import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 import { getVm } from '../vm/vm-registry.mjs'
 import { credentialModeFromOauth, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import {
@@ -1040,12 +1040,21 @@ export function createHandleProtocol(deps) {
           .filter(Boolean)
           .join('\n')
         const headers = extraHeadersFromLimitError(limitText, result.headers || {})
+        const exhausted = !result.ok && (Number(result.status) === 429 || isPlanLimitMessage(limitText))
         accountQuota.ingestHeaders(result.accountId, headers, healthReal ? null : logBag.usage, {
-          exhausted: !result.ok && (Number(result.status) === 429 || /hit your limit/i.test(limitText)),
+          exhausted,
           status: result.status,
           countRequest: !healthReal,
         })
         const pool = typeof deps.getPoolScheduler === 'function' ? deps.getPoolScheduler() : deps.poolScheduler
+        // Live `5h-status` on every response; `allowed` is the only early unblock.
+        if (!exhausted) {
+          pool?.rateLimitService?.updateSessionWindow?.({
+            accountId: result.accountId,
+            vmId: result.vmId || null,
+            headers: result.headers || {},
+          })
+        }
         if (pool?.syncQuotaSchedule && result.vmId && cfg?.paths?.project) {
           const vm = getVm(cfg.paths.project, result.vmId)
           if (vm) pool.syncQuotaSchedule(vm)

@@ -181,17 +181,40 @@ test('official 26 percent does not trip the quota gate', () => {
   assert.equal(q.headerUnderSafety(q.repo.get('pct-26')), true)
 })
 
-test('extraHeadersFromLimitError fills Extra 5h when wrap omits headers', () => {
+test('extraHeadersFromLimitError fills Extra 5h + reset from the text when wrap omits headers', () => {
+  const now = Date.parse('2026-09-23T12:37:10Z')
   const filled = extraHeadersFromLimitError(
     "provider error: You've hit your limit · resets 7:50pm (America/New_York)",
     {},
+    now,
   )
   assert.equal(filled['anthropic-ratelimit-unified-5h-status'], 'rejected')
+  assert.equal(filled['anthropic-ratelimit-unified-5h-reset'], String(Date.parse('2026-09-23T23:50:00Z') / 1000))
+  const weekly = extraHeadersFromLimitError("You've hit your weekly limit · resets Sep 25, 3pm (UTC)", {}, now)
+  assert.equal(weekly['anthropic-ratelimit-unified-7d-status'], 'rejected')
+  assert.equal(weekly['anthropic-ratelimit-unified-5h-status'], undefined)
   const kept = extraHeadersFromLimitError('hit your limit', {
-    'anthropic-ratelimit-unified-5h-utilization': '0.4',
+    'anthropic-ratelimit-unified-5h-status': 'allowed_warning',
   })
-  assert.equal(kept['anthropic-ratelimit-unified-5h-utilization'], '0.4')
-  assert.equal(kept['anthropic-ratelimit-unified-5h-status'], undefined)
+  assert.equal(kept['anthropic-ratelimit-unified-5h-status'], 'allowed_warning')
+})
+
+test('limit error without a fresh reset does not inherit the elapsed reset', () => {
+  const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  const elapsed = String(Math.floor((Date.now() - 3_600_000) / 1000))
+  q.ingestHeaders('elapsed-5h', {
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+    'anthropic-ratelimit-unified-5h-utilization': '0.4',
+    'anthropic-ratelimit-unified-5h-reset': elapsed,
+  })
+  q.ingestHeaders('elapsed-5h', extraHeadersFromLimitError('hit your limit', {}), null, {
+    exhausted: true,
+    countRequest: false,
+  })
+  const acc = q.repo.get('elapsed-5h')
+  assert.equal(acc.unified.headers['5h'].status, 'rejected')
+  assert.equal(acc.unified.headers['5h'].reset, null)
+  assert.ok(acc.unified.headers.exhausted_at)
 })
 
 test('cli rate_limit_event copies unifiedWindows utilization', () => {

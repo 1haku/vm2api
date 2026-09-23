@@ -232,6 +232,8 @@ const routingRt = createRoutingRuntime({
   get proxyPool() {
     return proxyPool
   },
+  // Lazy: panel is built after the runtime. One /usage hop when a 429 had no reset.
+  probeUsageOne: (vmId) => panel.buildProbeOne({ cfg, accountQuota, id: vmId }),
 })
 
 const {

@@ -7,7 +7,7 @@ import {
   isIncompleteAssistantMessage,
   isWrapConnectionError,
 } from '../core/errors.mjs'
-import { parseResetMs } from './quota-window.mjs'
+import { isPlanLimitMessage, parseLimitResetFromMessage, parseResetMs } from './quota-window.mjs'
 
 const ENTITLEMENT_PATTERNS = [
   /extra usage required/i,
@@ -96,13 +96,8 @@ function usageWindowReset(usage, now = Date.now()) {
   return candidates.length ? Math.min(...candidates) : null
 }
 
-function accountLimitUntil(reset, usage, now) {
-  return reset || usageWindowReset(usage, now) || now + 5 * 60_000
-}
-
-/** Claude CLI wraps a full 5h/7d window as 502, not 429. */
-function isPlanLimitMessage(message) {
-  return /hit your limit|extra usage/i.test(String(message || ''))
+function accountLimitUntil(reset, usage, now, message = '') {
+  return reset || parseLimitResetFromMessage(message, now) || usageWindowReset(usage, now) || now + 30 * 60_000
 }
 
 function isUsagePolicyMessage(message) {
@@ -310,6 +305,26 @@ export function classifyUpstreamResult(
       cooldownUntil: null,
     }
   }
+  // Plan limit arrives as 429, as a kernel 502 provider_error, or (pre-restore)
+  // as 200 + SSE error. The text decides, not the status (sub2api handle429).
+  if (isPlanLimitMessage(message)) {
+    return {
+      scope: 'account',
+      action: 'continue-and-cooldown',
+      reason: 'account_quota_exhausted',
+      cooldownUntil: accountLimitUntil(reset, usage, now, message),
+      retrySameAccount: false,
+    }
+  }
+  if (workerCode === 'empty_response') {
+    return {
+      scope: 'account',
+      action: 'continue',
+      reason: 'empty_response',
+      cooldownUntil: null,
+      retrySameAccount: true,
+    }
+  }
   if (isWrapConnectionError(message) || isWrapConnectionError(hay)) {
     return continueWithoutCooldown({
       scope: 'worker',
@@ -448,7 +463,7 @@ export function classifyUpstreamResult(
         scope: 'account',
         action: 'continue-and-cooldown',
         reason: 'account_quota_exhausted',
-        cooldownUntil: accountLimitUntil(reset, usage, now),
+        cooldownUntil: accountLimitUntil(reset, usage, now, message),
       }
     }
     if (isFableWindowLimit(result.headers) || isFableModel(model)) {
@@ -475,7 +490,7 @@ export function classifyUpstreamResult(
       scope: 'account',
       action: 'continue-and-cooldown',
       reason: 'rate_limited',
-      cooldownUntil: accountLimitUntil(reset, usage, now),
+      cooldownUntil: accountLimitUntil(reset, usage, now, message),
     }
   }
   if (status === 529) {
@@ -508,15 +523,6 @@ export function classifyUpstreamResult(
         scope: 'provider',
         reason: 'provider_timeout',
       })
-    }
-    if (isPlanLimitMessage(message)) {
-      return {
-        scope: 'account',
-        action: 'continue-and-cooldown',
-        reason: 'account_quota_exhausted',
-        cooldownUntil: accountLimitUntil(reset, usage, now),
-        retrySameAccount: false,
-      }
     }
     if (isUsagePolicyMessage(message)) {
       return {

@@ -304,6 +304,14 @@ export class AccountRuntimeRepo {
         state.cooldown_reason = null
         changed = true
       }
+      if (state.rate_limit_reset_at && state.rate_limit_reset_at <= now) {
+        state.rate_limit_reset_at = null
+        changed = true
+      }
+      if (state.overload_until && state.overload_until <= now) {
+        state.overload_until = null
+        changed = true
+      }
       const models = { ...(state.model_states || {}) }
       for (const [model, modelState] of Object.entries(models)) {
         if (modelState?.cooldown_until && Number(modelState.cooldown_until) <= now) {

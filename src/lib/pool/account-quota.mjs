@@ -14,6 +14,7 @@ import { AccountsRepo } from '../db/repos/accounts-repo.mjs'
 import { computeWeeklySplit, weeklySplitConfig } from './weekly-split.mjs'
 import {
   applyEffectiveWindows,
+  extraHeadersFromLimitError,
   extraIsLiveOpen,
   headerHardBlocked,
   headerWindow,
@@ -31,16 +32,7 @@ import { isFablePlanDenied, isInventedFableWindow, isOfficialUsageRateLimited } 
 import { normalizeUsage } from '../admin/pricing.mjs'
 import { isTestProbeSource } from './schedule-eligibility.mjs'
 
-/** Wrap CLI often reports Extra 5h as `You've hit your limit` without HTTP headers. */
-export function extraHeadersFromLimitError(message, headers = {}) {
-  const h = { ...(headers || {}) }
-  if (Object.keys(h).some((key) => /ratelimit-unified-5h/i.test(key))) return h
-  const text = String(message || '')
-  if (!/hit your limit/i.test(text)) return h
-  h['anthropic-ratelimit-unified-5h-status'] = 'rejected'
-  h['anthropic-ratelimit-unified-5h-utilization'] = '1'
-  return h
-}
+export { extraHeadersFromLimitError }
 
 export class AccountQuota {
   constructor({ dataDir, db, config, accounts }) {
@@ -155,6 +147,10 @@ export class AccountQuota {
     const u5 = num(h['anthropic-ratelimit-unified-5h-utilization'])
     const u7 = num(h['anthropic-ratelimit-unified-7d-utilization'])
     let sampled = false
+    if (exhausted) {
+      dropElapsedReset(acc, '5h', h['anthropic-ratelimit-unified-5h-reset'])
+      dropElapsedReset(acc, '7d', h['anthropic-ratelimit-unified-7d-reset'])
+    }
     if (
       writeExtra &&
       (u5 != null || h['anthropic-ratelimit-unified-5h-status'] || h['anthropic-ratelimit-unified-5h-reset'])
@@ -729,6 +725,8 @@ export class AccountQuota {
       return false
     }
     if (!state) return false
+    // Live 429 / overload columns belong to RateLimitService; passive Extra never lifts them.
+    if (Number(state.rate_limit_reset_at) > Date.now() || Number(state.overload_until) > Date.now()) return false
     const reason = String(state.cooldown_reason || '')
     const quotaCool = !reason || /quota|account_quota_exhausted|rate_limited/i.test(reason)
     if (!quotaCool) return false
@@ -1238,6 +1236,15 @@ function applyHeaderExhausted(acc, h = {}) {
     })
   }
   acc.unified.headers.exhausted_at = new Date().toISOString()
+}
+
+/** A reject without a fresh reset must not inherit last window's elapsed reset (wiped to 0 at once). */
+function dropElapsedReset(acc, key, incomingReset) {
+  if (incomingReset) return
+  const cur = acc.unified.headers?.[key]
+  if (!cur?.reset) return
+  const ms = parseResetMs(cur.reset)
+  if (Number.isFinite(ms) && ms <= Date.now()) acc.unified.headers[key] = { ...cur, reset: null }
 }
 
 function writeOfficialWindow(acc, key, incoming = {}) {
