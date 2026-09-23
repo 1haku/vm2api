@@ -30,21 +30,39 @@ test('only live credential + proxy slots are usage-probe targets', () => {
   assert.equal(isUsageProbeTarget({ ...live, proxy: null }), false)
 })
 
-test('interval ticks never hop /usage', () => {
+test('a never-sampled window is not an official usage hop', () => {
   assert.deepEqual(isUsageProbeDue({ unified: { '5h': { utilization: 0, status: 'active' } } }), {
     due: false,
     reason: 'list_passive_only',
   })
-  assert.deepEqual(
-    isUsageProbeDue({
-      last_probe: { at: '2026-08-24T11:58:00.000Z', ok: true, source: 'vm-oauth-usage' },
-      unified: {
-        source: 'vm-oauth-usage',
-        '5h': { utilization: 1, status: 'rejected', reset: '2026-08-24T11:59:00.000Z' },
+})
+
+test('an elapsed Extra window is probed once, then held for the gap', () => {
+  const now = Date.parse('2026-09-23T11:25:00.000Z')
+  const reset = '2026-09-23T01:20:00.000Z'
+  const stale = {
+    unified: {
+      headers: {
+        '5h': { utilization: 0, status: 'active', reset, stale_reason: 'reset_elapsed' },
+        '7d': { utilization: 0.5, status: 'allowed', reset: '2026-09-24T07:00:00.000Z' },
       },
-    }),
-    { due: false, reason: 'list_passive_only' },
-  )
+    },
+  }
+  assert.deepEqual(isUsageProbeDue(stale, { now }), {
+    due: true,
+    reason: 'extra_window_elapsed',
+  })
+  const probed = {
+    ...stale,
+    unified: {
+      ...stale.unified,
+      last_probe: { at: '2026-09-23T11:20:00.000Z', ok: true },
+    },
+  }
+  assert.deepEqual(isUsageProbeDue(probed, { now }), {
+    due: false,
+    reason: 'probed_recently',
+  })
 })
 
 test('invalid_grant slots are not usage-probe targets', () => {
@@ -79,4 +97,39 @@ test('monitor reconciles Extra and does not call probeAccount', async () => {
     run.items.every((item) => item.reason === 'reconcile_extra'),
     true,
   )
+})
+
+test('monitor hops /usage only for an elapsed Extra window', async () => {
+  const probed = []
+  const staleVm = { ...live, id: 'vm-05' }
+  const monitor = createUsageProbeMonitor({
+    config: { interval_sec: 60, stale_sec: 300, run_on_start: false },
+    listTargets: () => [live, staleVm],
+    accountForVm: (vm) =>
+      vm.id === 'vm-05'
+        ? {
+            account_id: vm.id,
+            unified: {
+              headers: {
+                '5h': {
+                  utilization: 0,
+                  status: 'active',
+                  reset: '2026-09-23T01:20:00.000Z',
+                  stale_reason: 'reset_elapsed',
+                },
+              },
+            },
+          }
+        : { account_id: vm.id },
+    reconcile: () => {},
+    probeOne: async (vm) => {
+      probed.push(vm.id)
+      return { ok: true, source: 'official-cc-usage' }
+    },
+  })
+  const run = await monitor.runOnce()
+  assert.deepEqual(probed, ['vm-05'])
+  assert.equal(run.due, 1)
+  assert.equal(run.items.find((item) => item.vm_id === 'vm-05')?.reason, 'extra_window_elapsed')
+  assert.equal(run.items.find((item) => item.vm_id === 'vm-13')?.reason, 'reconcile_extra')
 })
