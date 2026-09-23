@@ -253,6 +253,13 @@ test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe test
   })
   assert.equal(probe32.max_tokens, 1024)
 
+  const classifier64 = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 64,
+    messages: [{ role: 'user', content: '<severity>0</severity>' }],
+  })
+  assert.equal(classifier64.max_tokens, 1024)
+
   const normal = prepareCliHopBody({
     model: 'claude-haiku-4-5',
     max_tokens: 4096,
