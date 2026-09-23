@@ -25,6 +25,7 @@ import {
   wipeElapsedHeaderWindows,
 } from './quota-window.mjs'
 import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from './quota-tiers.mjs'
+import { resolvePolicyModelId } from '../protocol/model-policy.mjs'
 import { SessionLimitRegistry } from './session-limit.mjs'
 import { isFableUnavailablePro, isInventedFableWindow, isOfficialUsageRateLimited } from '../oauth/crs-usage-probe.mjs'
 import { normalizeUsage } from '../admin/pricing.mjs'
@@ -961,6 +962,32 @@ export class AccountQuota {
     if (acc.unified?.account_tier === key) return acc
     acc.unified = acc.unified || {}
     acc.unified.account_tier = key
+    acc.unified.updated_at = new Date().toISOString()
+    return this.repo.save(acc)
+  }
+
+  markModelUnsupported(accountId, model, durationMs = 60 * 60_000) {
+    const key = resolvePolicyModelId(model) || String(model || '').trim()
+    if (!accountId || !key) return null
+    const acc = this.repo.get(accountId)
+    if (!acc) return null
+    acc.unified = acc.unified || {}
+    acc.unified.model_denied_until = {
+      ...(acc.unified.model_denied_until || {}),
+      [key]: Date.now() + durationMs,
+    }
+    acc.unified.updated_at = new Date().toISOString()
+    return this.repo.save(acc)
+  }
+
+  clearModelUnsupported(accountId, model) {
+    const key = resolvePolicyModelId(model) || String(model || '').trim()
+    if (!accountId || !key) return null
+    const acc = this.repo.get(accountId)
+    if (!acc?.unified?.model_denied_until?.[key]) return acc
+    const denied = { ...acc.unified.model_denied_until }
+    delete denied[key]
+    acc.unified.model_denied_until = denied
     acc.unified.updated_at = new Date().toISOString()
     return this.repo.save(acc)
   }
