@@ -509,6 +509,48 @@ test('a body that only borrows the identity line is not enough', () => {
   )
 })
 
+const RELAYED_CC_BETA = {
+  'user-agent': 'Go-http-client/1.1',
+  'anthropic-beta':
+    'claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,mid-conversation-system-2026-04-07',
+}
+
+test('a relay that drops the billing block is still claimed when the client beta survives', () => {
+  assert.equal(
+    isProxiedOfficialClaudeCode(
+      {
+        model: 'claude-opus-5-5',
+        system: [
+          { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+          { type: 'text', text: 'You are an interactive agent that helps users with software engineering tasks.' },
+        ],
+        metadata: { user_id: OFFICIAL_USER_ID },
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'system', content: '<total_tokens>15000000 tokens left</total_tokens>' },
+        ],
+      },
+      RELAYED_CC_BETA,
+    ),
+    true,
+  )
+})
+
+test('the client beta does not claim a body that is not Claude Code', () => {
+  assert.equal(
+    isProxiedOfficialClaudeCode(
+      {
+        model: 'claude-fable-5',
+        system: "Write X's next reply in a fictional chat between X and the user.",
+        metadata: { user_id: OFFICIAL_USER_ID },
+        messages: [{ role: 'user', content: 'continue' }],
+      },
+      RELAYED_CC_BETA,
+    ),
+    false,
+  )
+})
+
 test('the local-agent stealth prefix stays unofficial even with a billing block', () => {
   assert.equal(
     isProxiedOfficialClaudeCode({

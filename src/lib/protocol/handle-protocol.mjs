@@ -158,7 +158,7 @@ export function createHandleProtocol(deps) {
     const official =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
       isOfficialClaudeClient(fp.client_class) ||
-      (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound))
+      (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound, req.headers))
     const zeroInject = isZeroInjectMode()
     const hit = detectDistill({ inbound, body, official, zeroInject }, cfg.distill)
     if (hit.action !== 'block') return false
@@ -559,7 +559,7 @@ export function createHandleProtocol(deps) {
     const officialClient = isOfficialClaudeClient(fp.client_class)
     const officialTraffic =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
-      (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound))
+      (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound, req.headers))
     const callerSession = extractCallerSession({ inbound, body: ctx.body, headers: req.headers })
     const firstUserText = extractFirstUserText(ctx.body?.messages) || extractFirstUserText(inbound?.messages)
     const clientDiscriminator = sessionContextDiscriminator({
