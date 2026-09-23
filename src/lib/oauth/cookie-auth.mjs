@@ -84,6 +84,7 @@ export function classifyImportHelperOutput(stderr) {
   const t = String(stderr || '')
   if (isSessionStale(t)) return 'session_stale_relogin'
   if (/authorize_no_code/i.test(t)) return 'authorize_no_code'
+  if (/proxy_auth_rejected|user was rejected by the socks5 server/i.test(t)) return 'proxy_auth_rejected'
   if (isCloudflareChallenge(t)) return 'cloudflare_challenge'
   return 'cookie_auth_failed'
 }
@@ -95,6 +96,9 @@ export function publicImportError(raw) {
   }
   if (/authorize_no_code/i.test(s)) {
     return '官方 CAI 授权页没有返回 code。sessionKey 可能未完成 claude.ai SSO，请重新登录 claude.ai 后立刻复制最新 sessionKey。'
+  }
+  if (/proxy_auth_rejected|user was rejected by the socks5 server/i.test(s)) {
+    return '槽位 SOCKS5 拒绝了用户名或密码（curl 97）。sessionKey 还没发出去。请核对这条代理的账密，或换一条能登录的 SOCKS5 后再导入。'
   }
   if (isCloudflareChallenge(s)) {
     return 'Cloudflare 拦截了该槽位 SOCKS5 出口。请换住宅代理或稍后重试。'
@@ -111,17 +115,21 @@ export function panelImportErrorPayload(err) {
   const raw = String(err?.message || err || '')
   const code = err?.code || classifyImportHelperOutput(raw)
   const stale = code === 'session_stale_relogin' || code === 'authorize_no_code'
-  const cf = !stale && (code === 'cloudflare_challenge' || /just a moment|cloudflare|doctype html/i.test(raw))
+  const proxyAuth = code === 'proxy_auth_rejected'
+  const cf =
+    !stale && !proxyAuth && (code === 'cloudflare_challenge' || /just a moment|cloudflare|doctype html/i.test(raw))
   return {
-    status: stale ? 400 : cf ? 502 : 500,
+    status: stale || proxyAuth ? 400 : cf ? 502 : 500,
     error: {
       code: stale
         ? code === 'authorize_no_code'
           ? 'authorize_no_code'
           : 'session_stale_relogin'
-        : cf
-          ? 'cloudflare_challenge'
-          : code || 'import_failed',
+        : proxyAuth
+          ? 'proxy_auth_rejected'
+          : cf
+            ? 'cloudflare_challenge'
+            : code || 'import_failed',
       message: publicImportError(raw),
     },
   }
