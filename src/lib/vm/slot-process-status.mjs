@@ -1,0 +1,57 @@
+/** Read-only status for the slot detail page. Never return worker identities or credentials. */
+import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
+
+const exec = promisify(execFile)
+const PROBE = String.raw`
+set -eu
+main=$(tr '\000' '\n' < /proc/1/cmdline | sed -n '1p')
+rust=0; go=0; telemetry=0
+case "$main" in
+  kin-kernel|*/kin-kernel|kin-kernel.bin|*/kin-kernel.bin) rust=1 ;;
+  kin-worker|*/kin-worker) go=1 ;;
+  */ld-linux-*.so.*)
+    # The shipped kernel uses a bundled glibc loader as PID1's executable.
+    if tr '\000' '\n' < /proc/1/cmdline | grep -Eq '(^|/)kin-kernel(\.bin)?$'; then rust=1; fi
+    if tr '\000' '\n' < /proc/1/cmdline | grep -Eq '(^|/)kin-worker$'; then go=1; fi
+    ;;
+esac
+for file in /proc/[0-9]*/comm; do
+  name=$(cat "$file" 2>/dev/null) || continue
+  [ "$name" = kin-worker ] || continue
+  mode=$(tr '\000' '\n' < "$(dirname "$file")/cmdline" 2>/dev/null | sed -n '2p') || continue
+  [ "$mode" != telemetry ] || telemetry=1
+done
+printf 'rust_pid1=%s\ngo_worker_pid1=%s\ngo_telemetry=%s\n' "$rust" "$go" "$telemetry"
+`
+
+export async function readSlotProcessStatus({ projectRoot, vm, run = exec } = {}) {
+  const unknown = { telemetry: { enabled: null, running: null }, process_topology: null }
+  if (!projectRoot || !/^vm-\d+$/.test(vm?.id || '')) return unknown
+  let enabled = null
+  try {
+    const config = JSON.parse(await readFile(path.join(projectRoot, 'vms', vm.id, 'run', 'worker.json'), 'utf8'))
+    if (typeof config.telemetry?.enabled === 'boolean') enabled = config.telemetry.enabled
+  } catch {
+    // Missing or unreadable config is unknown, never equivalent to disabled.
+  }
+  if (vm.runtime?.type !== 'docker') return { ...unknown, telemetry: { enabled, running: null } }
+  try {
+    const { stdout } = await run('docker', ['exec', `kin-${vm.id.slice(3)}`, 'sh', '-c', PROBE], {
+      timeout: 2500,
+      maxBuffer: 4096,
+      encoding: 'utf8',
+    })
+    const match = String(stdout)
+      .trim()
+      .match(/^rust_pid1=([01])\ngo_worker_pid1=([01])\ngo_telemetry=([01])$/)
+    if (!match) return { ...unknown, telemetry: { enabled, running: null } }
+    const topology = { rust_pid1: match[1] === '1', go_worker_pid1: match[2] === '1', go_telemetry: match[3] === '1' }
+    return { telemetry: { enabled, running: topology.go_telemetry }, process_topology: topology }
+  } catch {
+    // A stopped container, denied Docker access, or timeout must not break the detail page.
+    return { ...unknown, telemetry: { enabled, running: null } }
+  }
+}

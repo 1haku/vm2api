@@ -73,7 +73,8 @@ export type VmKernelSnapshot = {
   credential_state?: string | null
   proxy_state?: string | null
   telemetry?: {
-    enabled?: boolean
+    enabled?: boolean | null
+    running?: boolean | null
     process?: string | null
     read_only?: boolean
   } | null
