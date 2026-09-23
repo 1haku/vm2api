@@ -193,33 +193,17 @@ test('cli-hop keeps multi-turn history intact for native CLI marker placement', 
   assert.ok(body.messages.every((message) => message.content.every((block) => block.cache_control == null)))
 })
 
-test('cli-hop still lifts trailing system constraints without adding markers', () => {
-  const body = prepareCliHopBody({
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'system', content: 'caller constraint' },
-    ],
-  })
-  assert.equal(body.messages.length, 1)
-  assert.equal(body.system.at(-1).text, 'caller constraint')
-  assert.equal(body.messages[0].content[0].cache_control, undefined)
-})
-
-test('official CC turns stay a byte prefix of the next one, from turn 1 on', () => {
+test('Claude Code turns stay a byte prefix of the next one, from turn 1 on', () => {
   const reminder = (text) => ({ role: 'system', content: text })
   const budget = (left) => reminder(`<total_tokens>${left} tokens left</total_tokens>`)
+  // No client flag: relays strip the billing block, so this must hold for any caller.
   const turn = (messages) =>
-    prepareCliHopBody(
-      {
-        model: 'claude-opus-5-5',
-        max_tokens: 64000,
-        system: [{ type: 'text', text: 'main prompt' }],
-        messages,
-      },
-      { officialClient: true },
-    )
+    prepareCliHopBody({
+      model: 'claude-opus-5-5',
+      max_tokens: 64000,
+      system: [{ type: 'text', text: 'main prompt' }],
+      messages,
+    })
   // Turn 1 ends with SessionStart context, later turns with a live token counter.
   const turns = [
     [{ role: 'user', content: 'u1' }, reminder('SessionStart hook context')],
