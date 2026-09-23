@@ -62,6 +62,7 @@ import { VmOverviewTab } from '@/features/vm/detail-overview-tab'
 import { VmProxyTab } from '@/features/vm/detail-proxy-tab'
 import { VmDetailSkeleton } from '@/features/vm/detail-skeleton'
 import { VmTestTab } from '@/features/vm/detail-test-tab'
+import { probeOutcome, type ProbeCheck } from '@/features/vm/probe-status'
 import {
   testModelsQueryOptions,
   vmQueryOptions,
@@ -126,8 +127,14 @@ export function VmDetailPage() {
   const act = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       postVm(id, path, body),
-    onSuccess: async (_data, vars) => {
-      toast.success('已执行 ' + vars.path)
+    onSuccess: async (data, vars) => {
+      if (vars.path === '/probe') {
+        const probe = data as ProbeCheck
+        if (probe.ok === true) toast.success(probeOutcome(probe))
+        else toast.error(probeOutcome({ ...probe, ok: false }))
+      } else {
+        toast.success('已执行 ' + vars.path)
+      }
       await refreshAll()
     },
     onError: (error: Error) => toast.error(error.message),

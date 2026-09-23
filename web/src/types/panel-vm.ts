@@ -226,6 +226,14 @@ export type Vm = {
     transport?: boolean
     rate_limited?: boolean
   }
+  last_probe_check?: {
+    at?: string
+    ok?: boolean
+    source?: string
+    via?: string
+    error?: string | null
+    data_at?: string | null
+  } | null
   probe_source?: string
   /** 最近一次刷票失败的原因。与 `last_probe.error` 是两条独立的失效来源。 */
   refresh_error?: string
