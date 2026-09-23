@@ -828,7 +828,6 @@ export function createHandleProtocol(deps) {
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
-              officialClient: officialTraffic,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (identity) {
