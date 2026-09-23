@@ -754,13 +754,15 @@ export async function buildProbeOne({ cfg, accountQuota, id, force = false, usag
   const cache = usageCache || getUsageCache()
   if (force) cache.clear(accountId)
   const skipHop = !shouldHopOfficialUsage(acc?.unified, { hop, force })
-  let result = skipHop
+  const headerProbe = skipHop ? probeFromPassiveHeaders(acc?.unified || {}) : null
+  const result = skipHop
     ? {
-        ok: true,
+        ok: false,
+        error: '暂无请求响应头用量，请先完成一次请求后再检查',
         source: PASSIVE_HEADER_SOURCE,
         via: 'passive-headers',
         probed_at: new Date().toISOString(),
-        ...(probeFromPassiveHeaders(acc?.unified || {}) || {}),
+        ...(headerProbe ? { ...headerProbe, error: null } : {}),
       }
     : await cache.load(accountId, () => probeAccount({ exec, vm, includeFable }), { force: !!force })
   if (!skipHop) accountQuota.ingestOAuthUsage(accountId, result)
@@ -807,7 +809,7 @@ export async function buildProbeOne({ cfg, accountQuota, id, force = false, usag
       tier,
     ),
   })
-  return ok({
+  const data = {
     vm_id: id,
     account_uuid: vm.claude?.account_uuid || null,
     source: passive?.source || result.source,
@@ -858,7 +860,21 @@ export async function buildProbeOne({ cfg, accountQuota, id, force = false, usag
         : rateLimited
           ? '官方 /usage 限流，请稍后再试'
           : result.error || result.usage_error || null,
-  })
+  }
+  // Display metadata is separate from the authoritative usage/auth probe.
+  // Reading cached headers must not heal credential failures or clear backoff.
+  const checked = accountQuota.repo.get(accountId)
+  checked.unified = checked.unified || {}
+  checked.unified.last_probe_check = {
+    at: data.probed_at,
+    ok: data.ok,
+    source: data.source,
+    via: data.via,
+    error: data.error,
+    data_at: data.via === 'passive-headers' ? checked.unified.headers?.sampled_at || null : data.probed_at,
+  }
+  accountQuota.repo.save(checked)
+  return ok(data)
 }
 
 export async function buildProbeAll({ cfg, accountQuota, hop = false, force = false } = {}) {
@@ -1086,6 +1102,7 @@ function quotaFromAccount(acc, quotaConfig) {
     extra_usage: extra,
     fable: fable,
     last_probe: acc?.last_probe || u.last_probe || null,
+    last_probe_check: u.last_probe_check || null,
     probe_source: u.source || acc?.last_probe?.source || null,
     account_tier: u.account_tier || null,
     usage_has_fable: u.usage_has_fable === true,
@@ -1399,6 +1416,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     extra_usage: q.extra_usage,
     fable: q.fable,
     last_probe: q.last_probe,
+    last_probe_check: q.last_probe_check,
     probe_source: q.probe_source,
     refreshed_at: v.refreshed_at || null,
     refresh_status: liveCred?.credential_state || runtime?.refresh_status || null,
