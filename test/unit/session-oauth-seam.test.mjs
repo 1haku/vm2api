@@ -138,6 +138,17 @@ test('authorize 403 session freshness is not reported as Cloudflare', () => {
   assert.doesNotMatch(publicImportError(raw), /Cloudflare|Just a moment/)
 })
 
+test('SOCKS5 user rejection is a proxy auth error, not a sessionKey failure', () => {
+  const raw =
+    '[1/5] GET /api/organizations impersonate=chrome146 orgs request failed: ProxyError: Failed to perform, curl: (97) User was rejected by the SOCKS5 server (1 1).. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'
+  assert.equal(classifyImportHelperOutput(raw), 'proxy_auth_rejected')
+  const payload = panelImportErrorPayload({ message: raw })
+  assert.equal(payload.status, 400)
+  assert.equal(payload.error.code, 'proxy_auth_rejected')
+  assert.match(payload.error.message, /SOCKS5 拒绝了用户名或密码/)
+  assert.doesNotMatch(payload.error.message, /sessionKey 不够新|Cloudflare/)
+})
+
 test('panel import catch maps helper codes without leaking ReferenceError', () => {
   const stale = panelImportErrorPayload({
     message: 'Session is not fresh enough to authorize',
