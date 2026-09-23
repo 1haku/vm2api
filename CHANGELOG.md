@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.35 — 2026-09-23
 
 - 加强经中继转发的官方 Claude Code 识别。sub2api 只在 body 还带着 billing 块时认 `Go-http-client`；有的中继会把 billing 头剥掉，只留下 `anthropic-beta: claude-code-20250219`、官方 `user_id` 和官方 system 正文。这类请求现在也算官方流量：不注入 persona、不改 system 前缀。只有身份那一行、没有这个 beta 的第三方请求仍然不认。
 
