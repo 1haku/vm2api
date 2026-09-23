@@ -104,6 +104,7 @@ export function loadVmIdentity(exec = {}) {
     env,
     theme: seed.theme || settings.theme || 'dark',
     autoUpdates: false,
+    grove_enabled: false,
   }
 
   return {

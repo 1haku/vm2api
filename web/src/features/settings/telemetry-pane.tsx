@@ -23,12 +23,12 @@ export function TelemetryPane() {
     const body = enabled
       ? {
           telemetry_disabled: false,
-          disable_nonessential_traffic: false,
+          disable_nonessential_traffic: true,
           do_not_track: false,
         }
       : {
           telemetry_disabled: true,
-          disable_nonessential_traffic: true,
+          disable_nonessential_traffic: false,
           do_not_track: true,
         }
     let ok = 0
