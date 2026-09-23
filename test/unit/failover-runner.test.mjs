@@ -123,6 +123,37 @@ test('account1 quota exhausted rotates to account2 and commits final sticky', as
   assert.equal(attempts.items[1].terminalState, 'verified')
 })
 
+test('slot_busy spill serves the turn elsewhere but keeps the session pinned', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const pins = new Map([['conversation-1', { accountId: 'account-1', vmId: 'vm-01' }]])
+  const runner = new FailoverRunner({
+    scheduler,
+    stickyRouter: {
+      resolve: (key) => pins.get(key) || null,
+      bind: (key, value) => pins.set(key, value),
+      unbindByAccount: () => assert.fail('capacity spill must not unbind'),
+    },
+  })
+  const result = await runner.run({
+    requestId: 'req-spill',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: 'conversation-1',
+    callAttempt: ({ candidate: selected }) =>
+      selected.accountId === 'account-1'
+        ? {
+            ok: false,
+            status: 503,
+            terminalState: 'rejected',
+            body: { error: { type: 'api_error', code: 'slot_busy', message: 'no free slot' } },
+          }
+        : success(),
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.accountId, 'account-2')
+  assert.deepEqual(pins.get('conversation-1'), { accountId: 'account-1', vmId: 'vm-01' })
+})
+
 test('verified hop binds family and session sticky keys to the same account', async () => {
   const scheduler = new Scheduler([candidate(1)])
   const bindings = []

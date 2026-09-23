@@ -230,6 +230,9 @@ export async function ensureRustKernel(exec, { timeoutMs = 30000, runDockerExec 
 
 async function killWrapDataplane(container, runDockerExec) {
   if (!container) return
+  // Match /proc/pid/exe, not pkill -f. The docker exec shell's own argv
+  // contains these paths, so pkill -f signals that shell and can return
+  // before the running cli-node dies. The old inode then keeps serving.
   await runDockerExec(
     [
       'exec',
@@ -237,11 +240,15 @@ async function killWrapDataplane(container, runDockerExec) {
       'sh',
       '-c',
       [
-        'pkill -f /home/kincli/.kin/kin-kernel.bin',
-        'pkill -f /home/kincli/.kin/glibc239/ld-linux',
-        'pkill -f /home/kincli/.kin/cli-node',
+        'for d in /proc/[0-9]*; do',
+        '  exe=$(readlink "$d/exe" 2>/dev/null || true)',
+        '  case "$exe" in',
+        '    */.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*)',
+        '      kill -KILL "${d#/proc/}" 2>/dev/null || true',
+        '  esac',
+        'done',
         'true',
-      ].join(' >/dev/null 2>&1; '),
+      ].join('\n'),
     ],
     { timeoutMs: 3000 },
   )

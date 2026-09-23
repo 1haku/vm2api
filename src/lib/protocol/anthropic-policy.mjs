@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { liftMidConversationSystemMessages, stripIllegalContentFields } from './sanitize.mjs'
 import { isAnthropicServerTool } from './web-search.mjs'
 import { normalizeThinkingForModel, ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh } from './thinking.mjs'
-import { applyMaxTokensCap, getCapabilities } from './model-policy.mjs'
+import { applyMaxTokensCap, applyOpus55RequestRules, getCapabilities } from './model-policy.mjs'
 import { ensureOutputConfigSchema, rectifyUnofficialRequest } from './request-rectifier.mjs'
 import { DEFAULT_CACHE_TTL, applyCacheBreakpoints, stripCacheScopeFields } from './cache-ttl.mjs'
 import { normalizeImageContentBlocks } from './images.mjs'
@@ -73,10 +73,11 @@ export function enforceCacheLimit(body, maximum = 4) {
   }
   const live = locations.filter((location) => location.block?.cache_control)
   if (live.length <= maximum) return
-  // Sacrifice tools first, then messages, and give up system breakpoints last:
-  // system covers the longest prefix shared across every request on the account.
+  // Keep the message anchors: they advance the cache prefix on every turn.
+  // Tools are the cheapest to sacrifice, while system breakpoints preserve the
+  // stable persona prefix shared by the whole session.
   const bySection = (name) => live.filter((location) => location.section === name)
-  const order = [...bySection('tools').reverse(), ...bySection('messages'), ...bySection('system').reverse()]
+  const order = [...bySection('tools').reverse(), ...bySection('system').reverse(), ...bySection('messages')]
   for (const location of order.slice(0, live.length - maximum)) {
     delete location.block.cache_control
   }
@@ -260,6 +261,7 @@ export function prepareAnthropicRequest(
   let out = clone(body)
   // Model-aware thinking normalize (adaptive ↔ enabled) before other policy
   normalizeThinkingForModel(out)
+  out = applyOpus55RequestRules(out)
   applyMaxTokensCap(out)
   if (unofficial) {
     out = ensureUnofficialAdaptiveThinking(out)

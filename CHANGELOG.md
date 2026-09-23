@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.3.33 — 2026-09-23
+
+- 修复官方 Claude Code 走 cli-hop 时 prompt cache 只写不读。Node 按 VM 的 HTTP beta（不含 `mid-conversation-system`）把每轮的 `role=system` 提醒（`<total_tokens>` 等）搬进 `system[]`，`system` 每轮都变长，缓存前缀从 system 开始就对不上。但 cli-node 发出的请求自带这个 beta，内核也不转发 envelope 头。现在 cli-hop 的 envelope 不再按这组 beta 改写 body；只有不支持 `role=system` 的模型（Haiku）仍在 `prepareCliHopBody` 里搬移。第三方请求路径不变。
+- 官方 Claude Code 结尾的 `role=system` 提醒（首轮是 SessionStart 上下文，之后是 `<total_tokens>`）不再搬进 `system[]`，按原位置发出。原先 cli-node 把它拼进主提示词那个 system 块，第 2 轮以及每次提醒内容变化的那一轮都会整段重写缓存。第三方请求仍然搬移，保证以 user/assistant 结尾。
+- 新增缓存前缀检测：同一账号、同一出站会话的每一轮，和上一轮比较 tools → system → messages，第一处不同写进调试日志的 `cache_prefix`，并在 Node 日志打 `[cache-prefix] … broke at …`。之前只看 token 数，只写不读的问题好几天都没被发现。客户端 `/compact` 后报一次断点属正常。
+- `/wrap` 改为槽更新页：从 GitHub 拉取或本地上传，都只更新仓内 kernel；cli-hop 重装按勾选的槽或全部槽逐个执行并显示进度，「替换此槽」只改一台。右侧卡片新增「一键全部重装最新内核」，把最新 `cli-node` 和 cli-hop `kin-kernel` 装进全部槽。
+
+已部署机升级：覆盖控制面（含控制台前端）并重启 Node 一次。缓存修复不需要 `wrap-cli/sync`，二进制未变。不要 `docker rm` 槽。
+
+## 1.3.32 — 2026-09-23
+
+- 按当前本地 patch 重编 `share/wrap-cli/cli-node`，UPX 5.0.1。零注入账单头固定进程内 `cc_prompt_id`，不再写出随请求变化的 `cch`。无 ttl 断点仍按已有断点或 `kernel.json` 的 `default_cache_ttl` 补齐，缺省 `1h`。
+- `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 仍是 1.3.31 那一份。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再 `wrap-cli/sync`。只换磁盘上的 `cli-node` 不会换掉正在跑的进程。不要 `docker rm` 槽。
+
+## 1.3.31 — 2026-09-23
+
+- 粘性会话不再因容量不足换 VM：已绑定账号抢座位失败时在原账号排队；等待队列满或内核返回 `slot_busy` 时只让本次请求借用别的账号，绑定保持不变，下一轮回到原 VM。额度用尽、鉴权失败、禁用和冷却仍然解绑换号。
+- `bin/kin-kernel` 重编：VM 内 session 固定到同一个 slot，24 小时未使用才释放；绑定的 slot 忙时只借用、不改绑；新 session 优先用没人绑定的 slot。slot 达到 `KIN_SLOT_MAX_JOBS` / 寿命上限后原地重置计数，不再标记 Dead（原先 native host 不会重新上报，槽位会永久减少并把会话挤走）。
+- 额度窗口（5h/7d）过期后面板不再一直显示 0%：对这些槽 hop 一次 `/usage`，之后间隔 15 分钟。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再 `wrap-cli/sync`（或面板内核热更新 `v1.3.31`）让槽内换上新 `kin-kernel`。不要 `docker rm` 槽。
+
+## 1.3.30 — 2026-09-23
+
+- 缓存 TTL 优先级统一：`x-kin-cache-ttl` 头 → 请求断点上显式 `5m`/`1h` → 设置菜单。官方 Claude Code 的无 ttl 断点不再落成隐式 `5m`，改用菜单值；原先官方流量直接跳过 TTL 解析。
+- 同一会话（出站 session id）只写一种 TTL：首轮解析结果钉住，空闲超过该 TTL 后才重新解析。中途改菜单不再让同一前缀在 `5m`/`1h` 之间切换。
+- 本地代理（`px-local` / `scheme=local`）按宿主机默认路由直连（`mode: direct`）：不启 kin-egress，kin-egress 未运行不再记 `egress_down`，空 worker 代理不再判 `worker_proxy_missing`。操作者手动禁用本地出口仍拦截；远程 SOCKS5 仍走 kin-egress。
+
+已部署机升级：只覆盖控制面并重启 Node 一次，不需要 `wrap-cli/sync`。二进制未变。不要 `docker rm` 槽。
+
+## 1.3.29 — 2026-09-23
+
+- 修复 native Claude 多轮 prompt cache 只写不读：Node 清理旧断点，CLI 保留当前尾部并为 `messages.length >= 4` 的倒数第二个 user 写入稳定断点。
+- 同步 `share/wrap-cli/cli-node` 为双断点修复后的 CLI 二进制；面板选择的 `5m` / `1h` TTL 继续由每轮 native job 统一使用。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再执行 `wrap-cli/sync` 重启槽内 dataplane。不要 `docker rm` 槽。
+
+## 1.3.28 — 2026-09-23
+
+- cli-hop 接受 `claude-opus-5.5`，出站写成 `claude-opus-5-5`。思考用 adaptive，缺省 effort 是 medium。价目按官方 $4 / $20。
+- 出站 Claude Code 版本从 `2.1.278` 改为 `2.1.280`。`2.1.278` 会被上游拒成 `claude_code_version_too_old`。
+- 去掉 Codex Rotate 插件（`X-Codex-Turn-State` 采集/注入）。官方插件默认关闭，路由缺省对象曾把它当成开启。设置页不再提供开关。
+
+已部署机升级：控制面覆盖后重启 Node 一次，再 `wrap-cli/sync`，让槽内 kernel 读到新的 `cli_version`。`bin/kin-kernel` 本身没变。不要 `docker rm` 槽。
+
+## 1.3.27 — 2026-09-22
+
+- cli-node 补上的无 ttl 断点改成与 Node 已写断点相同的值。没有已有断点时用 `kernel.json` 的 `default_cache_ttl`，再缺省 `1h`。避免 system 的隐式 `5m` 落在后面的 `1h` 前面。ELF 经 UPX 压到 50MB 以内。
+- `wrap-cli/sync` 铺完文件后按 `/proc/pid/exe` 结束槽内正在跑的 `cli-node` 和 kernel，再拉起。不再用 `pkill -f`：那条命令的参数里就有同样的路径，shell 先被杀掉，旧进程继续占着旧 inode。
+
+已部署机升级：先更新控制面并重启 Node 一次，再 `wrap-cli/sync`。只换磁盘上的 `cli-node` 不会换掉正在跑的进程。不要 `docker rm` 槽。
+
 ## 1.3.25 — 2026-09-22
 
 - OpenAI 号池按权重、会话粘滞和 smart 分数选槽，不再按额度压力排序（#80）

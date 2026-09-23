@@ -152,333 +152,108 @@ test('prepareCliHopBody disables Haiku adaptive thinking', () => {
   assert.equal(body.thinking.type, 'disabled')
 })
 
-test('cli-hop keeps caller system and message anchors and fills the last tool', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      tools: [
-        { name: 'Read', input_schema: { type: 'object', properties: {} } },
-        {
-          name: 'Write',
-          input_schema: { type: 'object', properties: {} },
-          cache_control: { type: 'ephemeral', ttl: '5m' },
-        },
-      ],
-      system: [
-        {
-          type: 'text',
-          text: CRS_OFFICIAL_AGENT_PROMPT,
-          cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
-        },
-      ],
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-      ],
-    },
-    { cacheTtl: '5m' },
-  )
-  assert.equal(body.tools[0].cache_control, undefined)
-  assert.deepEqual(body.tools[1].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-})
-
-test('cli-hop does not invent a message breakpoint the caller did not send', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      tools: [
-        {
-          name: 'Write',
-          input_schema: { type: 'object', properties: {} },
-          cache_control: { type: 'ephemeral', ttl: '5m' },
-        },
-      ],
-      system: [{ type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } }],
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-    },
-    { cacheTtl: '5m' },
-  )
-  assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.equal(body.messages[0].content[0].cache_control, undefined)
-})
-
-test('cli-hop disabled keeps caller breakpoints and their ttl', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'u1', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
-        { role: 'user', content: [{ type: 'text', text: 'u2', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
-        { role: 'user', content: [{ type: 'text', text: 'u3', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-      ],
-    },
-    { cacheBreakpoints: { enabled: false } },
-  )
-  assert.equal(body.messages[0].content[0].cache_control.ttl, '1h')
-  assert.equal(body.messages[2].content[0].cache_control.ttl, '1h')
-  assert.equal(body.messages[4].content[0].cache_control.ttl, '1h')
-})
-
-test('cli-hop rewrite wins over routing fill when inbound already stamped last user', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'u1' }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
-        { role: 'user', content: [{ type: 'text', text: 'u2' }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'u3', cache_control: { type: 'ephemeral', ttl: '5m' } }],
-        },
-      ],
-    },
-    {
-      cacheBreakpoints: {
-        enabled: true,
-        preserve_client: true,
-        system_tail: true,
-        tools_tail: true,
-        messages: 'fill',
-      },
-    },
-  )
-  assert.equal(body.messages[0].content[0].cache_control, undefined)
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[4].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-})
-
-test('cli-hop rewrite writes 5m on the Node-owned boundary', () => {
-  const body = prepareCliHopBody({
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'assistant', content: 'a1' },
-      { role: 'user', content: 'u2' },
-      { role: 'assistant', content: 'a2' },
-      { role: 'user', content: 'u3' },
-    ],
-  })
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.equal(body.messages[4].content[0].cache_control, undefined)
-})
-
-test('cli-hop writes the console 1h onto Node markers', () => {
+test('cli-hop removes all cache markers before native CLI processing', () => {
   const body = prepareCliHopBody(
     {
       model: 'claude-sonnet-5',
       max_tokens: 256,
       tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '5m' } }],
-      system: [{ type: 'text', text: 'caller system', cache_control: { type: 'ephemeral', ttl: '5m' } }],
+      system: [{ type: 'text', text: 'caller', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      cache_control: { type: 'ephemeral', ttl: '5m' },
       messages: [
-        { role: 'user', content: 'u1' },
-        { role: 'assistant', content: 'a1' },
-        { role: 'user', content: 'u2' },
-        { role: 'assistant', content: 'a2' },
-        { role: 'user', content: 'u3' },
-      ],
-    },
-    { cacheTtl: '1h' },
-  )
-  assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.equal(body.messages[4].content[0].cache_control, undefined)
-})
-
-test('cli-hop writes the Node-owned boundary at 5m when the console asks for 5m', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      messages: [
-        { role: 'user', content: 'u1' },
-        { role: 'assistant', content: 'a1' },
-        { role: 'user', content: 'u2' },
-        { role: 'assistant', content: 'a2' },
-        { role: 'user', content: 'u3' },
+        { role: 'user', content: [{ type: 'text', text: 'u1', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a1', cache_control: { type: 'ephemeral' } }] },
+        { role: 'user', content: [{ type: 'text', text: 'u2', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
       ],
     },
     { cacheTtl: '5m' },
   )
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
-  assert.equal(body.messages[4].content[0].cache_control, undefined)
+  assert.equal(body.cache_control, undefined)
+  assert.equal(body.tools[0].cache_control, undefined)
+  assert.equal(body.system[0].cache_control, undefined)
+  assert.ok(body.messages.every((message) => message.content.every((block) => block.cache_control == null)))
 })
 
-test('missing console TTL defaults mixed client breakpoints to 1h', () => {
-  const body = prepareCliHopBody(
-    {
-      model: 'claude-sonnet-5',
-      max_tokens: 256,
-      system: [{ type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } }],
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'u1', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-        { role: 'assistant', content: 'a1' },
-        { role: 'user', content: [{ type: 'text', text: 'u2', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
-      ],
-    },
-    { cacheTtl: null },
-  )
-  assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-})
-
-test('cli-hop rewrite keeps sub2api penultimate user after dropping CLI last-user stamp', () => {
+test('cli-hop keeps multi-turn history intact for native CLI marker placement', () => {
   const body = prepareCliHopBody({
     model: 'claude-sonnet-5',
     max_tokens: 256,
     messages: [
-      { role: 'user', content: [{ type: 'text', text: 'u1' }] },
-      { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
-      { role: 'user', content: [{ type: 'text', text: 'u2', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
-      { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u3' },
     ],
   })
+  assert.deepEqual(
+    body.messages.map((message) => message.role),
+    ['user', 'assistant', 'user', 'assistant', 'user'],
+  )
+  assert.ok(body.messages.every((message) => message.content.every((block) => block.cache_control == null)))
+})
+
+test('cli-hop still lifts trailing system constraints without adding markers', () => {
+  const body = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'caller constraint' },
+    ],
+  })
+  assert.equal(body.messages.length, 1)
+  assert.equal(body.system.at(-1).text, 'caller constraint')
   assert.equal(body.messages[0].content[0].cache_control, undefined)
-  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.equal(body.messages[3].content[0].cache_control, undefined)
 })
 
-test('unofficial cli-hop rewrite matches official penultimate-user leftover', () => {
-  const inbound = {
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'assistant', content: 'a1' },
-      { role: 'user', content: 'u2' },
-      { role: 'assistant', content: 'a2' },
-      { role: 'user', content: 'u3' },
-    ],
+test('official CC turns stay a byte prefix of the next one, from turn 1 on', () => {
+  const reminder = (text) => ({ role: 'system', content: text })
+  const budget = (left) => reminder(`<total_tokens>${left} tokens left</total_tokens>`)
+  const turn = (messages) =>
+    prepareCliHopBody(
+      {
+        model: 'claude-opus-5-5',
+        max_tokens: 64000,
+        system: [{ type: 'text', text: 'main prompt' }],
+        messages,
+      },
+      { officialClient: true },
+    )
+  // Turn 1 ends with SessionStart context, later turns with a live token counter.
+  const turns = [
+    [{ role: 'user', content: 'u1' }, reminder('SessionStart hook context')],
+    [{ role: 'assistant', content: 'a1' }, { role: 'user', content: 'u2' }, budget(14930105)],
+    [{ role: 'assistant', content: 'a2' }, { role: 'user', content: 'u3' }, budget(14928642)],
+  ]
+  let history = []
+  let previous = null
+  for (const added of turns) {
+    history = [...history, ...added]
+    const body = turn(history)
+    assert.equal(body.messages.at(-1).role, 'system')
+    if (previous) {
+      assert.deepEqual(body.system, previous.system)
+      assert.deepEqual(body.messages.slice(0, previous.messages.length), previous.messages)
+    }
+    previous = body
   }
-  const unofficial = prepareCliHopBody(inbound, { unofficial: true })
-  const official = prepareCliHopBody(structuredClone(inbound), { unofficial: false })
-  assert.equal(unofficial.messages[0].content[0].cache_control, undefined)
-  assert.equal(unofficial.messages[2].content[0].cache_control, undefined)
-  assert.equal(unofficial.messages[4].content[0].cache_control, undefined)
-  assert.deepEqual(
-    unofficial.messages.map((message) => message.content?.[0]?.cache_control),
-    official.messages.map((message) => message.content?.[0]?.cache_control),
-  )
 })
 
-test('cli-hop lifts trailing system constraints so the hop ends with a user turn', () => {
-  const leftover = {
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    system: [{ type: 'text', text: 'persona system prefix' }],
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'system', content: 'caller constraint after current user' },
-    ],
-  }
-  const firstTurn = prepareCliHopBody(leftover, { unofficial: true })
-  assert.equal(firstTurn.messages.length, 1)
-  assert.equal(firstTurn.messages[0].role, 'user')
-  assert.equal(firstTurn.messages[0].content[0].text, 'u1')
-  assert.equal(firstTurn.system.at(-1).text, 'caller constraint after current user')
-  assert.equal(firstTurn.messages[0].content[0].cache_control, undefined)
-  assert.ok(firstTurn.system.every((block) => block.cache_control == null))
-
-  const later = prepareCliHopBody({
-    ...leftover,
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'system', content: 'historical constraint' },
-      { role: 'assistant', content: 'a1' },
-      { role: 'user', content: 'u2' },
-      { role: 'system', content: 'current constraint' },
-    ],
-  })
-  assert.equal(later.messages[1].role, 'system')
-  assert.equal(later.messages.at(-1).role, 'user')
-  assert.equal(later.messages.at(-1).content[0].text, 'u2')
-  assert.equal(later.system.at(-1).text, 'current constraint')
-  assert.equal(later.messages[0].content[0].cache_control, undefined)
-  assert.equal(later.messages[1].content[0].cache_control, undefined)
-  assert.equal(later.messages.at(-1).content[0].cache_control, undefined)
-  assert.ok(later.system.every((block) => block.cache_control == null))
-})
-
-test('cli-hop freezes the lifted 2.1.278 context budget so the next turn can read', () => {
-  const budget = (n) => `<system-reminder>\n<total_tokens>${n} tokens left</total_tokens>\n</system-reminder>`
-  const stable = budget(15000000)
-  const first = prepareCliHopBody({
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    system: [{ type: 'text', text: 'persona' }],
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'assistant', content: 'a1' },
-      { role: 'user', content: 'u2' },
-      { role: 'system', content: budget(14955783) },
-    ],
-  })
-  const second = prepareCliHopBody({
-    model: 'claude-sonnet-5',
-    max_tokens: 256,
-    system: [{ type: 'text', text: 'persona' }],
-    messages: [
-      { role: 'user', content: 'u1' },
-      { role: 'assistant', content: 'a1' },
-      { role: 'user', content: 'u2' },
-      { role: 'system', content: budget(14955783) },
-      { role: 'assistant', content: 'a2' },
-      { role: 'user', content: 'u3' },
-      { role: 'system', content: budget(14947383) },
-    ],
-  })
-  assert.equal(first.system.at(-1).text, stable)
-  assert.equal(second.system.at(-1).text, stable)
-  assert.deepEqual(
-    first.system.map((block) => block.text),
-    second.system.map((block) => block.text),
-  )
-  assert.equal(second.messages[3].role, 'system')
-  assert.equal(second.messages[3].content[0].text, stable)
-  assert.equal(second.messages[2].content[0].cache_control, undefined)
-  assert.deepEqual(
-    second.messages.slice(0, 3).map((message) => message.content[0].text),
-    first.messages.map((message) => message.content[0].text),
-  )
-})
-
-test('cli-hop strips Claude Code last tool_use/tool_result markers', () => {
+test('cli-hop lifts role=system turns for models that reject them', () => {
   const body = prepareCliHopBody({
-    model: 'claude-sonnet-5',
+    model: 'claude-haiku-4-5',
     max_tokens: 256,
     messages: [
-      { role: 'user', content: [{ type: 'text', text: 'u1' }] },
-      {
-        role: 'assistant',
-        content: [
-          { type: 'thinking', thinking: 'x', signature: 'sig' },
-          { type: 'tool_use', id: 't1', name: 'Read', input: {}, cache_control: { type: 'ephemeral' } },
-        ],
-      },
-      {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok', cache_control: { type: 'ephemeral' } }],
-      },
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'reminder' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
     ],
   })
-  const asstBlocks = body.messages[1].content
-  const userBlocks = body.messages[2].content
-  assert.deepEqual(asstBlocks.find((b) => b.type === 'tool_use')?.cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(userBlocks.find((b) => b.type === 'tool_result')?.cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.ok(body.messages.every((message) => message.role !== 'system'))
+  assert.equal(body.system.at(-1).text, 'reminder')
 })
-
 test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe tests', () => {
   const probe1 = prepareCliHopBody({
     model: 'claude-haiku-4-5',
@@ -500,4 +275,42 @@ test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe test
     messages: [{ role: 'user', content: 'hello' }],
   })
   assert.equal(normal.max_tokens, 4096)
+})
+
+test('cli-hop makes Opus 5.5 acceptable to Claude Code 2.1.280', () => {
+  const body = prepareCliHopBody({
+    model: 'claude-opus-5.5',
+    thinking: { type: 'enabled', budget_tokens: 8000, display: 'summarized' },
+    output_config: { effort: 'high' },
+    tool_choice: { type: 'tool', name: 'get_weather' },
+    tools: [
+      { name: 'get_weather', input_schema: { type: 'object' } },
+      { type: 'computer_20251124', name: 'computer' },
+    ],
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(body.model, 'claude-opus-5-5')
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
+  assert.equal(body.thinking.budget_tokens, undefined)
+  assert.equal(body.output_config.effort, 'high')
+  assert.deepEqual(body.tool_choice, { type: 'auto' })
+  assert.equal(body.tools.find((tool) => tool.name === 'get_weather').strict, true)
+  assert.equal(body.tools.find((tool) => tool.name === 'computer').type, 'computer_toolset_20260801')
+
+  const filled = prepareCliHopBody({
+    model: 'claude-opus-5-5',
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(filled.thinking.type, 'adaptive')
+  assert.equal(filled.thinking.budget_tokens, undefined)
+  assert.equal(filled.output_config.effort, 'medium')
+
+  const opus5 = prepareCliHopBody({
+    model: 'claude-opus-5',
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(opus5.thinking.type, 'disabled')
+  assert.equal(opus5.output_config.effort, 'high')
 })

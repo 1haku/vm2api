@@ -160,7 +160,7 @@ export function VmOpsTab(props: VmOpsTabProps) {
               variant='outline'
               onClick={() => onAction('/wrap-cli/promote')}
             >
-              晋升 wrap 文件
+              晋升母本
             </Button>
             <Button
               size='sm'

@@ -8,6 +8,8 @@ test('missing max_tokens follows official per-model defaults', () => {
   assert.equal(defaultMaxTokensForModel('claude-haiku-4-5'), 8192)
   assert.equal(defaultMaxTokensForModel('claude-sonnet-5'), 16384)
   assert.equal(defaultMaxTokensForModel('claude-opus-5'), 32000)
+  assert.equal(defaultMaxTokensForModel('claude-opus-5-5'), 128000)
+  assert.equal(defaultMaxTokensForModel('claude-opus-5.5'), 128000)
   assert.equal(defaultMaxTokensForModel('claude-fable-5'), 32000)
   assert.equal(defaultMaxTokensForModel('not-a-catalog-model'), 16384)
 })

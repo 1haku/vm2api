@@ -129,19 +129,47 @@ export function StatisticsChartCard({ className }: { className?: string }) {
             >
               <defs>
                 <linearGradient id='fill-cost' x1='0' y1='0' x2='0' y2='1'>
-                  <stop offset='5%' stopColor='var(--chart-1)' stopOpacity={0.8} />
-                  <stop offset='95%' stopColor='var(--chart-1)' stopOpacity={0.1} />
+                  <stop
+                    offset='5%'
+                    stopColor='var(--chart-1)'
+                    stopOpacity={0.8}
+                  />
+                  <stop
+                    offset='95%'
+                    stopColor='var(--chart-1)'
+                    stopOpacity={0.1}
+                  />
                 </linearGradient>
                 <linearGradient id='fill-success' x1='0' y1='0' x2='0' y2='1'>
-                  <stop offset='5%' stopColor='var(--chart-2)' stopOpacity={0.8} />
-                  <stop offset='95%' stopColor='var(--chart-2)' stopOpacity={0.1} />
+                  <stop
+                    offset='5%'
+                    stopColor='var(--chart-2)'
+                    stopOpacity={0.8}
+                  />
+                  <stop
+                    offset='95%'
+                    stopColor='var(--chart-2)'
+                    stopOpacity={0.1}
+                  />
                 </linearGradient>
                 <linearGradient id='fill-errors' x1='0' y1='0' x2='0' y2='1'>
-                  <stop offset='5%' stopColor='var(--status-bad)' stopOpacity={0.7} />
-                  <stop offset='95%' stopColor='var(--status-bad)' stopOpacity={0.05} />
+                  <stop
+                    offset='5%'
+                    stopColor='var(--status-bad)'
+                    stopOpacity={0.7}
+                  />
+                  <stop
+                    offset='95%'
+                    stopColor='var(--status-bad)'
+                    stopOpacity={0.05}
+                  />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} strokeDasharray='3 3' stroke='var(--border)' />
+              <CartesianGrid
+                vertical={false}
+                strokeDasharray='3 3'
+                stroke='var(--border)'
+              />
               <XAxis
                 dataKey='label'
                 tickLine={false}
@@ -160,13 +188,13 @@ export function StatisticsChartCard({ className }: { className?: string }) {
               />
               <Tooltip
                 formatter={(value, name) => [
-                  metric === 'cost' ? fmtUsd(Number(value)) : fmtNum(Number(value)),
+                  metric === 'cost'
+                    ? fmtUsd(Number(value))
+                    : fmtNum(Number(value)),
                   String(name),
                 ]}
               />
-              {multi ? (
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-              ) : null}
+              {multi ? <Legend wrapperStyle={{ fontSize: 12 }} /> : null}
               {metric === 'cost' ? (
                 <Area
                   type='monotone'
@@ -228,7 +256,9 @@ function ModeButton({
       onClick={onClick}
       className={cn(
         'rounded px-2 py-0.5 text-[10px]',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground'
       )}
     >
       {children}
