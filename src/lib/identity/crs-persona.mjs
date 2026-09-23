@@ -1445,17 +1445,31 @@ function systemHasOfficialBillingBlock(system) {
 
 /**
  * An upstream API gateway forwarding real Claude Code rewrites the UA to
- * Go-http-client but leaves the body intact. Rewriting system for that traffic
- * breaks the prompt-cache prefix it already owns, so every turn re-creates the
- * cache instead of reading it. Same gates as isOfficialClaudeCodeTraffic minus
- * the UA, with the stricter billing-block test in place of the identity prose.
+ * Go-http-client. sub2api keeps the body when it still has the billing block.
+ * Some relays also drop that block and only forward the client beta
+ * (`claude-code-20250219`) plus the official system text and user_id.
+ * The identity line alone is not enough: third-party tools copy it.
  */
-export function isProxiedOfficialClaudeCode(body = {}) {
+function headerBetaTokens(headers = {}) {
+  const raw = headers?.['anthropic-beta'] || headers?.['Anthropic-Beta'] || ''
+  return String(raw)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function systemLooksLikeRelayedClaudeCode(system) {
+  if (hasOfficialClaudeLine(system)) return true
+  return eachSystemText(system).some((text) => looksLikeAgentPrompt(text))
+}
+
+export function isProxiedOfficialClaudeCode(body = {}, headers = {}) {
   if (!body || typeof body !== 'object') return false
   if (looksLikeOhMyPiSystem(body?.system)) return false
   if (!isValidOfficialUserId(body?.metadata?.user_id)) return false
   if (inboundHasOpenAIToolShape(body)) return false
-  return systemHasOfficialBillingBlock(body?.system)
+  if (systemHasOfficialBillingBlock(body?.system)) return true
+  return headerBetaTokens(headers).includes('claude-code-20250219') && systemLooksLikeRelayedClaudeCode(body?.system)
 }
 
 /**
