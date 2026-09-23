@@ -841,10 +841,14 @@ export function createHandleProtocol(deps) {
             }
             if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
 
-            const cliHide = personaHideForCliZero(personaIn, hopBody, {
-              officialClient: officialTraffic,
-              timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
-            })
+            // 0注入 hides CLI billing + env. 官方提示词 must show real usage.
+            const cliHide =
+              resolvedPersona === 'official'
+                ? 0
+                : personaHideForCliZero(personaIn, hopBody, {
+                    officialClient: officialTraffic,
+                    timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
+                  })
             personaHideTokens = cliAppliesNodePersona ? (Number(personaHideTokens) || 0) + cliHide : cliHide
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
