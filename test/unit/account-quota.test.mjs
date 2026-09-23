@@ -404,11 +404,39 @@ test('usage ok plus fable 401 does not poison last_probe with revoke text', () =
   assert.equal(acc.unified.last_probe.error, null)
   assert.equal(acc.unified.last_probe.ok, true)
   assert.equal(acc.unified.fable.banned, false)
-  assert.equal(acc.unified.fable.plan_denied, true)
+  assert.equal(acc.unified.fable.plan_denied, false)
   q.clearGrantRevokeLeftover('acc-pro-401')
   const after = q.repo.get('acc-pro-401')
   assert.equal(after.unified.last_probe.error, null)
-  assert.equal(after.unified.fable.plan_denied, true)
+  assert.equal(after.unified.fable.plan_denied, false)
+  assert.equal(after.unified.account_tier, undefined)
+})
+
+test('Fable 403 does not classify Pro when official usage cannot verify the grant', () => {
+  const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  q.ingestOAuthUsage('acc-uncertain-403', {
+    ok: false,
+    usage_status: 500,
+    fable: { ok: false, plan_denied: true, status: 403, model: 'claude-fable-5' },
+    probed_at: new Date().toISOString(),
+  })
+  const acc = q.repo.get('acc-uncertain-403')
+  assert.equal(acc.unified.account_tier, undefined)
+  assert.equal(acc.unified.fable.plan_denied, false)
+})
+
+test('official usage without Fable evidence does not classify an unprobed account as Pro', () => {
+  const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  q.ingestOAuthUsage('acc-unprobed', {
+    ok: true,
+    usage_status: 200,
+    usage_has_fable: false,
+    five_hour: { utilization: 0.1, status: 'allowed' },
+    probed_at: new Date().toISOString(),
+  })
+  const acc = q.repo.get('acc-unprobed')
+  assert.equal(acc.unified.account_tier, undefined)
+  assert.equal(acc.unified.fable, undefined)
 })
 
 test('clearGrantRevokeLeftover drops stale revoke after refresh', () => {
@@ -428,7 +456,8 @@ test('clearGrantRevokeLeftover drops stale revoke after refresh', () => {
   const acc = q.repo.get('acc-stale')
   assert.equal(acc.unified.last_probe.error, null)
   assert.equal(acc.unified.fable.banned, false)
-  assert.equal(acc.unified.fable.plan_denied, true)
+  assert.equal(acc.unified.fable.plan_denied, false)
+  assert.equal(acc.unified.account_tier, undefined)
 })
 
 test('clearGrantRevokeLeftover keeps stored Max off leftover Fable revoke', () => {
@@ -474,13 +503,14 @@ test('fable 429 without 7d_oi window does not invent a full Fable quota', () => 
   })
   const acc = q.repo.get('acc-pro')
   assert.equal(acc.unified.fable.limited, false)
-  assert.equal(acc.unified.fable.plan_denied, true)
+  assert.equal(acc.unified.fable.plan_denied, false)
+  assert.equal(acc.unified.account_tier, undefined)
   assert.equal(acc.unified['7d_oi']?.status || null, null)
   assert.equal(q.canAccept('acc-pro').ok, true)
   assert.equal(q.fableWindowLimited('acc-pro'), false)
 })
 
-test('pro usage probe without fable hop clears leftover 429 as plan_denied', () => {
+test('official usage without Fable hop does not turn leftover 429 into Pro', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
     config: { quota: { safety_ratio: 0.95, block_on_5h: true, block_on_7d: true } },
@@ -500,7 +530,7 @@ test('pro usage probe without fable hop clears leftover 429 as plan_denied', () 
     },
     probed_at: '2026-08-22T00:00:00Z',
   })
-  assert.equal(q.repo.get('acc-pro-skip').unified.account_tier, 'pro')
+  assert.equal(q.repo.get('acc-pro-skip').unified.account_tier, undefined)
   q.ingestOAuthUsage('acc-pro-skip', {
     ok: true,
     usage_status: 200,
@@ -510,10 +540,10 @@ test('pro usage probe without fable hop clears leftover 429 as plan_denied', () 
     probed_at: '2026-08-24T00:00:00Z',
   })
   const acc = q.repo.get('acc-pro-skip')
-  assert.equal(acc.unified.fable.plan_denied, true)
+  assert.equal(acc.unified.fable.plan_denied, false)
   assert.equal(acc.unified.fable.ok, false)
-  assert.equal(acc.unified.fable.error, 'plan_denied')
-  assert.equal(acc.unified.account_tier, 'pro')
+  assert.equal(acc.unified.fable.error, 'Error')
+  assert.equal(acc.unified.account_tier, undefined)
 })
 
 test('usage listing Fable flips stored Pro to Max even if hop is plan_denied', () => {

@@ -39,7 +39,6 @@ import {
 } from '../pool/availability.mjs'
 import { isLeftoverGrantRevokeRuntime, viewRuntimeWithoutLeftoverRevoke } from '../pool/schedule-eligibility.mjs'
 import {
-  isFableUnavailablePro,
   isOfficialUsageRateLimited,
   PASSIVE_HEADER_SOURCE,
   probeFromPassiveHeaders,
@@ -763,28 +762,6 @@ export async function buildProbeOne({ cfg, accountQuota, id, force = false, usag
         ...(probeFromPassiveHeaders(acc?.unified || {}) || {}),
       }
     : await cache.load(accountId, () => probeAccount({ exec, vm, includeFable }), { force: !!force })
-  const usageListsFable = result.usage_has_fable === true || !!result.seven_day_oi
-  if (
-    !includeFable &&
-    !usageListsFable &&
-    (String(storedTier || '').toLowerCase() === 'pro' || isFableUnavailablePro(q.fable || {}, q))
-  ) {
-    result = {
-      ...result,
-      fable: {
-        ...(result.fable || {}),
-        model: 'claude-fable-5',
-        ok: false,
-        banned: false,
-        limited: false,
-        plan_denied: true,
-        status: result.fable?.status || 403,
-        error: 'plan_denied',
-        utilization: null,
-        reset_at: null,
-      },
-    }
-  }
   if (!skipHop) accountQuota.ingestOAuthUsage(accountId, result)
   const after = accountQuota.repo.get(accountId)
   const qAfter = quotaFromAccount(after)

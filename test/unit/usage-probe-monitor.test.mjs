@@ -37,6 +37,20 @@ test('a never-sampled window is not an official usage hop', () => {
   })
 })
 
+test('a stale Pro classification is rechecked without an elapsed Extra window', () => {
+  const now = Date.parse('2026-09-23T11:25:00.000Z')
+  const account = {
+    unified: {
+      account_tier: 'pro',
+      fable: { plan_denied: true, status: 403, probed_at: '2026-09-23T10:00:00.000Z' },
+      fable_probe_attempted_at: '2026-09-23T10:00:00.000Z',
+    },
+  }
+  assert.deepEqual(isUsageProbeDue(account, { now }), { due: true, reason: 'pro_tier_recheck' })
+  account.unified.fable_probe_attempted_at = '2026-09-23T11:20:00.000Z'
+  assert.deepEqual(isUsageProbeDue(account, { now }), { due: false, reason: 'list_passive_only' })
+})
+
 test('an elapsed Extra window is probed once, then held for the gap', () => {
   const now = Date.parse('2026-09-23T11:25:00.000Z')
   const reset = '2026-09-23T01:20:00.000Z'
