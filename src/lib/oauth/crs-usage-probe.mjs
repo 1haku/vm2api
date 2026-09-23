@@ -172,10 +172,10 @@ export function parseFableProbe({ status, body, transportError, headers } = {}) 
 /** Fable 403/permission = 套餐没有 Fable（Pro），不是账号吊销。 */
 export function isFablePlanDenied(fb = {}) {
   if (!fb || typeof fb !== 'object') return false
-  if (fb.plan_denied) return true
   const st = Number(fb.status || 0)
   const err = String(fb.error || fb.type || '')
-  if (st === 401 || /oauth|authentication/i.test(err)) return false
+  if (st === 401 || st === 429 || /oauth|authentication/i.test(err)) return false
+  if (fb.plan_denied) return true
   return st === 403 || /permission/i.test(err)
 }
 
@@ -197,20 +197,25 @@ export function isInventedFableWindow(fb = {}, quota = {}) {
   return oi != null && oi >= 1 && !reset
 }
 
-/** Pro：套餐没有 Fable。含 403、plan_denied、以及无真实 7d_oi 窗的 429。 */
+/** Only an explicit Fable permission denial proves a Pro entitlement. */
 export function isFableUnavailablePro(fb = {}, quota = {}) {
-  if (isFablePlanDenied(fb)) return true
-  return isInventedFableWindow(fb, quota)
+  return isFablePlanDenied(fb)
 }
 
-export function shouldProbeFable({ fable = {}, quota = {}, storedTier = null } = {}) {
+export function shouldProbeFable({ fable = {}, quota = {}, storedTier = null, now = Date.now() } = {}) {
   if (quota.usage_has_fable === true) return false
-  if (quota.utilization_7d_oi != null || quota.reset_7d_oi || quota.status_7d_oi || quota['7d_oi']?.reset) {
+  if (
+    !isInventedFableWindow(fable, quota) &&
+    (quota.utilization_7d_oi != null || quota.reset_7d_oi || quota.status_7d_oi || quota['7d_oi']?.reset)
+  ) {
     return false
   }
   const stored = String(storedTier || quota.account_tier || '').toLowerCase()
-  if (stored === 'pro') return false
-  return !isFableUnavailablePro(fable, quota)
+  if (stored === 'pro' || isFableUnavailablePro(fable, quota)) {
+    const probedAt = Date.parse(fable.probed_at || '')
+    return !Number.isFinite(probedAt) || now - probedAt >= 60 * 60_000
+  }
+  return true
 }
 
 export function usageErrorText(probe = {}) {
@@ -341,17 +346,10 @@ export async function probeVmUsage({ exec, includeFable = true, timeoutMs = 2000
     // Usage listing a Fable model is Max. Hop 401/403 is format noise, not Pro.
     if (usageRes.ok && fable && hasFableUsage) {
       fable = { ...fable, banned: false, plan_denied: false }
-    } else if (
-      usageRes.ok &&
-      fable &&
-      (fable.banned || fable.status === 401 || /revoked|oauth|authentication/i.test(String(fable.error || '')))
-    ) {
-      fable = {
-        ...fable,
-        banned: false,
-        plan_denied: true,
-        error: fable.plan_denied || fable.status === 403 ? fable.error : 'plan_denied',
-      }
+    } else if (usageRes.ok && fable?.banned) {
+      // A successful official usage call means the probe's 401 is not proof
+      // of either a revoked credential or a Pro subscription.
+      fable = { ...fable, banned: false }
     }
   }
 

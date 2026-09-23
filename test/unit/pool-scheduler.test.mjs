@@ -1223,6 +1223,30 @@ test('fable skips pro and unknown, lands on max', async (t) => {
   selected.release()
 })
 
+test('fable skips a Max account recently denied that model', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const accountQuota = {
+    repo: {
+      get: (id) => ({
+        account_id: id,
+        unified: {
+          account_tier: 'max',
+          ...(id === 'account-1' ? { model_denied_until: { 'claude-fable-5': Date.now() + 60_000 } } : {}),
+        },
+      }),
+    },
+    canAccept: () => ({ ok: true }),
+  }
+  const selected = await scheduler(root, { accountQuota }).selectAndReserve({
+    model: 'claude-fable-5',
+    allowWait: false,
+  })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.vmId, 'vm-02')
+  selected.release()
+})
+
 test('fable with only pro slots returns fable_requires_max', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))

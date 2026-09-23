@@ -958,9 +958,11 @@ test('different sticky sessions still execute concurrently', async () => {
 test('fable 403 marks pro and failovers without credential cooldown', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const denied = []
+  const accepted = []
   const runner = new FailoverRunner({
     scheduler,
     onFablePlanDenied: (event) => denied.push(event.selected.accountId),
+    onFableSuccess: (event) => accepted.push(event.selected.accountId),
   })
   const result = await runner.run({
     requestId: 'req-fable-pro',
@@ -981,5 +983,6 @@ test('fable 403 marks pro and failovers without credential cooldown', async () =
   assert.equal(result.ok, true)
   assert.equal(result.accountId, 'account-2')
   assert.deepEqual(denied, ['account-1'])
+  assert.deepEqual(accepted, ['account-2'])
   assert.equal(scheduler.cooldowns.length, 0)
 })

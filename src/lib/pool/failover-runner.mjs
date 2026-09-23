@@ -1,4 +1,9 @@
-import { classifyUpstreamResult, repairAnthropicRequest, shouldContinue } from './upstream-error-policy.mjs'
+import {
+  classifyUpstreamResult,
+  isFableModel,
+  repairAnthropicRequest,
+  shouldContinue,
+} from './upstream-error-policy.mjs'
 import { listQuotaFromHeaders } from './quota-window.mjs'
 import {
   isCompleteAssistantMessage,
@@ -271,6 +276,7 @@ export class FailoverRunner {
     onProxyFailure = null,
     onCredentialFailure = null,
     onFablePlanDenied = null,
+    onFableSuccess = null,
   } = {}) {
     this.scheduler = scheduler
     this.stickyRouter = stickyRouter
@@ -279,6 +285,7 @@ export class FailoverRunner {
     this.onProxyFailure = onProxyFailure
     this.onCredentialFailure = onCredentialFailure
     this.onFablePlanDenied = onFablePlanDenied
+    this.onFableSuccess = onFableSuccess
     this.sessionTails = new Map()
   }
 
@@ -535,6 +542,11 @@ export class FailoverRunner {
         }
         if (verifiedSuccess(result)) {
           this.scheduler.markSuccess(selected, { workerStatus: result.workerStatus || null, countUsage })
+          if (isFableModel(model) && typeof this.onFableSuccess === 'function') {
+            try {
+              this.onFableSuccess({ selected, model })
+            } catch {}
+          }
           bindAll({
             accountId: selected.accountId,
             vmId: selected.vmId,
