@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { downloadReleaseKernel, isAllowedKernelUrl, selectKernelAsset } from '../../src/lib/admin/release-kernel.mjs'
+import {
+  downloadReleaseKernel,
+  isAllowedKernelUrl,
+  selectKernelAsset,
+  selectCliNodeAsset,
+} from '../../src/lib/admin/release-kernel.mjs'
 
 function fakeElf64Amd64() {
   const buf = Buffer.alloc(64)
@@ -32,6 +37,20 @@ test('selectKernelAsset accepts only the kin-kernel GitHub asset', () => {
   assert.equal(picked.tag, 'v1.3.2')
   assert.equal(picked.url, 'https://api.github.com/repos/dofastted/vm2api/releases/assets/9')
   assert.equal(selectKernelAsset({ tag_name: 'v1.3.2', assets: [] }).code, 'kernel_asset_missing')
+  assert.equal(
+    selectCliNodeAsset({
+      tag_name: 'v1.3.2',
+      assets: [
+        {
+          name: 'cli-node',
+          size: 64,
+          url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/8',
+        },
+      ],
+    }).asset,
+    'cli-node',
+  )
+  assert.equal(selectCliNodeAsset({ tag_name: 'v1.3.2', assets: [] }).code, 'cli_node_asset_missing')
   assert.equal(
     selectKernelAsset({
       tag_name: 'v1.3.2',
@@ -75,6 +94,11 @@ test('kernel download follows GitHub asset redirects and refuses other hosts', a
                 size: elf.length,
                 browser_download_url: 'https://github.com/dofastted/vm2api/releases/download/v1.2.3/kin-kernel',
               },
+              {
+                name: 'cli-node',
+                size: elf.length,
+                browser_download_url: 'https://github.com/dofastted/vm2api/releases/download/v1.2.3/cli-node',
+              },
             ],
           }),
           { status: 200 },
@@ -92,13 +116,17 @@ test('kernel download follows GitHub asset redirects and refuses other hosts', a
         assert.equal(opts.headers.Authorization, undefined)
         return new Response(elf, { status: 200 })
       }
+      if (String(url) === 'https://github.com/dofastted/vm2api/releases/download/v1.2.3/cli-node') {
+        return new Response(elf, { status: 200 })
+      }
       throw new Error(`unexpected ${url}`)
     },
   })
   assert.equal(fetched.ok, true, fetched.error)
   assert.equal(fetched.tag, 'v1.2.3')
   assert.ok(Buffer.from(fetched.bytes).equals(elf))
-  assert.equal(seen.length, 3)
+  assert.ok(Buffer.from(fetched.cliNode.bytes).equals(elf))
+  assert.equal(seen.length, 4)
 
   const blocked = await downloadReleaseKernel({
     fetchImpl: async (url) => {
@@ -111,6 +139,11 @@ test('kernel download follows GitHub asset redirects and refuses other hosts', a
                 name: 'kin-kernel',
                 size: 64,
                 url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/4',
+              },
+              {
+                name: 'cli-node',
+                size: 64,
+                url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/5',
               },
             ],
           }),

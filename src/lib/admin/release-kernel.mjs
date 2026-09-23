@@ -1,19 +1,20 @@
 /**
- * Download the published linux amd64 kin-kernel from a GitHub Release.
- * Callers install it with replaceKernelBinary and sync slots; this module
- * only fetches bytes. Redirects stay on GitHub hosts so a release payload
- * cannot point the control plane at an internal URL.
+ * Download the published linux amd64 kin-kernel and cli-node from one GitHub Release.
+ * Callers install both and sync slots; this module only fetches bytes.
+ * Redirects stay on GitHub hosts so a release payload cannot point the
+ * control plane at an internal URL.
  */
 import { inspectLinuxAmd64Elf } from '../vm/wrap-cli-runtime.mjs'
 import { GITHUB_REPO, githubApiHeaders, isReleaseTag, normalizeTag, normalizeVersion } from './release.mjs'
 
 export const KERNEL_RELEASE_ASSET = 'kin-kernel'
+export const CLI_NODE_RELEASE_ASSET = 'cli-node'
 export const MAX_KERNEL_DOWNLOAD_BYTES = 32 * 1024 * 1024
+export const MAX_CLI_NODE_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
 const META_TIMEOUT_MS = 8000
 const DOWNLOAD_TIMEOUT_MS = 60_000
 const MAX_REDIRECTS = 3
-
 function coded(code, message) {
   const error = new Error(message)
   error.code = code
@@ -25,12 +26,16 @@ export function kernelReleaseHttpStatus(code) {
   if (
     code === 'kernel_tag_invalid' ||
     code === 'kernel_asset_missing' ||
+    code === 'cli_node_asset_missing' ||
     code === 'kernel_asset_url' ||
+    code === 'cli_node_asset_url' ||
     code === 'kernel_too_large' ||
+    code === 'cli_node_too_large' ||
     code === 'kernel_redirect_blocked' ||
     code === 'kernel_too_small' ||
     code === 'kernel_empty' ||
-    String(code || '').startsWith('kernel_not_')
+    String(code || '').startsWith('kernel_not_') ||
+    String(code || '').startsWith('cli_node_')
   ) {
     return 400
   }
@@ -51,9 +56,9 @@ export function isAllowedKernelUrl(raw, { redirect = false } = {}) {
     )
   }
   if (url.hostname === 'github.com') {
-    return new RegExp(`^/${GITHUB_REPO}/releases/download/v\\d+\\.\\d+\\.\\d+/${KERNEL_RELEASE_ASSET}$`).test(
-      url.pathname,
-    )
+    return new RegExp(
+      `^/${GITHUB_REPO}/releases/download/v\\d+\\.\\d+\\.\\d+/(?:${KERNEL_RELEASE_ASSET}|${CLI_NODE_RELEASE_ASSET})$`,
+    ).test(url.pathname)
   }
   return (
     redirect &&
@@ -61,38 +66,62 @@ export function isAllowedKernelUrl(raw, { redirect = false } = {}) {
   )
 }
 
-export function selectKernelAsset(payload) {
+export function selectReleaseAsset(payload, { name, maxBytes, missingCode, tooLargeCode }) {
   const tag = normalizeTag(payload?.tag_name || payload?.tag || '')
   if (!tag) return { ok: false, code: 'github_empty', error: 'GitHub Release 没有可用版本号' }
   const assets = Array.isArray(payload?.assets) ? payload.assets : []
-  const asset = assets.find((item) => item && item.name === KERNEL_RELEASE_ASSET)
-  if (!asset) return { ok: false, code: 'kernel_asset_missing', error: 'GitHub Release 里没有 kin-kernel' }
+  const asset = assets.find((item) => item && item.name === name)
+  if (!asset) return { ok: false, code: missingCode, error: `GitHub Release 里没有 ${name}` }
   const size = Number(asset.size)
-  if (Number.isFinite(size) && size > MAX_KERNEL_DOWNLOAD_BYTES) {
-    return { ok: false, code: 'kernel_too_large', error: 'kin-kernel 超过 32MB' }
+  if (Number.isFinite(size) && size > maxBytes) {
+    return { ok: false, code: tooLargeCode, error: `${name} 超过 ${Math.round(maxBytes / (1024 * 1024))}MB` }
   }
   const apiUrl = typeof asset.url === 'string' ? asset.url : ''
   const browserUrl = typeof asset.browser_download_url === 'string' ? asset.browser_download_url : ''
   const url = isAllowedKernelUrl(apiUrl) ? apiUrl : isAllowedKernelUrl(browserUrl) ? browserUrl : ''
-  if (!url) return { ok: false, code: 'kernel_asset_url', error: 'kin-kernel 下载地址不是 GitHub Release' }
+  if (!url)
+    return {
+      ok: false,
+      code: name === CLI_NODE_RELEASE_ASSET ? 'cli_node_asset_url' : 'kernel_asset_url',
+      error: `${name} 下载地址不是 GitHub Release`,
+    }
   return {
     ok: true,
     tag,
     version: normalizeVersion(tag),
-    asset: KERNEL_RELEASE_ASSET,
+    asset: name,
     size: Number.isFinite(size) && size > 0 ? size : 0,
     url,
   }
 }
 
-async function readCappedBody(res, maxBytes) {
+export function selectKernelAsset(payload) {
+  return selectReleaseAsset(payload, {
+    name: KERNEL_RELEASE_ASSET,
+    maxBytes: MAX_KERNEL_DOWNLOAD_BYTES,
+    missingCode: 'kernel_asset_missing',
+    tooLargeCode: 'kernel_too_large',
+  })
+}
+
+export function selectCliNodeAsset(payload) {
+  return selectReleaseAsset(payload, {
+    name: CLI_NODE_RELEASE_ASSET,
+    maxBytes: MAX_CLI_NODE_DOWNLOAD_BYTES,
+    missingCode: 'cli_node_asset_missing',
+    tooLargeCode: 'cli_node_too_large',
+  })
+}
+
+async function readCappedBody(res, maxBytes, label) {
+  const tooLarge = label === CLI_NODE_RELEASE_ASSET ? 'cli_node_too_large' : 'kernel_too_large'
   const declared = Number(res.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw coded('kernel_too_large', 'kin-kernel 超过 32MB')
+    throw coded(tooLarge, `${label} 超过 ${Math.round(maxBytes / (1024 * 1024))}MB`)
   }
   if (!res.body || typeof res.body.getReader !== 'function') {
     const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length > maxBytes) throw coded('kernel_too_large', 'kin-kernel 超过 32MB')
+    if (buf.length > maxBytes) throw coded(tooLarge, `${label} 超过 ${Math.round(maxBytes / (1024 * 1024))}MB`)
     return buf
   }
   const reader = res.body.getReader()
@@ -104,7 +133,7 @@ async function readCappedBody(res, maxBytes) {
       if (done) break
       const chunk = Buffer.from(value)
       total += chunk.length
-      if (total > maxBytes) throw coded('kernel_too_large', 'kin-kernel 超过 32MB')
+      if (total > maxBytes) throw coded(tooLarge, `${label} 超过 ${Math.round(maxBytes / (1024 * 1024))}MB`)
       chunks.push(chunk)
     }
   } catch (error) {
@@ -114,7 +143,7 @@ async function readCappedBody(res, maxBytes) {
   return Buffer.concat(chunks, total)
 }
 
-async function fetchKernelBytes(startUrl, fetchImpl) {
+async function fetchReleaseBytes(startUrl, fetchImpl, maxBytes, label) {
   let current = startUrl
   let headers = githubApiHeaders('application/octet-stream')
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -136,8 +165,11 @@ async function fetchKernelBytes(startUrl, fetchImpl) {
       }
       continue
     }
-    if (!res.ok) throw coded('kernel_download_failed', `GitHub kernel 下载失败 (${res.status})`)
-    return readCappedBody(res, MAX_KERNEL_DOWNLOAD_BYTES)
+    if (!res.ok) {
+      const code = label === CLI_NODE_RELEASE_ASSET ? 'cli_node_download_failed' : 'kernel_download_failed'
+      throw coded(code, `GitHub ${label} 下载失败 (${res.status})`)
+    }
+    return readCappedBody(res, maxBytes, label)
   }
   throw coded('kernel_redirect_blocked', 'GitHub 下载跳转过多')
 }
@@ -179,26 +211,39 @@ export async function downloadReleaseKernel({ tag = '', fetchImpl = globalThis.f
       error: String(error?.message || error || 'GitHub 不可达').slice(0, 200),
     }
   }
-  const picked = selectKernelAsset(payload)
-  if (!picked.ok) return picked
-  let bytes
+  const kernel = selectKernelAsset(payload)
+  if (!kernel.ok) return kernel
+  const cliNode = selectCliNodeAsset(payload)
+  if (!cliNode.ok) return cliNode
+  let kernelBytes
+  let cliBytes
   try {
-    bytes = await fetchKernelBytes(picked.url, fetchImpl)
+    kernelBytes = await fetchReleaseBytes(kernel.url, fetchImpl, MAX_KERNEL_DOWNLOAD_BYTES, KERNEL_RELEASE_ASSET)
+    cliBytes = await fetchReleaseBytes(cliNode.url, fetchImpl, MAX_CLI_NODE_DOWNLOAD_BYTES, CLI_NODE_RELEASE_ASSET)
   } catch (error) {
     return {
       ok: false,
       code: error?.code || 'kernel_download_failed',
-      error: String(error?.message || error || 'kernel download failed').slice(0, 200),
+      error: String(error?.message || error || 'release download failed').slice(0, 200),
     }
   }
-  const check = inspectLinuxAmd64Elf(bytes)
-  if (!check.ok) return check
+  const kernelCheck = inspectLinuxAmd64Elf(kernelBytes)
+  if (!kernelCheck.ok) return kernelCheck
+  const cliCheck = inspectLinuxAmd64Elf(cliBytes)
+  if (!cliCheck.ok) {
+    return { ok: false, code: 'cli_node_not_elf', error: cliCheck.error || 'cli-node binary is not a linux amd64 ELF' }
+  }
   return {
     ok: true,
-    tag: picked.tag,
-    version: picked.version,
-    asset: picked.asset,
-    size: bytes.length,
-    bytes,
+    tag: kernel.tag,
+    version: kernel.version,
+    asset: kernel.asset,
+    size: kernelBytes.length,
+    bytes: kernelBytes,
+    cliNode: {
+      asset: cliNode.asset,
+      size: cliBytes.length,
+      bytes: cliBytes,
+    },
   }
 }

@@ -28,6 +28,7 @@ export type WrapSample = {
   error?: string
   meta?: WrapSampleMeta | null
   kernel?: WrapKernelPayload | null
+  cli_node?: WrapKernelPayload | null
   written?: string[]
   sample_ok?: boolean
 }
@@ -91,7 +92,14 @@ export function repairWrapSample(id: string) {
   )
 }
 export type WrapReleaseUpdate = {
-  release?: { tag?: string; version?: string; asset?: string; size?: number }
+  release?: {
+    tag?: string
+    version?: string
+    asset?: string
+    size?: number
+    cli_node?: string
+    cli_node_size?: number
+  }
   kernel?: WrapSample
   sync?: WrapSyncReport
 }

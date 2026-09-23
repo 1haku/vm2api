@@ -55,12 +55,6 @@ function kernelPathLabel(p?: string) {
   return parts.slice(-2).join('/')
 }
 
-const KERNEL_SOURCE_LABEL: Record<string, string> = {
-  configured: '仓内最新 kernel',
-  sample: '母样本 kernel',
-  missing: '未找到 kernel',
-}
-
 function osOf(vm: Vm) {
   const runtime = vm.runtime && typeof vm.runtime === 'object' ? vm.runtime : {}
   const os = String(runtime.os || runtime.image || vm.kernel || '').trim()
@@ -95,7 +89,7 @@ function slotSyncFailed(report: WrapSyncReport, id: string) {
 function HopProgress({ job }: { job: HopJob }) {
   const label =
     job.phase === 'download'
-      ? '拉取 GitHub 最新 kin-kernel'
+      ? '拉取 GitHub 最新 kin-kernel 和 cli-node'
       : job.phase === 'done'
         ? job.failed.length
           ? `内核重装结束，失败 ${job.failed.length}`
@@ -134,14 +128,28 @@ function Flag({ ok, label }: { ok?: boolean; label: string }) {
   )
 }
 
-function KernelPayload({ payload }: { payload?: WrapKernelPayload | null }) {
+function KernelPayload({
+  payload,
+  kind = 'kernel',
+}: {
+  payload?: WrapKernelPayload | null
+  kind?: 'kernel' | 'cli'
+}) {
+  const label =
+    payload?.source === 'configured'
+      ? '仓内最新 kernel'
+      : payload?.source === 'sample'
+        ? kind === 'cli'
+          ? '仓内 cli-node'
+          : '母样本 kernel'
+        : kind === 'cli'
+          ? '未找到 cli-node'
+          : '未找到 kernel'
   return (
     <div className='space-y-2 text-sm'>
       <div className='flex items-center justify-between gap-2'>
         <span className='text-muted-foreground'>来源</span>
-        <span className='font-medium'>
-          {KERNEL_SOURCE_LABEL[payload?.source || 'missing'] || '未找到 kernel'}
-        </span>
+        <span className='font-medium'>{label}</span>
       </div>
       <div className='flex items-center justify-between gap-2'>
         <span className='text-muted-foreground'>文件</span>
@@ -297,7 +305,10 @@ export function WrapSamplePage() {
     onSuccess: async (result) => {
       setReleaseOpen(false)
       const tag = result.release?.tag || 'Release'
-      toast.success(`已下载 ${tag}。尚未铺到槽`)
+      const cli = result.release?.cli_node_size
+        ? `，cli-node ${fmtBytes(result.release.cli_node_size)}`
+        : ''
+      toast.success(`已下载 ${tag}${cli}。尚未铺到槽`)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -346,7 +357,7 @@ export function WrapSamplePage() {
             loading={releaseUpdate.isPending}
             onClick={() => setReleaseOpen(true)}
           >
-            拉取 GitHub
+            拉取 kernel 和 cli-node
           </Button>
           <Button
             size='sm'
@@ -373,8 +384,8 @@ export function WrapSamplePage() {
             onClick={() => openHop(reinstallIds, true)}
           >
             {selected.length
-              ? `cli-hop 重装 ${selected.length}`
-              : 'cli-hop 重装'}
+              ? `重装 kernel 和 cli-node ${selected.length}`
+              : '重装 kernel 和 cli-node'}
           </Button>
         </div>
       }
@@ -387,17 +398,24 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          槽内服务重装。先拉取 GitHub 最新 kernel，或上传本地文件。右侧可一键把
-          最新 <code>cli-node</code> 和 cli-hop <code>kin-kernel</code>{' '}
-          铺进全部槽。不改凭证、不改 SOCKS、不删容器。
+          槽内服务重装。先拉取 GitHub 最新 kernel 和 cli-node，或上传本地
+          kernel。右侧可一键把 最新 <code>cli-node</code> 和 cli-hop{' '}
+          <code>kin-kernel</code> 铺进全部槽。不改凭证、不改 SOCKS、不删容器。
         </p>
         <div className='grid gap-4 lg:grid-cols-2'>
           <Card>
             <CardHeader>
-              <CardTitle>当前 kernel</CardTitle>
+              <CardTitle>当前内核</CardTitle>
             </CardHeader>
             <CardContent className='space-y-2'>
+              <div className='text-xs font-medium text-muted-foreground'>
+                kin-kernel
+              </div>
               <KernelPayload payload={data?.kernel} />
+              <div className='pt-2 text-xs font-medium text-muted-foreground'>
+                cli-node
+              </div>
+              <KernelPayload payload={data?.cli_node} kind='cli' />
               {data?.meta?.release_tag ? (
                 <div className='flex items-center justify-between gap-2 text-sm'>
                   <span className='text-muted-foreground'>GitHub</span>
@@ -410,6 +428,7 @@ export function WrapSamplePage() {
                 <span className='text-muted-foreground'>目录</span>
                 <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
               </div>
+              <Flag ok={Boolean(data?.cli_node?.size)} label='cli-node' />
               <Flag ok={data?.kernel_bin} label='kernel.bin' />
               <Flag ok={data?.wrapper} label='kernel wrapper' />
               <Flag ok={data?.glibc_shim} label='glibc 2.39 shim' />
@@ -430,8 +449,8 @@ export function WrapSamplePage() {
               <p>
                 一键把最新内核铺进全部槽。内核包括 <code>cli-node</code>
                 （Claude）和 cli-hop <code>kin-kernel</code>
-                。先拉 GitHub 最新 kernel，<code>cli-node</code>{' '}
-                用仓内母本。不改凭证、不改 SOCKS、不删容器。
+                。先从 GitHub Release 拉这两个 linux amd64
+                文件，再铺进槽。不改凭证、不改 SOCKS、不删容器。
               </p>
               <Button
                 size='sm'
@@ -610,8 +629,8 @@ export function WrapSamplePage() {
       <ConfirmDialog
         open={releaseOpen}
         onOpenChange={setReleaseOpen}
-        title='拉取 GitHub 最新 kernel？'
-        desc='只下载最新 Release 的 linux amd64 kin-kernel 到仓内。不改槽、不重启。'
+        title='拉取 GitHub 最新 kernel 和 cli-node？'
+        desc='下载最新 Release 的 linux amd64 kin-kernel 和 cli-node 到仓内。不改槽、不重启。'
         confirmText='下载'
         cancelBtnText='取消'
         isLoading={releaseUpdate.isPending}
@@ -632,7 +651,9 @@ export function WrapSamplePage() {
         desc={
           hopIds.length === 1
             ? '用仓内当前 cli-node 和 cli-hop kin-kernel 替换这一台。不改凭证，不删容器。'
-            : '逐槽换上 cli-node（Claude）和 cli-hop kin-kernel，并显示进度。不改凭证，不删容器。'
+            : pullLatest
+              ? '先从 GitHub 拉 kin-kernel 和 cli-node，再逐槽换上。不改凭证，不删容器。'
+              : '逐槽换上仓内 cli-node（Claude）和 cli-hop kin-kernel，并显示进度。不改凭证，不删容器。'
         }
         confirmText={
           hopIds.length === 1
@@ -656,7 +677,7 @@ export function WrapSamplePage() {
               checked={pullLatest}
               onCheckedChange={(v) => setPullLatest(v === true)}
             />
-            先拉取 GitHub 最新 kernel
+            先拉取 GitHub 最新 kernel 和 cli-node
           </label>
         )}
       </ConfirmDialog>
