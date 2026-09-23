@@ -335,7 +335,7 @@ export function buildOfficialCcResidentDockerArgs({ vmId, uid, gid, timezone = '
     '-e',
     'CLAUDE_CODE_USE_VERTEX=0',
     '-e',
-    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0',
     '-e',
     'DISABLE_TELEMETRY=1',
     '-e',
@@ -1011,7 +1011,7 @@ export function buildOfficialCcDockerArgs({
     '-e',
     'CLAUDE_CODE_USE_VERTEX=0',
     '-e',
-    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0',
     '-e',
     'DISABLE_TELEMETRY=1',
     '-e',
@@ -1097,7 +1097,7 @@ function persistOfficialCcFingerprint(vmPath, homeDir) {
 
 /**
  * Post-init telemetry close-out used by vm-05 / vm-13 / vm-30:
- * normalize seed (telemetry on, kill-switch keys gone), write official
+ * normalize seed (telemetry on, NONESSENTIAL=1, grove_enabled false), write official
  * ~/.claude.json IDs into worker.json.telemetry, reload the slot so
  * `kin-worker telemetry` starts, then touch a 10-minute session.
  * Never docker rm.
@@ -1123,7 +1123,7 @@ export async function finalizeOfficialCcTelemetry(
   const seed = defaultSeedPolicy({
     ...(vm.seed_policy || {}),
     telemetry_disabled: enable ? false : vm.seed_policy?.telemetry_disabled !== false,
-    disable_nonessential_traffic: enable ? false : vm.seed_policy?.disable_nonessential_traffic !== false,
+    disable_nonessential_traffic: enable ? true : vm.seed_policy?.telemetry_disabled === false,
     do_not_track: enable ? false : vm.seed_policy?.do_not_track !== false,
   })
   vm.seed_policy = seed

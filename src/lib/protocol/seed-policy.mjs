@@ -2,11 +2,15 @@
  * Slot seed policy + inbound body sanitation.
  * The forwarding layer must never honor client-local settings/identity.
  *
- * Telemetry contract (one switch):
- *   telemetry_disabled === false  → delete kill-switch keys; sidecar enabled
- *   otherwise                     → write kill-switch keys = "1"; sidecar off
- * Official init (~/.claude.json userID/machineID) is the sidecar identity.
- * Sidecar stays off until those official IDs exist — never invent a device.
+ * Telemetry contract:
+ *   telemetry_disabled === false → delete kill-switch keys; sidecar on
+ *     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+ *   otherwise → kill-switch keys = "1"; sidecar off
+ *     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "0"
+ * grove_enabled is always false (Help improve Claude off).
+ * Official CLI treats any set NONESSENTIAL value, including "0", as
+ * essential-traffic (GitHub #84631). The seed still writes the requested
+ * literal. Other kill switches must be absent when telemetry is on.
  */
 
 export function isTelemetryEnabled(pol = {}) {
@@ -16,10 +20,12 @@ export function isTelemetryEnabled(pol = {}) {
 /**
  * Official CLI kill switches. When telemetry is ON these keys must be
  * absent — GitHub #84631: the value "0" still disables.
+ * NONESSENTIAL is not in this map; it is always written by the contract.
  */
+export const NONESSENTIAL_TRAFFIC_ENV_KEY = 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'
+
 export const TELEMETRY_KILL_ENV = Object.freeze({
   DISABLE_TELEMETRY: '1',
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   CLAUDE_CODE_USE_BEDROCK: '1',
   CLAUDE_CODE_USE_VERTEX: '1',
 })
@@ -33,6 +39,7 @@ export const TELEMETRY_KILL_ENV_KEYS = Object.freeze([...Object.keys(TELEMETRY_K
  */
 export const LEGACY_SCRIPT_ENV_KEYS = Object.freeze([
   ...TELEMETRY_KILL_ENV_KEYS,
+  NONESSENTIAL_TRAFFIC_ENV_KEY,
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
@@ -48,13 +55,19 @@ export function stripLegacyScriptEnv(env = {}) {
   return next
 }
 
+export function nonessentialTrafficValue(pol = {}) {
+  return isTelemetryEnabled(pol) ? '1' : '0'
+}
+
 export function applyRequiredSeedEnv(env = {}, pol = {}) {
   const next = { ...env }
   if (isTelemetryEnabled(pol)) {
     for (const key of TELEMETRY_KILL_ENV_KEYS) delete next[key]
-    return next
+  } else {
+    Object.assign(next, TELEMETRY_KILL_ENV)
   }
-  return { ...next, ...TELEMETRY_KILL_ENV }
+  next[NONESSENTIAL_TRAFFIC_ENV_KEY] = nonessentialTrafficValue(pol)
+  return next
 }
 
 /**
@@ -87,10 +100,13 @@ export function seedTelemetryContract(pol = {}) {
     telemetry_enabled: enabled,
     telemetry_disabled: !enabled,
     kill_keys: [...TELEMETRY_KILL_ENV_KEYS],
-    required_env: enabled ? {} : { ...TELEMETRY_KILL_ENV },
+    required_env: enabled
+      ? { [NONESSENTIAL_TRAFFIC_ENV_KEY]: '1' }
+      : { ...TELEMETRY_KILL_ENV, [NONESSENTIAL_TRAFFIC_ENV_KEY]: '0' },
+    grove_enabled: false,
     note: enabled
-      ? 'telemetry on: kill-switch keys deleted from settings.env'
-      : 'telemetry off: kill-switch keys written as 1',
+      ? 'telemetry on: kill-switch keys deleted; NONESSENTIAL=1; grove_enabled false'
+      : 'telemetry off: kill-switch keys written as 1; NONESSENTIAL=0; grove_enabled false',
   }
 }
 
@@ -98,7 +114,8 @@ export function defaultSeedPolicy(partial = {}) {
   const telemetryDisabled = partial.telemetry_disabled !== false
   return {
     telemetry_disabled: telemetryDisabled,
-    disable_nonessential_traffic: telemetryDisabled ? partial.disable_nonessential_traffic !== false : false,
+    disable_nonessential_traffic: !telemetryDisabled,
+    grove_enabled: false,
     do_not_track: telemetryDisabled ? partial.do_not_track !== false : false,
     reject_client_settings: partial.reject_client_settings !== false,
     reject_client_metadata_identity: partial.reject_client_metadata_identity !== false,
@@ -119,7 +136,6 @@ export function defaultSeedPolicy(partial = {}) {
 export function standardSeedPolicy(partial = {}) {
   return defaultSeedPolicy({
     telemetry_disabled: false,
-    disable_nonessential_traffic: false,
     do_not_track: false,
     ...partial,
   })

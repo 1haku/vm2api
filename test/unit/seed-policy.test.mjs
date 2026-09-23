@@ -11,10 +11,15 @@ import {
 
 test('standardSeedPolicy is telemetry on; defaultSeedPolicy stays off for omitted field', () => {
   assert.equal(defaultSeedPolicy().telemetry_disabled, true)
+  assert.equal(defaultSeedPolicy().disable_nonessential_traffic, false)
+  assert.equal(defaultSeedPolicy().grove_enabled, false)
   assert.equal(standardSeedPolicy().telemetry_disabled, false)
-  assert.equal(standardSeedPolicy().disable_nonessential_traffic, false)
+  assert.equal(standardSeedPolicy().disable_nonessential_traffic, true)
+  assert.equal(standardSeedPolicy().grove_enabled, false)
   assert.equal(standardSeedPolicy().do_not_track, false)
   assert.equal(standardSeedPolicy({ telemetry_disabled: true }).telemetry_disabled, true)
+  assert.equal(standardSeedPolicy({ telemetry_disabled: true }).disable_nonessential_traffic, false)
+  assert.equal(standardSeedPolicy({ grove_enabled: true }).grove_enabled, false)
 })
 
 test('stripLegacyScriptEnv drops kill-switch and leftover Anthropic hop keys', () => {
@@ -58,6 +63,8 @@ test('buildSlotSettingsEnv is TZ/LANG plus contract, leftover extra cannot win',
 test('buildSeedSettingsEnv delegates to slot env', () => {
   const off = buildSeedSettingsEnv({ telemetry_disabled: true })
   assert.equal(off.DISABLE_TELEMETRY, '1')
+  assert.equal(off.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '0')
   const on = buildSeedSettingsEnv({ telemetry_disabled: false })
   assert.equal(on.DISABLE_TELEMETRY, undefined)
+  assert.equal(on.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '1')
 })
