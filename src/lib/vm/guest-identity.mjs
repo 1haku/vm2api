@@ -8,7 +8,7 @@ import path from 'node:path'
 import { atomicWriteJson } from './vm-file.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
 import { slotExec } from './slot-runtime.mjs'
-import { callWorkerGet } from '../transport/go-worker-client.mjs'
+import { readGuestIdentity } from './guest-identity-reader.mjs'
 import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm } from '../identity/official-fingerprint.mjs'
 import { isHostKernel } from '../identity/workstation-profile.mjs'
@@ -91,7 +91,7 @@ export function mergeGuestFingerprint(prev = {}, guest = {}) {
   return next
 }
 
-export async function collectSlotIdentity(projectRoot, vm, { callGet = callWorkerGet, timeoutMs = 5000 } = {}) {
+export async function collectSlotIdentity(projectRoot, vm, { callGet = readGuestIdentity, timeoutMs = 5000 } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
   const exec = slotExec(projectRoot, vm)
   const res = await callGet(exec, '/internal/identity', { timeoutMs })
