@@ -253,6 +253,7 @@ export function createHandleProtocol(deps) {
     toolNames = {},
     want1m = false,
     preserveCacheBreakpoints = false,
+    cliHop = false,
     routing = {},
     noGoFallback = false,
   }) {
@@ -269,6 +270,7 @@ export function createHandleProtocol(deps) {
       want1m,
       routing,
       preserveCacheBreakpoints,
+      cliHop,
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
@@ -839,7 +841,7 @@ export function createHandleProtocol(deps) {
             logBag.official_cc_inference = 'cli-hop'
             logBag.provider = 'local_cli'
             logBag.outbound_summary = summarizeBody(hopBody)
-            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId } }
+            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true } }
           }
 
           cacheTtl = requestedCacheTtl
@@ -907,6 +909,7 @@ export function createHandleProtocol(deps) {
               toolNames: attemptMeta?.toolNames || {},
               cacheTtl,
               preserveCacheBreakpoints,
+              cliHop: attemptMeta?.cliHop === true,
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
@@ -936,6 +939,7 @@ export function createHandleProtocol(deps) {
               exec: candidate.exec,
               cacheTtl,
               preserveCacheBreakpoints,
+              cliHop: attemptMeta?.cliHop === true,
               body,
               reqHeaders: req.headers,
               timeoutMs: cfg.limits.upstream_timeout_ms,
