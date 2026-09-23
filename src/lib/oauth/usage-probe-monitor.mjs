@@ -1,13 +1,16 @@
 /**
  * Periodic Extra reconcile for live credential slots.
  *
- * Aligns with sub2api: list/gate read Messages headers. Official
- * GET /api/oauth/usage is never interval-polled (that API 429s).
- * The 60s tick only wipes elapsed Extra windows.
+ * Healthy windows stay on Messages headers. Official GET /api/oauth/usage is
+ * not interval-polled. A window whose reset has already passed is not a real
+ * 0% sample: cli-hop often stops sending fresh rate-limit headers, and the
+ * wipe would otherwise pin the panel at 0 while usage_logs keep growing.
+ * Those slots get one /usage hop, then back off.
  */
+import { usageProbeBackoffRemainingMs } from './crs-usage-probe.mjs'
 import { hasRefreshPresence } from './oauth-credentials.mjs'
 import { vmHasProxyPath } from './credential-refresh-monitor.mjs'
-
+import { parseResetMs } from '../pool/quota-window.mjs'
 export const DEFAULT_USAGE_PROBE = Object.freeze({
   enabled: true,
   interval_sec: 60,
@@ -57,12 +60,43 @@ export function isUsageProbeTarget(vm) {
   return true
 }
 
+/** Re-hop a stale window at most this often after a probe that did not refresh it. */
+const STALE_USAGE_PROBE_GAP_MS = 15 * 60_000
+
+function elapsedExtraResetMs(unified = {}, now = Date.now()) {
+  const headers = unified?.headers
+  if (!headers || typeof headers !== 'object') return null
+  let resetMs = null
+  for (const key of ['5h', '7d']) {
+    const window = headers[key]
+    if (!window || typeof window !== 'object') continue
+    const ms = parseResetMs(window.reset)
+    const elapsed = window.stale_reason === 'reset_elapsed' || (Number.isFinite(ms) && ms <= now)
+    if (!elapsed) continue
+    const mark = Number.isFinite(ms) ? ms : 0
+    resetMs = resetMs == null ? mark : Math.min(resetMs, mark)
+  }
+  return resetMs
+}
+
 /**
- * Interval ticks never hop /usage. Kept so settings + tests can inspect.
+ * Hop /usage only after a 5h/7d Extra reset has elapsed.
+ * A live or never-sampled window stays passive.
  * @returns {{ due: boolean, reason?: string }}
  */
-export function isUsageProbeDue(_account = {}, _opts = {}) {
-  return { due: false, reason: 'list_passive_only' }
+export function isUsageProbeDue(account = {}, opts = {}) {
+  const now = opts.now || Date.now()
+  const unified = account?.unified || {}
+  if (usageProbeBackoffRemainingMs(unified, now) > 0) {
+    return { due: false, reason: 'usage_backoff' }
+  }
+  const resetMs = elapsedExtraResetMs(unified, now)
+  if (resetMs == null) return { due: false, reason: 'list_passive_only' }
+  const probedAt = Date.parse(account?.last_probe?.at || unified.last_probe?.at || unified.last_probe?.probed_at || '')
+  if (Number.isFinite(probedAt) && probedAt > resetMs && now - probedAt < STALE_USAGE_PROBE_GAP_MS) {
+    return { due: false, reason: 'probed_recently' }
+  }
+  return { due: true, reason: 'extra_window_elapsed' }
 }
 
 export function createUsageProbeMonitor(opts = {}) {
@@ -83,6 +117,7 @@ export function createUsageProbeMonitor(opts = {}) {
       const started = nowFn()
       const targets = listTargets()
       const items = []
+      const due = []
       for (const vm of targets) {
         const account = typeof opts.accountForVm === 'function' ? opts.accountForVm(vm) : null
         if (typeof opts.reconcile === 'function') {
@@ -90,17 +125,47 @@ export function createUsageProbeMonitor(opts = {}) {
             opts.reconcile(vm, account)
           } catch {}
         }
-        items.push({
-          vm_id: vm.id,
-          ok: true,
-          reason: 'reconcile_extra',
-          source: null,
-        })
+        const decision = isUsageProbeDue(account || {}, { now: nowFn() })
+        if (!decision.due || typeof opts.probeOne !== 'function') {
+          items.push({
+            vm_id: vm.id,
+            ok: true,
+            reason: 'reconcile_extra',
+            source: null,
+          })
+          continue
+        }
+        due.push(vm)
       }
+      let cursor = 0
+      const workers = Math.min(config.concurrency, due.length)
+      await Promise.all(
+        Array.from({ length: workers }, async () => {
+          while (cursor < due.length) {
+            const vm = due[cursor++]
+            try {
+              const result = await opts.probeOne(vm)
+              items.push({
+                vm_id: vm.id,
+                ok: result?.ok !== false,
+                reason: 'extra_window_elapsed',
+                source: result?.source || 'oauth-usage',
+              })
+            } catch {
+              items.push({
+                vm_id: vm.id,
+                ok: false,
+                reason: 'extra_window_elapsed',
+                source: null,
+              })
+            }
+          }
+        }),
+      )
       lastRun = {
         at: new Date(nowFn()).toISOString(),
         duration_ms: nowFn() - started,
-        due: 0,
+        due: due.length,
         items,
       }
       return lastRun
