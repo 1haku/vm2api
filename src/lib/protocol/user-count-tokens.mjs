@@ -126,7 +126,7 @@ function distillContext(req, inbound) {
   }
   const official =
     isOfficialClaudeCodeTraffic(req?.headers || {}, inbound) ||
-    (detectProxiedOfficialCcFromRouting(routing || {}) && isProxiedOfficialClaudeCode(inbound))
+    (detectProxiedOfficialCcFromRouting(routing || {}) && isProxiedOfficialClaudeCode(inbound, req?.headers || {}))
   const inject = String(routing?.compatibility?.persona_inject || '')
     .trim()
     .toLowerCase()
