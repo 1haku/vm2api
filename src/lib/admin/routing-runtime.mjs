@@ -392,21 +392,9 @@ export function createRoutingRuntime(ctx) {
       },
       onFablePlanDenied: ({ selected }) => {
         const accountId = selected?.accountId
-        const vmId = selected?.vmId
         if (accountId && selected?.model) {
           try {
             ctx.accountQuota.markModelUnsupported(accountId, selected.model)
-          } catch {}
-        }
-        if (storedAccountTier({ accountId, vmId, vm: selected?.vm }) === 'max') return
-        if (accountId) {
-          try {
-            ctx.accountQuota.setAccountTier(accountId, 'pro')
-          } catch {}
-        }
-        if (vmId) {
-          try {
-            persistAccountTier(ctx.cfg.paths.project, vmId, 'pro')
           } catch {}
         }
       },
