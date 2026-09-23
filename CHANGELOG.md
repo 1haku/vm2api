@@ -1,12 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.3.39 — 2026-09-24
 
 - cch 对齐 Claude Code 2.1.280。种子 `0x4D659218E32A3268`。哈希原文字符串：第一处 `cch` 回到 `00000`，清空所有 `"model"` 值，切掉 `fallbacks`、`fallback_credit_token` 和数字 `max_tokens`。发出去的 body 仍保留原值。
 - 主 Messages beta 对齐 2.1.280 linux-x64 sdk-cli 抓包。`advanced-tool-use` 与 `thinking-binding-controls` 一起发，并带上 `mid-conversation-system-clear-at`、`extended-cache-ttl`、`cache-diagnosis`。不加 `context-1m`。
 - 重编 `share/wrap-cli/cli-node`，UPX 5.0.1，124MB 压到 33MB。
+- GitHub 拉取和一键内核重装同时下载 Release 里的 `kin-kernel` 和 `cli-node`，写进仓内后再铺到槽。缺 `cli-node` 附件就失败，不再只用仓内旧母本。
 
-已部署机升级：cli-node 变了，需要 `wrap-cli/sync` 或 kernel release。不要 `docker rm` 槽。
+已部署机升级：覆盖控制面并重启 Node 一次。槽内二进制这次没有新文件，不必 `wrap-cli/sync`。不要 `docker rm` 槽。
 
 ## 1.3.38 — 2026-09-24
 
