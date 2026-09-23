@@ -207,32 +207,37 @@ test('cli-hop still lifts trailing system constraints without adding markers', (
   assert.equal(body.messages[0].content[0].cache_control, undefined)
 })
 
-test('cli-hop keeps each official CC turn a byte prefix of the next one', () => {
-  const budget = (left) => ({ role: 'system', content: `<total_tokens>${left} tokens left</total_tokens>` })
+test('official CC turns stay a byte prefix of the next one, from turn 1 on', () => {
+  const reminder = (text) => ({ role: 'system', content: text })
+  const budget = (left) => reminder(`<total_tokens>${left} tokens left</total_tokens>`)
   const turn = (messages) =>
-    prepareCliHopBody({
-      model: 'claude-opus-5-5',
-      max_tokens: 64000,
-      system: [{ type: 'text', text: 'main prompt' }],
-      messages,
-    })
-  const history = [
-    { role: 'user', content: 'u1' },
-    budget(14930105),
-    { role: 'assistant', content: 'a1' },
-    { role: 'user', content: 'u2' },
+    prepareCliHopBody(
+      {
+        model: 'claude-opus-5-5',
+        max_tokens: 64000,
+        system: [{ type: 'text', text: 'main prompt' }],
+        messages,
+      },
+      { officialClient: true },
+    )
+  // Turn 1 ends with SessionStart context, later turns with a live token counter.
+  const turns = [
+    [{ role: 'user', content: 'u1' }, reminder('SessionStart hook context')],
+    [{ role: 'assistant', content: 'a1' }, { role: 'user', content: 'u2' }, budget(14930105)],
+    [{ role: 'assistant', content: 'a2' }, { role: 'user', content: 'u3' }, budget(14928642)],
   ]
-  const first = turn([...history, budget(14928642)])
-  const next = turn([
-    ...history,
-    budget(14928642),
-    { role: 'assistant', content: 'a2' },
-    { role: 'user', content: 'u3' },
-    budget(14927830),
-  ])
-  assert.deepEqual(next.system, first.system)
-  assert.deepEqual(next.messages.slice(0, first.messages.length), first.messages)
-  assert.equal(next.messages[4].role, 'system')
+  let history = []
+  let previous = null
+  for (const added of turns) {
+    history = [...history, ...added]
+    const body = turn(history)
+    assert.equal(body.messages.at(-1).role, 'system')
+    if (previous) {
+      assert.deepEqual(body.system, previous.system)
+      assert.deepEqual(body.messages.slice(0, previous.messages.length), previous.messages)
+    }
+    previous = body
+  }
 })
 
 test('cli-hop lifts role=system turns for models that reject them', () => {
