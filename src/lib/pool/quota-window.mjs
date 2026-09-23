@@ -26,6 +26,107 @@ export function parseResetMs(reset) {
   return Number.isFinite(parsed) ? parsed : NaN
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+/** Wall-clock parts of `ms` in `timeZone`. */
+function zonedParts(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  }).formatToParts(new Date(ms))
+  const out = {}
+  for (const part of parts) if (part.type !== 'literal') out[part.type] = Number(part.value)
+  return out
+}
+
+/** Epoch ms for a wall-clock time in `timeZone` (DST-safe, two passes). */
+function zonedWallToMs({ year, month, day, hour, minute }, timeZone) {
+  const wall = Date.UTC(year, month - 1, day, hour, minute)
+  let ms = wall
+  for (let i = 0; i < 2; i++) {
+    const seen = zonedParts(ms, timeZone)
+    const seenWall = Date.UTC(seen.year, seen.month - 1, seen.day, seen.hour, seen.minute)
+    ms += wall - seenWall
+  }
+  return ms
+}
+
+/**
+ * Claude CLI limit text carries no header, only `resets 11am (America/New_York)`
+ * or `resets Sep 25, 3pm (UTC)` (utils/format.ts formatResetTime). Returns the
+ * reset as epoch ms, or null when the text has no parseable reset.
+ */
+export function parseLimitResetFromMessage(message, now = Date.now()) {
+  const text = String(message || '')
+  const m = text.match(
+    /resets\s+(?:([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(?:(\d{4}),?\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*(?:\(([^)]+)\))?/i,
+  )
+  if (!m) return null
+  const [, monName, dayRaw, yearRaw, hourRaw, minuteRaw, ampm, zoneRaw] = m
+  let timeZone = String(zoneRaw || 'UTC').trim()
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone })
+  } catch {
+    timeZone = 'UTC'
+  }
+  let hour = Number(hourRaw) % 12
+  if (ampm.toLowerCase() === 'pm') hour += 12
+  const minute = Number(minuteRaw || 0)
+  const today = zonedParts(now, timeZone)
+  if (monName) {
+    const month = MONTHS.indexOf(monName.toLowerCase()) + 1
+    if (month <= 0) return null
+    let year = yearRaw ? Number(yearRaw) : today.year
+    let ms = zonedWallToMs({ year, month, day: Number(dayRaw), hour, minute }, timeZone)
+    if (!yearRaw && ms <= now) {
+      year += 1
+      ms = zonedWallToMs({ year, month, day: Number(dayRaw), hour, minute }, timeZone)
+    }
+    return Number.isFinite(ms) ? ms : null
+  }
+  let ms = zonedWallToMs({ year: today.year, month: today.month, day: today.day, hour, minute }, timeZone)
+  if (ms <= now) {
+    const next = zonedParts(now + 24 * 3600_000, timeZone)
+    ms = zonedWallToMs({ year: next.year, month: next.month, day: next.day, hour, minute }, timeZone)
+  }
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** Which Extra window a CLI limit text names. */
+export function limitWindowFromMessage(message) {
+  return /weekly|opus limit|sonnet limit|7-day|seven.day/i.test(String(message || '')) ? '7d' : '5h'
+}
+
+/** CLI plan-limit text (`You've hit your limit`, `out of extra usage`). Not `extra usage required`. */
+export function isPlanLimitMessage(message) {
+  const text = String(message || '')
+  if (/extra usage required/i.test(text)) return false
+  return /hit your (?:\w+ )?limit|out of extra usage/i.test(text)
+}
+
+/**
+ * Wrap CLI often reports Extra 5h/7d as `You've hit your limit` without HTTP headers.
+ * The reset comes from the text; an elapsed leftover reset must never be reused.
+ */
+export function extraHeadersFromLimitError(message, headers = {}, now = Date.now()) {
+  const h = { ...(headers || {}) }
+  if (Object.keys(h).some((key) => /ratelimit-unified-(5h|7d)-status/i.test(key))) return h
+  const text = String(message || '')
+  if (!isPlanLimitMessage(text)) return h
+  const window = limitWindowFromMessage(text)
+  h[`anthropic-ratelimit-unified-${window}-status`] = 'rejected'
+  h[`anthropic-ratelimit-unified-${window}-utilization`] = '1'
+  const resetMs = parseLimitResetFromMessage(text, now)
+  if (resetMs) h[`anthropic-ratelimit-unified-${window}-reset`] = String(Math.floor(resetMs / 1000))
+  return h
+}
+
 export function parseUsedAtMs(value) {
   if (value == null || value === '') return 0
   if (typeof value === 'number' && Number.isFinite(value)) {

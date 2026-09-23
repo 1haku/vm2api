@@ -9,6 +9,9 @@ import {
   toPercentUsed,
   usageWindowsEmpty,
   publicUsageWindow,
+  parseLimitResetFromMessage,
+  isPlanLimitMessage,
+  limitWindowFromMessage,
 } from '../../src/lib/pool/quota-window.mjs'
 
 test('officialWindow prefers official over headers and leftover flat percent', () => {
@@ -143,4 +146,33 @@ test('26 percent with a rejected flag is not a hard block', () => {
   )
   assert.equal(w.utilization, 26)
   assert.equal(w.stale, false)
+})
+
+test('parseLimitResetFromMessage reads CLI reset text in its timezone', () => {
+  const now = Date.parse('2026-09-23T12:37:10Z')
+  const at = (text) => parseLimitResetFromMessage(text, now)
+  assert.equal(at("You've hit your limit · resets 11am (America/New_York)"), Date.parse('2026-09-23T15:00:00Z'))
+  assert.equal(at("You've hit your session limit · resets 3:30pm (UTC)"), Date.parse('2026-09-23T15:30:00Z'))
+  // 8am ET already passed today → tomorrow.
+  assert.equal(at("You've hit your limit · resets 8am (America/New_York)"), Date.parse('2026-09-24T12:00:00Z'))
+  assert.equal(
+    at("You've hit your weekly limit · resets Sep 25, 3pm (America/New_York)"),
+    Date.parse('2026-09-25T19:00:00Z'),
+  )
+  assert.equal(at('provider error: api_error'), null)
+})
+
+test('parseLimitResetFromMessage follows DST in the named zone', () => {
+  // 2026-11-01: US leaves DST. 11am ET the next day is UTC-5.
+  const now = Date.parse('2026-11-01T20:00:00Z')
+  assert.equal(parseLimitResetFromMessage('resets 11am (America/New_York)', now), Date.parse('2026-11-02T16:00:00Z'))
+})
+
+test('isPlanLimitMessage matches CLI limit text but not the entitlement error', () => {
+  assert.equal(isPlanLimitMessage("You've hit your limit · resets 11am"), true)
+  assert.equal(isPlanLimitMessage("You've hit your weekly limit"), true)
+  assert.equal(isPlanLimitMessage("You're out of extra usage · resets 3pm"), true)
+  assert.equal(isPlanLimitMessage('Extra usage required for this model'), false)
+  assert.equal(limitWindowFromMessage("You've hit your weekly limit"), '7d')
+  assert.equal(limitWindowFromMessage("You've hit your limit"), '5h')
 })

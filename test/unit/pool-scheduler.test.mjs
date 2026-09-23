@@ -1980,3 +1980,54 @@ test('max sessions follow the conversation window and keep one conversation on o
   assert.equal(third.ok, false)
   assert.equal(third.reason, 'no_eligible_accounts')
 })
+
+test('live rate_limit_reset_at gates the account and unbinds its sticky session', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const runtimeRepo = new RuntimeRepo()
+  runtimeRepo.upsert({ account_id: 'account-1', vm_id: 'vm-01', rate_limit_reset_at: Date.now() + 3_600_000 })
+  const unbound = []
+  const stickyRouter = {
+    resolve: () => ({ accountId: 'account-1', vmId: 'vm-01' }),
+    unbind: (key) => unbound.push(key),
+  }
+  const pool = scheduler(root, { runtimeRepo, stickyRouter })
+  const selected = await pool.selectAndReserve({ model: 'claude-test', stickyKey: 'conv-1', allowWait: false })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.vmId, 'vm-02')
+  assert.deepEqual(unbound, ['conv-1'])
+  selected.release()
+})
+
+test('overload_until gates the account until it passes', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const runtimeRepo = new RuntimeRepo()
+  runtimeRepo.upsert({ account_id: 'account-2', vm_id: 'vm-02', overload_until: Date.now() + 600_000 })
+  runtimeRepo.upsert({ account_id: 'account-1', vm_id: 'vm-01', overload_until: Date.now() - 1 })
+  const pool = scheduler(root, { runtimeRepo })
+  const selected = await pool.selectAndReserve({ model: 'claude-test', excluded: new Set(), allowWait: false })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.vmId, 'vm-01')
+  selected.release()
+})
+
+test('passive quota sync never clears a live 429 block', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const runtimeRepo = new RuntimeRepo()
+  const until = Date.now() + 3_600_000
+  runtimeRepo.upsert({
+    account_id: 'account-1',
+    vm_id: 'vm-01',
+    cooldown_until: until,
+    cooldown_reason: 'account_quota_exhausted',
+    rate_limit_reset_at: until,
+  })
+  const pool = scheduler(root, { runtimeRepo })
+  const vm = JSON.parse(fs.readFileSync(path.join(root, 'vms', 'vm-01.json'), 'utf8'))
+  const cleared = pool.clearQuotaRestriction(vm, 'account-1', path.join(root, 'vms', 'vm-01.json'))
+  assert.equal(cleared, false)
+  assert.equal(runtimeRepo.get('account-1').cooldown_until, until)
+  assert.equal(runtimeRepo.get('account-1').rate_limit_reset_at, until)
+})

@@ -30,6 +30,7 @@ import { computeWeeklySplit, publicWeeklySplit, weeklySplitConfig } from '../poo
 import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from '../pool/quota-tiers.mjs'
 import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders } from '../pool/quota-window.mjs'
+import { hardBlockOf } from '../pool/rate-limit-service.mjs'
 import { resolveCredentialScheduleLevel } from '../pool/credential-weight.mjs'
 import {
   evaluateAccount,
@@ -1276,6 +1277,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     max: Number(v.max_sessions ?? policy.max_sessions ?? 0),
     idleMin: policy.session_idle_min,
   }) || { active: 0, max: Number(v.max_sessions ?? policy.max_sessions ?? 0), idle_min: policy.session_idle_min }
+  const liveHardBlock = hardBlockOf(runtime)
   const availability = evaluateAccount({
     vm: v,
     account: acc || {},
@@ -1293,6 +1295,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     quota: mergedQuota,
     policy,
     sessionLimit,
+    hardBlock: liveHardBlock,
     cooldownUntil:
       runtime?.cooldown_until ||
       v.claude?.temp_unschedulable_until ||
@@ -1307,6 +1310,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
       null,
   })
   const restrictionUntil =
+    liveHardBlock?.until ||
     runtime?.cooldown_until ||
     v.claude?.temp_unschedulable_until ||
     v.temp_unschedulable_until ||
@@ -1314,6 +1318,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     availability.until ||
     null
   const restrictionReason =
+    liveHardBlock?.reason ||
     runtime?.cooldown_reason ||
     v.claude?.temp_unschedulable_reason ||
     v.temp_unschedulable_reason ||
