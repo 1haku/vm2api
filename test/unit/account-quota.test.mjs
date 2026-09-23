@@ -22,6 +22,17 @@ test('ensure seeds account and is idempotent', () => {
   assert.equal(acc.unified['5h'].status, 'active')
 })
 
+test('a model entitlement rejection is persisted for that account and model', () => {
+  const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  q.ensure({ account_id: 'a-denied' })
+  q.markModelUnsupported('a-denied', 'claude-fable-5')
+  const until = q.repo.get('a-denied').unified.model_denied_until['claude-fable-5']
+  assert.ok(until > Date.now())
+  assert.ok(until <= Date.now() + 60 * 60_000)
+  q.clearModelUnsupported('a-denied', 'claude-fable-5')
+  assert.equal(q.repo.get('a-denied').unified.model_denied_until['claude-fable-5'], undefined)
+})
+
 function futureReset(msFromNow) {
   return new Date(Date.now() + msFromNow).toISOString()
 }
