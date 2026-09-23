@@ -26,6 +26,33 @@ test('setup-token worker envelope is inference-only', () => {
   assert.match(String(out.headers['anthropic-beta'] || ''), /oauth-2025-04-20/)
 })
 
+test('cli-hop envelope keeps role=system turns that the VM betas do not declare', () => {
+  const body = {
+    model: 'claude-opus-5-5',
+    system: [{ type: 'text', text: 'main prompt' }],
+    messages: [
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'reminder' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+    ],
+  }
+  const out = finalizeWorkerPayload({
+    body,
+    reqHeaders: {},
+    // setup-token betas omit mid-conversation-system; cli-node sends it on the wire.
+    exec: { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } },
+    identity: null,
+    cliHop: true,
+  })
+  assert.doesNotMatch(String(out.headers['anthropic-beta'] || ''), /mid-conversation-system/)
+  assert.deepEqual(
+    out.body.messages.map((message) => message.role),
+    ['user', 'system', 'assistant', 'user'],
+  )
+  assert.deepEqual(out.body.system, body.system)
+})
+
 const unix = process.platform !== 'win32'
 const unixTest = unix ? test : test.skip
 

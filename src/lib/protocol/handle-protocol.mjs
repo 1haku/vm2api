@@ -100,6 +100,7 @@ import {
   pinConversationCacheTtl,
   resolveCacheTtl,
 } from './cache-ttl.mjs'
+import { trackCachePrefix } from './cache-prefix.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
 import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
@@ -253,6 +254,7 @@ export function createHandleProtocol(deps) {
     toolNames = {},
     want1m = false,
     preserveCacheBreakpoints = false,
+    cliHop = false,
     routing = {},
     noGoFallback = false,
   }) {
@@ -269,6 +271,7 @@ export function createHandleProtocol(deps) {
       want1m,
       routing,
       preserveCacheBreakpoints,
+      cliHop,
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
@@ -766,6 +769,15 @@ export function createHandleProtocol(deps) {
     // Pin is panel test-chat / diagnostics (manage). Unpinned /v1 is dispatch.
     const ownerScope = pinVmId ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
     const healthReal = isHealthRealBypass(req.headers)
+    // Cache lives per account; a failover to another account starts cold by design.
+    const noteCachePrefix = (selected, sessionId, body) => {
+      if (!sessionId) return
+      const prefix = trackCachePrefix(`${selected.accountId}:${sessionId}`, body)
+      logBag.cache_prefix = prefix
+      if (!prefix?.break) return
+      const where = prefix.break.section === 'messages' ? `messages[${prefix.break.index}]` : prefix.break.section
+      console.warn(`[cache-prefix] request ${logCtx.request_id} turn ${prefix.turn} broke at ${where}`)
+    }
     let result
     try {
       result = await getFailoverRunner().run({
@@ -816,6 +828,7 @@ export function createHandleProtocol(deps) {
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
+              officialClient: officialTraffic,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (identity) {
@@ -839,7 +852,8 @@ export function createHandleProtocol(deps) {
             logBag.official_cc_inference = 'cli-hop'
             logBag.provider = 'local_cli'
             logBag.outbound_summary = summarizeBody(hopBody)
-            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId } }
+            noteCachePrefix(selected, attemptSessionId, hopBody)
+            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true } }
           }
 
           cacheTtl = requestedCacheTtl
@@ -892,6 +906,7 @@ export function createHandleProtocol(deps) {
           if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = prepared.body
           logBag.outbound_headers = redactHeaders(prepared.headers || {})
           logBag.outbound_summary = summarizeBody(prepared.body)
+          noteCachePrefix(selected, attemptSessionId, prepared.body)
           return { body: prepared.body, meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId } }
         },
         callAttempt: async ({ candidate, body, attemptMeta, deliveryMode: attemptDelivery, signal, onCommit }) => {
@@ -907,6 +922,7 @@ export function createHandleProtocol(deps) {
               toolNames: attemptMeta?.toolNames || {},
               cacheTtl,
               preserveCacheBreakpoints,
+              cliHop: attemptMeta?.cliHop === true,
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
@@ -936,6 +952,7 @@ export function createHandleProtocol(deps) {
               exec: candidate.exec,
               cacheTtl,
               preserveCacheBreakpoints,
+              cliHop: attemptMeta?.cliHop === true,
               body,
               reqHeaders: req.headers,
               timeoutMs: cfg.limits.upstream_timeout_ms,

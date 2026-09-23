@@ -95,14 +95,14 @@ function slotSyncFailed(report: WrapSyncReport, id: string) {
 function HopProgress({ job }: { job: HopJob }) {
   const label =
     job.phase === 'download'
-      ? '拉取 GitHub 最新 kernel'
+      ? '拉取 GitHub 最新 kin-kernel'
       : job.phase === 'done'
         ? job.failed.length
-          ? `cli-hop 重装结束，失败 ${job.failed.length}`
-          : `cli-hop 已重装 ${job.done}/${job.total}`
-        : `正在替换 ${job.current || '槽'}`
+          ? `内核重装结束，失败 ${job.failed.length}`
+          : `最新内核已重装 ${job.done}/${job.total}`
+        : `正在换 ${job.current || '槽'} 的 cli-node 和 kin-kernel`
   return (
-    <div className='mb-4 max-w-3xl space-y-1.5'>
+    <div className='space-y-1.5'>
       <div className='flex items-center justify-between gap-3 text-xs text-muted-foreground'>
         <span>{label}</span>
         <span>
@@ -245,14 +245,14 @@ export function WrapSamplePage() {
         failed: [...failed],
       })
       if (failed.length) {
-        toast.error(`cli-hop 重装 ${ids.length - failed.length}/${ids.length}`)
+        toast.error(`内核重装 ${ids.length - failed.length}/${ids.length}`)
       } else {
-        toast.success(`cli-hop 重装 ${ids.length}/${ids.length}`)
+        toast.success(`内核重装 ${ids.length}/${ids.length}`)
       }
       await invalidate()
     } catch (error) {
       if (!alive()) return
-      toast.error(error instanceof Error ? error.message : 'cli-hop 重装失败')
+      toast.error(error instanceof Error ? error.message : '内核重装失败')
       setHopJob((cur) =>
         cur
           ? { ...cur, phase: 'done', failed: failed.length ? failed : ['下载'] }
@@ -387,10 +387,10 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          槽内服务重装。先拉取 GitHub 最新 kernel，或上传本地文件。再一键把
-          cli-hop（kernel + cli-node）铺进槽里。不改凭证、不改 SOCKS、不删容器。
+          槽内服务重装。先拉取 GitHub 最新 kernel，或上传本地文件。右侧可一键把
+          最新 <code>cli-node</code> 和 cli-hop <code>kin-kernel</code>{' '}
+          铺进全部槽。不改凭证、不改 SOCKS、不删容器。
         </p>
-        {hopJob ? <HopProgress job={hopJob} /> : null}
         <div className='grid gap-4 lg:grid-cols-2'>
           <Card>
             <CardHeader>
@@ -424,12 +424,29 @@ export function WrapSamplePage() {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle>怎么用</CardTitle>
+              <CardTitle>内核重装</CardTitle>
             </CardHeader>
-            <CardContent className='space-y-2 text-sm leading-relaxed text-muted-foreground'>
-              <p>1. 拉取 GitHub，或本地上传。两者只更新仓内 kernel。</p>
-              <p>2. cli-hop 重装逐槽换上 kernel 和 cli-node，并显示进度。</p>
-              <p>3. 「替换此槽」只动一台。未勾选槽时，重装按钮覆盖全部。</p>
+            <CardContent className='space-y-3 text-sm leading-relaxed text-muted-foreground'>
+              <p>
+                一键把最新内核铺进全部槽。内核包括 <code>cli-node</code>
+                （Claude）和 cli-hop <code>kin-kernel</code>
+                。先拉 GitHub 最新 kernel，<code>cli-node</code>{' '}
+                用仓内母本。不改凭证、不改 SOCKS、不删容器。
+              </p>
+              <Button
+                size='sm'
+                disabled={!complete || vms.length === 0 || hopBusy}
+                loading={hopBusy && hopIds.length > 1}
+                onClick={() =>
+                  openHop(
+                    vms.map((vm) => vm.id),
+                    true
+                  )
+                }
+              >
+                一键全部重装最新内核
+              </Button>
+              {hopJob ? <HopProgress job={hopJob} /> : null}
             </CardContent>
           </Card>
         </div>
@@ -608,16 +625,22 @@ export function WrapSamplePage() {
         title={
           hopIds.length === 1
             ? `替换 ${hopIds[0]}？`
-            : selected.length
-              ? `重装所选 ${hopIds.length} 槽？`
-              : '重装全部槽的 cli-hop？'
+            : hopIds.length === vms.length
+              ? '一键重装全部槽的最新内核？'
+              : `重装所选 ${hopIds.length} 槽？`
         }
         desc={
           hopIds.length === 1
-            ? '用仓内当前 kernel 和 cli-node 替换这一台。不改凭证，不删容器。'
-            : '逐槽换上 kernel 和 cli-node，并显示进度。不改凭证，不删容器。'
+            ? '用仓内当前 cli-node 和 cli-hop kin-kernel 替换这一台。不改凭证，不删容器。'
+            : '逐槽换上 cli-node（Claude）和 cli-hop kin-kernel，并显示进度。不改凭证，不删容器。'
         }
-        confirmText={hopIds.length === 1 ? '替换' : '开始重装'}
+        confirmText={
+          hopIds.length === 1
+            ? '替换'
+            : hopIds.length === vms.length
+              ? '全部重装'
+              : '开始重装'
+        }
         cancelBtnText='取消'
         isLoading={hopBusy}
         handleConfirm={() => {
