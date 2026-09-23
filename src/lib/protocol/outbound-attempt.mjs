@@ -10,7 +10,9 @@ import {
   ensureClearThinkingContextManagement,
   stripInvalidThinkingBlocks,
   alignSamplingWithThinking,
+  modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
+import { liftMidConversationSystemMessages } from './sanitize.mjs'
 import { ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh, normalizeThinkingForModel } from './thinking.mjs'
 import {
   applyCrsIdentityReplace,
@@ -194,6 +196,9 @@ export function prepareCliHopBody(canonicalBody, { stream = true, repaired = fal
   else body.system = leftover
   body = liftTrailingSystemMessages(body)
   body = stabilizeMessageBudgets(body)
+  // cli-node sends mid-conversation-system, so role=system turns stay in place and
+  // the cached prefix only grows. Only models that reject the role need the lift.
+  if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
 
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
