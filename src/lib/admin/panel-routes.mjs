@@ -174,6 +174,7 @@ import {
   makeWrapSample,
   materializeWrapCli,
   replaceKernelBinary,
+  replaceCliNodeBinary,
   syncWrapSample,
   wrapCliHomeDir,
 } from '../vm/wrap-cli-runtime.mjs'
@@ -1298,6 +1299,10 @@ export function createPanelHandler(ctx) {
         if (!replaced.ok) {
           return json(res, 400, { ok: false, error: { code: replaced.code, message: replaced.error } })
         }
+        const cliNode = replaceCliNodeBinary(cfg.paths.project, downloaded.cliNode?.bytes)
+        if (!cliNode.ok) {
+          return json(res, 400, { ok: false, error: { code: cliNode.code, message: cliNode.error } })
+        }
         const report = await syncInstalledKernels({
           project: cfg.paths.project,
           routingConfig: ctx.routingConfig,
@@ -1308,6 +1313,8 @@ export function createPanelHandler(ctx) {
           version: downloaded.version,
           asset: downloaded.asset,
           size: downloaded.size,
+          cli_node: downloaded.cliNode?.asset,
+          cli_node_size: cliNode.size,
         }
         if (!report.ok) {
           return json(res, 400, {
