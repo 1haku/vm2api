@@ -196,6 +196,7 @@ export function evaluateAccount({
   policy = null,
   sessionKey = null,
   sessionLimit = null,
+  hardBlock = null,
   cooldownUntil = null,
   cooldownReason = null,
   now = Date.now(),
@@ -282,6 +283,19 @@ export function evaluateAccount({
         reason: disabledReason || 'disabled',
       },
     )
+  }
+
+  // sub2api IsSchedulable: live rate_limit_reset_at / overload_until win over passive Extra.
+  if (hardBlock?.until > now) {
+    const overloaded = hardBlock.reason === 'overloaded'
+    return finish(base, {
+      key: overloaded ? 'cool' : 'quota',
+      text: overloaded ? '过载冷却' : '限流中',
+      accept: false,
+      usable: true,
+      reason: hardBlock.reason,
+      until: hardBlock.until,
+    })
   }
 
   if (headerHardBlocked(account.unified || {}, '5h', now) || headerHardBlocked(quota, '5h', now)) {

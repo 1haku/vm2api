@@ -16,6 +16,7 @@ import { refreshSlotCredentialIfNeeded } from '../oauth/host-token-refresh.mjs'
 import { hostCountTokens, hostModels, hostOauthUsage } from '../oauth/host-anthropic.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
 import { isCompleteAssistantMessage } from '../core/errors.mjs'
+import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
 
@@ -215,6 +216,71 @@ export function usageFromSseEvent(event) {
   return null
 }
 
+const AUTH_ERROR_TEXT =
+  /authentication_error|token has been revoked|oauth_revoked|invalid_grant|invalid (?:bearer|x-api-key)|OAuth token has expired/i
+
+/**
+ * The kernel cli-hop answers 200 and then streams `event: error` (sub2api
+ * sseStreamErrorEventError). Before any downstream byte, restore the HTTP
+ * status the upstream meant so the pool classifies it like a real response.
+ */
+export function semanticStatusForStreamError(errorBody) {
+  const type = String(errorBody?.error?.type || errorBody?.type || '')
+  const message = String(errorBody?.error?.message || errorBody?.message || '')
+  if (type === 'rate_limit_error' || isPlanLimitMessage(message)) return 429
+  if (type === 'overloaded_error') return 529
+  if (type === 'authentication_error' || AUTH_ERROR_TEXT.test(message)) return 401
+  if (type === 'permission_error') return 403
+  if (type === 'invalid_request_error') return 400
+  return 502
+}
+
+/**
+ * Kernel `map_kernel` folds every provider failure into 502 `provider_error`.
+ * A plan limit / overload inside that text is the upstream 429 / 529.
+ */
+export function restoreKernelErrorStatus(result = {}, { now = Date.now() } = {}) {
+  if (!result || result.ok || Number(result.status) !== 502) return result
+  const body = result.body
+  if (!(body?.type === 'error' || body?.error)) return result
+  const status = semanticStatusForStreamError(body)
+  if (status !== 429 && status !== 529) return result
+  const headers =
+    status === 429
+      ? extraHeadersFromLimitError(String(body?.error?.message || ''), result.headers || {}, now)
+      : result.headers
+  return { ...result, status, headers, terminalState: 'rejected' }
+}
+
+/**
+ * Uncommitted hop that streamed an error, or ended with no visible output,
+ * gets a real status. A thinking/text hop already committed and never lands here.
+ */
+export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
+  if (!result || result.committed || result.ok) return result
+  if (Number(result.status) < 200 || Number(result.status) >= 300) return result
+  const body = result.body
+  if (body?.type === 'error' || body?.error) {
+    const status = semanticStatusForStreamError(body)
+    const headers =
+      status === 429
+        ? extraHeadersFromLimitError(String(body?.error?.message || ''), result.headers || {}, now)
+        : result.headers
+    // A generic 502 stream error may have left the CLI slot busy; keep it incomplete so it recycles.
+    const terminalState = status === 502 ? result.terminalState : 'rejected'
+    return { ...result, status, headers, terminalState, streamError: status !== 502 }
+  }
+  if (Array.isArray(body?.content) && body.content.length) return result
+  return {
+    ...result,
+    status: 502,
+    body: {
+      type: 'error',
+      error: { type: 'api_error', code: 'empty_response', message: 'Upstream stream ended without visible output' },
+    },
+  }
+}
+
 function dumpSessionEnvelope(envelope) {
   const dir = process.env.KIN_SESSION_DUMP
   if (!dir) return
@@ -339,7 +405,7 @@ export async function callGoWorker({
     const data = await readAll(response)
     const parsed = parseJson(data)
     const headers = mergeRateLimitHeaders(publicHeaders(response.headers))
-    return {
+    return restoreKernelErrorStatus({
       ok: response.statusCode >= 200 && response.statusCode < 300 && parsed?.type !== 'error',
       status: response.statusCode || 0,
       via: 'go-worker',
@@ -350,7 +416,7 @@ export async function callGoWorker({
       stopReason: parsed?.stop_reason || null,
       terminalState: headers['x-kin-terminal-state'] || null,
       transportError: false,
-    }
+    })
   } catch (error) {
     return {
       ok: false,
@@ -485,7 +551,7 @@ export async function streamGoWorker({
     const headers = mergeRateLimitHeaders(publicHeaders(response.headers))
     if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
       const data = await readAll(response, 1024 * 1024)
-      return {
+      return restoreKernelErrorStatus({
         ok: false,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
@@ -494,7 +560,7 @@ export async function streamGoWorker({
         committed: false,
         terminalState: headers['x-kin-terminal-state'] || 'error',
         transportError: false,
-      }
+      })
     }
     let buffer = ''
     let lastError = null
@@ -609,7 +675,7 @@ export async function streamGoWorker({
       if (!committed && complete) await flushCommit()
       const terminalState = complete ? 'verified' : 'incomplete'
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
-      return {
+      return restoreUncommittedHop({
         ok: response.statusCode === 200 && !lastError && complete,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
@@ -625,7 +691,7 @@ export async function streamGoWorker({
         committed,
         terminalState,
         transportError: false,
-      }
+      })
     } finally {
       if (idleTimer) clearInterval(idleTimer)
     }

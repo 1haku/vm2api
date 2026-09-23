@@ -123,12 +123,20 @@ export function resolveHopEngine(_vm, _routing = {}, { rustReady = null, binPath
   return { engine: 'rust', wanted, reason: 'configured_rust', fallback: false }
 }
 
+/**
+ * Only a hop that may have leaked a CLI slot is recycled. An upstream answer
+ * the transport restored (429 limit, 529, 401, stream error) is a response,
+ * not a dead slot — SIGKILLing the CLI there is how a layout mismatch loops.
+ */
 function isDeadWrapHop(result) {
   if (!result) return false
-  if (result.terminalState === 'incomplete') return true
   if (result.transportError) return true
   const msg = String(result?.body?.error?.message || '')
-  return /connection error/i.test(msg)
+  if (/connection error/i.test(msg)) return true
+  if (result.streamError) return false
+  const status = Number(result.status) || 0
+  if (status === 429 || status === 529 || status === 401 || status === 403) return false
+  return result.terminalState === 'incomplete'
 }
 
 /** Incomplete hop occupied a kernel CLI slot. Release it now; do not wait out the recycle cooldown. */
