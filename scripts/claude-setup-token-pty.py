@@ -140,7 +140,7 @@ def build_argv() -> list[str]:
         "-e", "PATH=/home/kincli/.local/bin:/usr/bin:/bin",
         "-e", "CLAUDE_CODE_USE_BEDROCK=0",
         "-e", "CLAUDE_CODE_USE_VERTEX=0",
-        "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+        "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0",
         "-e", "DISABLE_TELEMETRY=1",
         "-e", "DO_NOT_TRACK=1",
         "-e", "ANTHROPIC_BASE_URL=",

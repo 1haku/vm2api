@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { finalizeOfficialCcTelemetry, normalizeOfficialCcConfig } from '../src/lib/oauth/official-cc-bootstrap.mjs'
-import { TELEMETRY_KILL_ENV_KEYS } from '../src/lib/protocol/seed-policy.mjs'
+import { NONESSENTIAL_TRAFFIC_ENV_KEY, TELEMETRY_KILL_ENV_KEYS } from '../src/lib/protocol/seed-policy.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const rootGuess = path.resolve(here, '..')
@@ -64,7 +64,7 @@ async function liveHttp() {
   }
 }
 
-function fixtureFinalize() {
+async function fixtureFinalize() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-verify-init-'))
   const vmId = 'vm-98'
   const home = path.join(root, 'vms', vmId, 'cli-home')
@@ -110,12 +110,14 @@ function fixtureFinalize() {
       fingerprint: { device_id: 'slot-preset', session_id: 'sess-fake' },
     }),
   )
-  const out = finalizeOfficialCcTelemetry(root, vmId, { reload: false })
+  const out = await finalizeOfficialCcTelemetry(root, vmId, { reload: false })
   const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
   const worker = JSON.parse(fs.readFileSync(path.join(runDir, 'worker.json'), 'utf8'))
   const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'))
-  const leftoverGone = !fs.existsSync(path.join(home, '.claude', '.claude.json'))
-  const killGone = TELEMETRY_KILL_ENV_KEYS.every((k) => settings.env?.[k] == null)
+  const leftoverKept = fs.existsSync(path.join(home, '.claude', '.claude.json'))
+  const killGone = TELEMETRY_KILL_ENV_KEYS.filter((k) => k !== NONESSENTIAL_TRAFFIC_ENV_KEY).every(
+    (k) => settings.env?.[k] == null,
+  )
   record(
     'fake official IDs enable sidecar without docker reload',
     out.enabled === true && out.official === true && out.reloaded === false,
@@ -123,7 +125,8 @@ function fixtureFinalize() {
   record(
     'leftover seed flags cleared',
     vm.seed_policy?.telemetry_disabled === false &&
-      vm.seed_policy?.disable_nonessential_traffic === false &&
+      vm.seed_policy?.disable_nonessential_traffic === true &&
+      vm.seed_policy?.grove_enabled === false &&
       vm.seed_policy?.do_not_track === false,
   )
   record(
@@ -133,7 +136,11 @@ function fixtureFinalize() {
       worker.telemetry?.identity?.source === 'official-cc-init',
   )
   record('kill-switch env deleted from settings.json', killGone)
-  record('leftover ~/.claude/.claude.json discarded', leftoverGone)
+  record(
+    'telemetry on writes NONESSENTIAL=1 and grove_enabled false',
+    settings.env?.[NONESSENTIAL_TRAFFIC_ENV_KEY] === '1' && settings.grove_enabled === false,
+  )
+  record('leftover ~/.claude/.claude.json kept beside official home json', leftoverKept)
   record(
     'fingerprint overwritten by official machineID',
     vm.fingerprint?.official_machine_id === MACHINE && vm.fingerprint?.device_id === MACHINE,
@@ -142,7 +149,7 @@ function fixtureFinalize() {
   fs.rmSync(root, { recursive: true, force: true })
 }
 
-function fixtureNoIdentity() {
+async function fixtureNoIdentity() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-verify-noid-'))
   const vmId = 'vm-97'
   const runDir = path.join(root, 'vms', vmId, 'run')
@@ -157,7 +164,7 @@ function fixtureNoIdentity() {
       fingerprint: { device_id: 'slot-only' },
     }),
   )
-  const out = finalizeOfficialCcTelemetry(root, vmId, { reload: false })
+  const out = await finalizeOfficialCcTelemetry(root, vmId, { reload: false })
   const worker = JSON.parse(fs.readFileSync(path.join(runDir, 'worker.json'), 'utf8'))
   record(
     'no official IDs keeps sidecar off',
@@ -209,8 +216,8 @@ async function liveMasterRead() {
 }
 
 const live = process.argv.includes('--live') || process.env.VERIFY_LIVE === '1'
-fixtureFinalize()
-fixtureNoIdentity()
+await fixtureFinalize()
+await fixtureNoIdentity()
 liveFiles()
 if (live) {
   await liveHttp()
