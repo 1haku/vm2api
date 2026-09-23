@@ -104,6 +104,14 @@ function quotaView(vm, account) {
 
 export function resolveSlotTier(vm, account = null) {
   const quota = quotaView(vm, account)
+  // An explicit Pro classification must veto stale Max usage evidence. The
+  // latter can survive a credential change or a Fable entitlement rejection.
+  if (
+    String(vm?.claude?.account_tier || vm?.account_tier || '').toLowerCase() === 'pro' ||
+    String(account?.unified?.account_tier || '').toLowerCase() === 'pro'
+  ) {
+    return 'pro'
+  }
   return inferClaudeTier(
     {
       has_token: true,
@@ -126,6 +134,9 @@ export function slotAllowsModel({ vm, account = null, model } = {}) {
   } else if (isCodexCatalogModel(modelKey)) {
     return { ok: false, reason: 'claude_model_required' }
   }
+  const canonical = resolvePolicyModelId(modelKey) || modelKey
+  const deniedUntil = Number(account?.unified?.model_denied_until?.[canonical]) || 0
+  if (deniedUntil > Date.now()) return { ok: false, reason: 'model_not_supported' }
   if (isFableModel(modelKey) && resolveSlotTier(vm, account) !== 'max') {
     return { ok: false, reason: 'fable_requires_max' }
   }

@@ -25,8 +25,9 @@ import {
   wipeElapsedHeaderWindows,
 } from './quota-window.mjs'
 import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from './quota-tiers.mjs'
+import { resolvePolicyModelId } from '../protocol/model-policy.mjs'
 import { SessionLimitRegistry } from './session-limit.mjs'
-import { isFableUnavailablePro, isInventedFableWindow, isOfficialUsageRateLimited } from '../oauth/crs-usage-probe.mjs'
+import { isFablePlanDenied, isInventedFableWindow, isOfficialUsageRateLimited } from '../oauth/crs-usage-probe.mjs'
 import { normalizeUsage } from '../admin/pricing.mjs'
 import { isTestProbeSource } from './schedule-eligibility.mjs'
 
@@ -303,6 +304,7 @@ export class AccountQuota {
     if (probe.extra_usage) acc.unified.overage_status = probe.extra_usage.status || acc.unified.overage_status
     acc.unified.extra_usage = probe.extra_usage || acc.unified.extra_usage || null
     const fableTransport = isFableTransportFailure(probe)
+    if (probe.fable) acc.unified.fable_probe_attempted_at = nowIso
     const oi = probe.seven_day_oi || probe.seven_day_overage_included || probe.fable?.seven_day_oi
     const oiUtil =
       oi?.utilization != null
@@ -336,20 +338,7 @@ export class AccountQuota {
     if (probe.usage_has_fable === true || hasFableUsage) acc.unified.usage_has_fable = true
     else if (probe.usage_has_fable === false) acc.unified.usage_has_fable = false
     if (probe.fable && !fableTransport) {
-      const fableRevokeNoise =
-        usageOk &&
-        !hasFableUsage &&
-        (probe.fable.banned ||
-          probe.fable.status === 401 ||
-          /revoked|oauth|authentication/i.test(String(probe.fable.error || '')))
-      const fable429Pro =
-        usageOk &&
-        !hasFableUsage &&
-        !oiNorm &&
-        !oi?.resets_at &&
-        !oi?.reset &&
-        (Number(probe.fable.status) === 429 || !!probe.fable.limited)
-      const planDenied = !hasFableUsage && (!!probe.fable.plan_denied || fableRevokeNoise || fable429Pro)
+      const planDenied = usageOk && !hasFableUsage && isFablePlanDenied(probe.fable)
       acc.unified.fable = {
         limited: oiRejected,
         banned: !!probe.fable.banned && !usageOk && (probe.usage_status === 401 || probe.usage_status === 403),
@@ -359,7 +348,7 @@ export class AccountQuota {
         reset: probe.fable.reset_at || acc.unified['7d_oi']?.reset || null,
         utilization: oiNorm ?? probe.fable.utilization ?? acc.unified['7d_oi']?.utilization ?? null,
         model: probe.fable.model || 'claude-fable-5',
-        error: planDenied ? (fableRevokeNoise ? 'plan_denied' : probe.fable.error || null) : probe.fable.error || null,
+        error: usageOk && Number(probe.fable.status) === 401 ? null : probe.fable.error || null,
         probed_at: probe.probed_at || new Date().toISOString(),
       }
       const stored = String(acc.unified.account_tier || '').toLowerCase()
@@ -367,7 +356,6 @@ export class AccountQuota {
       else if (acc.unified.fable.plan_denied && stored !== 'max') acc.unified.account_tier = 'pro'
     } else if (usageOk) {
       const leftover = leftoverFable
-      const stored = String(acc.unified.account_tier || '').toLowerCase()
       if (hasFableUsage) {
         acc.unified.account_tier = 'max'
         if (leftover.plan_denied || leftover.ok === false) {
@@ -377,37 +365,6 @@ export class AccountQuota {
             ok: true,
             error: null,
             probed_at: probe.probed_at || leftover.probed_at || new Date().toISOString(),
-          }
-        }
-      } else if (
-        stored !== 'max' &&
-        (probe.usage_has_fable === false ||
-          stored === 'pro' ||
-          isFableUnavailablePro(leftover, {
-            utilization_7d_oi: acc.unified['7d_oi']?.utilization,
-            reset_7d_oi: acc.unified['7d_oi']?.reset,
-            status_7d_oi: acc.unified['7d_oi']?.status,
-            '7d_oi': acc.unified['7d_oi'],
-          }))
-      ) {
-        acc.unified.fable = {
-          limited: false,
-          banned: false,
-          plan_denied: true,
-          ok: false,
-          status: leftover.status || 403,
-          reset: null,
-          utilization: null,
-          model: leftover.model || 'claude-fable-5',
-          error: 'plan_denied',
-          probed_at: probe.probed_at || new Date().toISOString(),
-        }
-        acc.unified.account_tier = 'pro'
-        if (!oiNorm && !oi?.resets_at && !oi?.reset) {
-          acc.unified['7d_oi'] = {
-            utilization: null,
-            reset: null,
-            status: null,
           }
         }
       }
@@ -937,13 +894,11 @@ export class AccountQuota {
       changed = true
     }
     if (fb && (fb.banned || revoke.test(String(fb.error || '')))) {
-      const stored = String(u.account_tier || '').toLowerCase()
       u.fable = {
         ...fb,
         banned: false,
-        // Leftover revoke on a Max ticket is not a Pro plan_denied.
-        plan_denied: stored === 'max' ? false : true,
-        error: revoke.test(String(fb.error || '')) ? (stored === 'max' ? null : 'plan_denied') : fb.error || null,
+        plan_denied: revoke.test(String(fb.error || '')) ? false : !!fb.plan_denied,
+        error: revoke.test(String(fb.error || '')) ? null : fb.error || null,
       }
       changed = true
     }
@@ -961,6 +916,32 @@ export class AccountQuota {
     if (acc.unified?.account_tier === key) return acc
     acc.unified = acc.unified || {}
     acc.unified.account_tier = key
+    acc.unified.updated_at = new Date().toISOString()
+    return this.repo.save(acc)
+  }
+
+  markModelUnsupported(accountId, model, durationMs = 60 * 60_000) {
+    const key = resolvePolicyModelId(model) || String(model || '').trim()
+    if (!accountId || !key) return null
+    const acc = this.repo.get(accountId)
+    if (!acc) return null
+    acc.unified = acc.unified || {}
+    acc.unified.model_denied_until = {
+      ...(acc.unified.model_denied_until || {}),
+      [key]: Date.now() + durationMs,
+    }
+    acc.unified.updated_at = new Date().toISOString()
+    return this.repo.save(acc)
+  }
+
+  clearModelUnsupported(accountId, model) {
+    const key = resolvePolicyModelId(model) || String(model || '').trim()
+    if (!accountId || !key) return null
+    const acc = this.repo.get(accountId)
+    if (!acc?.unified?.model_denied_until?.[key]) return acc
+    const denied = { ...acc.unified.model_denied_until }
+    delete denied[key]
+    acc.unified.model_denied_until = denied
     acc.unified.updated_at = new Date().toISOString()
     return this.repo.save(acc)
   }

@@ -2,12 +2,13 @@
  * Periodic Extra reconcile for live credential slots.
  *
  * Healthy windows stay on Messages headers. Official GET /api/oauth/usage is
- * not interval-polled. A window whose reset has already passed is not a real
- * 0% sample: cli-hop often stops sending fresh rate-limit headers, and the
+ * only polled for an elapsed Extra reset or a stale Pro classification.
+ * A window whose reset has already passed is not a real 0% sample: cli-hop
+ * often stops sending fresh rate-limit headers, and the
  * wipe would otherwise pin the panel at 0 while usage_logs keep growing.
  * Those slots get one /usage hop, then back off.
  */
-import { usageProbeBackoffRemainingMs } from './crs-usage-probe.mjs'
+import { shouldProbeFable, usageProbeBackoffRemainingMs } from './crs-usage-probe.mjs'
 import { hasRefreshPresence } from './oauth-credentials.mjs'
 import { vmHasProxyPath } from './credential-refresh-monitor.mjs'
 import { parseResetMs } from '../pool/quota-window.mjs'
@@ -80,7 +81,7 @@ function elapsedExtraResetMs(unified = {}, now = Date.now()) {
 }
 
 /**
- * Hop /usage only after a 5h/7d Extra reset has elapsed.
+ * Hop /usage after a 5h/7d Extra reset has elapsed or a Pro tier needs rechecking.
  * A live or never-sampled window stays passive.
  * @returns {{ due: boolean, reason?: string }}
  */
@@ -89,6 +90,15 @@ export function isUsageProbeDue(account = {}, opts = {}) {
   const unified = account?.unified || {}
   if (usageProbeBackoffRemainingMs(unified, now) > 0) {
     return { due: false, reason: 'usage_backoff' }
+  }
+  if (
+    String(unified.account_tier || '').toLowerCase() === 'pro' &&
+    shouldProbeFable({ fable: unified.fable || {}, quota: unified, storedTier: 'pro', now })
+  ) {
+    const attemptedAt = Date.parse(unified.fable_probe_attempted_at || unified.fable?.probed_at || '')
+    if (!Number.isFinite(attemptedAt) || now - attemptedAt >= 60 * 60_000) {
+      return { due: true, reason: 'pro_tier_recheck' }
+    }
   }
   const resetMs = elapsedExtraResetMs(unified, now)
   if (resetMs == null) return { due: false, reason: 'list_passive_only' }
