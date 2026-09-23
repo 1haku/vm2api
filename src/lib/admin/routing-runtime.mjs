@@ -102,7 +102,9 @@ export function createRoutingRuntime(ctx) {
     const v = Math.max(0, Math.min(256, Number(n) || 0))
     const skip = []
     for (const vm of listVms(ctx.cfg.paths.project)) {
-      if (vm.policy?.concurrencyOverride) {
+      // listVms returns flattened summaries; override flags live in the raw record.
+      const storedVm = getVm(ctx.cfg.paths.project, vm.id)
+      if (storedVm?.policy?.concurrencyOverride) {
         skip.push(vm.id)
         if (vm.account_uuid) skip.push(vm.account_uuid)
         continue
@@ -126,7 +128,9 @@ export function createRoutingRuntime(ctx) {
     const skip = []
     const applied = { default: 0, pro: 0, max: 0, skipped: 0 }
     for (const vm of listVms(ctx.cfg.paths.project)) {
-      if (vm.policy?.concurrencyOverride) {
+      // listVms returns flattened summaries; override flags live in the raw record.
+      const storedVm = getVm(ctx.cfg.paths.project, vm.id)
+      if (storedVm?.policy?.concurrencyOverride) {
         skip.push(vm.id)
         if (vm.account_uuid) skip.push(vm.account_uuid)
         if (vm.claude?.account_uuid) skip.push(vm.claude.account_uuid)
@@ -135,7 +139,7 @@ export function createRoutingRuntime(ctx) {
       }
       const key = vmTierKey(vm)
       const next = Number(policies[key]?.max_concurrency ?? 2)
-      const cur = Number(vm.policy?.maxConcurrency)
+      const cur = Number(storedVm?.policy?.maxConcurrency)
       if (cur === next) continue
       applyVmConcurrency(vm.id, next, { override: false })
       applied[key] += 1
