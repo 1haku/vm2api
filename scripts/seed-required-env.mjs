@@ -8,7 +8,11 @@ import path from 'node:path'
 import { listVms, getVm } from '../src/lib/vm/vm-registry.mjs'
 import { atomicWriteJson } from '../src/lib/vm/vm-file.mjs'
 import { loadVmIdentity, persistVmSettings } from '../src/lib/identity/vm-identity.mjs'
-import { defaultSeedPolicy, isTelemetryEnabled, TELEMETRY_KILL_ENV_KEYS } from '../src/lib/protocol/seed-policy.mjs'
+import {
+  defaultSeedPolicy,
+  NONESSENTIAL_TRAFFIC_ENV_KEY,
+  TELEMETRY_KILL_ENV_KEYS,
+} from '../src/lib/protocol/seed-policy.mjs'
 import { syncWorkerTelemetry } from '../src/lib/vm/vm-runtime.mjs'
 
 const root = process.argv[2] || '/opt/kin-gateway'
@@ -29,7 +33,7 @@ for (const id of ids) {
   const next = defaultSeedPolicy({
     ...(vm.seed_policy || {}),
     telemetry_disabled: !enable,
-    disable_nonessential_traffic: enable ? false : vm.seed_policy?.disable_nonessential_traffic !== false,
+    disable_nonessential_traffic: enable,
     do_not_track: enable ? false : vm.seed_policy?.do_not_track !== false,
   })
   vm.seed_policy = next
@@ -49,8 +53,12 @@ for (const id of ids) {
     const identity = loadVmIdentity(exec)
     const result = persistVmSettings(exec, identity)
     const env = identity.settings?.env || {}
-    const keysPresent = TELEMETRY_KILL_ENV_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(env, key))
-    const ok = enable ? keysPresent.length === 0 : keysPresent.includes('DISABLE_TELEMETRY')
+    const killKeys = TELEMETRY_KILL_ENV_KEYS.filter((key) => key !== NONESSENTIAL_TRAFFIC_ENV_KEY)
+    const keysPresent = killKeys.filter((key) => Object.prototype.hasOwnProperty.call(env, key))
+    const nonessential = env[NONESSENTIAL_TRAFFIC_ENV_KEY]
+    const ok = enable
+      ? keysPresent.length === 0 && nonessential === '1'
+      : keysPresent.includes('DISABLE_TELEMETRY') && nonessential === '0'
     if (!ok) {
       failed += 1
       missing.push(id)

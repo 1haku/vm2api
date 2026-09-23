@@ -38,6 +38,7 @@ export function writeSlotSeedFiles(projectRoot, vm, seedPolicy = null) {
     }),
     theme: pol.theme || 'dark',
     autoUpdates: false,
+    grove_enabled: false,
   }
   const seedDoc = buildKinSeedJson(vm, pol, {
     timezone,

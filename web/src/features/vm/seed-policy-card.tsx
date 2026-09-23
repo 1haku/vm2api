@@ -17,21 +17,21 @@ type SeedPolicy = Record<string, boolean>
 export const SEED_PRESETS: Record<string, SeedPolicy> = {
   standard: {
     telemetry_disabled: false,
-    disable_nonessential_traffic: false,
+    disable_nonessential_traffic: true,
     do_not_track: false,
     reject_client_settings: true,
     reject_client_metadata_identity: true,
   },
   open: {
     telemetry_disabled: false,
-    disable_nonessential_traffic: false,
+    disable_nonessential_traffic: true,
     do_not_track: false,
     reject_client_settings: false,
     reject_client_metadata_identity: false,
   },
   strict: {
     telemetry_disabled: true,
-    disable_nonessential_traffic: true,
+    disable_nonessential_traffic: false,
     do_not_track: true,
     reject_client_settings: true,
     reject_client_metadata_identity: true,
@@ -39,21 +39,23 @@ export const SEED_PRESETS: Record<string, SeedPolicy> = {
 }
 
 const PRESET_LABELS: [string, string, string][] = [
-  ['standard', '标准', '拒客户端覆写，遥测保持官方默认'],
-  ['open', '开放', '完全不干预客户端'],
-  ['strict', '关闭遥测', '关遥测 + 关非必要流量 + DNT'],
+  ['standard', '标准', '拒客户端覆写，遥测开，非必要流量=1'],
+  ['open', '开放', '不拒客户端；遥测开，非必要流量=1'],
+  ['strict', '关闭遥测', '关遥测 + DNT；非必要流量=0'],
 ]
 
 /**
- * Telemetry on forces the kill-switch companions off. That is the same
- * contract as defaultSeedPolicy and the external telemetry pane: DNT and
- * nonessential traffic cannot stay on while telemetry is enabled.
+ * Nonessential traffic is the inverse of the telemetry switch:
+ * telemetry on → disable_nonessential_traffic true (env 1);
+ * telemetry off → false (env 0). DNT still cannot stay on while telemetry is on.
  */
 export function alignTelemetryDraft(draft: SeedPolicy): SeedPolicy {
-  if (draft.telemetry_disabled) return draft
+  if (draft.telemetry_disabled) {
+    return { ...draft, disable_nonessential_traffic: false }
+  }
   return {
     ...draft,
-    disable_nonessential_traffic: false,
+    disable_nonessential_traffic: true,
     do_not_track: false,
   }
 }
@@ -147,7 +149,9 @@ export function SeedPolicyCard({
 
         <div className='space-y-2 border-t pt-3'>
           {SEED_FLAGS.map(([key, label]) => {
-            const locked = telemetryOn && TELEMETRY_LOCKED.has(key)
+            const locked =
+              key === 'disable_nonessential_traffic' ||
+              (telemetryOn && TELEMETRY_LOCKED.has(key))
             return (
               <div
                 key={key}
@@ -175,7 +179,7 @@ export function SeedPolicyCard({
           })}
         </div>
         <p className='text-xs text-muted-foreground'>
-          遥测打开时，DNT 和非必要流量跟外部契约一起关掉，不能单独打开。
+          遥测打开时非必要流量固定为 1，DNT 关掉。遥测关闭时非必要流量固定为 0。
           {syncTelemetry
             ? ' 外部初装「同步遥测」开着，下次换票会按那份配置把本槽遥测重新打开。'
             : ' 外部初装「同步遥测」关着，换票不会改写这里的遥测开关。'}
