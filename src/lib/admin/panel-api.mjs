@@ -6,6 +6,7 @@
  *   { ok: false, error: { type, code, message, ... } }
  */
 
+import { readSlotProcessStatus } from '../vm/slot-process-status.mjs'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -510,6 +511,7 @@ export async function buildVmDetail({
   requestLog = null,
   proxyPool = null,
   kernelHealth = null,
+  slotProcessStatus = readSlotProcessStatus,
 }) {
   const vm = getVm(cfg.paths.project, id)
   if (!vm) {
@@ -574,6 +576,7 @@ export async function buildVmDetail({
       }
     }
   }
+  const processStatus = gpt ? null : await slotProcessStatus({ projectRoot: cfg.paths.project, vm })
   const activeEngine = gpt ? null : rustHealth?.reachable ? 'rust' : null
   return ok({
     vm: summary,
@@ -614,6 +617,7 @@ export async function buildVmDetail({
           codex_health: codexHealth,
         }
       : {
+          ...processStatus,
           credential_owner: 'go',
           configured_engine: summary.inference_engine || null,
           resolved_engine: inferenceEngine,
