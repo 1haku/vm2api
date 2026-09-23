@@ -5,10 +5,10 @@ import { VIEW_TITLES } from '@/config/nav'
 import type { Vm } from '@/types/panel-vm'
 import { toast } from 'sonner'
 import { fmtBytes } from '@/lib/format'
-import { wrapSyncKernelFails } from '@/lib/wrap-health'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -30,7 +30,6 @@ import {
   installReleaseKernel,
   makeWrapSample,
   promoteWrapSample,
-  repairWrapSample,
   syncWrapSample,
   uploadKernelBinary,
   wrapSampleQueryOptions,
@@ -72,15 +71,56 @@ function engineOf(vm: Vm) {
   return vm.resolved_inference_engine || vm.inference_engine || 'auto'
 }
 
-function toastSync(report: WrapSyncReport) {
-  const total = report.total ?? 0
-  const ok = report.ok_count ?? 0
-  const failed = report.failed_count ?? 0
-  const kernelFail = wrapSyncKernelFails(report.items)
-  if (failed > 0) toast.error(`kernel 重装 ${ok}/${total}`)
-  else if (kernelFail > 0)
-    toast.error(`kernel 文件 ${ok}/${total}，进程未起来 ${kernelFail}`)
-  else toast.success(`kernel 重装 ${ok}/${total}`)
+type HopJob = {
+  phase: 'download' | 'slots' | 'done'
+  done: number
+  total: number
+  current: string
+  failed: string[]
+}
+
+function hopProgressValue(job: HopJob) {
+  if (job.phase === 'download') return 8
+  if (!job.total) return 0
+  return Math.round((job.done / job.total) * 100)
+}
+
+function slotSyncFailed(report: WrapSyncReport, id: string) {
+  const item = report.items?.find((row) => row.id === id) || report.items?.[0]
+  if (!item) return report.ok === false
+  if (item.ok === false) return true
+  return item.kernel?.ok === false
+}
+
+function HopProgress({ job }: { job: HopJob }) {
+  const label =
+    job.phase === 'download'
+      ? '拉取 GitHub 最新 kernel'
+      : job.phase === 'done'
+        ? job.failed.length
+          ? `cli-hop 重装结束，失败 ${job.failed.length}`
+          : `cli-hop 已重装 ${job.done}/${job.total}`
+        : `正在替换 ${job.current || '槽'}`
+  return (
+    <div className='mb-4 max-w-3xl space-y-1.5'>
+      <div className='flex items-center justify-between gap-3 text-xs text-muted-foreground'>
+        <span>{label}</span>
+        <span>
+          {job.phase === 'download' ? '下载中' : `${job.done}/${job.total}`}
+        </span>
+      </div>
+      <Progress
+        value={hopProgressValue(job)}
+        className='h-2'
+        indicatorClassName={job.phase === 'done' ? undefined : 'animate-pulse'}
+      />
+      {job.failed.length ? (
+        <p className='text-xs text-destructive'>
+          失败：{job.failed.join('、')}
+        </p>
+      ) : null}
+    </div>
+  )
 }
 
 function Flag({ ok, label }: { ok?: boolean; label: string }) {
@@ -133,12 +173,19 @@ export function WrapSamplePage() {
   const [glibcVm, setGlibcVm] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [releaseOpen, setReleaseOpen] = useState(false)
+  const [hopOpen, setHopOpen] = useState(false)
+  const [hopIds, setHopIds] = useState<string[]>([])
+  const [pullLatest, setPullLatest] = useState(true)
+  const [hopJob, setHopJob] = useState<HopJob | null>(null)
+  const [hopBusy, setHopBusy] = useState(false)
+  const hopToken = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const rustVms = useMemo(
     () => vms.filter((vm) => engineOf(vm) === 'rust'),
     [vms]
   )
+  const reinstallIds = selected.length ? selected : vms.map((vm) => vm.id)
 
   const invalidate = async () => {
     await Promise.all([
@@ -147,23 +194,79 @@ export function WrapSamplePage() {
     ])
   }
 
-  const sync = useMutation({
-    mutationFn: () =>
-      syncWrapSample({
-        ids: selected.length ? selected : undefined,
-        restart,
-      }),
-    onSuccess: async (report) => {
-      toastSync(report)
+  const openHop = (ids: string[], pull: boolean) => {
+    setHopIds(ids)
+    setPullLatest(pull)
+    setHopOpen(true)
+  }
+
+  const runHop = async (ids: string[], pull: boolean) => {
+    if (!ids.length || hopBusy) return
+    const token = hopToken.current + 1
+    hopToken.current = token
+    const alive = () => hopToken.current === token
+    setHopBusy(true)
+    setHopJob({
+      phase: pull ? 'download' : 'slots',
+      done: 0,
+      total: ids.length,
+      current: ids[0] || '',
+      failed: [],
+    })
+    const failed: string[] = []
+    try {
+      if (pull) {
+        await installReleaseKernel({ ids: [], restart: false })
+        if (!alive()) return
+      }
+      for (let i = 0; i < ids.length; i++) {
+        if (!alive()) return
+        const id = ids[i]
+        setHopJob({
+          phase: 'slots',
+          done: i,
+          total: ids.length,
+          current: id,
+          failed: [...failed],
+        })
+        try {
+          const report = await syncWrapSample({ ids: [id], restart })
+          if (slotSyncFailed(report, id)) failed.push(id)
+        } catch {
+          failed.push(id)
+        }
+      }
+      if (!alive()) return
+      setHopJob({
+        phase: 'done',
+        done: ids.length,
+        total: ids.length,
+        current: '',
+        failed: [...failed],
+      })
+      if (failed.length) {
+        toast.error(`cli-hop 重装 ${ids.length - failed.length}/${ids.length}`)
+      } else {
+        toast.success(`cli-hop 重装 ${ids.length}/${ids.length}`)
+      }
       await invalidate()
-    },
-    onError: (error: Error) => toast.error(error.message),
-  })
+    } catch (error) {
+      if (!alive()) return
+      toast.error(error instanceof Error ? error.message : 'cli-hop 重装失败')
+      setHopJob((cur) =>
+        cur
+          ? { ...cur, phase: 'done', failed: failed.length ? failed : ['下载'] }
+          : cur
+      )
+    } finally {
+      if (alive()) setHopBusy(false)
+    }
+  }
 
   const promote = useMutation({
     mutationFn: (id: string) => promoteWrapSample(id),
     onSuccess: async (_data, id) => {
-      toast.success(`已从 ${id} 晋升 wrap 文件`)
+      toast.success(`已把 ${id} 收成母本`)
       setPromoteId(null)
       await invalidate()
     },
@@ -180,42 +283,21 @@ export function WrapSamplePage() {
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const repair = useMutation({
-    mutationFn: (id: string) => repairWrapSample(id),
-    onSuccess: async (report, id) => {
-      const kernelOk = report.kernel?.ok !== false
-      toast[kernelOk ? 'success' : 'error'](
-        kernelOk ? `${id} 已重装 kernel` : `${id} kernel 文件已写入，进程未起来`
-      )
-      await invalidate()
-    },
-    onError: (error: Error) => toast.error(error.message),
-  })
-
   const upload = useMutation({
     mutationFn: (file: File) => uploadKernelBinary(file),
     onSuccess: async () => {
-      toast.success('已替换仓内 kernel，请选择槽位重装')
+      toast.success('已写入仓内 kernel。用 cli-hop 重装铺到槽')
       setUploadFile(null)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
   })
   const releaseUpdate = useMutation({
-    mutationFn: () =>
-      installReleaseKernel({
-        ids: selected.length ? selected : undefined,
-        restart,
-      }),
+    mutationFn: () => installReleaseKernel({ ids: [], restart: false }),
     onSuccess: async (result) => {
       setReleaseOpen(false)
       const tag = result.release?.tag || 'Release'
-      const total = result.sync?.total ?? 0
-      const ok = result.sync?.ok_count ?? 0
-      const kernelFail = wrapSyncKernelFails(result.sync?.items)
-      if (kernelFail > 0) toast.error(`已写入 ${tag}，进程未起来 ${kernelFail}`)
-      else if (total === 0) toast.success(`已写入 ${tag}，没有槽位需要同步`)
-      else toast.success(`已用 ${tag} 热更新 kernel ${ok}/${total}`)
+      toast.success(`已下载 ${tag}。尚未铺到槽`)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -259,39 +341,40 @@ export function WrapSamplePage() {
           />
           <Button
             size='sm'
-            disabled={releaseUpdate.isPending || sync.isPending}
+            variant='outline'
+            disabled={releaseUpdate.isPending || hopBusy}
             loading={releaseUpdate.isPending}
             onClick={() => setReleaseOpen(true)}
           >
-            下载并热更新
+            拉取 GitHub
           </Button>
           <Button
             size='sm'
             variant='outline'
-            disabled={upload.isPending}
+            disabled={upload.isPending || hopBusy}
             loading={upload.isPending}
             onClick={() => fileRef.current?.click()}
           >
-            上传 kernel
+            本地上传
           </Button>
           <Button
             size='sm'
             variant='outline'
-            disabled={make.isPending}
+            disabled={make.isPending || hopBusy}
             loading={make.isPending}
             onClick={() => setMakeOpen(true)}
           >
-            重整 wrap 文件
+            重整母本
           </Button>
           <Button
             size='sm'
-            disabled={!complete || sync.isPending}
-            loading={sync.isPending}
-            onClick={() => sync.mutate()}
+            disabled={!complete || !reinstallIds.length || hopBusy}
+            loading={hopBusy && hopIds.length !== 1}
+            onClick={() => openHop(reinstallIds, true)}
           >
             {selected.length
-              ? `重装所选 ${selected.length} 槽`
-              : '全部重装 kernel'}
+              ? `cli-hop 重装 ${selected.length}`
+              : 'cli-hop 重装'}
           </Button>
         </div>
       }
@@ -304,10 +387,10 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          用仓内最新 linux amd64 <code>kin-kernel</code> 重装所选 VM 的槽内
-          kernel。不改凭证、不改 SOCKS、不 docker rm。wrap CLI（cli-node / glibc
-          shim）仍随同步铺到槽内。
+          槽内服务重装。先拉取 GitHub 最新 kernel，或上传本地文件。再一键把
+          cli-hop（kernel + cli-node）铺进槽里。不改凭证、不改 SOCKS、不删容器。
         </p>
+        {hopJob ? <HopProgress job={hopJob} /> : null}
         <div className='grid gap-4 lg:grid-cols-2'>
           <Card>
             <CardHeader>
@@ -335,9 +418,7 @@ export function WrapSamplePage() {
                   checked={restart}
                   onCheckedChange={(v) => setRestart(v === true)}
                 />
-                <label>
-                  同步后重启 rust kernel（默认开，让 CONNECT 桥跟着起来）
-                </label>
+                <label>铺完后重启 rust kernel，让 cli-hop 用上新二进制</label>
               </div>
             </CardContent>
           </Card>
@@ -346,21 +427,9 @@ export function WrapSamplePage() {
               <CardTitle>怎么用</CardTitle>
             </CardHeader>
             <CardContent className='space-y-2 text-sm leading-relaxed text-muted-foreground'>
-              <p>
-                1. 默认用仓内 <code>bin/kin-kernel</code>（
-                <code>KIN_KERNEL_BIN</code>
-                ）。旧母样本 ELF 不会盖回去。
-              </p>
-              <p>
-                2. 「下载并热更新」拉取 GitHub 最新 Release 的 linux amd64
-                <code>kin-kernel</code>
-                ，写入仓内后同步所选槽。未选槽则全部。不 docker rm。「上传
-                kernel」只替换仓内二进制，不自动同步。
-              </p>
-              <p>
-                3. 单槽「重装 kernel」只修这一台，不碰凭证。覆盖在跑的文件会先
-                unlink 再换上。
-              </p>
+              <p>1. 拉取 GitHub，或本地上传。两者只更新仓内 kernel。</p>
+              <p>2. cli-hop 重装逐槽换上 kernel 和 cli-node，并显示进度。</p>
+              <p>3. 「替换此槽」只动一台。未勾选槽时，重装按钮覆盖全部。</p>
             </CardContent>
           </Card>
         </div>
@@ -421,32 +490,30 @@ export function WrapSamplePage() {
                             )}
                           </td>
                           <td className='py-2 text-muted-foreground'>
-                            {source
-                              ? '当前来源'
-                              : rust
-                                ? '可晋升'
-                                : 'go 槽只收文件'}
+                            {source ? '当前母本' : rust ? '可收成' : '只收文件'}
                           </td>
                           <td className='py-2'>
                             <div className='flex justify-end gap-2'>
                               <Button
                                 size='sm'
                                 variant='outline'
-                                disabled={!rust || promote.isPending}
+                                disabled={!rust || promote.isPending || hopBusy}
                                 onClick={() => setPromoteId(vm.id)}
                               >
-                                晋升 wrap 文件
+                                晋升母本
                               </Button>
                               <Button
                                 size='sm'
                                 variant='outline'
-                                disabled={!complete || repair.isPending}
+                                disabled={!complete || hopBusy}
                                 loading={
-                                  repair.isPending && repair.variables === vm.id
+                                  hopBusy &&
+                                  hopIds.length === 1 &&
+                                  hopIds[0] === vm.id
                                 }
-                                onClick={() => repair.mutate(vm.id)}
+                                onClick={() => openHop([vm.id], false)}
                               >
-                                重装 kernel
+                                替换此槽
                               </Button>
                             </div>
                           </td>
@@ -459,7 +526,7 @@ export function WrapSamplePage() {
             )}
             {rustVms.length === 0 ? (
               <p className='mt-3 text-xs text-muted-foreground'>
-                没有 rust cli-hop 槽时仍可同步文件，但不会启动 wrap kernel。
+                没有 rust cli-hop 槽时仍会铺文件，但不会重启 kernel。
               </p>
             ) : null}
           </CardContent>
@@ -470,9 +537,9 @@ export function WrapSamplePage() {
         onOpenChange={(open) => {
           if (!open) setPromoteId(null)
         }}
-        title='覆盖 wrap 母样本？'
-        desc={`用 ${promoteId || ''} 槽内已验证的 .kin 覆盖 share/wrap-cli。不会复制凭证或 SOCKS。下次重装仍优先仓内最新 kernel。`}
-        confirmText='晋升 wrap 文件'
+        title='收成母本？'
+        desc={`把 ${promoteId || '此槽'} 里已跑通的 cli-node 收成以后重装用的母本。不拷凭证。kernel 仍用仓内文件。`}
+        confirmText='晋升'
         cancelBtnText='取消'
         isLoading={promote.isPending}
         handleConfirm={() => {
@@ -514,9 +581,9 @@ export function WrapSamplePage() {
         onOpenChange={(open) => {
           if (!open) setUploadFile(null)
         }}
-        title='替换 kernel 二进制？'
-        desc={`将用 ${uploadFile?.name || '所选文件'}（${fmtBytes(uploadFile?.size || 0)}）覆盖仓内 bin/kin-kernel 与 share/wrap-cli/kin-kernel.bin。不会自动同步槽位。`}
-        confirmText='替换'
+        title='上传 kernel？'
+        desc={`用 ${uploadFile?.name || '所选文件'}（${fmtBytes(uploadFile?.size || 0)}）覆盖仓内 kernel。不会自动改槽。`}
+        confirmText='上传'
         cancelBtnText='取消'
         isLoading={upload.isPending}
         handleConfirm={() => {
@@ -526,13 +593,50 @@ export function WrapSamplePage() {
       <ConfirmDialog
         open={releaseOpen}
         onOpenChange={setReleaseOpen}
-        title='从 GitHub 热更新 kernel？'
-        desc={`下载最新 Release 的 linux amd64 kin-kernel，覆盖仓内 bin/kin-kernel 与 share/wrap-cli/kin-kernel.bin，再同步${selected.length ? `所选 ${selected.length} 槽` : '全部槽'}并${restart ? '重启' : '不重启'}槽内 dataplane。不 docker rm，不改凭证和 SOCKS。`}
-        confirmText='下载并热更新'
+        title='拉取 GitHub 最新 kernel？'
+        desc='只下载最新 Release 的 linux amd64 kin-kernel 到仓内。不改槽、不重启。'
+        confirmText='下载'
         cancelBtnText='取消'
         isLoading={releaseUpdate.isPending}
         handleConfirm={() => releaseUpdate.mutate()}
       />
+      <ConfirmDialog
+        open={hopOpen}
+        onOpenChange={(open) => {
+          if (!open) setHopOpen(false)
+        }}
+        title={
+          hopIds.length === 1
+            ? `替换 ${hopIds[0]}？`
+            : selected.length
+              ? `重装所选 ${hopIds.length} 槽？`
+              : '重装全部槽的 cli-hop？'
+        }
+        desc={
+          hopIds.length === 1
+            ? '用仓内当前 kernel 和 cli-node 替换这一台。不改凭证，不删容器。'
+            : '逐槽换上 kernel 和 cli-node，并显示进度。不改凭证，不删容器。'
+        }
+        confirmText={hopIds.length === 1 ? '替换' : '开始重装'}
+        cancelBtnText='取消'
+        isLoading={hopBusy}
+        handleConfirm={() => {
+          const ids = hopIds
+          const pull = ids.length === 1 ? false : pullLatest
+          setHopOpen(false)
+          void runHop(ids, pull)
+        }}
+      >
+        {hopIds.length === 1 ? null : (
+          <label className='flex items-center gap-2 text-sm'>
+            <Checkbox
+              checked={pullLatest}
+              onCheckedChange={(v) => setPullLatest(v === true)}
+            />
+            先拉取 GitHub 最新 kernel
+          </label>
+        )}
+      </ConfirmDialog>
     </PageHeader>
   )
 }
