@@ -509,9 +509,17 @@ test('thinking-only hop retries same account and returns the later text', async 
   assert.equal(result.body.stop_reason, 'end_turn')
 })
 
-test('repeated incomplete hop stops on the original VM after one recovery', async () => {
+test('repeated incomplete hop parks the slot then switches accounts', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
-  const runner = new FailoverRunner({ scheduler, config: { same_account_retry_delay_ms: 0 } })
+  const parked = []
+  const runner = new FailoverRunner({
+    scheduler,
+    config: { same_account_retry_delay_ms: 0 },
+    rateLimitService: {
+      handleUpstreamError: () => null,
+      tempUnschedule: (item) => parked.push(item),
+    },
+  })
   const seen = []
   const result = await runner.run({
     requestId: 'req-incomplete-affinity',
@@ -520,6 +528,7 @@ test('repeated incomplete hop stops on the original VM after one recovery', asyn
     stickyKey: 'session-affinity',
     callAttempt: ({ candidate: selected }) => {
       seen.push(selected.vmId)
+      if (selected.vmId === 'vm-02') return success('recovered')
       return {
         ok: false,
         status: 200,
@@ -529,13 +538,71 @@ test('repeated incomplete hop stops on the original VM after one recovery', asyn
       }
     },
   })
-  assert.equal(result.ok, false)
+  assert.equal(result.ok, true)
+  assert.equal(result.vmId, 'vm-02')
+  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02'])
+  assert.deepEqual(parked, [{ accountId: 'account-1', vmId: 'vm-01' }])
+})
+
+test('pinned incomplete hop still stops on the pinned VM', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({ scheduler, config: { same_account_retry_delay_ms: 0 } })
+  const result = await runner.run({
+    requestId: 'req-incomplete-pin',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    pinVmId: 'vm-01',
+    callAttempt: () => ({
+      ok: false,
+      status: 200,
+      committed: false,
+      terminalState: 'incomplete',
+      body: { type: 'message', role: 'assistant', content: [], stop_reason: null },
+    }),
+  })
   assert.equal(result.status, 502)
   assert.equal(result.body.error.code, 'incomplete_response')
-  assert.equal(result.attemptCount, 2)
   assert.equal(result.vmId, 'vm-01')
-  assert.deepEqual(seen, ['vm-01', 'vm-01'])
-  assert.equal(scheduler.selectCalls, 2)
+})
+
+test('streamed plan limit writes the hard block and rotates to another account', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const blocks = []
+  const runner = new FailoverRunner({
+    scheduler,
+    config: { same_account_retry_delay_ms: 0 },
+    rateLimitService: {
+      handleUpstreamError: ({ accountId, policy }) => {
+        if (policy.reason !== 'account_quota_exhausted') return null
+        blocks.push({ accountId, reason: policy.reason })
+        return { kind: 'rate_limited', until: 9_999_999_999_999 }
+      },
+      tempUnschedule: () => {},
+    },
+  })
+  const seen = []
+  const result = await runner.run({
+    requestId: 'req-plan-limit',
+    canonicalBody: { model: 'claude-haiku-test' },
+    model: 'claude-haiku-test',
+    callAttempt: ({ candidate: selected }) => {
+      seen.push(selected.accountId)
+      if (selected.accountId === 'account-2') return success('other account')
+      return {
+        ok: false,
+        status: 429,
+        committed: false,
+        terminalState: 'rejected',
+        body: { type: 'error', error: { type: 'api_error', message: "You've hit your limit · resets 11am (UTC)" } },
+      }
+    },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.accountId, 'account-2')
+  assert.deepEqual(seen, ['account-1', 'account-2'])
+  assert.deepEqual(blocks, [{ accountId: 'account-1', reason: 'account_quota_exhausted' }])
+  const cooled = scheduler.cooldowns.find((item) => item.candidate.accountId === 'account-1')
+  assert.equal(cooled.update.until, 9_999_999_999_999)
 })
 
 test('fast 502 retries the same account once without cooldown', async () => {

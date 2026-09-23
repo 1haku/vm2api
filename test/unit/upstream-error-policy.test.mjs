@@ -6,7 +6,7 @@ import {
   shouldContinue,
 } from '../../src/lib/pool/upstream-error-policy.mjs'
 
-test('unified account 429 without reset header uses usage window then 5 minutes', () => {
+test('unified account 429 without reset header uses usage window then 30 minutes', () => {
   const now = 1_700_000_000_000
   const usageReset = now + 3_600_000
   const fromUsage = classifyUpstreamResult(
@@ -31,7 +31,7 @@ test('unified account 429 without reset header uses usage window then 5 minutes'
     },
     { model: 'claude-opus-test', now },
   )
-  assert.equal(fallback.cooldownUntil, now + 5 * 60_000)
+  assert.equal(fallback.cooldownUntil, now + 30 * 60_000)
 })
 
 test('unified account 429 cools account until authoritative reset', () => {
@@ -172,7 +172,8 @@ test('slot_busy 503 does not park the account', () => {
   assert.equal(policy.retrySameAccount, false)
 })
 
-test('a 502 plan-limit message switches accounts instead of pausing', () => {
+test('a 502 plan-limit message switches accounts until the reset named in the text', () => {
+  const now = Date.parse('2026-09-23T12:37:10Z')
   const policy = classifyUpstreamResult(
     {
       status: 502,
@@ -183,12 +184,63 @@ test('a 502 plan-limit message switches accounts instead of pausing', () => {
         },
       },
     },
-    { now: 1_000, usage: { reset_5h: 1_790_032_800 } },
+    // An elapsed leftover window reset must lose to the text reset.
+    { now, usage: { reset_5h: new Date(now - 3_600_000).toISOString() } },
   )
   assert.equal(policy.action, 'continue-and-cooldown')
   assert.equal(policy.reason, 'account_quota_exhausted')
-  assert.equal(policy.cooldownUntil, 1_790_032_800_000)
+  assert.equal(policy.cooldownUntil, Date.parse('2026-09-23T23:20:00Z'))
   assert.equal(policy.rememberRefusal, undefined)
+  assert.equal(shouldContinue(policy), true)
+})
+
+test('200 + streamed plan-limit error is account quota, not http_200 stop', () => {
+  const now = Date.parse('2026-09-23T12:37:10Z')
+  const policy = classifyUpstreamResult(
+    {
+      ok: false,
+      status: 200,
+      committed: false,
+      terminalState: 'incomplete',
+      body: {
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: "provider error: provider error: You've hit your limit · resets 11am (America/New_York)",
+        },
+      },
+    },
+    { now },
+  )
+  assert.equal(policy.scope, 'account')
+  assert.equal(policy.reason, 'account_quota_exhausted')
+  assert.equal(policy.cooldownUntil, Date.parse('2026-09-23T15:00:00Z'))
+  assert.equal(policy.retrySameAccount, false)
+})
+
+test('extra usage required stays a request-scoped entitlement stop', () => {
+  const policy = classifyUpstreamResult(
+    {
+      status: 429,
+      body: { type: 'error', error: { type: 'rate_limit_error', message: 'Extra usage required for this model' } },
+    },
+    { now: 1000 },
+  )
+  assert.equal(policy.reason, 'entitlement_required')
+})
+
+test('empty_response retries the same account', () => {
+  const policy = classifyUpstreamResult(
+    {
+      ok: false,
+      status: 502,
+      terminalState: 'incomplete',
+      body: { type: 'error', error: { type: 'api_error', code: 'empty_response', message: 'no output' } },
+    },
+    { now: 1000 },
+  )
+  assert.equal(policy.reason, 'empty_response')
+  assert.equal(policy.retrySameAccount, true)
   assert.equal(shouldContinue(policy), true)
 })
 

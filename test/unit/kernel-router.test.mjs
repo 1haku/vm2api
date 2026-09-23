@@ -432,6 +432,64 @@ unixTest('pinned rust does not fall back to Go HTTP', async () => {
   assert.match(String(result.via), /rust-kernel/)
 })
 
+unixTest('streamed plan-limit error is a response, not a dead slot: no recycle', async () => {
+  const previous = process.env.KIN_KERNEL_BIN
+  process.env.KIN_KERNEL_BIN = '/bin/true'
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-limit-'))
+  const runDir = path.join(root, 'vm-01', 'run')
+  const homeDir = path.join(root, 'vm-01', 'cli-home')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.mkdirSync(homeDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'internal.token'), 'internal-test\n', { mode: 0o600 })
+  const kernelSocket = path.join(runDir, 'kernel.sock')
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.end(
+      'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"provider error: You\'ve hit your limit · resets 11am (UTC)"}}\n\n',
+    )
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(kernelSocket, resolve)
+  })
+  const exec = {
+    vmId: 'vm-01',
+    homeDir,
+    vm: {
+      id: 'vm-01',
+      inference_engine: 'rust',
+      runtime: {
+        kernel_socket: kernelSocket,
+        worker_socket: path.join(runDir, 'worker.sock'),
+        worker_run_dir: runDir,
+        worker_token_file: path.join(runDir, 'internal.token'),
+      },
+    },
+  }
+  try {
+    const recycled = []
+    const result = await dispatchStreamInference({
+      exec,
+      body: { model: 'claude-haiku-4-5-20251001', messages: [{ role: 'user', content: 'hi' }] },
+      routing: { inference: { engine: 'rust' } },
+      ensureRust: async () => ({ ok: true, reason: 'already_up' }),
+      recycleWrap: (target) => {
+        recycled.push(target?.vmId)
+        return { ok: true, skipped: false }
+      },
+      timeoutMs: 3000,
+    })
+    assert.equal(result.status, 429)
+    assert.equal(result.committed, false)
+    assert.deepEqual(recycled, [])
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+    if (previous == null) delete process.env.KIN_KERNEL_BIN
+    else process.env.KIN_KERNEL_BIN = previous
+  }
+})
+
 unixTest('committed Rust stream transport failure is not replayed on Go', async () => {
   const previous = process.env.KIN_KERNEL_BIN
   process.env.KIN_KERNEL_BIN = '/bin/true'

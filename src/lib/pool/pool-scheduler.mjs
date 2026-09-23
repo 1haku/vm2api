@@ -28,6 +28,7 @@ import {
   isQuotaWindowReason,
 } from './availability.mjs'
 import { listQuotaFromHeaders } from './quota-window.mjs'
+import { hardBlockOf } from './rate-limit-service.mjs'
 import { isSlotProxyDesynced, readWorkerProxyEndpoint, readWorkerEgressMode } from '../vm/vm-runtime.mjs'
 import { splitBlocksModel } from './weekly-split.mjs'
 import { slotAllowsModel } from './slot-model-gate.mjs'
@@ -430,6 +431,10 @@ export class PoolScheduler {
   }
 
   async checkEligibility({ vm, accountId, state, model, now, signal, pinned = false, sessionKey = null }) {
+    // sub2api IsSchedulable: rate_limit_reset_at / overload_until gate before any
+    // passive Extra reading or health hop. Pins are diagnostics and still reach the slot.
+    const hardBlock = pinned ? null : hardBlockOf(state, now)
+    if (hardBlock) return { ok: false, reason: hardBlock.reason, until: hardBlock.until }
     const gate = evaluateSlotGate(vm)
     if (!gate.ok && gate.reason !== 'no_credential') {
       // Master pin may test a slot taken out of the pool, but SOCKS is still mandatory.
@@ -1264,6 +1269,9 @@ export class PoolScheduler {
 
   clearQuotaRestriction(vm, accountId, file) {
     const state = this.runtimeRepo?.get?.(accountId)
+    // A live 429 block lifts only on its reset or an `allowed` header, never
+    // from a passive Extra re-read (sub2api ClearRateLimit via UpdateSessionWindow).
+    if (hardBlockOf(state)) return false
     const reason = state?.cooldown_reason || vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason
     if (reason && !isAccountRestrictionReason(reason) && !isQuotaWindowReason(reason)) return false
     if (isAuthCooldownReason(reason)) return false
