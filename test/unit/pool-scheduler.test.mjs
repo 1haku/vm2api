@@ -1889,7 +1889,7 @@ test('sticky slot_busy stays on the bound account', async (t) => {
   selected.release()
 })
 
-test('a sticky reserve miss acquires the next free account', async (t) => {
+test('a sticky reserve miss waits on the bound account instead of moving the session', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const unbound = []
@@ -1900,17 +1900,23 @@ test('a sticky reserve miss acquires the next free account', async (t) => {
     },
   })
   const real = pool.reserve.bind(pool)
+  let misses = 0
   pool.reserve = (candidate, opts) => {
-    if (candidate.accountId === 'account-1') return null
+    if (candidate.accountId === 'account-1' && misses++ === 0) {
+      // The racing request that won the seat finishes shortly after.
+      setTimeout(() => pool.notifyCapacity('account-1'), 20)
+      return null
+    }
     return real(candidate, opts)
   }
   const selected = await pool.selectAndReserve({
     model: 'claude-test',
     stickyKey: 'conversation-one',
-    allowWait: false,
+    deadline: Date.now() + 5000,
   })
   assert.equal(selected.ok, true)
-  assert.equal(selected.accountId, 'account-2')
+  assert.equal(selected.accountId, 'account-1')
+  assert.deepEqual(unbound, [])
   selected.release()
 })
 

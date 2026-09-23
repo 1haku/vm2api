@@ -1,17 +1,20 @@
-/** Keep existing allowlists usable after correcting the Fable 5.1 model id. */
+/** Keep existing allowlists usable after correcting dotted 5.1 / 5.5 ids. */
 export function canonicalAllowedModelId(id: string) {
   return String(id)
     .trim()
     .replace(/^claude-fable-5(?:\.1|-1)(?=-|$)/i, 'claude-fable-5-1')
+    .replace(/^claude-opus-5(?:\.5|-5)(?=-|$)/i, 'claude-opus-5-5')
 }
 
-/** Match dated aliases without treating Fable 5 and Fable 5.1 as one model. */
+/** Match dated aliases without treating a point release as its parent model. */
 export function matchesAllowedModel(modelId: string, entry: string) {
   const model = canonicalAllowedModelId(modelId).toLowerCase()
   const allowed = canonicalAllowedModelId(entry).toLowerCase()
   if (model === allowed) return true
   const fable51 = /^claude-fable-5-1(?:-|$)/
   if (fable51.test(model) !== fable51.test(allowed)) return false
+  const opus55 = /^claude-opus-5-5(?:-|$)/
+  if (opus55.test(model) !== opus55.test(allowed)) return false
   return model.startsWith(`${allowed}-`) || allowed.startsWith(`${model}-`)
 }
 

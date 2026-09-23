@@ -337,23 +337,22 @@ export class FailoverRunner {
     const startedAt = Date.now()
     const deadline = startedAt + Number(this.config.total_retry_deadline_ms || 120000)
     const excluded = new Set()
+    // Accounts left only because the kernel had no free slot; their pins stay.
+    const spilled = new Set()
     const sameAccountRetries = new Map()
     const bindKeys = uniqueStickyKeys(stickyKey, stickyKeys)
     let outboundSessionId = ''
     let outboundSessionAccountId = ''
     const bindAll = (account, opts) => {
       if (!this.stickyRouter?.bind || !account) return
-      const sessions = this.scheduler?.accountQuota?.sessions
       const sessionId = account.sessionId || (account.accountId === outboundSessionAccountId ? outboundSessionId : '')
       const payload = { accountId: account.accountId, vmId: account.vmId }
       if (sessionId) payload.sessionId = sessionId
       for (const key of bindKeys) {
         const prev = this.stickyRouter.resolve?.(key)
-        if (prev?.accountId && prev.accountId !== account.accountId) {
-          try {
-            sessions?.drop?.(prev.accountId, key)
-          } catch {}
-        }
+        // A live pin on another account means this request only spilled for
+        // capacity. Rewriting it would move the whole session off its slot.
+        if (prev?.accountId && prev.accountId !== account.accountId) continue
         this.stickyRouter.bind(key, payload, opts)
       }
     }
@@ -384,6 +383,7 @@ export class FailoverRunner {
           model,
           stickyKey,
           excluded,
+          spilled,
           signal,
           deadline,
           allowWait: true,
@@ -599,6 +599,7 @@ export class FailoverRunner {
         }
 
         excluded.add(selected.accountId)
+        if (policy.reason === 'slot_busy') spilled.add(selected.accountId)
         excluded.add(selected.vmId)
         accountSwitches++
         if (accountSwitches > this.config.max_account_switches) {
@@ -688,6 +689,7 @@ export class FailoverRunner {
           continue
         }
         excluded.add(selected.accountId)
+        if (policy.reason === 'slot_busy') spilled.add(selected.accountId)
         excluded.add(selected.vmId)
         accountSwitches++
       } finally {

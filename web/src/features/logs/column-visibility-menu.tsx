@@ -28,8 +28,7 @@ export function ColumnVisibilityMenu({
           className='h-8 gap-1.5 text-xs'
           aria-label='列显隐'
         >
-          <Columns3 className='size-3.5' />
-          列
+          <Columns3 className='size-3.5' />列
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-40'>

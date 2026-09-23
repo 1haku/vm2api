@@ -415,6 +415,7 @@ export class RequestLogStore {
         via: extra.via || extra.hop_meta?.via || null,
         upstream_status: extra.upstream_status ?? null,
         outbound_summary: extra.outbound_summary || null,
+        cache_prefix: extra.cache_prefix || null,
         outbound_headers: extra.outbound_headers != null ? redactHeaders(extra.outbound_headers) : null,
         outbound_body: extra.outbound_body != null ? clampBody(extra.outbound_body, this.maxDebugBodyChars) : null,
       }

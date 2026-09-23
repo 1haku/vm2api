@@ -16,7 +16,9 @@ function StatCell({
   return (
     <div className='rounded-lg border border-border/50 bg-card/20 p-4'>
       <div className='mb-1 text-sm text-muted-foreground'>{title}</div>
-      <div className='font-mono text-2xl font-semibold tabular-nums'>{value}</div>
+      <div className='font-mono text-2xl font-semibold tabular-nums'>
+        {value}
+      </div>
       {lines ? (
         <div className='mt-2 space-y-1 text-xs text-muted-foreground'>
           {lines.map((line) => (

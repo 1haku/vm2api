@@ -23,11 +23,11 @@ import {
   Yi,
   Zhipu,
 } from '@lobehub/icons'
-import { cn } from '@/lib/utils'
 import {
   inferVendorFromModelName,
   UNKNOWN_VENDOR,
 } from '@/lib/model-vendor/vendor-inference'
+import { cn } from '@/lib/utils'
 
 type IconProps = { className?: string; size?: number }
 

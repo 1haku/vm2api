@@ -1,5 +1,5 @@
-import { errorClassTone, statusTone } from '@/lib/log-tone'
 import type { RequestLogItem } from '@/types/panel-logs'
+import { errorClassTone, statusTone } from '@/lib/log-tone'
 
 export type LogBadgeTone = 'ok' | 'caution' | 'warn' | 'bad' | 'none'
 
@@ -45,7 +45,10 @@ export function rateBadge(multiplier: unknown): LogBadge | null {
 }
 
 export function showModelRedirect(
-  row: Pick<RequestLogItem, 'requested_model' | 'upstream_model' | 'model_mismatch' | 'model'>
+  row: Pick<
+    RequestLogItem,
+    'requested_model' | 'upstream_model' | 'model_mismatch' | 'model'
+  >
 ): boolean {
   const flag = row.model_mismatch
   if (flag === true || flag === 1) return true

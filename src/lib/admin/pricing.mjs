@@ -17,6 +17,8 @@ export const OFFICIAL_RATES = {
   'fable-5': { input: 10, output: 50, cache_5m: 12.5, cache_1h: 20, cache_read: 1 },
   'mythos-5': { input: 10, output: 50, cache_5m: 12.5, cache_1h: 20, cache_read: 1 },
   'opus-5': { input: 5, output: 25, cache_5m: 6.25, cache_1h: 10, cache_read: 0.5 },
+  // 2.1.280 tier_4_20_cache_read_0_20. Write stays 1.25× / 2×; read is the published $0.20, not 0.1×.
+  'opus-5.5': { input: 4, output: 20, cache_5m: 5, cache_1h: 8, cache_read: 0.2 },
   'opus-4.5': { input: 5, output: 25, cache_5m: 6.25, cache_1h: 10, cache_read: 0.5 },
   'opus-4': { input: 15, output: 75, cache_5m: 18.75, cache_1h: 30, cache_read: 1.5 },
   'sonnet-5': { input: 2, output: 10, cache_5m: 2.5, cache_1h: 4, cache_read: 0.2 },
@@ -70,6 +72,7 @@ export function resolvePricingKey(raw) {
   if (/haiku/.test(m)) return 'haiku-4.5'
   if (/sonnet-5/.test(m)) return 'sonnet-5'
   if (/sonnet/.test(m)) return 'sonnet-4'
+  if (/opus-5(?:[-.]5)(?:-|$)/.test(m)) return 'opus-5.5'
   if (/opus-5/.test(m)) return 'opus-5'
   if (/opus-4-[5-9]|opus-4\.[5-9]/.test(m)) return 'opus-4.5'
   if (/opus/.test(m)) return 'opus-4'

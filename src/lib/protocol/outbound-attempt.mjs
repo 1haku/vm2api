@@ -10,8 +10,9 @@ import {
   ensureClearThinkingContextManagement,
   stripInvalidThinkingBlocks,
   alignSamplingWithThinking,
-  enforceCacheLimit,
+  modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
+import { liftMidConversationSystemMessages } from './sanitize.mjs'
 import { ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh, normalizeThinkingForModel } from './thinking.mjs'
 import {
   applyCrsIdentityReplace,
@@ -37,11 +38,11 @@ import {
 import {
   applyCacheTtlToBody,
   enforceCacheTtlOrder,
-  injectToolsTailBreakpoint,
-  normalizeCacheTtl,
+  removeCacheControlFields,
   stripIllegalCacheControlFields,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
+import { applyOpus55RequestRules } from './model-policy.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
 
 export const INFERENCE_UA = 'kin-inference/1.0'
@@ -72,16 +73,6 @@ export function stripCliOwnedSystem(system) {
   const kept = system.filter((block) => !isCliOwnedSystemText(systemBlockText(block)))
   return kept.length ? kept : undefined
 }
-
-/** sub2api default: keep the caller's system and message anchors. Node only
- * fills the last non-deferred tool, which is the stable tools prefix. */
-export const CLI_HOP_CACHE_BREAKPOINTS = Object.freeze({
-  enabled: true,
-  preserve_client: true,
-  system_tail: false,
-  tools_tail: true,
-  messages: 'off',
-})
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
@@ -160,8 +151,8 @@ function stabilizeMessageBudgets(body) {
   return changed ? { ...body, messages } : body
 }
 
-/** A CLI hop must end on a conversational user/assistant turn. Preserve older
- * role=system leftovers in place, but lift only a trailing run to system[]. */
+/** Third-party hops end on a user/assistant turn: a trailing role=system run is
+ * lifted to system[]. Official Claude Code skips this (see prepareCliHopBody). */
 function liftTrailingSystemMessages(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   let firstTrailing = messages.length
@@ -190,18 +181,16 @@ function liftTrailingSystemMessages(body) {
   })
 }
 
-/** Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks. */
-export function prepareCliHopBody(
-  canonicalBody,
-  {
-    stream = true,
-    repaired = false,
-    cacheBreakpoints = CLI_HOP_CACHE_BREAKPOINTS,
-    cacheControlLimit = 4,
-    cacheTtl = null,
-    unofficial: _unofficial = false,
-  } = {},
-) {
+/**
+ * Caller fields only. CLI owns UA / billing / metadata / layoutSystemBlocks.
+ *
+ * `officialClient`: Claude Code ends most turns with a role=system reminder and
+ * sends it that way itself. Lifting it would put a different text into the
+ * cached system block on every turn whose reminder changes (turn 2 always:
+ * SessionStart context, then `<total_tokens>`), so the whole prefix misses.
+ * Left in place, it becomes history on the next turn and the prefix only grows.
+ */
+export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false, officialClient = false } = {}) {
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   // Wrap CLI (Claude Code) throws a fatal "max_output_tokens" error if response reaches max_tokens.
@@ -213,8 +202,11 @@ export function prepareCliHopBody(
   const leftover = stripCliOwnedSystem(body.system)
   if (leftover == null) delete body.system
   else body.system = leftover
-  body = liftTrailingSystemMessages(body)
+  body = officialClient ? stabilizeSystemBudget(body) : liftTrailingSystemMessages(body)
   body = stabilizeMessageBudgets(body)
+  // cli-node sends mid-conversation-system, so role=system turns stay in place and
+  // the cached prefix only grows. Only models that reject the role need the lift.
+  if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
 
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
@@ -224,16 +216,10 @@ export function prepareCliHopBody(
     body = ensureClearThinkingContextManagement(body)
   }
   body = stripInvalidThinkingBlocks(body)
+  body = applyOpus55RequestRules(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
-  // Menu cache_ttl (default 1h). Do not pin a second value here.
-  const ttl = normalizeCacheTtl(cacheTtl)
-  if (cacheBreakpoints?.enabled !== false) {
-    body = injectToolsTailBreakpoint(body, ttl)
-    body = applyCacheTtlToBody(body, ttl)
-  }
-  body = enforceCacheTtlOrder(body)
-  enforceCacheLimit(body, cacheControlLimit)
+  body = removeCacheControlFields(body)
   return body
 }
 /** Wrap CLI process is spawned as sonnet-5/adaptive. Haiku rejects thinking. */
