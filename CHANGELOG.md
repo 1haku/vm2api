@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.46 — 2026-09-24
+
+- crag 把 stdin 用户帧改成最后一条 **user** 消息（跳过 Claude Code 客户端拖在后面的 role=system SessionStart）。纯文本压成 string。去掉 `--agent crag-worker`，避免官方 CLI 先空跑一轮。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再把槽切到 crag（`POST /api/panel/dataplane` restart）铺新 `share/crag/kin-kernel`。不要 `docker rm` 槽。
+
 ## 1.3.45 — 2026-09-24
 
 - crag 官方 `claude -p` 使用请求里的 model，不再写死 `claude-sonnet-4-5`。同一会话换模型会杀掉旧 CLI 再起。
