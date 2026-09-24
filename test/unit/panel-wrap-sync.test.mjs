@@ -143,7 +143,7 @@ test('kernel upload rejects non-ELF payloads', async () => {
   }
 })
 
-function releaseFetch(elf, { assetBytes = elf, status = 200 } = {}) {
+function releaseFetch(elf, { assetBytes = elf, cliBytes = fakeElf64Amd64('github-cli-node'), status = 200 } = {}) {
   return async (url) => {
     const href = String(url)
     if (href.endsWith('/releases/latest')) {
@@ -156,6 +156,11 @@ function releaseFetch(elf, { assetBytes = elf, status = 200 } = {}) {
               size: assetBytes.length,
               url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/9',
             },
+            {
+              name: 'cli-node',
+              size: cliBytes.length,
+              url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/8',
+            },
           ],
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -165,6 +170,12 @@ function releaseFetch(elf, { assetBytes = elf, status = 200 } = {}) {
       return new Response(assetBytes, {
         status,
         headers: { 'content-length': String(assetBytes.length) },
+      })
+    }
+    if (href.endsWith('/releases/assets/8')) {
+      return new Response(cliBytes, {
+        status: 200,
+        headers: { 'content-length': String(cliBytes.length) },
       })
     }
     throw new Error(`unexpected ${href}`)
@@ -211,6 +222,10 @@ test('github kernel release replaces host kernel and syncs stopped slots', async
     assert.equal(response.body.data.sync.items[0].kernel.reason, 'vm_stopped')
     assert.ok(fs.readFileSync(path.join(project, 'bin', 'kin-kernel')).equals(elf))
     assert.ok(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'kin-kernel.bin')).equals(elf))
+    assert.ok(
+      fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cli-node')).equals(fakeElf64Amd64('github-cli-node')),
+    )
+    assert.equal(response.body.data.release.cli_node, 'cli-node')
     assert.ok(
       fs.readFileSync(path.join(project, 'vms', 'legacy-slot', 'cli-home', '.kin', 'kin-kernel.bin')).equals(elf),
     )

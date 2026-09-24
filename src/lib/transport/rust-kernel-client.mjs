@@ -70,10 +70,15 @@ export function rustKernelCliReady(health) {
   return Number.isFinite(n) && n > 0
 }
 
-/** Process is up and CLI is alive; idle slots=0 means busy, not dead. */
+/**
+ * Process is up and CLI is alive; idle slots=0 means busy, not dead.
+ * Unless the kernel watchdog retired slots whose cancel was never acked:
+ * those never come back, so waiting would pin the VM unusable — restart it.
+ */
 export function rustKernelBusy(health) {
   if (!rustKernelProcessUp(health)) return false
   if (rustKernelCliReady(health)) return false
+  if (Number(health?.wedged_slots) > 0) return false
   const pid = finiteNumber(health?.cli_pid)
   return pid != null && pid > 0
 }
