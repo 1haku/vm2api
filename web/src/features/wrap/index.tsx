@@ -151,12 +151,12 @@ function slotSyncFailed(report: WrapSyncReport, id: string) {
 function HopProgress({ job }: { job: HopJob }) {
   const label =
     job.phase === 'download'
-      ? '拉取 GitHub 最新 kin-kernel 和 cli-node'
+      ? '拉取 GitHub wrap kernel、cli-node 和 crag kernel'
       : job.phase === 'done'
         ? job.failed.length
           ? `内核重装结束，失败 ${job.failed.length}`
           : `最新内核已重装 ${job.done}/${job.total}`
-        : `正在换 ${job.current || '槽'} 的 cli-node 和 kin-kernel`
+        : `正在按当前数据面换 ${job.current || '槽'} 的内核`
   return (
     <div className='space-y-1.5'>
       <div className='flex items-center justify-between gap-3 text-xs text-muted-foreground'>
@@ -359,7 +359,7 @@ export function WrapSamplePage() {
   const upload = useMutation({
     mutationFn: (file: File) => uploadKernelBinary(file),
     onSuccess: async () => {
-      toast.success('已写入仓内 kernel。用 cli-hop 重装铺到槽')
+      toast.success('已写入仓内 wrap kernel。再重装铺到槽')
       setUploadFile(null)
       await invalidate()
     },
@@ -472,7 +472,7 @@ export function WrapSamplePage() {
             loading={releaseUpdate.isPending}
             onClick={() => setReleaseOpen(true)}
           >
-            拉取 kernel 和 cli-node
+            拉取 wrap/crag
           </Button>
           <Button
             size='sm'
@@ -499,8 +499,8 @@ export function WrapSamplePage() {
             onClick={() => openHop(reinstallIds, true)}
           >
             {selected.length
-              ? `重装 kernel 和 cli-node ${selected.length}`
-              : '重装 kernel 和 cli-node'}
+              ? `重装当前内核 ${selected.length}`
+              : '重装当前内核'}
           </Button>
         </div>
       }
@@ -630,10 +630,9 @@ export function WrapSamplePage() {
             </CardHeader>
             <CardContent className='space-y-3 text-sm leading-relaxed text-muted-foreground'>
               <p>
-                一键把最新内核铺进全部槽。内核包括 <code>cli-node</code>
-                （Claude）和 cli-hop <code>kin-kernel</code>
-                。先从 GitHub Release 拉这两个 linux amd64
-                文件，再铺进槽。不改凭证、不改 SOCKS、不删容器。
+                按各槽当前数据面铺内核：wrap 铺 cli-node 和 wrap
+                kin-kernel，crag 铺官方 Claude kernel。可先从 GitHub Release 拉
+                linux amd64 文件。不改凭证、不改 SOCKS、不删容器。
               </p>
               <Button
                 size='sm'
@@ -839,8 +838,8 @@ export function WrapSamplePage() {
       <ConfirmDialog
         open={releaseOpen}
         onOpenChange={setReleaseOpen}
-        title='拉取 GitHub 最新 kernel 和 cli-node？'
-        desc='下载最新 Release 的 linux amd64 kin-kernel 和 cli-node 到仓内。不改槽、不重启。'
+        title='拉取 GitHub wrap/crag 内核？'
+        desc='下载最新 Release 的 linux amd64 wrap kin-kernel、cli-node 和 crag kin-kernel 到仓内。不改槽、不重启。'
         confirmText='下载'
         cancelBtnText='取消'
         isLoading={releaseUpdate.isPending}
@@ -860,10 +859,10 @@ export function WrapSamplePage() {
         }
         desc={
           hopIds.length === 1
-            ? '用仓内当前 cli-node 和 cli-hop kin-kernel 替换这一台。不改凭证，不删容器。'
+            ? '按该槽当前数据面铺内核并重启 rust kernel。不改凭证，不删容器。'
             : pullLatest
-              ? '先从 GitHub 拉 kin-kernel 和 cli-node，再逐槽换上。不改凭证，不删容器。'
-              : '逐槽换上仓内 cli-node（Claude）和 cli-hop kin-kernel，并显示进度。不改凭证，不删容器。'
+              ? '先从 GitHub 拉 wrap/crag 二进制，再按各槽数据面逐槽换上。不改凭证，不删容器。'
+              : '按各槽当前数据面铺仓内内核并显示进度。不改凭证，不删容器。'
         }
         confirmText={
           hopIds.length === 1
@@ -887,7 +886,7 @@ export function WrapSamplePage() {
               checked={pullLatest}
               onCheckedChange={(v) => setPullLatest(v === true)}
             />
-            先拉取 GitHub 最新 kernel 和 cli-node
+            先拉取 GitHub 最新 wrap/crag
           </label>
         )}
       </ConfirmDialog>

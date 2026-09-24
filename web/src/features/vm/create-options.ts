@@ -4,28 +4,28 @@ export const KERNELS = [
     name: 'Ubuntu 24.04',
     base: 'kin-os/ubuntu:24.04',
     size: '标准机',
-    feats: ['LTS', 'apt', 'kernel/cli-hop', 'host-net'],
+    feats: ['LTS', 'apt', 'cli-hop wrap/crag', 'host-net'],
   },
   {
     id: 'debian-12',
     name: 'Debian 12',
     base: 'kin-os/debian:12',
     size: '标准机',
-    feats: ['glibc', 'apt', 'kernel/cli-hop', 'host-net'],
+    feats: ['glibc', 'apt', 'cli-hop wrap/crag', 'host-net'],
   },
   {
     id: 'archlinux',
     name: 'Arch Linux',
     base: 'kin-os/arch:latest',
     size: '标准机',
-    feats: ['rolling', 'pacman', 'kernel/cli-hop', 'host-net'],
+    feats: ['rolling', 'pacman', 'cli-hop wrap/crag', 'host-net'],
   },
   {
     id: 'fedora-41',
     name: 'Fedora 41',
     base: 'kin-os/fedora:41',
     size: '标准机',
-    feats: ['dnf', 'glibc', 'kernel/cli-hop', 'host-net'],
+    feats: ['dnf', 'glibc', 'cli-hop wrap/crag', 'host-net'],
   },
 ]
 
