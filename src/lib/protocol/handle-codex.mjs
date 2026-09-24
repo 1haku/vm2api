@@ -104,6 +104,18 @@ export function isRetryableCodexTransport(result) {
 }
 
 /** Idle SOCKS / first hop 502 is retryable only before any SSE byte is committed. */
+/** `response.service_tier` from a Responses SSE data line, if present. */
+export function serviceTierFromSseLine(line) {
+  if (typeof line !== 'string' || !line.startsWith('data:') || !line.includes('service_tier')) return null
+  try {
+    const ev = JSON.parse(line.slice(5).trim())
+    const tier = ev?.response?.service_tier ?? ev?.service_tier
+    return typeof tier === 'string' && tier ? tier : null
+  } catch {
+    return null
+  }
+}
+
 export async function runCodexKernelHop({ hop, args = {}, onEvent } = {}) {
   let emitted = false
   const wrapped = async (line) => {
@@ -292,6 +304,7 @@ export async function handleCodexProtocol({
     let attemptKind = 'failed'
     try {
       const chunks = []
+      let responseServiceTier = null
       const result = await runCodexKernelHop({
         hop,
         args: {
@@ -305,6 +318,8 @@ export async function handleCodexProtocol({
           },
         },
         onEvent: async (line) => {
+          const tier = serviceTierFromSseLine(line)
+          if (tier) responseServiceTier = tier
           if (!stream) {
             chunks.push(line)
             return
@@ -331,7 +346,9 @@ export async function handleCodexProtocol({
         bindSticky(vm)
         const usage = result.usage || result.body?.usage || result.body?.response?.usage || null
         const extracted = extractOpenaiUsage(usage)
-        logBag.usage = usage
+        // Billing band: upstream-reported tier wins over the requested one (codex-proxy-rs observation).
+        const serviceTier = responseServiceTier || converted.body?.service_tier || null
+        logBag.usage = usage && serviceTier ? { ...usage, service_tier: serviceTier } : usage
         logBag.input_tokens = extracted?.input_tokens ?? usage?.input_tokens ?? usage?.prompt_tokens ?? null
         logBag.output_tokens = extracted?.output_tokens ?? usage?.output_tokens ?? usage?.completion_tokens ?? null
         logBag.cache_read_tokens =

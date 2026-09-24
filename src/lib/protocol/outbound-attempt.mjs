@@ -7,6 +7,7 @@ import {
   prepareAnthropicRequest,
   rewriteToolNames,
   sanitizeAnthropicBodyForBetaTokens,
+  ensureFastModeBeta,
   ensureClearThinkingContextManagement,
   stripInvalidThinkingBlocks,
   alignSamplingWithThinking,
@@ -354,6 +355,10 @@ export function prepareOutboundEnvelope({
     delete headers.Authorization
   }
   if (stream) headers.accept = 'text/event-stream'
+  if (!isSetupTokenMode(credentialMode)) {
+    const beta = ensureFastModeBeta(headers['anthropic-beta'] || '', prepared.body)
+    if (beta) headers['anthropic-beta'] = beta
+  }
   const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''))
   return { body, headers, toolNames: prepared.toolNames }
 }

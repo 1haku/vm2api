@@ -188,6 +188,29 @@ export function ensureClearThinkingContextManagement(body = {}) {
   }
 }
 
+export const FAST_MODE_BETA = 'fast-mode-2026-02-01'
+
+/** Opus 5.5 / Opus 5 / Opus 4.8 accept `speed: "fast"`; 4.7 errors, 4.6 silently runs standard. */
+export function modelSupportsFastMode(model = '') {
+  const m = String(model || '').toLowerCase()
+  if (!m.includes('opus')) return false
+  return /opus-5(?![0-9])/.test(m) || /opus-4[-.]8(?![0-9])/.test(m)
+}
+
+export function wantsFastMode(body = {}) {
+  return (
+    String(body?.speed ?? '')
+      .trim()
+      .toLowerCase() === 'fast' && modelSupportsFastMode(body?.model)
+  )
+}
+
+/** Add the fast-mode beta when the body asks for fast on a supported model (mimicry drops client betas). */
+export function ensureFastModeBeta(header = '', body = {}) {
+  if (!wantsFastMode(body) || anthropicBetaTokensContains(header, FAST_MODE_BETA)) return header
+  return header ? `${header},${FAST_MODE_BETA}` : FAST_MODE_BETA
+}
+
 export function anthropicBetaTokensContains(header, token) {
   if (!header || !token) return false
   return String(header)
@@ -215,6 +238,14 @@ export function sanitizeAnthropicBodyForBetaTokens(body = {}, anthropicBetaHeade
   }
   if (!anthropicBetaTokensContains(anthropicBetaHeader, PROMPT_CACHING_SCOPE_BETA)) {
     out = stripCacheScopeFields(out)
+  }
+  // `speed` needs the fast-mode beta; without it the request 400s instead of running standard.
+  if (
+    Object.prototype.hasOwnProperty.call(out, 'speed') &&
+    (!anthropicBetaTokensContains(anthropicBetaHeader, FAST_MODE_BETA) || !modelSupportsFastMode(out.model))
+  ) {
+    out = { ...out }
+    delete out.speed
   }
   const allowMidSystem =
     modelSupportsMidConversationSystem(out.model) &&
