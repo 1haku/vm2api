@@ -254,6 +254,103 @@ test('parent and child session ids stay on separate slots', () => {
   assert.equal(r.resolve('child-sess').sessionId, 'outbound-2')
 })
 
+function companionHaiku(sessionId, deviceId = '998dad9c1e3eccf11cd192c3919d4d1f') {
+  return {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    stream: true,
+    temperature: 0,
+    thinking: { type: 'disabled' },
+    tools: [],
+    system: [
+      { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.280.e2f; cc_entrypoint=cli; cch=e6d45;' },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+    ],
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Compress into one routing hint of at most 12 words: WHEN to use; WHEN NOT' }],
+      },
+    ],
+    metadata: {
+      user_id: JSON.stringify({ device_id: deviceId, session_id: sessionId }),
+    },
+  }
+}
+
+test('haiku subagent reuses the parent VM and session slot', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key_f0419454c00d' }, headers: { 'user-agent': 'Go-http-client/1.1' } }
+  const parentBody = {
+    model: 'claude-opus-5-5',
+    messages: [
+      { role: 'user', content: 'parent turn' },
+      { role: 'assistant', content: 'tool' },
+    ],
+    metadata: { user_id: { device_id: '8cd2bdff61fcd056', session_id: 'parent-sess' } },
+  }
+  const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
+  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-parent' })
+  const first = companionHaiku('1334bab2-94bb-4429-a694-b2fa3434b1f5')
+  const second = companionHaiku('e5bee774-fcc6-4f35-a55c-b3586a1f4baa')
+  assert.equal(r.extractPoolKey(req, first, { platform: 'anthropic' }), parentKey)
+  assert.deepEqual(r.collectPoolKeys(req, first, { platform: 'anthropic' }), [parentKey])
+  assert.equal(r.extractPoolKey(req, second, { platform: 'anthropic' }), parentKey)
+  assert.equal(r.resolve(parentKey).vmId, 'vm-10')
+  assert.equal(r.stats().active_sessions, 1)
+  const otherKey = { apiKeyRecord: { id: 'key_other' }, headers: {} }
+  assert.notEqual(r.extractPoolKey(otherKey, first, { platform: 'anthropic' }), parentKey)
+})
+
+test('companion haiku without a live parent share one device family slot', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key_side' }, headers: {} }
+  const a = r.extractPoolKey(req, companionHaiku('sess-a'), { platform: 'anthropic' })
+  const b = r.extractPoolKey(req, companionHaiku('sess-b'), { platform: 'anthropic' })
+  assert.equal(a, b)
+  assert.match(a, /fam:998dad9c1e3eccf11cd192c3919d4d1f$/)
+  r.bind(a, { accountId: 'acc-side', vmId: 'vm-side' })
+  assert.equal(r.resolve(r.extractPoolKey(req, companionHaiku('sess-c'), { platform: 'anthropic' })).vmId, 'vm-side')
+  assert.equal(r.stats().active_sessions, 1)
+})
+
+test('a stale parent and a real haiku chat do not absorb the companion rule', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 3600 } } })
+  const req = { apiKeyRecord: { id: 'key_stale' }, headers: {} }
+  const parentBody = {
+    model: 'claude-opus-5-5',
+    messages: [{ role: 'user', content: 'old' }],
+    metadata: { user_id: { device_id: 'dev-old', session_id: 'old-sess' } },
+  }
+  const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
+  r.bind(parentKey, { accountId: 'acc-old', vmId: 'vm-old', sessionId: 'out-old' })
+  const prev = r.stats().sessions[parentKey]
+  r.repo.upsert(parentKey, {
+    account_id: prev.account_id,
+    vm_id: prev.vm_id,
+    session_id: prev.session_id,
+    bound_at: Date.now() - 10 * 60_000,
+    expires_at: prev.expires_at,
+    hits: prev.hits,
+  })
+  const companion = companionHaiku('fresh-child')
+  const fam = r.extractPoolKey(req, companion, { platform: 'anthropic' })
+  assert.notEqual(fam, parentKey)
+  assert.match(fam, /fam:/)
+  const chat = {
+    model: 'claude-haiku-4-5',
+    tools: [{ name: 'Bash' }],
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'next' },
+    ],
+    metadata: { user_id: { device_id: 'dev-chat', session_id: 'chat-sess' } },
+  }
+  r.bind(parentKey, { accountId: 'acc-old', vmId: 'vm-old' })
+  assert.match(r.extractPoolKey(req, chat, { platform: 'anthropic' }), /chat-sess$/)
+})
+
 test('anthropic and openai sticky keys do not share a session', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
   const req = { headers: { 'x-session-id': 'same-session' } }
