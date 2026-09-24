@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.40 — 2026-09-24
+
+- 额度、刷新、profile、models、count-tokens 改到槽内 `kin-worker oauth`。Node 不再直连 Anthropic。
+- hello 之后在槽里跑 CLI `/usage`，失败再试 2 次。账号等级以官方 `/api/oauth/profile` 为准。
+- 去掉 `quota_via`、`cli_stats`、`usage_fallback`、`stats_prompt`。旧键读入时丢弃。删除宿主 `host-anthropic` 与 `host-token-refresh`。
+- `kin-worker` 带上 oauth 子命令。发布的 `kin-kernel` 仍是仓内动态 ELF，不是 v1.3.39 附件上那份 UPX。
+
+已部署机升级：覆盖控制面并重启 Node 一次。`kin-worker` 按文件挂进槽，已有槽要 `docker restart` 才能看到新二进制，不要 `docker rm`。不要覆盖 `routing.json`。内核不用 `wrap-cli/sync`。
+
 ## 1.3.39 — 2026-09-24
 
 - cch 对齐 Claude Code 2.1.280。种子 `0x4D659218E32A3268`。哈希原文字符串：第一处 `cch` 回到 `00000`，清空所有 `"model"` 值，切掉 `fallbacks`、`fallback_credit_token` 和数字 `max_tokens`。发出去的 body 仍保留原值。
