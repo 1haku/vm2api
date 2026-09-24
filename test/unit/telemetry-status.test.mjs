@@ -135,3 +135,16 @@ test('unsupported runtime and invalid slot ID do not invoke Docker', async (t) =
   )
   assert.equal((await readSlotProcessStatus({ ...f, vm: { id: '../secret' }, run })).telemetry.enabled, null)
 })
+
+test('process observation uses the configured slot container name', async (t) => {
+  const args = fixture(t, true)
+  const status = await readSlotProcessStatus({
+    ...args,
+    vm: { ...args.vm, runtime: { type: 'docker', container: 'custom-slot-02' } },
+    run: async (_cmd, argv) => {
+      assert.equal(argv[1], 'custom-slot-02')
+      return { stdout: observed }
+    },
+  })
+  assert.deepEqual(status.telemetry, { enabled: true, running: true })
+})
