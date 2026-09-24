@@ -174,13 +174,16 @@ export function modelSupportsMidConversationSystem(modelId = '') {
  * models drop the field; final beta sanitize may still strip it later.
  */
 export function ensureClearThinkingContextManagement(body = {}) {
-  if (!thinkingModeEnabled(body)) return body
+  // 不支持的模型（Haiku）即使没开 thinking 也要删掉调用方带的 context_management：
+  // cli-hop 会先把 Haiku 的 thinking 固定为 disabled，且跳过后面的 beta 清洗，
+  // 这里若提前返回，clear_thinking 就会漏到上游，导致槽内 CLI 被杀。
   if (!modelSupportsContextManagement(body.model)) {
     if (body.context_management == null) return body
     const out = { ...body }
     delete out.context_management
     return out
   }
+  if (!thinkingModeEnabled(body)) return body
   if (body.context_management != null) return body
   return {
     ...body,
