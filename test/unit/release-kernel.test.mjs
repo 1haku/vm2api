@@ -126,7 +126,9 @@ test('kernel download follows GitHub asset redirects and refuses other hosts', a
   assert.equal(fetched.tag, 'v1.2.3')
   assert.ok(Buffer.from(fetched.bytes).equals(elf))
   assert.ok(Buffer.from(fetched.cliNode.bytes).equals(elf))
+  assert.equal(fetched.crag?.skipped, true)
   assert.equal(seen.length, 4)
+  assert.equal(isAllowedKernelUrl('https://github.com/dofastted/vm2api/releases/download/v1.2.3/kin-kernel-crag'), true)
 
   const blocked = await downloadReleaseKernel({
     fetchImpl: async (url) => {

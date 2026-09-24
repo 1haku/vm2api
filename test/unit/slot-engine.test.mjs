@@ -7,12 +7,14 @@ import {
   assertCliHopAllowed,
   KERNEL_NATIVE_SLOT_COUNT,
   normalizeInferenceConfig,
+  normalizeKernelDataplane,
   normalizeSessionSlots,
   parseSlotEnginePolicyPatch,
   parseSlotPolicyTargets,
   personaModeFromPreset,
   resolveCliSystemLayout,
   resolveInferenceEngine,
+  resolveKernelDataplane,
   resolveOfficialCcInference,
   resolveSessionSlots,
   resolveSlotPersonaPreset,
@@ -67,6 +69,21 @@ test('vm engine overrides routing, empty inherits rust', () => {
   assert.equal(resolveInferenceEngine({}, { inference: { engine: 'rust' } }), 'rust')
   assert.equal(resolveInferenceEngine({ inference_engine: 'go' }, { inference: { engine: 'rust' } }), 'rust')
   assert.equal(resolveInferenceEngine({ inference_engine: 'rust' }, { inference: { engine: 'go' } }), 'rust')
+})
+
+test('kernel dataplane defaults wrap and accepts crag', () => {
+  assert.equal(resolveKernelDataplane({}, {}), 'wrap')
+  assert.equal(resolveKernelDataplane({}, { inference: { dataplane: 'crag' } }), 'crag')
+  assert.equal(resolveKernelDataplane({ dataplane: 'wrap' }, { inference: { dataplane: 'crag' } }), 'wrap')
+  assert.equal(normalizeKernelDataplane('cli-node'), 'wrap')
+  assert.equal(normalizeKernelDataplane('official-cli'), 'crag')
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'nope' } }), [
+    'inference.dataplane 必须是 wrap 或 crag',
+  ])
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'crag' } }), [])
+  const patch = parseSlotEnginePolicyPatch({ dataplane: 'crag' })
+  assert.equal(patch.ok, true)
+  assert.equal(patch.patch.dataplane, 'crag')
 })
 
 test('resolveCliSystemLayout follows persona_preset, not leftover inject-only', () => {

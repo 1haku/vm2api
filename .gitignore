@@ -26,6 +26,8 @@ share/*
 !share/wrap-cli/**
 share/wrap-cli/cli-dist/
 share/wrap-cli/bun
+!share/crag/
+!share/crag/**
 .workflow/
 __pycache__/
 web/dist/

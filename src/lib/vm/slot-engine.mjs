@@ -15,6 +15,8 @@ import { isCodexVm } from './vm-kind.mjs'
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero'])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
+export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'crag'])
+export const CONTAINER_CRAG_CLAUDE_BIN = '/home/kincli/.local/bin/claude'
 
 export const KERNEL_NATIVE_SLOT_COUNT = 20
 export const SESSION_SLOT_MIN = 1
@@ -95,6 +97,7 @@ export function normalizeInferenceConfig(raw = {}) {
     health_ttl_ms: optionalTtlMs(raw.health_ttl_ms, 2000),
     tcp_nodelay: optionalBool(raw.tcp_nodelay, true),
     session_slots: normalizeSessionSlots(raw.session_slots),
+    dataplane: normalizeKernelDataplane(raw.dataplane),
   }
 }
 
@@ -103,6 +106,40 @@ export function resolveInferenceEngine(vm, routing = {}) {
   const fromVm = normalizeInferenceEngine(vm?.inference_engine, { inherit: true })
   if (fromVm) return fromVm
   return normalizeInferenceEngine(routing?.inference?.engine)
+}
+
+export function normalizeKernelDataplane(value, { inherit = false } = {}) {
+  const raw = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replaceAll('_', '-')
+  if (!raw || raw === 'inherit' || raw === 'global' || raw === 'default' || raw === 'auto') {
+    return inherit ? '' : 'wrap'
+  }
+  if (raw === 'wrap' || raw === 'cli-node' || raw === 'native-messages' || raw === 'nativemessages') {
+    return 'wrap'
+  }
+  if (raw === 'crag' || raw === 'official-cli' || raw === 'official-cc' || raw === 'claude-code') {
+    return 'crag'
+  }
+  return inherit ? '' : 'wrap'
+}
+
+export function resolveKernelDataplane(vm, routing = {}) {
+  if (isCodexVm(vm)) return null
+  const fromVm = normalizeKernelDataplane(vm?.dataplane, { inherit: true })
+  if (fromVm) return fromVm
+  return normalizeKernelDataplane(routing?.inference?.dataplane)
+}
+
+export function parseKernelDataplanePatch(value) {
+  if (value == null || value === '') return { ok: true, value: '' }
+  const parsed = normalizeKernelDataplane(value, { inherit: true })
+  if (!parsed) return { ok: true, value: '' }
+  if (!KERNEL_DATAPLANES.includes(parsed)) {
+    return { ok: false, error: 'dataplane must be wrap or crag' }
+  }
+  return { ok: true, value: parsed }
 }
 
 export function normalizeOfficialCcInference(value, { inherit = false } = {}) {
@@ -181,11 +218,11 @@ export function parseInferenceEnginePatch(value) {
   }
   if (
     raw === 'rust' ||
+    raw === 'kernel' ||
+    raw === 'kin-kernel' ||
     raw === 'go' ||
     raw === 'worker' ||
-    raw === 'go-worker' ||
-    raw === 'kernel' ||
-    raw === 'kin-kernel'
+    raw === 'go-worker'
   ) {
     return { ok: true, value: 'rust' }
   }
@@ -207,8 +244,9 @@ export function parseSlotPersonaPresetPatch(value) {
     raw === 'prompt' ||
     raw === 'agent_prompt' ||
     raw === 'cc_prompt'
-  )
+  ) {
     return { ok: true, value: 'official' }
+  }
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') {
     return { ok: true, value: 'zero' }
   }
@@ -218,8 +256,9 @@ export function parseSlotPersonaPresetPatch(value) {
 export function parseSlotEnginePolicyPatch(body = {}) {
   const hasEngine = Object.prototype.hasOwnProperty.call(body, 'inference_engine')
   const hasPersona = Object.prototype.hasOwnProperty.call(body, 'persona_preset')
-  if (!hasEngine && !hasPersona) {
-    return { ok: false, error: 'inference_engine or persona_preset required' }
+  const hasDataplane = Object.prototype.hasOwnProperty.call(body, 'dataplane')
+  if (!hasEngine && !hasPersona && !hasDataplane) {
+    return { ok: false, error: 'inference_engine, persona_preset or dataplane required' }
   }
   const patch = {}
   if (hasEngine) {
@@ -231,6 +270,11 @@ export function parseSlotEnginePolicyPatch(body = {}) {
     const parsed = parseSlotPersonaPresetPatch(body.persona_preset)
     if (!parsed.ok) return parsed
     patch.persona_preset = parsed.value
+  }
+  if (hasDataplane) {
+    const parsed = parseKernelDataplanePatch(body.dataplane)
+    if (!parsed.ok) return parsed
+    patch.dataplane = parsed.value
   }
   return { ok: true, patch }
 }
@@ -286,6 +330,11 @@ export function validateInferenceRoutingPatch(body = {}) {
   if (Object.prototype.hasOwnProperty.call(body.inference, 'health_ttl_ms')) {
     const n = Number(body.inference.health_ttl_ms)
     if (!Number.isFinite(n) || n < 0) errors.push('inference.health_ttl_ms 必须是 >= 0 的数字')
+  }
+  if (Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
+    const parsed = parseKernelDataplanePatch(body.inference.dataplane)
+    if (!parsed.ok) errors.push(parsed.error)
+    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap 或 crag')
   }
   return errors
 }
