@@ -535,6 +535,20 @@ export function classifyUpstreamResult(
         refusalTtlMs: PROVIDER_PAUSE_MS,
       }
     }
+    // A 2xx stream that died before visible output used to be rewritten to 502.
+    // Kernel may also send that 502 with terminal incomplete. Neither is overload.
+    if (
+      result.terminalState === 'incomplete' &&
+      !result.committed &&
+      !isUsagePolicyMessage(message) &&
+      !/overload/i.test(message)
+    ) {
+      return continueWithoutCooldown({
+        scope: 'stream',
+        reason: 'empty_response',
+        retrySameAccount: true,
+      })
+    }
     return {
       scope: 'provider',
       action: 'continue-and-cooldown',
