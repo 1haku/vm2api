@@ -1,16 +1,17 @@
 # Changelog
 
-## 未发布
+## 1.3.49 — 2026-09-24
 
-- `share/wrap-cli/cli-node` 改为 Bun `bun-linux-x64-baseline` 目标重编（同 patch、同 Bun 1.3.14，UPX 5.0.1）。不支持 AVX2 / BMI2 的 CPU（Xeon E5 v2 等老机器、不透传 BMI2 的 KVM VPS）不再在槽内 SIGILL，也不再只报 `wrap cli-hop 未就绪` / `kernel.sock` 缺失。新 CPU 行为不变。（#120）
-- 控制面容器启动时，镜像内 `cli-node` 与 `share/wrap-cli/cli-node` 不同就覆盖，并在 `KIN_AUTO_SYNC_WRAP=1` 时同步到各槽。以前只在文件缺失时复制，已安装用户升级镜像后仍留着旧 ELF。
+- `share/wrap-cli/cli-node` 改为 Bun `bun-linux-x64-baseline` 重编（同 patch、同 Bun 1.3.14，UPX 5.0.1）。不支持 AVX2 / BMI2 的 CPU 不再在槽内 SIGILL，也不再只报 `wrap cli-hop 未就绪`。（#122）
+- 控制面容器启动时，镜像内 `cli-node` 与 `share/wrap-cli/cli-node` 不同就覆盖，并在 `KIN_AUTO_SYNC_WRAP=1` 时同步到各槽。
+- 没有可见输出的跳不再改写成 502。按空跳留在原 VM 重试，不再记成过载，也不再写 `overload_until`。（#123）
+- Codex 的 200 流只要带了 token 就写入用量、`service_tier` 和费用，不再记成 `codex_upstream`。日志和 VM 计量条因此能显示实际计费。（#123）
+- 自定义槽位 id 在虚拟机列表和日志里显示真实名字，不再显示「未绑定账号」。（#123）
 
-已部署机升级：拉新镜像重启控制面即可，启动脚本会覆盖 `cli-node` 并自动 `wrap-cli/sync`；源码安装走 `install.sh upgrade`。不要 `docker rm` 槽。
+已部署机升级：`cli-node` 二进制变了。镜像安装拉新镜像并重启控制面，启动脚本会覆盖 `cli-node`，`KIN_AUTO_SYNC_WRAP=1` 时自动 `wrap-cli/sync`。源码安装覆盖控制面和 `share/wrap-cli/cli-node`，重启 Node 一次，然后 `wrap-cli/sync`。不要 `docker rm` 槽。
 
 ## 1.3.48 — 2026-09-24
 
-- 没有可见输出的跳不再改写成 502。它按空跳留在原 VM 重试，不再记成过载去换号。
-- Codex 流不再因为不是 Claude 完整消息就记成 `codex_upstream`。带 token 的 200 跳写入用量和费用，日志与 VM 计量条能显示实际计费。
 - 账号被额度硬闸踢出后，会话的全部粘滞别名一起解开，并让出该账号的会话窗座位，下一轮可以绑到别的 VM。
 - 选号失败不再被上一跳未完成的 assistant 改写成 502 `incomplete_response`。空池对客户端仍是 503 `overloaded_error`。空池日志不再打印 `soonest=0s`。
 - Haiku 子代理认母会话改为入站 `metadata.user_id.device_id`。同一 API key 上另一台设备的最近会话不再被占用。同一 `device_id` 两分钟内的母会话是这条主体 session；没有母会话时，该 `device_id` 的这批请求仍只占一个位。
