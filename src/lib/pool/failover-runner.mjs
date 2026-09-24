@@ -339,6 +339,7 @@ export class FailoverRunner {
     model,
     stickyKey = null,
     stickyKeys = null,
+    stickyDeviceId = null,
     stream = false,
     deliveryMode = null,
     signal,
@@ -365,6 +366,7 @@ export class FailoverRunner {
       const sessionId = account.sessionId || (account.accountId === outboundSessionAccountId ? outboundSessionId : '')
       const payload = { accountId: account.accountId, vmId: account.vmId }
       if (sessionId) payload.sessionId = sessionId
+      if (stickyDeviceId) payload.deviceId = stickyDeviceId
       for (const key of bindKeys) {
         const prev = this.stickyRouter.resolve?.(key)
         // A live pin on another account means this request only spilled for

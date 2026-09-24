@@ -74,6 +74,7 @@ import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
   applyCrsIdentityReplace,
   extractCallerSession,
+  parseUserId,
   resolveOutboundSessionId,
   sessionContextDiscriminator,
 } from '../identity/identity-rewrite.mjs'
@@ -573,7 +574,8 @@ export function createHandleProtocol(deps) {
       clientDiscriminator,
       firstUserText,
     }
-    // Family device_id wins when already bound so a child hop cannot open a second VM session.
+    // device_id points a Haiku companion at this turn's session. API key does not.
+    const stickyDeviceId = String(parseUserId(inbound?.metadata?.user_id)?.device_id || '').trim()
     const stickyKey = stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null
     const stickyKeys = stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || []
     const stickyBound =
@@ -787,6 +789,7 @@ export function createHandleProtocol(deps) {
         model: canonicalBody.model,
         stickyKey,
         stickyKeys,
+        stickyDeviceId,
         pinVmId,
         ownerScope,
         countUsage: !healthReal,
