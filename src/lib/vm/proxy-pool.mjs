@@ -16,7 +16,7 @@ import { ProxiesRepo } from '../db/repos/proxies-repo.mjs'
 import { canBindProxyToVm, normalizeOwnerId, proxyOwnerId } from '../admin/resource-owner.mjs'
 import { validTimezone } from '../core/timezone.mjs'
 import { lookupProxyGeo } from './proxy-geo.mjs'
-import { LOCAL_EGRESS_ID, isLocalEgressProxy } from './egress.mjs'
+import { DNS_PRIMARY_AUTO, DNS_UPSTREAMS, LOCAL_EGRESS_ID, isLocalEgressProxy, validDnsPrimary } from './egress.mjs'
 
 export const MAX_VMS_PER_PROXY = 5
 export const BIND_LIMIT_MIN = 1
@@ -33,6 +33,8 @@ const DEFAULT_CONFIG = {
   // operator pinned one by hand (vm.timezone_source === 'manual').
   follow_proxy_timezone: true,
   bind_limit: MAX_VMS_PER_PROXY,
+  // Transparent-egress DNS tried first; the other built-ins remain as fallback.
+  dns_primary: DNS_PRIMARY_AUTO,
 }
 
 export function clampBindLimit(value, fallback = MAX_VMS_PER_PROXY) {
@@ -596,6 +598,10 @@ export class ProxyPool {
 
   updateConfig(patch = {}) {
     const allowed = [5, 10, 30, 60]
+    if (patch.dns_primary != null && !validDnsPrimary(patch.dns_primary)) {
+      return { ok: false, error: 'invalid_dns_primary', allowed: [DNS_PRIMARY_AUTO, ...DNS_UPSTREAMS] }
+    }
+    if (patch.dns_primary != null) this.state.config.dns_primary = patch.dns_primary
     if (patch.probe_interval_min != null) {
       const n = Number(patch.probe_interval_min)
       if (!allowed.includes(n)) {

@@ -160,6 +160,7 @@ import {
   boundProxyUrl,
   hasBoundExit,
   isLocalEgressProxy,
+  dnsUpstreamChain,
 } from '../vm/egress.mjs'
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
 import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../identity/official-fingerprint.mjs'
@@ -3510,13 +3511,29 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'PUT' && p === '/api/panel/proxies/config') {
         const body = await readBody(req, 64 * 1024)
+        const previousDnsPrimary = proxyPool.snapshot().config.dns_primary
         const result = proxyPool.updateConfig(body)
         if (!result.ok)
           return json(res, 400, {
             ok: false,
             error: { type: 'invalid_request_error', code: result.error, message: result.error, details: result },
           })
-        return json(res, 200, panel.ok(result.config))
+        // DNS order change must reach running egress helpers; slots stay intact.
+        const egress = []
+        if (
+          body.dns_primary != null &&
+          body.dns_primary !== previousDnsPrimary &&
+          egressEnabled() &&
+          process.env.KIN_CRS_MOCK !== '1'
+        ) {
+          const dnsUpstream = dnsUpstreamChain(result.config.dns_primary)
+          for (const proxy of proxyPool.snapshot().proxies) {
+            if (isLocalEgressProxy(proxy) || !proxy.bound_vm_ids?.length) continue
+            const r = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id), { dnsUpstream })
+            egress.push({ proxy_id: proxy.id, ok: r.ok, error: r.ok ? null : r.error })
+          }
+        }
+        return json(res, 200, panel.ok({ ...result.config, egress }))
       }
       // Must stay BELOW /proxies/config: `[^/]+` matches "config" too, and this
       // route shares its method, so ordering alone decides the winner. The

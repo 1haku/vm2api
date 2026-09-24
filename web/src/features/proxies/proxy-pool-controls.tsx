@@ -13,6 +13,15 @@ import { Textarea } from '@/components/ui/textarea'
 
 const BIND_LIMITS = [1, 2, 3, 4, 5, 8, 10, 16, 20, 32]
 const PROBE_MINS = [5, 10, 30, 60]
+// Values mirror DNS_UPSTREAMS in src/lib/vm/egress.mjs. The chosen one is tried
+// first; the rest stay behind it as automatic fallback.
+const DNS_CHOICES = [
+  { value: 'auto', label: '自动（默认顺序）' },
+  { value: 'https://1.1.1.1/dns-query', label: 'Cloudflare DoH' },
+  { value: 'https://8.8.8.8/dns-query', label: 'Google DoH' },
+  { value: '8.8.8.8:53', label: 'Google TCP 53（明文）' },
+  { value: '1.1.1.1:53', label: 'Cloudflare TCP 53（明文）' },
+]
 
 type ProxyPoolControlsProps = {
   bindLimit: number
@@ -21,6 +30,8 @@ type ProxyPoolControlsProps = {
   importing: boolean
   onBindLimitChange: (value: number) => void
   onProbeMinChange: (value: number) => void
+  dnsPrimary: string
+  onDnsPrimaryChange: (value: string) => void
   followProxyTimezone: boolean
   onFollowProxyTimezoneChange: (value: boolean) => void
   onRawChange: (value: string) => void
@@ -38,6 +49,8 @@ export function ProxyPoolControls(props: ProxyPoolControlsProps) {
     importing,
     onBindLimitChange,
     onProbeMinChange,
+    dnsPrimary,
+    onDnsPrimaryChange,
     followProxyTimezone,
     onFollowProxyTimezoneChange,
     onRawChange,
@@ -90,6 +103,27 @@ export function ProxyPoolControls(props: ProxyPoolControlsProps) {
               ))}
             </SelectContent>
           </Select>
+        </label>
+        <label className='flex items-center gap-2'>
+          出口 DNS
+          <Select value={dnsPrimary} onValueChange={onDnsPrimaryChange}>
+            <SelectTrigger
+              className='h-8 w-[200px]'
+              aria-label='透明出口优先 DNS'
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DNS_CHOICES.map((choice) => (
+                <SelectItem key={choice.value} value={choice.value}>
+                  {choice.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className='text-xs text-muted-foreground'>
+            优先用所选，失败自动换下一个
+          </span>
         </label>
         <label className='flex items-center gap-2'>
           <Switch

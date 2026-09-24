@@ -8,6 +8,8 @@ import {
   boundProxyUrl,
   bridgeName,
   chainName,
+  dnsUpstreamChain,
+  validDnsPrimary,
   egressEnabled,
   hasBoundExit,
   inspectEgressNetwork,
@@ -20,6 +22,7 @@ import {
   networkName,
   portsForProxy,
   slotNetworkForVm,
+  startEgressProcess,
 } from '../../src/lib/vm/egress.mjs'
 
 test('names stay short and stable per proxy id', () => {
@@ -119,4 +122,34 @@ test('local egress readiness is direct and does not require kin-egress', () => {
   const listen = egressListening('/tmp/does-not-matter', LOCAL_EGRESS_ID)
   assert.equal(listen.ok, true)
   assert.equal(listen.mode, 'direct')
+})
+
+test('dns primary puts the chosen upstream first and keeps the rest as fallback', () => {
+  assert.equal(dnsUpstreamChain('auto'), '')
+  assert.equal(dnsUpstreamChain('bogus'), '')
+  assert.equal(
+    dnsUpstreamChain('8.8.8.8:53'),
+    '8.8.8.8:53,https://1.1.1.1/dns-query,https://8.8.8.8/dns-query,1.1.1.1:53',
+  )
+  assert.equal(validDnsPrimary('auto'), true)
+  assert.equal(validDnsPrimary('https://1.1.1.1/dns-query'), true)
+  assert.equal(validDnsPrimary('9.9.9.9:53'), false)
+})
+
+test('egress config carries dns_upstream only when configured', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-dns-'))
+  const base = {
+    projectRoot: root,
+    proxyUrl: 'socks5h://127.0.0.1:1',
+    tcpPort: 20000,
+    dnsPort: 20001,
+    listenHost: '127.0.0.1',
+    bin: '/bin/true',
+  }
+  const a = startEgressProcess({ ...base, proxyId: 'px-a', dnsUpstream: '' })
+  assert.equal(a.ok, true)
+  assert.equal(JSON.parse(fs.readFileSync(a.configPath, 'utf8')).dns_upstream, undefined)
+  const b = startEgressProcess({ ...base, proxyId: 'px-b', dnsUpstream: '8.8.8.8:53,1.1.1.1:53' })
+  assert.equal(JSON.parse(fs.readFileSync(b.configPath, 'utf8')).dns_upstream, '8.8.8.8:53,1.1.1.1:53')
+  fs.rmSync(root, { recursive: true, force: true })
 })
