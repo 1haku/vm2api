@@ -42,17 +42,81 @@ function textParts(content) {
     .join('\n')
 }
 
-function chatMessageToInput(message) {
-  const text = textParts(message.content)
-  if (message.role === 'system') {
-    return { type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }
+function imageUrlOf(part) {
+  if (typeof part?.image_url === 'string') return part.image_url
+  if (typeof part?.image_url?.url === 'string') return part.image_url.url
+  if (typeof part?.url === 'string') return part.url
+  return ''
+}
+
+function userContentParts(content) {
+  if (typeof content === 'string') return content ? [{ type: 'input_text', text: content }] : []
+  if (!Array.isArray(content)) {
+    const text = content?.text || ''
+    return text ? [{ type: 'input_text', text }] : []
   }
-  const role = message.role === 'assistant' ? 'assistant' : 'user'
-  return {
-    type: 'message',
-    role,
-    content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
+  const parts = []
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part) parts.push({ type: 'input_text', text: part })
+      continue
+    }
+    if (!part || typeof part !== 'object') continue
+    if (part.type === 'image_url' || part.type === 'image' || part.type === 'input_image') {
+      const url = imageUrlOf(part)
+      if (url) parts.push({ type: 'input_image', image_url: url })
+      continue
+    }
+    const text = part.text || ''
+    if (text) parts.push({ type: 'input_text', text })
   }
+  return parts
+}
+
+function toolArguments(call) {
+  const raw = call?.function?.arguments ?? call?.arguments ?? '{}'
+  return typeof raw === 'string' ? raw : JSON.stringify(raw ?? {})
+}
+
+/** Chat message → Responses items. Tool-only assistant turns stay function_call items, not empty text. */
+function chatMessageToItems(message) {
+  if (!message || typeof message !== 'object') return []
+  if (message.role === 'tool') {
+    const output = typeof message.content === 'string' ? message.content : textParts(message.content)
+    return [
+      {
+        type: 'function_call_output',
+        call_id: message.tool_call_id || message.id || 'call_unknown',
+        output: output || '',
+      },
+    ]
+  }
+  if (message.role === 'assistant') {
+    const items = []
+    const text = textParts(message.content)
+    if (text) {
+      items.push({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text }],
+      })
+    }
+    for (const call of message.tool_calls || []) {
+      const name = call?.function?.name || call?.name
+      if (!name) continue
+      items.push({
+        type: 'function_call',
+        call_id: call.id || call.call_id || `call_${name}`,
+        name,
+        arguments: toolArguments(call),
+      })
+    }
+    return items
+  }
+  const role = message.role === 'system' || message.role === 'developer' ? 'developer' : 'user'
+  const parts = userContentParts(message.content)
+  if (!parts.length) return []
+  return [{ type: 'message', role, content: parts }]
 }
 
 function toolsToCodex(tools) {
@@ -80,7 +144,7 @@ function toolsToCodex(tools) {
 
 export function chatToCodexResponses(body = {}) {
   const messages = Array.isArray(body.messages) ? body.messages : []
-  const input = messages.map(chatMessageToInput)
+  const input = messages.flatMap(chatMessageToItems)
   const out = {
     model: body.model,
     input,
@@ -91,6 +155,7 @@ export function chatToCodexResponses(body = {}) {
   if (tools) out.tools = tools
   if (body.tool_choice) out.tool_choice = body.tool_choice
   if (body.reasoning) out.reasoning = body.reasoning
+  if (body.reasoning_effort) out.reasoning_effort = body.reasoning_effort
   if (body.max_tokens || body.max_completion_tokens) {
     out.max_output_tokens = body.max_tokens || body.max_completion_tokens
   }
@@ -202,7 +267,44 @@ export function toCodexResponses(protocol, body, convert = {}) {
   return { ok: false, code: 'protocol_not_allowed' }
 }
 
-export function responsesSseToChatChunk(line, id = 'codex') {
+export function createChatSseState(id = 'codex') {
+  return { id, seq: 0, tools: new Map(), sawTool: false }
+}
+
+function chatChunk(id, delta, finish, extra = {}) {
+  return `data: ${JSON.stringify({
+    id,
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta, finish_reason: finish ?? null }],
+    ...extra,
+  })}\n\n`
+}
+
+function bindTool(state, keys, fields = {}) {
+  const names = keys.filter((key) => key != null && key !== '').map(String)
+  const existing = names.map((key) => state.tools.get(key)).find(Boolean)
+  const slot = existing || { index: state.seq++, id: '', name: '', header: false }
+  if (fields.id) slot.id = fields.id
+  if (fields.name) slot.name = fields.name
+  for (const key of names) state.tools.set(key, slot)
+  state.sawTool = true
+  return slot
+}
+
+function toolHeaderDelta(slot) {
+  if (slot.header) return null
+  slot.header = true
+  return {
+    index: slot.index,
+    id: slot.id,
+    type: 'function',
+    function: { name: slot.name, arguments: '' },
+  }
+}
+
+export function responsesSseToChatChunk(line, id = 'codex', state = null) {
+  const session = state || createChatSseState(id)
+  if (!state && id) session.id = id
   const trimmed = String(line || '').trim()
   if (!trimmed.startsWith('data:')) return null
   const data = trimmed.slice(5).trim()
@@ -214,25 +316,42 @@ export function responsesSseToChatChunk(line, id = 'codex') {
     return null
   }
   const type = event.type || ''
-  if (
-    type === 'response.output_text.delta' ||
-    (event.delta && type !== 'response.completed' && type !== 'response.done')
-  ) {
-    const content = event.delta || event.text || ''
-    return `data: ${JSON.stringify({
-      id,
-      object: 'chat.completion.chunk',
-      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    })}\n\n`
+  if (type === 'response.output_item.added' && (event.item?.type === 'function_call' || event.item?.type === 'custom_tool_call')) {
+    const slot = bindTool(session, [event.output_index, event.item_id, event.item.call_id, event.item.id], {
+      id: event.item.call_id || event.item.id,
+      name: event.item.name,
+    })
+    const header = toolHeaderDelta(slot)
+    return header ? chatChunk(session.id, { tool_calls: [header] }) : null
+  }
+  if (type === 'response.function_call_arguments.delta' || type === 'response.custom_tool_call_input.delta') {
+    const slot = bindTool(session, [event.output_index, event.item_id])
+    const pieces = []
+    const header = toolHeaderDelta(slot)
+    if (header) pieces.push(header)
+    const args = typeof event.delta === 'string' ? event.delta : ''
+    if (args) pieces.push({ index: slot.index, function: { arguments: args } })
+    return pieces.length ? chatChunk(session.id, { tool_calls: pieces }) : null
+  }
+  if (type === 'response.function_call_arguments.done' || type === 'response.custom_tool_call_input.done') {
+    const slot = bindTool(session, [event.output_index, event.item_id], { name: event.name })
+    if (slot.header) return null
+    const header = toolHeaderDelta(slot)
+    const args = event.arguments || event.input || ''
+    const calls = header ? [header] : []
+    if (args) calls.push({ index: slot.index, function: { arguments: args } })
+    return calls.length ? chatChunk(session.id, { tool_calls: calls }) : null
+  }
+  if (type.startsWith('response.reasoning_') && typeof event.delta === 'string' && event.delta) {
+    return chatChunk(session.id, { reasoning_content: event.delta })
+  }
+  if (type === 'response.output_text.delta' || (typeof event.delta === 'string' && event.delta && type !== 'response.completed' && type !== 'response.done')) {
+    return chatChunk(session.id, { content: event.delta || event.text || '' })
   }
   if (type === 'response.completed' || type === 'response.done') {
     const usage = openaiChatUsageFromExtract(extractOpenaiUsage(event.response?.usage || event.usage))
-    return `data: ${JSON.stringify({
-      id,
-      object: 'chat.completion.chunk',
-      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-      ...(usage ? { usage } : {}),
-    })}\n\ndata: [DONE]\n\n`
+    const finish = session.sawTool ? 'tool_calls' : 'stop'
+    return `${chatChunk(session.id, {}, finish, usage ? { usage } : {})}data: [DONE]\n\n`
   }
   return null
 }
