@@ -15,7 +15,10 @@ import {
   officialCcShouldForceRefresh,
   buildOfficialCcDockerArgs,
   DEFAULT_HELLO_PROMPT,
-  DEFAULT_STATS_PROMPT,
+  DEFAULT_USAGE_PROMPT,
+  OFFICIAL_USAGE_RETRIES,
+  runOfficialCcUsage,
+  collectOfficialCcAccount,
   DEFAULT_OFFICIAL_CC_CONFIG,
   normalizeOfficialCcConfig,
   loadOfficialCcConfig,
@@ -28,7 +31,6 @@ import {
   listOfficialCcVmIds,
   repairOfficialClaudeBinLink,
   repairProjectOfficialClaudeBins,
-  officialCcUsesCliQuota,
   officialCcQuotaSucceeded,
   finalizeOfficialCcTelemetry,
   buildOfficialCcResidentDockerArgs,
@@ -102,7 +104,7 @@ test('status file never stores tokens', () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test('docker args use hello/stats bypassPermissions without CONNECT proxy', () => {
+test('docker args use hello//usage bypassPermissions without CONNECT proxy', () => {
   const args = buildOfficialCcDockerArgs({
     vmId: 'vm-30',
     uid: 10030,
@@ -120,13 +122,17 @@ test('docker args use hello/stats bypassPermissions without CONNECT proxy', () =
   )
   assert.ok(args.includes('ANTHROPIC_BASE_URL='))
   assert.ok(!args.some((item) => String(item).includes('8787')))
-  const statsArgs = buildOfficialCcDockerArgs({
+  const usageArgs = buildOfficialCcDockerArgs({
     vmId: 'vm-30',
     uid: 10030,
     gid: 987,
-    prompt: DEFAULT_STATS_PROMPT,
+    prompt: DEFAULT_USAGE_PROMPT,
   })
-  assert.ok(statsArgs.includes('/stats'))
+  assert.ok(usageArgs.includes('/usage'))
+  // stream-json keeps the structured usage_report (server limits[]) the
+  // plain json envelope drops.
+  assert.equal(usageArgs[usageArgs.indexOf('--output-format') + 1], 'stream-json')
+  assert.ok(usageArgs.includes('--verbose'))
 })
 
 test('guest docker gateway is not container localhost', () => {
@@ -189,26 +195,25 @@ test('normalizeOfficialCcConfig fills defaults and clamps', () => {
     wipe: false,
     apply_seed: false,
     reconcile_fingerprint: false,
-    usage_fallback: false,
     timeout_ms: 10,
     memory: '99g',
     hello_prompt: '  hi  ',
-    stats_prompt: '  /usage  ',
+    quota_via: 'cli',
+    stats_prompt: '/stats',
   })
   assert.equal(n.enabled, false)
   assert.equal(n.wipe, false)
   assert.equal(n.apply_seed, false)
   assert.equal(n.reconcile_fingerprint, false)
-  assert.equal(n.usage_fallback, false)
   assert.equal(n.timeout_ms, DEFAULT_OFFICIAL_CC_CONFIG.timeout_ms)
   assert.equal(n.memory, '500m')
   assert.equal(n.hello_prompt, 'hi')
-  assert.equal(n.stats_prompt, '/usage')
+  // Retired keys are dropped: /usage in the slot is the only quota source.
+  assert.equal('quota_via' in n, false)
+  assert.equal('stats_prompt' in n, false)
   const okTimeout = normalizeOfficialCcConfig({ timeout_ms: 60000, memory: '4g' })
   assert.equal(okTimeout.timeout_ms, 60000)
   assert.equal(okTimeout.memory, '4g')
-  assert.equal(normalizeOfficialCcConfig({}).quota_via, 'usage-api')
-  assert.equal(normalizeOfficialCcConfig({}).cli_stats, false)
   assert.equal(normalizeOfficialCcConfig({}).sync_telemetry, true)
   assert.equal(normalizeOfficialCcConfig({ sync_telemetry: false }).sync_telemetry, false)
   assert.equal(normalizeOfficialCcConfig({}).resident, false)
@@ -239,10 +244,8 @@ test('resident docker args stay interactive without CONNECT proxy', () => {
   assert.ok(!args.includes('CI=1'))
 })
 
-test('official quota defaults to protocol /usage, not CLI /stats', () => {
-  assert.equal(officialCcUsesCliQuota(normalizeOfficialCcConfig()), false)
-  assert.equal(officialCcUsesCliQuota({ quota_via: 'cli' }), true)
-  assert.equal(officialCcQuotaSucceeded({ ok: true, source: 'official-cc-usage' }), true)
+test('official quota success accepts parsed /usage windows', () => {
+  assert.equal(officialCcQuotaSucceeded({ ok: true, source: 'official-cc-usage-cli' }), true)
   assert.equal(officialCcQuotaSucceeded({ ok: false }), false)
 })
 
@@ -662,4 +665,73 @@ test('Node boot restores dead residents without another hello', async () => {
   assert.equal(already.reason, 'cli-hop')
   assert.deepEqual(listOfficialCcVmIds(root).sort(), ['vm-30', 'vm-31'])
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+function usageLines(limits) {
+  return [
+    JSON.stringify({ type: 'assistant', usage_report: { rate_limits: { limits } } }),
+    JSON.stringify({ type: 'result', result: 'ok' }),
+  ].join('\n')
+}
+
+test('slot /usage retries at most twice when limits[] is missing', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cc-usage-'))
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
+  const prompts = []
+  const turn = async ({ prompt, outFile }) => {
+    prompts.push(prompt)
+    fs.writeFileSync(outFile, usageLines(null))
+    return { ok: true, code: 0, timed_out: false }
+  }
+  const run = await runOfficialCcUsage({ turn, homeDir: home, retryDelayMs: 0 })
+  assert.equal(run.attempts, OFFICIAL_USAGE_RETRIES + 1)
+  assert.deepEqual(prompts, ['/usage', '/usage', '/usage'])
+  assert.equal(run.stats.limits_present, false)
+  fs.rmSync(home, { recursive: true, force: true })
+})
+
+test('slot /usage stops once Fable limits arrive', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cc-usage-'))
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
+  let n = 0
+  const turn = async ({ outFile }) => {
+    n += 1
+    fs.writeFileSync(
+      outFile,
+      n === 1
+        ? 'boom'
+        : usageLines([
+            { kind: 'session', percent: 10, resets_at: null },
+            { kind: 'weekly_scoped', percent: 21, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+          ]),
+    )
+    return { ok: n > 1, code: n > 1 ? 0 : 1, timed_out: false }
+  }
+  const run = await runOfficialCcUsage({ turn, homeDir: home, retryDelayMs: 0 })
+  assert.equal(run.attempts, 2)
+  assert.equal(run.stats.seven_day_oi.utilization, 0.21)
+  fs.rmSync(home, { recursive: true, force: true })
+})
+
+test('collectOfficialCcAccount reads tier from profile and model ids via slot worker', async () => {
+  const ops = []
+  const slotOauth = async (_exec, op) => {
+    ops.push(op)
+    if (op === 'profile') {
+      return { ok: true, status: 200, body: { account: { has_claude_max: true }, organization: {} } }
+    }
+    return { ok: true, status: 200, body: { data: [{ id: 'claude-fable-5' }, { id: 'claude-sonnet-4-5' }] } }
+  }
+  const got = await collectOfficialCcAccount({ vmId: 'vm-01' }, { slotOauth })
+  assert.deepEqual(ops.sort(), ['models', 'profile'])
+  assert.equal(got.account_tier, 'max')
+  assert.deepEqual(got.available_models, ['claude-fable-5', 'claude-sonnet-4-5'])
+})
+
+test('bootstrap source never calls Anthropic from the host', () => {
+  const src = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/lib/oauth/official-cc-bootstrap.mjs'),
+    'utf8',
+  )
+  assert.equal(/probeVmUsage|host-anthropic|node-fetch/.test(src), false)
 })

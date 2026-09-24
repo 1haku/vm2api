@@ -56,7 +56,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 以下请求共用该槽绑定的 SOCKS5（控制面 host 或 kernel 透明出口），不允许 VPS 直连 Anthropic：
 
 - `/v1/messages`（Rust kernel cli-hop）
-- `/api/oauth/usage`（额度，host SOCKS）
+- `/api/oauth/usage`、`/api/oauth/profile`、`/v1/models`（额度与等级，槽内 worker）
 - `/v1/oauth/token`（refresh / 授权码）
 - 健康 / 额度探测
 - 遥测 sidecar 的 event_logging / eval（若开启）
@@ -74,9 +74,6 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 | `apply_seed` | true | hello 成功后置播种 |
 | `reconcile_fingerprint` | true | 官方 userID/machineID 覆盖槽位自造 id |
 | `sync_telemetry` | true | 初装成功后写 sidecar 身份并 reload 槽位 |
-| `quota_via` | `usage-api` | hello 后走协议 `GET /api/oauth/usage` |
-| `cli_stats` | false | `/stats` 是 TUI，仅 opt-in |
-| `usage_fallback` | false | 无窗口时是否再试 CLI `/usage` |
 | `hello_prompt` | `hello` | |
 | `timeout_ms` | 240000 | |
 | `memory` | `2g` | 仅初装期间 `docker update`；结束/失败收回 768m |
@@ -86,7 +83,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 1. wipe 初装文件  
 2. 物化 `~/.claude/.credentials.json`（worker 活票）  
 3. 官方 CLI 经 HTTP CONNECT → 槽 SOCKS5 跑 `hello`  
-4. 协议 `/api/oauth/usage` 写 5h/7d/Fable 刻度（utilization 0–100）  
+4. 槽内 CLI `/usage` 写 5h/7d/Fable 刻度，失败再试 2 次。账号等级以官方 profile 为准
 5. 后置播种（含强制 env：`DISABLE_TELEMETRY` 等按 seed_policy）  
 6. `~/.claude.json` 的 userID/machineID 写入槽位指纹；清 leftover `.claude/.claude.json`  
 7. `sync_telemetry`：写 `kin-identity.json` + `worker.json.telemetry`，reload 槽位拉 sidecar  
@@ -97,7 +94,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 
 ## 用量刻度
 
-面板探测走官方 `GET /api/oauth/usage`（worker + 槽 SOCKS5）：
+面板探测走槽内 `kin-worker oauth`（profile、usage、models）。出口是槽的 SOCKS5 或透明网络，Node 不直连 Anthropic：
 
 - `five_hour` / `seven_day` utilization 0–100
 - Fable `weekly_scoped` → `7d_oi`；limits / model_scoped 里出现 Fable 模型即 Max

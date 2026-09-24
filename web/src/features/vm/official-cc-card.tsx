@@ -16,8 +16,8 @@ const STEP_LABELS: Record<string, string> = {
   refresh: '刷新过期票',
   login: '写入官方登录文件',
   hello: '首次对话 hello',
-  usage: '协议 /usage 额度探测',
-  stats: '读取 /stats 额度',
+  usage: '槽内 /usage 额度',
+  profile: '读取账号等级与模型',
   seed: '后置覆写播种',
   telemetry: '写入遥测',
   resident: 'hello 后常驻',
@@ -38,7 +38,7 @@ export function officialCcErrorHint(err?: string | null): string {
   if (/timed out|timeout/i.test(s))
     return '官方对话超时。可在本页再次执行官方初装。'
   if (/\/usage|usage probe|official-cc-usage/i.test(s))
-    return '协议额度探测失败。检查槽位 worker 与 SOCKS5 后，再执行一次官方初装。'
+    return '槽内 /usage 重试 2 次仍失败。检查槽位 SOCKS5 后，再执行一次官方初装。'
   if (/no live oauth|no_credential|credential/i.test(s))
     return '此槽没有可用 OAuth。先换票，再执行官方初装。'
   if (/already_running/i.test(s)) return '初装已在运行，稍等或刷新进度。'
@@ -66,7 +66,7 @@ function trackIndex(step?: string): number {
     login: 2,
     hello: 3,
     usage: 4,
-    stats: 4,
+    profile: 4,
     seed: 5,
     telemetry: 5,
     resident: 6,
@@ -238,6 +238,11 @@ export function OfficialCcCard({ vmId }: { vmId: string }) {
         <OfficialCcTrack cc={cc || null} />
         <div className='flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground'>
           {cc?.account_tier ? <span>{cc.account_tier}</span> : null}
+          {cc?.available_models?.length ? (
+            <span title={cc.available_models.join('\n')}>
+              {cc.available_models.length} 个可用模型
+            </span>
+          ) : null}
           {cc?.hello_ok && (cc?.usage_ok || cc?.stats_ok) ? (
             <span>额度已探测</span>
           ) : cc?.hello_ok ? (
