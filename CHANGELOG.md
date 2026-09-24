@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.44 — 2026-09-24
+
+- 测试对话、设置 → 协议、虚拟机详情、内核页文案区分运输（Rust cli-hop）和数据面（wrap `cli-node` / crag 官方 Claude）。
+- 测试日志不再把 rust cli-hop 一律写成 wrap。
+
+已部署机升级：覆盖控制面和前端并重启 Node 一次。不改槽 ELF。不要 `docker rm` 槽。
+
 ## 1.3.43 — 2026-09-24
 
 - 内核页两个对等卡片：wrap（`cli-node`）和 crag（官方 Claude Code）。点卡片确认后切换，槽表显示每槽内核。Codex 不动。
