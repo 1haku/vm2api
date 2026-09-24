@@ -43,6 +43,7 @@ import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
 import { OpenaiQuotaPanel } from '@/features/vm/openai-quota-panel'
 import { proxyHealthOf } from '@/features/vm/proxy-health'
 import { SessionSlotsEditor } from '@/features/vm/session-slots-editor'
+import { telemetryStatusLabel } from './telemetry-status'
 
 type Props = {
   vm: Vm
@@ -389,9 +390,7 @@ export function VmStatusBoard(props: Props) {
                   {topology?.go_telemetry ? ' · Go telemetry' : ''}
                 </Field>
                 <Field label='遥测' compact>
-                  {telemetry?.enabled
-                    ? `运行中${telemetry.read_only ? ' · 只读' : ''}`
-                    : '未启用'}
+                  {telemetryStatusLabel(telemetry)}
                 </Field>
               </>
             )}
