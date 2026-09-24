@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.47 — 2026-09-24
+
+- crag stdin 注入 trailing `role=system` 环境（cwd、SessionStart、额外工作目录），不再丢掉 Claude Code 客户端的环境块。
+- 请求里的 `Primary working directory` 若在本机存在，则作为 `claude` 的 cwd，并 `--add-dir`。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再 `POST /api/panel/dataplane` crag restart 铺新 `share/crag/kin-kernel`。不要 `docker rm` 槽。HostDzire 当前保持 wrap，不必切 dataplane。
+
 ## 1.3.46 — 2026-09-24
 
 - crag 把 stdin 用户帧改成最后一条 **user** 消息（跳过 Claude Code 客户端拖在后面的 role=system SessionStart）。纯文本压成 string。去掉 `--agent crag-worker`，避免官方 CLI 先空跑一轮。
