@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布
+
+- `share/wrap-cli/cli-node` 改为 Bun `bun-linux-x64-baseline` 目标重编（同 patch、同 Bun 1.3.14，UPX 5.0.1）。不支持 AVX2 / BMI2 的 CPU（Xeon E5 v2 等老机器、不透传 BMI2 的 KVM VPS）不再在槽内 SIGILL，也不再只报 `wrap cli-hop 未就绪` / `kernel.sock` 缺失。新 CPU 行为不变。（#120）
+- 控制面容器启动时，镜像内 `cli-node` 与 `share/wrap-cli/cli-node` 不同就覆盖，并在 `KIN_AUTO_SYNC_WRAP=1` 时同步到各槽。以前只在文件缺失时复制，已安装用户升级镜像后仍留着旧 ELF。
+
+已部署机升级：拉新镜像重启控制面即可，启动脚本会覆盖 `cli-node` 并自动 `wrap-cli/sync`；源码安装走 `install.sh upgrade`。不要 `docker rm` 槽。
+
 ## 1.3.48 — 2026-09-24
 
 - 账号被额度硬闸踢出后，会话的全部粘滞别名一起解开，并让出该账号的会话窗座位，下一轮可以绑到别的 VM。
