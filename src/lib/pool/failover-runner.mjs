@@ -10,8 +10,10 @@ import {
   isIncompleteAssistantMessage,
   incompleteAssistantClientError,
 } from '../core/errors.mjs'
-import { hasRefreshPresence } from '../oauth/oauth-credentials.mjs'
+import { hasRefreshPresence, readWorkerCredentialFile } from '../oauth/oauth-credentials.mjs'
+import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { resolveOfficialCcInference } from '../vm/slot-engine.mjs'
+import { AttemptCoordinator } from './unit-decision.mjs'
 
 const DEFAULTS = {
   max_account_switches: 10,
@@ -213,12 +215,23 @@ function preferLastResult(lastResult, lastPolicy, fallback, extras = {}) {
   }
 }
 
-function canRetrySameAccount(policy, used, config, hopMs) {
-  const maxRetries = Number(config.max_same_account_retries ?? 0)
-  const maxHopMs = Number(config.same_account_retry_max_hop_ms ?? 10_000)
-  if (!policy?.retrySameAccount || used >= maxRetries) return false
-  if (policy.reason === 'incomplete_assistant' || policy.reason === 'empty_response') return true
-  return hopMs < maxHopMs
+function permanentOAuthRevoke(policy) {
+  return {
+    ...policy,
+    scope: 'account',
+    action: 'continue-and-cooldown',
+    reason: 'oauth_revoked',
+    cooldownUntil: Number.MAX_SAFE_INTEGER,
+    retrySameAccount: false,
+  }
+}
+
+function isCredentialDeath(policy) {
+  return (
+    policy?.action === 'disable' ||
+    policy?.reason === 'oauth_no_refresh' ||
+    policy?.reason === 'oauth_revoked'
+  )
 }
 
 /**
@@ -299,6 +312,43 @@ export class FailoverRunner {
     this.sessionTails = new Map()
   }
 
+  noteUnitHealth(selected, policy, result) {
+    const circuit = this.scheduler?.unitCircuit
+    if (!circuit || !selected?.accountId) return
+    if (policy?.circuit) circuit.recordFailure(selected.accountId)
+    else if (verifiedSuccess(result)) circuit.recordSuccess(selected.accountId)
+    else circuit.releaseProbe?.(selected.accountId)
+  }
+
+  async recoverCredential(selected, policy) {
+    if (policy?.reason !== 'oauth_refresh_required') return policy
+    const exec = selected?.exec
+    if (!exec?.homeDir) return permanentOAuthRevoke(policy)
+    const before = readWorkerCredentialFile(exec.homeDir)
+    const beforeRefresh = String(before?.refresh_token || '')
+    let refreshed
+    try {
+      refreshed = await ensureWorkerCredential(exec, { force: true })
+    } catch (error) {
+      refreshed = { ok: false, error: { message: String(error?.message || error) } }
+    }
+    const after = readWorkerCredentialFile(exec.homeDir)
+    const afterRefresh = String(after?.refresh_token || '')
+    const blob = `${refreshed?.error?.code || ''} ${refreshed?.error?.message || ''} ${refreshed?.refresh_class || ''}`
+    const grantDead = /invalid_grant|token has been revoked|oauth_revoked/i.test(blob)
+    if (!refreshed?.ok && grantDead && afterRefresh === beforeRefresh) return permanentOAuthRevoke(policy)
+    if (refreshed?.ok || (beforeRefresh && afterRefresh && afterRefresh !== beforeRefresh)) {
+      return { ...policy, retrySameAccount: true, action: 'continue', cooldownUntil: null }
+    }
+    return {
+      ...policy,
+      retrySameAccount: false,
+      action: 'continue',
+      reason: 'oauth_refresh_failed',
+      cooldownUntil: null,
+    }
+  }
+
   forgetCredential(selected, policy) {
     this.stickyRouter?.unbindByAccount?.({
       accountId: selected?.accountId,
@@ -353,11 +403,16 @@ export class FailoverRunner {
     if (!this.scheduler) throw new Error('FailoverRunner requires a scheduler')
     if (typeof callAttempt !== 'function') throw new Error('FailoverRunner requires callAttempt')
     const startedAt = Date.now()
-    const deadline = startedAt + Number(this.config.total_retry_deadline_ms || 120000)
-    const excluded = new Set()
+    const budget = new AttemptCoordinator({
+      maxSameUnitRetries: Number(this.config.max_same_account_retries ?? 1),
+      maxUnitSwitches: Number(this.config.max_account_switches ?? 10),
+      deadlineMs: Number(this.config.total_retry_deadline_ms || 120000),
+      startedAt,
+    })
+    const deadline = budget.deadline
+    const excluded = budget.excluded
     // Accounts left only because the kernel had no free slot; their pins stay.
-    const spilled = new Set()
-    const sameAccountRetries = new Map()
+    const spilled = budget.spilled
     const bindKeys = uniqueStickyKeys(stickyKey, stickyKeys)
     let outboundSessionId = ''
     let outboundSessionAccountId = ''
@@ -365,6 +420,8 @@ export class FailoverRunner {
       if (!this.stickyRouter?.bind || !account) return
       const sessionId = account.sessionId || (account.accountId === outboundSessionAccountId ? outboundSessionId : '')
       const payload = { accountId: account.accountId, vmId: account.vmId }
+      const slotIndex = account.slotIndex != null ? account.slotIndex : pinnedSlot
+      if (slotIndex != null) payload.slotIndex = slotIndex
       if (sessionId) payload.sessionId = sessionId
       if (stickyDeviceId) payload.deviceId = stickyDeviceId
       for (const key of bindKeys) {
@@ -372,12 +429,13 @@ export class FailoverRunner {
         // A live pin on another account means this request only spilled for
         // capacity. Rewriting it would move the whole session off its slot.
         if (prev?.accountId && prev.accountId !== account.accountId) continue
-        this.stickyRouter.bind(key, payload, opts)
+        const guard = prev ? { ...opts, ifGeneration: prev.generation || 0 } : opts
+        this.stickyRouter.bind(key, payload, guard)
       }
     }
     let lastResult = null
     let lastPolicy = null
-    let accountSwitches = 0
+    let pinnedSlot = null
     let repaired = false
     let requestBody = clone(canonicalBody)
 
@@ -451,10 +509,12 @@ export class FailoverRunner {
         if (isUnfinishedLastResult(lastResult, lastPolicy)) return exhausted
         return preferLastResult(lastResult, lastPolicy, exhausted, { attemptCount: attemptNo - 1 })
       }
+      pinnedSlot = selected.slotIndex ?? null
       bindAll(
         {
           accountId: selected.accountId,
           vmId: selected.vmId,
+          slotIndex: pinnedSlot,
         },
         { countHit: false },
       )
@@ -533,6 +593,7 @@ export class FailoverRunner {
 
         lastResult = result
         lastPolicy = policy
+        this.noteUnitHealth(selected, policy, result)
         notifyProxyFailure(this.onProxyFailure, selected, policy)
         if (policy.reason === 'fable_plan_denied' && typeof this.onFablePlanDenied === 'function') {
           try {
@@ -596,10 +657,7 @@ export class FailoverRunner {
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
         if (
           !pinVmId &&
-          (policy.scope === 'credential' ||
-            policy.action === 'disable' ||
-            policy.reason === 'oauth_no_refresh' ||
-            policy.reason === 'oauth_revoked')
+          isCredentialDeath(policy)
         ) {
           this.forgetCredential(selected, policy)
         }
@@ -613,10 +671,10 @@ export class FailoverRunner {
             policy,
           }
         }
+        policy = await this.recoverCredential(selected, policy)
         const hopMs = Date.now() - attemptStarted
-        const used = sameAccountRetries.get(selected.accountId) || 0
-        if (canRetrySameAccount(policy, used, this.config, hopMs)) {
-          sameAccountRetries.set(selected.accountId, used + 1)
+        if (budget.allowSameUnit(selected.accountId, policy, hopMs, this.config.same_account_retry_max_hop_ms)) {
+          budget.noteSameUnit(selected.accountId)
           try {
             await sleepWithSignal(this.config.same_account_retry_delay_ms, signal)
           } catch {
@@ -644,11 +702,10 @@ export class FailoverRunner {
           } catch {}
         }
 
-        excluded.add(selected.accountId)
-        if (policy.reason === 'slot_busy') spilled.add(selected.accountId)
-        excluded.add(selected.vmId)
-        accountSwitches++
-        if (accountSwitches > this.config.max_account_switches) {
+        const switchesExhausted = budget.noteSwitch(selected.accountId, selected.vmId, {
+          spill: policy.reason === 'slot_busy',
+        })
+        if (switchesExhausted) {
           return preferLastResult(
             result,
             policy,
@@ -693,6 +750,7 @@ export class FailoverRunner {
         dropIncompleteSession(this.scheduler, selected, bindKeys, result, policy)
         lastResult = result
         lastPolicy = policy
+        this.noteUnitHealth(selected, policy, result)
         notifyProxyFailure(this.onProxyFailure, selected, policy)
         this.attemptsRepo?.complete?.(requestId, attemptNo, {
           upstreamStatus: 0,
@@ -716,17 +774,14 @@ export class FailoverRunner {
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
         if (
           !pinVmId &&
-          (policy.scope === 'credential' ||
-            policy.action === 'disable' ||
-            policy.reason === 'oauth_no_refresh' ||
-            policy.reason === 'oauth_revoked')
+          isCredentialDeath(policy)
         ) {
           this.forgetCredential(selected, policy)
         }
+        policy = await this.recoverCredential(selected, policy)
         const hopMs = Date.now() - attemptStarted
-        const used = sameAccountRetries.get(selected.accountId) || 0
-        if (canRetrySameAccount(policy, used, this.config, hopMs)) {
-          sameAccountRetries.set(selected.accountId, used + 1)
+        if (budget.allowSameUnit(selected.accountId, policy, hopMs, this.config.same_account_retry_max_hop_ms)) {
+          budget.noteSameUnit(selected.accountId)
           try {
             await sleepWithSignal(this.config.same_account_retry_delay_ms, signal)
           } catch {
@@ -734,10 +789,9 @@ export class FailoverRunner {
           }
           continue
         }
-        excluded.add(selected.accountId)
-        if (policy.reason === 'slot_busy') spilled.add(selected.accountId)
-        excluded.add(selected.vmId)
-        accountSwitches++
+        budget.noteSwitch(selected.accountId, selected.vmId, {
+          spill: policy.reason === 'slot_busy',
+        })
       } finally {
         selected.release?.()
       }

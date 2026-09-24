@@ -23,6 +23,25 @@ import { isCompleteAssistantMessage, isWrapConnectionError } from '../core/error
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
+const credentialRefreshTail = new Map()
+
+function withCredentialRefreshLock(key, fn) {
+  const prev = credentialRefreshTail.get(key) || Promise.resolve()
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const tail = prev.catch(() => {}).then(() => gate)
+  credentialRefreshTail.set(key, tail)
+  return prev.catch(() => {}).then(async () => {
+    try {
+      return await fn()
+    } finally {
+      release()
+      if (credentialRefreshTail.get(key) === tail) credentialRefreshTail.delete(key)
+    }
+  })
+}
 
 export function workerPaths(exec = {}) {
   const slotRoot = exec.homeDir ? path.dirname(exec.homeDir) : null
@@ -806,19 +825,44 @@ export async function ensureWorkerCredential(exec, { force = false } = {}) {
     }
   }
 
-  const result = await runSlotOauth(exec, 'refresh', { force: !!force })
-  const body = result?.body || {}
-  const refreshedCredential = readWorkerCredentialFile(exec.homeDir)
-  const mapped = {
-    ok: !!result?.ok,
-    status: result?.status || 0,
-    refreshed: !!body.refreshed,
-    refresh_class: result?.ok ? (body.refreshed ? 'rotated' : 'already_fresh') : undefined,
-    credential: result?.ok ? credentialSummary({ ...(refreshedCredential || {}), ...body }, Date.now()) : undefined,
-    error: result?.ok ? undefined : body.error,
-  }
-  if (!mapped.ok) mapped.refresh_class = classifyCredentialRefresh(mapped)
-  return mapped
+  const snapshotRefresh = String(credential.refresh_token || '')
+  const lockKey = String(exec.homeDir || exec.vm?.id || 'credential')
+  return withCredentialRefreshLock(lockKey, async () => {
+    const live = readWorkerCredentialFile(exec.homeDir) || credential
+    const liveRefresh = String(live?.refresh_token || '')
+    if (snapshotRefresh && liveRefresh && snapshotRefresh !== liveRefresh) {
+      return {
+        ok: true,
+        status: 200,
+        refreshed: false,
+        refresh_class: 'already_fresh',
+        credential: credentialSummary(live, Date.now()),
+      }
+    }
+    const liveNow = Date.now()
+    if (!force && !needsRefresh(live.expires_at, liveNow, REFRESH_SKEW_MS) && !isApiKeyMode(live.type || live.mode)) {
+      return {
+        ok: true,
+        status: 200,
+        refreshed: false,
+        refresh_class: 'already_fresh',
+        credential: credentialSummary(live, liveNow),
+      }
+    }
+    const result = await runSlotOauth(exec, 'refresh', { force: !!force })
+    const body = result?.body || {}
+    const refreshedCredential = readWorkerCredentialFile(exec.homeDir)
+    const mapped = {
+      ok: !!result?.ok,
+      status: result?.status || 0,
+      refreshed: !!body.refreshed,
+      refresh_class: result?.ok ? (body.refreshed ? 'rotated' : 'already_fresh') : undefined,
+      credential: result?.ok ? credentialSummary({ ...(refreshedCredential || {}), ...body }, Date.now()) : undefined,
+      error: result?.ok ? undefined : body.error,
+    }
+    if (!mapped.ok) mapped.refresh_class = classifyCredentialRefresh(mapped)
+    return mapped
+  })
 }
 
 function credentialSummary(credential, now = Date.now()) {
