@@ -29,6 +29,12 @@ import { CredentialPanel } from '@/features/vm/credential-panel'
 import { Field, Meter } from '@/features/vm/detail-section-primitives'
 import { OfficialCcCard } from '@/features/vm/official-cc-card'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
+import {
+  latestProbe,
+  probeOutcome,
+  probeSourceLabel,
+  type ProbeCheck,
+} from '@/features/vm/probe-status'
 
 type VmAccountTabProps = {
   id: string
@@ -72,10 +78,12 @@ export function VmAccountTab(props: VmAccountTabProps) {
   } = props
   const blocked = vm.can_import_credential === false
   const gpt = isCodexVm(vm)
-  const probe =
-    ((acc.last_probe as Record<string, unknown> | undefined) ||
-      vm.last_probe) ??
-    {}
+  const probe = latestProbe(
+    acc.last_probe_check as ProbeCheck | undefined,
+    vm.last_probe_check,
+    acc.last_probe as ProbeCheck | undefined,
+    vm.last_probe
+  )
 
   return (
     <TabsContent value='account' className='space-y-3 pt-3'>
@@ -221,12 +229,25 @@ export function VmAccountTab(props: VmAccountTabProps) {
               <CardContent className='divide-y pt-0'>
                 <Field label='时间' compact>
                   <span className='font-mono text-xs'>
-                    {String(probe.at || '未探测')}
+                    {probe.at || probe.probed_at
+                      ? fmtExpiresAt(probe.at || probe.probed_at)
+                      : '未探测'}
                   </span>
                 </Field>
                 <Field label='来源' compact>
-                  {String(acc.probe_source ?? vm.probe_source ?? '—')}
+                  {probeSourceLabel(
+                    probe.source ||
+                      String(acc.probe_source ?? vm.probe_source ?? '')
+                  )}
                 </Field>
+                <Field label='结果' compact>
+                  {probeOutcome(probe)}
+                </Field>
+                {probe.via === 'passive-headers' ? (
+                  <Field label='采样时间' compact>
+                    {probe.data_at ? fmtExpiresAt(probe.data_at) : '未知'}
+                  </Field>
+                ) : null}
                 {gpt ? null : (
                   <Field label='超额' compact>
                     {extraUsageText(acc.extra_usage ?? vm.extra_usage)}
