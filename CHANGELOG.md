@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+- 槽内核加 job 看门狗。CLI 超过 `KIN_JOB_IDLE_SECS`（默认 180 秒）没有任何输出帧，就给客户端回 `job idle timeout` 并发 `kin_cancel`，slot 在 CLI 回 ack 后释放。以前这种静默 job 会永久占住 slot，20 个占满后整个槽一直 `slot_busy`。
+- `kin_cancel` 超过 `KIN_CANCEL_ACK_SECS`（默认 30 秒）仍无 ack，该 slot 标为不可用并计入 `/internal/health` 的 `wedged_slots`。迟到的 ack 会让它恢复。
+- 客户端在 CLI 静默期间断开，现在立即取消 job，不再等下一帧。
+- 控制面：`ready_slots=0` 且 `wedged_slots>0` 视为内核坏了，不再当“忙”一直等，按原有路径重启槽内核。
 - 文档：`502 incomplete_response` 的含义、常见原因和自查命令写进 [docs/API.md](docs/API.md)。同一个槽全部失败、每次约 20–30 秒、面板代理探测却是绿的，多半是宿主机防火墙拦住了槽容器到 `kin-egress` 网关这一跳。
 - 部署：[docs/DEPLOY.md](docs/DEPLOY.md) 新增「防火墙（UFW / firewalld）」。绑远程 SOCKS5 的槽要放行 `keg*` 网卡到 20000–35999 端口（TCP + UDP）的入站；vm2api 不改宿主 INPUT 规则。本地出口不涉及。
 
-已部署机：代码未变，无需升级。开了 UFW / firewalld 入站默认拒绝的机器，按 DEPLOY.md 放行一次。
+已部署机升级：覆盖控制面并重启 Node 一次，再 `wrap-cli/sync` 把新 `kin-kernel.bin` 铺到槽并重启槽内 dataplane。不要 `docker rm` 槽。开了 UFW / firewalld 入站默认拒绝的机器，按 DEPLOY.md 放行一次。
 
 ## 1.3.40 — 2026-09-24
 
