@@ -941,11 +941,11 @@ test('pool exhaustion details include the scheduler snapshot', async () => {
   assert.deepEqual(result.body.error.details.wait_reasons, ['account_cooldown'])
 })
 
-test('preferLastResult does not deliver thinking-only as HTTP 200', async () => {
+test('thinking-only last hop never masks an empty pool', async () => {
   const scheduler = new Scheduler([candidate(1)])
   const runner = new FailoverRunner({
     scheduler,
-    config: { max_total_attempts: 1, max_same_account_retries: 0, max_account_switches: 0 },
+    config: { same_account_retry_delay_ms: 0 },
   })
   const result = await runner.run({
     requestId: 'req-incomplete-last',
@@ -964,10 +964,42 @@ test('preferLastResult does not deliver thinking-only as HTTP 200', async () => 
       },
     }),
   })
-  assert.equal(result.ok, false)
-  assert.equal(result.status, 502)
-  assert.equal(result.body.error.code, 'incomplete_response')
   assert.notEqual(result.status, 200)
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error.code, 'account_pool_exhausted')
+  assert.equal(result.body.error.details.reason, 'no_eligible_accounts')
+  assert.equal(result.body.error.details.last_reason, 'incomplete_assistant')
+  assert.equal(result.body.error.details.last_status, 200)
+})
+
+test('incomplete hops that empty the pool stay account_pool_exhausted', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const runner = new FailoverRunner({
+    scheduler,
+    config: { same_account_retry_delay_ms: 0 },
+  })
+  const result = await runner.run({
+    requestId: 'req-incomplete-empty-pool',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    callAttempt: () => ({
+      ok: false,
+      status: 200,
+      committed: false,
+      terminalState: 'incomplete',
+      body: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'draft', signature: 'sig' }],
+        stop_reason: null,
+      },
+    }),
+  })
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error.code, 'account_pool_exhausted')
+  assert.equal(result.body.error.details.reason, 'no_eligible_accounts')
+  assert.equal(result.body.error.details.last_reason, 'incomplete_assistant')
+  assert.equal(result.body.error.details.last_status, 200)
 })
 
 test('same sticky session requests execute serially', async () => {
