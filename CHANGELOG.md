@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.45 — 2026-09-24
+
+- crag 官方 `claude -p` 使用请求里的 model，不再写死 `claude-sonnet-4-5`。同一会话换模型会杀掉旧 CLI 再起。
+
+已部署机升级：覆盖控制面并重启 Node 一次，再 `wrap-cli/sync`（restart）把新 `share/crag/kin-kernel` 铺到槽。不要 `docker rm` 槽。
+
 ## 1.3.44 — 2026-09-24
 
 - 测试对话、设置 → 协议、虚拟机详情、内核页文案区分运输（Rust cli-hop）和数据面（wrap `cli-node` / crag 官方 Claude）。
