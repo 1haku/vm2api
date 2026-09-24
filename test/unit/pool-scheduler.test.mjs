@@ -448,6 +448,14 @@ test('formatPoolSelectionSummary keeps a compact internal log line', () => {
     }),
     'all_accounts_busy soonest=10064s sticky_cleared',
   )
+  assert.equal(
+    formatPoolSelectionSummary({
+      reason: 'no_eligible_accounts',
+      soonest_available_ms: null,
+      eligible: 0,
+    }),
+    'no_eligible_accounts eligible=0',
+  )
 })
 
 test('fable family cooldown still allows sonnet on the same account', async (t) => {
@@ -1996,6 +2004,35 @@ test('live rate_limit_reset_at gates the account and unbinds its sticky session'
   assert.equal(selected.ok, true)
   assert.equal(selected.vmId, 'vm-02')
   assert.deepEqual(unbound, ['conv-1'])
+  selected.release()
+})
+
+test('hard block releases every sticky alias and frees the session window', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const runtimeRepo = new RuntimeRepo()
+  runtimeRepo.upsert({ account_id: 'account-1', vm_id: 'vm-01', rate_limit_reset_at: Date.now() + 3_600_000 })
+  const sessions = new SessionLimitRegistry()
+  sessions.touch('account-1', 'conv-1')
+  const unbound = []
+  const pool = scheduler(root, {
+    runtimeRepo,
+    stickyRouter: {
+      resolve: () => ({ accountId: 'account-1', vmId: 'vm-01' }),
+      unbind: (key) => unbound.push(key),
+    },
+    accountQuota: { canAccept: () => ({ ok: true }), sessions },
+  })
+  const selected = await pool.selectAndReserve({
+    model: 'claude-test',
+    stickyKey: 'conv-1',
+    stickyKeys: ['conv-1', 'fam:dev-9'],
+    allowWait: false,
+  })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.vmId, 'vm-02')
+  assert.deepEqual(unbound, ['conv-1', 'fam:dev-9'])
+  assert.equal(sessions.snapshot('account-1', { max: 1 }).active, 0)
   selected.release()
 })
 

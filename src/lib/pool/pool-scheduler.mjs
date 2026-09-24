@@ -75,9 +75,11 @@ export function formatPoolSelectionSummary(details = {}) {
   if (!reason) return ''
   const parts = [reason]
   const soonest = Number(details.soonest_available_ms)
-  if (Number.isFinite(soonest) && soonest >= 0) {
+  if (Number.isFinite(soonest) && soonest > 0) {
     parts.push(`soonest=${Math.round(soonest / 1000)}s`)
   }
+  const eligible = Number(details.eligible)
+  if (Number.isFinite(eligible)) parts.push(`eligible=${eligible}`)
   if (details.sticky_cleared) parts.push('sticky_cleared')
   return parts.join(' ')
 }
@@ -229,6 +231,7 @@ export class PoolScheduler {
     allowWait = true,
     pinVmId = null,
     ownerScope = PLATFORM_SCOPE,
+    stickyKeys = null,
   } = {}) {
     const startedAt = Date.now()
     const pinned = !!String(pinVmId || '').trim()
@@ -273,7 +276,7 @@ export class PoolScheduler {
         ownerScope,
       })
       const available = candidates.filter((candidate) => this.isReservable(candidate))
-      let selected = this.pick(available, { model, stickyKey, eligible: candidates, spilled: spill })
+      let selected = this.pick(available, { model, stickyKey, eligible: candidates, spilled: spill, stickyKeys })
       if (this.lastStickyCleared) stickyCleared = true
       const reserveMisses = []
       const attempted = new Set()
@@ -749,11 +752,22 @@ export class PoolScheduler {
     return cleared
   }
 
+  /** Session leaves this account: drop every alias key and free its session-window seat. */
+  releaseSticky(bound, stickyKey, stickyKeys) {
+    const keys = Array.isArray(stickyKeys) && stickyKeys.length ? stickyKeys : stickyKey ? [stickyKey] : []
+    for (const key of keys) {
+      this.stickyRouter?.unbind?.(key)
+      try {
+        this.accountQuota?.sessions?.drop?.(bound?.accountId, key)
+      } catch {}
+    }
+  }
+
   /**
    * `spilled`: accounts this request skipped only for capacity (wait queue
    * full, kernel slot_busy). The session pin survives; the next turn returns.
    */
-  pick(candidates, { model, stickyKey, eligible = candidates, spilled = null } = {}) {
+  pick(candidates, { model, stickyKey, eligible = candidates, spilled = null, stickyKeys = null } = {}) {
     this.lastStickyCleared = false
     if (!candidates.length && !eligible?.length) return null
     const bound = stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null
@@ -761,7 +775,7 @@ export class PoolScheduler {
       const match = (candidate) => candidate.vmId === bound.vmId && candidate.accountId === bound.accountId
       const amongEligible = (eligible || candidates).find(match)
       if (!amongEligible) {
-        if (!spilled?.has(bound.accountId)) this.stickyRouter?.unbind?.(stickyKey)
+        if (!spilled?.has(bound.accountId)) this.releaseSticky(bound, stickyKey, stickyKeys)
         this.lastStickyCleared = true
       } else if (this.isReservable(amongEligible)) {
         return { ...amongEligible, selectionReason: 'sticky' }
@@ -769,7 +783,7 @@ export class PoolScheduler {
         if (this.waiterCount(amongEligible.accountId) < this.maxWaiters()) return null
         this.lastStickyCleared = true
       } else {
-        this.stickyRouter?.unbind?.(stickyKey)
+        this.releaseSticky(bound, stickyKey, stickyKeys)
         this.lastStickyCleared = true
       }
     }
