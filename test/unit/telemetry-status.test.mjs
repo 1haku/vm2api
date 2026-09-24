@@ -136,6 +136,34 @@ test('unsupported runtime and invalid slot ID do not invoke Docker', async (t) =
   assert.equal((await readSlotProcessStatus({ ...f, vm: { id: '../secret' }, run })).telemetry.enabled, null)
 })
 
+test('custom slot ids are observed; path traversal is not', async (t) => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-status-custom-'))
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }))
+  const id = 'bloat-ranges-3hicloudcom'
+  fs.mkdirSync(path.join(projectRoot, 'vms', id, 'run'), { recursive: true })
+  fs.writeFileSync(
+    path.join(projectRoot, 'vms', id, 'run', 'worker.json'),
+    JSON.stringify({ telemetry: { enabled: true } }),
+  )
+  const seen = []
+  const status = await readSlotProcessStatus({
+    projectRoot,
+    vm: { id, runtime: { type: 'docker' } },
+    run: async (_cmd, argv) => {
+      seen.push(argv[1])
+      return { stdout: observed }
+    },
+  })
+  assert.deepEqual(seen, [`kin-${id}`])
+  assert.deepEqual(status.telemetry, { enabled: true, running: true })
+  const blocked = await readSlotProcessStatus({
+    projectRoot,
+    vm: { id: '../secret', runtime: { type: 'docker' } },
+    run: async () => assert.fail('must not invoke Docker'),
+  })
+  assert.equal(blocked.telemetry.enabled, null)
+})
+
 test('process observation uses the configured slot container name', async (t) => {
   const args = fixture(t, true)
   const status = await readSlotProcessStatus({

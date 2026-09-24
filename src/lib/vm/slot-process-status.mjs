@@ -28,9 +28,13 @@ done
 printf 'rust_pid1=%s\ngo_worker_pid1=%s\ngo_telemetry=%s\n' "$rust" "$go" "$telemetry"
 `
 
+function isSafeSlotId(id) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$/.test(String(id || ''))
+}
+
 export async function readSlotProcessStatus({ projectRoot, vm, run = exec } = {}) {
   const unknown = { telemetry: { enabled: null, running: null }, process_topology: null }
-  if (!projectRoot || !/^vm-\d+$/.test(vm?.id || '')) return unknown
+  if (!projectRoot || !isSafeSlotId(vm?.id)) return unknown
   let enabled = null
   try {
     const config = JSON.parse(await readFile(path.join(projectRoot, 'vms', vm.id, 'run', 'worker.json'), 'utf8'))

@@ -6,7 +6,7 @@ import { expiresAtToMs, fmtResetClock } from '@/lib/fable-status'
 import { fmtNum, fmtUsd, usedPctOf } from '@/lib/format'
 import { tierVisual } from '@/lib/tier-visual'
 import { cn } from '@/lib/utils'
-import { isCodexVm } from '@/lib/vm-kind'
+import { isCodexVm, slotNameLabel } from '@/lib/vm-kind'
 import {
   credentialStatus,
   fleetGroup,
@@ -409,7 +409,7 @@ function CostCell({ vm, week }: { vm: Vm; week: VmWeekOutcome }) {
 }
 
 function SlotCell({ vm }: { vm: Vm }) {
-  const name = vm.name || vm.id
+  const name = slotNameLabel(vm)
   const email = String(vm.email || '').trim()
   return (
     <div className={cn(LIST_COL.vm, 'min-w-0 overflow-hidden')}>
@@ -418,7 +418,7 @@ function SlotCell({ vm }: { vm: Vm }) {
         className='truncate text-[12px] text-muted-foreground'
         title={email ? name : undefined}
       >
-        {email ? name : '未绑定账号'}
+        {name}
       </div>
     </div>
   )

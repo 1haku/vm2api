@@ -155,6 +155,23 @@ test('generic 502 overload switches accounts after a short cooldown', () => {
   assert.equal(shouldContinue(policy), true)
 })
 
+test('incomplete 502 is an empty hop, not account overload', () => {
+  const policy = classifyUpstreamResult(
+    {
+      status: 502,
+      terminalState: 'incomplete',
+      committed: false,
+      body: { type: 'error', error: { type: 'api_error', message: 'provider error' } },
+    },
+    { now: 1000 },
+  )
+  assert.equal(policy.scope, 'stream')
+  assert.equal(policy.reason, 'empty_response')
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.cooldownUntil, null)
+  assert.equal(policy.retrySameAccount, true)
+})
+
 test('slot_busy 503 does not park the account', () => {
   const policy = classifyUpstreamResult(
     {
