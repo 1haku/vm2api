@@ -228,8 +228,9 @@ export class StickyRouter {
   }
 
   /** Ordered aliases for one logical conversation. A caller session is the only key.
-   * A parent-session companion does not open its own slot: it reuses the
-   * API key's newest real session, or one device-family slot if none is live.
+   * A parent-session companion does not open its own slot: it reuses the live
+   * parent bound to the same device_id, or one device-family slot if none is live.
+   * API key only namespaces the row. It does not choose which parent.
    */
   collectPoolKeys(req, body = {}, opts = {}) {
     if (!this.config.enabled) return []
@@ -240,12 +241,14 @@ export class StickyRouter {
       if (scoped && !keys.includes(scoped)) keys.push(scoped)
     }
     if (isParentSessionCompanion(body)) {
-      const parent = this.latestParentPoolKey(req, { platform: platform || 'anthropic' })
+      const device = String(parseUserId(body?.metadata?.user_id)?.device_id || '').trim()
+      const parent = device
+        ? this.latestParentPoolKey(req, { platform: platform || 'anthropic', deviceId: device })
+        : null
       if (parent) {
         add(parent)
         return keys
       }
-      const device = String(parseUserId(body?.metadata?.user_id)?.device_id || '').trim()
       if (device) {
         add(this.isolateKey(`fam:${device}`, req))
         return keys
@@ -267,8 +270,15 @@ export class StickyRouter {
     return keys
   }
 
-  /** Newest real conversation for this API key. Companions must not inherit fam:/alias rows. */
-  latestParentPoolKey(req, { platform = 'anthropic', now = Date.now(), withinMs = COMPANION_PARENT_MS } = {}) {
+  /** Live parent for this device_id. Companions must not inherit fam:/alias rows
+   * or another device's session on the same API key.
+   */
+  latestParentPoolKey(
+    req,
+    { platform = 'anthropic', now = Date.now(), withinMs = COMPANION_PARENT_MS, deviceId = '' } = {},
+  ) {
+    const device = String(deviceId || '').trim()
+    if (!device) return null
     const id = req?.apiKeyRecord?.id
     if (id == null || id === '') return null
     const prefix = scopeStickyKey(this.isolateKey('', req), platform)
@@ -279,6 +289,7 @@ export class StickyRouter {
       if (!key.startsWith(prefix)) continue
       const rest = key.slice(prefix.length)
       if (!rest || /^(fam:|ch:|dev:|envelope$|login$)/.test(rest)) continue
+      if (String(ent?.device_id || '') !== device) continue
       if (!ent?.expires_at || now > ent.expires_at) continue
       const at = Number(ent.bound_at) || 0
       if (now - at > withinMs) continue
@@ -317,15 +328,17 @@ export class StickyRouter {
     return { accountId: ent.account_id, vmId: ent.vm_id, sessionId: ent.session_id || null, key }
   }
 
-  bind(key, { accountId, vmId, sessionId = null } = {}, { countHit = true } = {}) {
+  bind(key, { accountId, vmId, sessionId = null, deviceId = null } = {}, { countHit = true } = {}) {
     if (!key || !this.config.enabled) return
     const ttl = (this.config.ttl_seconds || 86400) * 1000
     const prev = this.repo.get(key) || {}
     const locked = prev.vm_id && vmId && prev.vm_id !== vmId
+    const device = String(deviceId || '').trim()
     this.repo.upsert(key, {
       account_id: locked ? prev.account_id : accountId,
       vm_id: locked ? prev.vm_id : vmId,
       session_id: prev.session_id || sessionId || null,
+      device_id: device || null,
       bound_at: Date.now(),
       expires_at: Date.now() + ttl,
       hits: (prev.hits || 0) + (countHit ? 1 : 0),

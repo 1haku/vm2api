@@ -278,8 +278,9 @@ function companionHaiku(sessionId, deviceId = '998dad9c1e3eccf11cd192c3919d4d1f'
   }
 }
 
-test('haiku subagent reuses the parent VM and session slot', () => {
+test('haiku subagent reuses the parent with the same device_id', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const device = '8cd2bdff61fcd056'
   const req = { apiKeyRecord: { id: 'key_f0419454c00d' }, headers: { 'user-agent': 'Go-http-client/1.1' } }
   const parentBody = {
     model: 'claude-opus-5-5',
@@ -287,19 +288,34 @@ test('haiku subagent reuses the parent VM and session slot', () => {
       { role: 'user', content: 'parent turn' },
       { role: 'assistant', content: 'tool' },
     ],
-    metadata: { user_id: { device_id: '8cd2bdff61fcd056', session_id: 'parent-sess' } },
+    metadata: { user_id: { device_id: device, session_id: 'parent-sess' } },
+  }
+  const otherBody = {
+    model: 'claude-opus-5-5',
+    messages: [{ role: 'user', content: 'other device' }],
+    metadata: { user_id: { device_id: '998dad9c1e3eccf11cd192c3919d4d1f', session_id: 'other-sess' } },
   }
   const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
-  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-parent' })
-  const first = companionHaiku('1334bab2-94bb-4429-a694-b2fa3434b1f5')
-  const second = companionHaiku('e5bee774-fcc6-4f35-a55c-b3586a1f4baa')
+  const otherKey = r.extractPoolKey(req, otherBody, { platform: 'anthropic' })
+  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-parent', deviceId: device })
+  r.bind(otherKey, {
+    accountId: 'acc-other',
+    vmId: 'vm-99',
+    sessionId: 'out-other',
+    deviceId: '998dad9c1e3eccf11cd192c3919d4d1f',
+  })
+  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10' })
+  assert.equal(r.stats().sessions[parentKey].device_id, device)
+  const first = companionHaiku('1334bab2-94bb-4429-a694-b2fa3434b1f5', device)
+  const second = companionHaiku('e5bee774-fcc6-4f35-a55c-b3586a1f4baa', device)
   assert.equal(r.extractPoolKey(req, first, { platform: 'anthropic' }), parentKey)
   assert.deepEqual(r.collectPoolKeys(req, first, { platform: 'anthropic' }), [parentKey])
+  assert.notEqual(parentKey, otherKey)
   assert.equal(r.extractPoolKey(req, second, { platform: 'anthropic' }), parentKey)
   assert.equal(r.resolve(parentKey).vmId, 'vm-10')
-  assert.equal(r.stats().active_sessions, 1)
-  const otherKey = { apiKeyRecord: { id: 'key_other' }, headers: {} }
-  assert.notEqual(r.extractPoolKey(otherKey, first, { platform: 'anthropic' }), parentKey)
+  assert.equal(r.stats().active_sessions, 2)
+  const otherApiKey = { apiKeyRecord: { id: 'key_other' }, headers: {} }
+  assert.notEqual(r.extractPoolKey(otherApiKey, first, { platform: 'anthropic' }), parentKey)
 })
 
 test('companion haiku without a live parent share one device family slot', () => {
@@ -316,27 +332,29 @@ test('companion haiku without a live parent share one device family slot', () =>
 
 test('a stale parent and a real haiku chat do not absorb the companion rule', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 3600 } } })
+  const device = 'dev-old'
   const req = { apiKeyRecord: { id: 'key_stale' }, headers: {} }
   const parentBody = {
     model: 'claude-opus-5-5',
     messages: [{ role: 'user', content: 'old' }],
-    metadata: { user_id: { device_id: 'dev-old', session_id: 'old-sess' } },
+    metadata: { user_id: { device_id: device, session_id: 'old-sess' } },
   }
   const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
-  r.bind(parentKey, { accountId: 'acc-old', vmId: 'vm-old', sessionId: 'out-old' })
+  r.bind(parentKey, { accountId: 'acc-old', vmId: 'vm-old', sessionId: 'out-old', deviceId: device })
   const prev = r.stats().sessions[parentKey]
   r.repo.upsert(parentKey, {
     account_id: prev.account_id,
     vm_id: prev.vm_id,
     session_id: prev.session_id,
+    device_id: prev.device_id,
     bound_at: Date.now() - 10 * 60_000,
     expires_at: prev.expires_at,
     hits: prev.hits,
   })
-  const companion = companionHaiku('fresh-child')
+  const companion = companionHaiku('fresh-child', device)
   const fam = r.extractPoolKey(req, companion, { platform: 'anthropic' })
   assert.notEqual(fam, parentKey)
-  assert.match(fam, /fam:/)
+  assert.match(fam, /fam:dev-old$/)
   const chat = {
     model: 'claude-haiku-4-5',
     tools: [{ name: 'Bash' }],
