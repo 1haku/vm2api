@@ -20,8 +20,6 @@ import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
 import { boundProxyUrl } from '../vm/egress.mjs'
 import { orderCodexSessionSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
-import { classifyUpstreamResult } from '../pool/upstream-error-policy.mjs'
-import { unitCircuit } from '../pool/unit-circuit.mjs'
 import { acquireOpenAISlot, releaseOpenAISlot, reportOpenAIAttempt } from '../pool/openai-account-runtime.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
 
@@ -305,16 +303,6 @@ export async function handleCodexProtocol({
   for (let i = 0; i < candidateIds.length; i++) {
     const vm = getVm(projectRoot, candidateIds[i])
     if (!vm || !isCodexVm(vm)) continue
-    const circuit = unitCircuit.admit(vm.id)
-    if (!circuit.ok) {
-      last = {
-        ok: false,
-        status: 503,
-        committed: false,
-        body: { error: { type: 'api_error', code: circuit.reason, message: 'Codex credential circuit is open' } },
-      }
-      continue
-    }
     logBag.vm_id = vm.id
     writeCfg(projectRoot, vm, {
       proxyUrl: boundProxyUrl(vm.proxy),
@@ -334,7 +322,6 @@ export async function handleCodexProtocol({
           },
         },
       }
-      unitCircuit.releaseProbe(vm.id)
       if (i + 1 < candidateIds.length && !res.headersSent) {
         leaveSticky(vm)
         continue
@@ -394,7 +381,6 @@ export async function handleCodexProtocol({
       const delivered = result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0)
       if (delivered) {
         attemptKind = 'succeeded'
-        unitCircuit.recordSuccess(vm.id)
         bindSticky(vm)
         const extracted = extractOpenaiUsage(usage)
         const serviceTier = responseServiceTier || converted.body?.service_tier || usage?.service_tier || null
@@ -429,14 +415,7 @@ export async function handleCodexProtocol({
         logBag.upstream_status = result?.status || 0
         return res.end()
       }
-      const policy = classifyUpstreamResult(result, { hasRefresh: !!vm?.has_refresh || !!vm?.codex?.refresh_token })
-      if (policy.circuit) unitCircuit.recordFailure(vm.id)
-      else unitCircuit.releaseProbe(vm.id)
-      const switchUnit =
-        policy.decision?.action === 'next_unit' ||
-        policy.decision?.action === 'retry_same' ||
-        isCodexFailoverError(result)
-      if (i + 1 < candidateIds.length && switchUnit && policy.decision?.action !== 'return') {
+      if (i + 1 < candidateIds.length && isCodexFailoverError(result)) {
         reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
         leaveSticky(vm)
         continue
