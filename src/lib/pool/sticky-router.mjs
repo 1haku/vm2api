@@ -325,24 +325,44 @@ export class StickyRouter {
       this.repo.remove(key)
       return null
     }
-    return { accountId: ent.account_id, vmId: ent.vm_id, sessionId: ent.session_id || null, key }
+    return {
+      accountId: ent.account_id,
+      vmId: ent.vm_id,
+      sessionId: ent.session_id || null,
+      generation: Number(ent.generation) || 0,
+      slotIndex: ent.slot_index == null ? null : Number(ent.slot_index),
+      key,
+    }
   }
 
-  bind(key, { accountId, vmId, sessionId = null, deviceId = null } = {}, { countHit = true } = {}) {
-    if (!key || !this.config.enabled) return
+  bind(key, { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {}, { countHit = true, ifGeneration = null } = {}) {
+    if (!key || !this.config.enabled) return false
     const ttl = (this.config.ttl_seconds || 86400) * 1000
     const prev = this.repo.get(key) || {}
-    const locked = prev.vm_id && vmId && prev.vm_id !== vmId
+    const prevGeneration = Number(prev.generation) || 0
+    if (ifGeneration != null && prevGeneration !== Number(ifGeneration)) return false
+    const locked = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
+    const nextAccount = locked ? prev.account_id : accountId
+    const nextVm = locked ? prev.vm_id : vmId
+    const nextSlot = locked ? (prev.slot_index ?? null) : slotIndex == null ? (prev.slot_index ?? null) : Number(slotIndex)
+    const changed = !!(
+      prev.vm_id &&
+      (nextAccount !== prev.account_id || nextVm !== prev.vm_id || (slotIndex != null && nextSlot !== prev.slot_index))
+    )
+    const generation = prev.vm_id ? (changed ? prevGeneration + 1 : prevGeneration || 1) : 1
     const device = String(deviceId || '').trim()
     this.repo.upsert(key, {
-      account_id: locked ? prev.account_id : accountId,
-      vm_id: locked ? prev.vm_id : vmId,
+      account_id: nextAccount,
+      vm_id: nextVm,
       session_id: prev.session_id || sessionId || null,
       device_id: device || null,
       bound_at: Date.now(),
       expires_at: Date.now() + ttl,
       hits: (prev.hits || 0) + (countHit ? 1 : 0),
+      generation,
+      slot_index: nextSlot,
     })
+    return true
   }
 
   unbind(key) {

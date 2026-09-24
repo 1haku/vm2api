@@ -29,6 +29,7 @@ import {
 } from './availability.mjs'
 import { listQuotaFromHeaders } from './quota-window.mjs'
 import { hardBlockOf } from './rate-limit-service.mjs'
+import { unitCircuit } from './unit-circuit.mjs'
 import { isSlotProxyDesynced, readWorkerProxyEndpoint, readWorkerEgressMode } from '../vm/vm-runtime.mjs'
 import { splitBlocksModel } from './weekly-split.mjs'
 import { slotAllowsModel } from './slot-model-gate.mjs'
@@ -219,6 +220,9 @@ export class PoolScheduler {
     this.smooth = new Map()
     this.lastUsed = new Map()
     this.cooldownTimers = new Map()
+    this.vmSlots = new Map()
+    this.unitCircuit = unitCircuit
+    if (runtimeRepo) this.unitCircuit.bindRepo(runtimeRepo)
   }
 
   async selectAndReserve({
@@ -420,7 +424,10 @@ export class PoolScheduler {
         inflight,
         maxConcurrency,
         sessionSlots: sessionSlotsOf(vm, this.config.default_session_slots),
-        loadRatio: inflight / maxConcurrency,
+        slotHeld: this.assignedSlot(summary.id, sessionKey),
+        slotHeldBusy: this.slotInflight(summary.id, this.assignedSlot(summary.id, sessionKey)),
+        usedSlots: this.usedSlotCount(summary.id),
+        loadRatio: (inflight + this.waiterCount(accountId)) / maxConcurrency,
         lastUsedAt: this.lastUsed.get(accountId) || state?.last_used_at || 0,
         workerStatus: eligibility.workerStatus,
         busy: !!eligibility.busy,
@@ -438,6 +445,10 @@ export class PoolScheduler {
     // passive Extra reading or health hop. Pins are diagnostics and still reach the slot.
     const hardBlock = pinned ? null : hardBlockOf(state, now)
     if (hardBlock) return { ok: false, reason: hardBlock.reason, until: hardBlock.until }
+    if (!pinned) {
+      const circuit = this.unitCircuit?.admit?.(accountId, now)
+      if (circuit && !circuit.ok) return { ok: false, reason: circuit.reason, until: circuit.until }
+    }
     const gate = evaluateSlotGate(vm)
     if (!gate.ok && gate.reason !== 'no_credential') {
       // Master pin may test a slot taken out of the pool, but SOCKS is still mandatory.
@@ -605,7 +616,7 @@ export class PoolScheduler {
       }
     }
 
-    if (inflight >= sessionSlots) markWait('session_slots_full')
+    if (this.usedSlotCount(vm.id) >= sessionSlots) markWait('session_slots_full')
     if (inflight >= maxConcurrency) markWait('concurrency_limit')
     const fableCap = Number(this.config.fable_max_per_account)
     if (isFableModel(modelKey) && Number.isFinite(fableCap) && fableCap > 0) {
@@ -752,10 +763,11 @@ export class PoolScheduler {
     return cleared
   }
 
-  /** Session leaves this account: drop every alias key and free its session-window seat. */
+  /** Session leaves this VM: drop alias keys and the slot that session was pinned to. */
   releaseSticky(bound, stickyKey, stickyKeys) {
     const keys = Array.isArray(stickyKeys) && stickyKeys.length ? stickyKeys : stickyKey ? [stickyKey] : []
     for (const key of keys) {
+      this.dropSessionSlot(bound?.vmId, key)
       this.stickyRouter?.unbind?.(key)
       try {
         this.accountQuota?.sessions?.drop?.(bound?.accountId, key)
@@ -904,9 +916,10 @@ export class PoolScheduler {
   }
 
   reserve(candidate, { sessionKey = null, skipQuota = false } = {}) {
-    const current = this.inflight.get(candidate.accountId) || 0
-    if (!candidate.maxConcurrency || current >= candidate.maxConcurrency) return null
-    if (candidate.sessionSlots > 0 && current >= candidate.sessionSlots) return null
+    const requestInflight = this.inflight.get(candidate.accountId) || 0
+    if (!candidate.maxConcurrency || requestInflight >= candidate.maxConcurrency) return null
+    const slot = this.acquireSlot(candidate.vmId, sessionKey, candidate.sessionSlots)
+    if (candidate.sessionSlots > 0 && !slot) return null
     const family = isFableModel(candidate.model) ? FABLE_FAMILY_KEY : null
     const fableCap = Number(this.config.fable_max_per_account)
     if (
@@ -915,6 +928,7 @@ export class PoolScheduler {
       fableCap > 0 &&
       this.familyInflight(candidate.accountId, family) >= fableCap
     ) {
+      if (slot?.created) this.releaseSlotHold(candidate.vmId, slot.holdKey)
       return null
     }
     const quotaReservation = this.accountQuota?.tryAcquire?.(candidate.accountId, {
@@ -922,17 +936,21 @@ export class PoolScheduler {
       skipGate: !!skipQuota,
       tier: vmTierOf(candidate.vm),
     })
-    if (quotaReservation && !quotaReservation.ok) return null
+    if (quotaReservation && !quotaReservation.ok) {
+      if (slot?.created) this.releaseSlotHold(candidate.vmId, slot.holdKey)
+      return null
+    }
     if (sessionKey) {
       try {
         this.accountQuota?.sessions?.touch?.(candidate.accountId, sessionKey)
       } catch {}
     }
-    this.inflight.set(candidate.accountId, current + 1)
+    this.inflight.set(candidate.accountId, requestInflight + 1)
     this.bumpFamily(candidate.accountId, family, 1)
     let released = false
     return {
       reserved: true,
+      slotIndex: slot?.index ?? null,
       release: () => {
         if (released) return
         released = true
@@ -946,9 +964,86 @@ export class PoolScheduler {
           } catch {}
         }
         this.accountQuota?.release?.(candidate.accountId)
+        if (slot?.ephemeral) this.releaseSlotHold(candidate.vmId, slot.holdKey)
         this.notifyCapacity(candidate.accountId)
       },
     }
+  }
+
+  _slotBook(vmId) {
+    const id = String(vmId || '')
+    let book = this.vmSlots.get(id)
+    if (!book) {
+      book = { preferred: new Map(), inflight: new Map() }
+      this.vmSlots.set(id, book)
+    }
+    return book
+  }
+
+  assignedSlot(vmId, sessionKey) {
+    if (!sessionKey) return null
+    const index = this.vmSlots.get(String(vmId || ''))?.preferred?.get(String(sessionKey))
+    return Number.isInteger(index) ? index : null
+  }
+
+  slotInflight(vmId, index) {
+    if (index == null) return false
+    const inflight = this.vmSlots.get(String(vmId || ''))?.inflight
+    if (!inflight) return false
+    for (const held of inflight.values()) {
+      if (held === index) return true
+    }
+    return false
+  }
+
+  usedSlotCount(vmId) {
+    return this.vmSlots.get(String(vmId || ''))?.inflight?.size || 0
+  }
+
+  /**
+   * VM is the callable atom. session_slots are seats inside that VM.
+   * A session keeps its seat index as the next decision, and that seat
+   * still counts as busy while a request holds it.
+   */
+  acquireSlot(vmId, sessionKey, cap) {
+    const limit = Number(cap) || 0
+    if (limit <= 0) return null
+    const book = this._slotBook(vmId)
+    if (book.inflight.size >= limit) return null
+    const key = String(sessionKey || '')
+    const preferred = key ? book.preferred.get(key) : null
+    let index = Number.isInteger(preferred) ? preferred : null
+    if (index == null) {
+      const taken = new Set([...book.preferred.values(), ...book.inflight.values()])
+      index = 0
+      while (taken.has(index)) index += 1
+      if (index >= limit) index = 0
+      if (key) book.preferred.set(key, index)
+    }
+    const holdKey = `live:${key || 'anon'}:${index}:${Date.now()}:${Math.random().toString(16).slice(2)}`
+    book.inflight.set(holdKey, index)
+    return { index, holdKey, ephemeral: true, created: !Number.isInteger(preferred) }
+  }
+
+  dropSessionSlot(vmId, sessionKey) {
+    const book = this.vmSlots.get(String(vmId || ''))
+    const key = String(sessionKey || '')
+    if (!book || !key) return
+    const index = book.preferred.get(key)
+    book.preferred.delete(key)
+    if (!Number.isInteger(index)) return
+    for (const [hold, held] of book.inflight) {
+      if (held === index && String(hold).startsWith(`live:${key}:`)) book.inflight.delete(hold)
+    }
+    if (!book.inflight.size && !book.preferred.size) this.vmSlots.delete(String(vmId || ''))
+  }
+
+  releaseSlotHold(vmId, holdKey) {
+    const id = String(vmId || '')
+    const book = this.vmSlots.get(id)
+    if (!book || !holdKey) return
+    book.inflight.delete(String(holdKey))
+    if (!book.inflight.size && !book.preferred.size) this.vmSlots.delete(id)
   }
 
   markSuccess(candidate, { workerStatus = null, countUsage = true } = {}) {
@@ -1045,7 +1140,8 @@ export class PoolScheduler {
     const inflight = candidate.inflight || 0
     const seats = Number(candidate.sessionSlots) || 0
     const conc = Number(candidate.maxConcurrency) || 0
-    if (seats > 0 && inflight >= seats) return false
+    const usedSlots = Number(candidate.usedSlots) || 0
+    if (seats > 0 && usedSlots >= seats) return false
     if (conc > 0 && inflight >= conc) return false
     if (!candidate.busy) return true
     return candidate.waitReason === 'slot_busy'

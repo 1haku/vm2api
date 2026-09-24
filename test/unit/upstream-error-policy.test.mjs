@@ -54,7 +54,7 @@ test('unified account 429 cools account until authoritative reset', () => {
   assert.equal(shouldContinue(policy), true)
 })
 
-test('model 429 only cools requested model', () => {
+test('model 429 stays on the model and does not open the unit circuit', () => {
   const policy = classifyUpstreamResult(
     {
       status: 429,
@@ -66,6 +66,8 @@ test('model 429 only cools requested model', () => {
   assert.equal(policy.scope, 'model')
   assert.equal(policy.model, 'claude-sonnet-test')
   assert.equal(policy.cooldownUntil, 61_000)
+  assert.equal(policy.circuit, undefined)
+  assert.equal(policy.decision.scope, 'model')
 })
 
 test('entitlement 429 stops without poisoning pool', () => {
@@ -140,7 +142,7 @@ test('response-header timeout does not cool the account', () => {
   assert.equal(shouldContinue(policy), true)
 })
 
-test('generic 502 overload switches accounts after a short cooldown', () => {
+test('generic 502 overload switches units through the circuit, not a 15s cooldown', () => {
   const policy = classifyUpstreamResult(
     {
       status: 502,
@@ -148,9 +150,12 @@ test('generic 502 overload switches accounts after a short cooldown', () => {
     },
     { now: 1000 },
   )
-  assert.equal(policy.action, 'continue-and-cooldown')
+  assert.equal(policy.action, 'continue')
   assert.equal(policy.reason, 'provider_overloaded')
-  assert.equal(policy.cooldownUntil, 16_000)
+  assert.equal(policy.cooldownUntil, null)
+  assert.equal(policy.circuit, true)
+  assert.equal(policy.decision.scope, 'unit')
+  assert.equal(policy.decision.action, 'next_unit')
   assert.equal(policy.retrySameAccount, false)
   assert.equal(shouldContinue(policy), true)
 })
@@ -276,7 +281,7 @@ test('transport timeout is not treated as a dead proxy', () => {
   assert.equal(policy.cooldownUntil, null)
 })
 
-test('529 still uses a short provider cooldown', () => {
+test('529 opens the unit circuit instead of a fixed cooldown', () => {
   const policy = classifyUpstreamResult(
     {
       status: 529,
@@ -285,9 +290,11 @@ test('529 still uses a short provider cooldown', () => {
     { now: 1000 },
   )
   assert.equal(policy.scope, 'provider')
-  assert.equal(policy.action, 'continue-and-cooldown')
+  assert.equal(policy.action, 'continue')
   assert.equal(policy.reason, 'provider_overloaded')
-  assert.equal(policy.cooldownUntil, 16_000)
+  assert.equal(policy.cooldownUntil, null)
+  assert.equal(policy.circuit, true)
+  assert.equal(policy.decision.action, 'next_unit')
 })
 
 test('signature error has one scoped repair', () => {
@@ -552,7 +559,7 @@ test('invalid encrypted_content flattens the replayed search history once', () =
   assert.equal(classifyUpstreamResult(result, { repaired: true }).action, 'stop')
 })
 
-test('401 with refresh is oauth_revoked on the first hop', () => {
+test('401 with refresh asks for one same-unit refresh instead of permanent revoke', () => {
   const policy = classifyUpstreamResult(
     {
       status: 401,
@@ -560,10 +567,13 @@ test('401 with refresh is oauth_revoked on the first hop', () => {
     },
     { hasRefresh: true, oauth401CooldownMs: 20_000 },
   )
-  assert.equal(policy.scope, 'account')
-  assert.equal(policy.action, 'continue-and-cooldown')
-  assert.equal(policy.reason, 'oauth_revoked')
-  assert.equal(policy.cooldownUntil, Number.MAX_SAFE_INTEGER)
+  assert.equal(policy.scope, 'credential')
+  assert.equal(policy.action, 'continue')
+  assert.equal(policy.reason, 'oauth_refresh_required')
+  assert.equal(policy.cooldownUntil, null)
+  assert.equal(policy.retrySameAccount, true)
+  assert.equal(policy.decision.action, 'retry_same')
+  assert.equal(policy.decision.credentialRefreshNeeded, true)
   assert.equal(shouldContinue(policy), true)
 })
 
