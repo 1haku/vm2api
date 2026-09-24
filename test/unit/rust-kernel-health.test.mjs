@@ -64,6 +64,18 @@ test('rustKernelBusy is slot-full with a live CLI, not unreachable', () => {
   assert.equal(rustKernelReachable(ready), true)
 })
 
+test('rustKernelBusy: no free slot because slots are wedged is dead, not busy', () => {
+  // Kernel watchdog retired slots whose kin_cancel was never acked. Waiting on
+  // "busy" would keep the VM unusable forever; it must fall through to restart.
+  const wedged = { ok: true, status: 200, engine: 'rust', ready_slots: 0, cli_pid: 12, wedged_slots: 1 }
+  assert.equal(rustKernelBusy(wedged), false)
+  assert.equal(rustKernelReachable(wedged), false)
+  const partlyWedged = { ok: true, status: 200, engine: 'rust', ready_slots: 3, cli_pid: 12, wedged_slots: 2 }
+  assert.equal(rustKernelReachable(partlyWedged), true)
+  const busy = { ok: true, status: 200, engine: 'rust', ready_slots: 0, cli_pid: 12, wedged_slots: 0 }
+  assert.equal(rustKernelBusy(busy), true)
+})
+
 test('toPublicKernelHealth leaves Go hop slot fields null', () => {
   const out = toPublicKernelHealth({ ok: true, status: 200, engine: 'go', worker_version: 'go-1' }, 'go')
   assert.equal(out.reachable, true)
