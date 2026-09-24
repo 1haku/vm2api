@@ -214,6 +214,8 @@ Claude 槽测试与能力探针走官方 CC 入站（`/v1/messages`）。GPT/Cod
 
 `PUT /proxies/config` 的 `follow_proxy_timezone`（默认 true）：绑定一条代理后，该槽采用出口节点的 IANA 时区（persona `# Environment`、指纹、容器 `TZ`）。操作者在创建时或 `PATCH /vms/:id` 手动指定过时区的槽不受影响。
 
+`PUT /proxies/config` 的 `dns_primary`（默认 `auto`）：远程 SOCKS5 透明出口优先使用的 DNS 上游，可选 `auto`、`https://1.1.1.1/dns-query`、`https://8.8.8.8/dns-query`、`8.8.8.8:53`、`1.1.1.1:53`。所选上游排第一，其余内置上游按默认顺序排在其后作为自动 fallback；`auto` 直接用 kin-egress 内置顺序。`IP:53` 为经 SOCKS 转发的 DNS-over-TCP，出口到 DNS 服务器之间明文。变更后重载已绑定的 `kin-egress`，不重建槽位，响应 `egress` 数组报告各出口重载结果。
+
 ### `POST /proxies/geo` · `POST /proxies/:id/geo`
 
 经该代理本身去查出口 IP 的国家 / 城市 / 时区（本地出口走宿主机默认路由）。结果落在 `proxies.geo_*` 列，列表响应的 `geo` 字段回显。单条成功后，已绑槽位在 `follow_proxy_timezone` 开启且未被手动钉住时会改用该时区。

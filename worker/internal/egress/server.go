@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kinproxy "github.com/dofastted/kin-gateway/worker/internal/proxy"
@@ -59,26 +60,55 @@ func (e *spliceError) Unwrap() error {
 	return e.err
 }
 
+// DefaultDNSUpstreams is tried in order when dns_upstream is empty. Mixing
+// DoH and plain DNS-over-TCP on two providers keeps resolution alive when a
+// proxy exit cannot reach one of them (e.g. 1.1.1.1:443 blocked).
+var DefaultDNSUpstreams = []string{
+	"https://1.1.1.1/dns-query",
+	"https://8.8.8.8/dns-query",
+	"8.8.8.8:53",
+	"1.1.1.1:53",
+}
+
+// dnsAttemptTimeout bounds each upstream so a dead one does not eat the
+// client's whole resolver timeout before fallback kicks in.
+const dnsAttemptTimeout = 4 * time.Second
+
 type Server struct {
-	cfg    Config
-	dialer *kinproxy.Dialer
-	http   *http.Client
+	cfg       Config
+	dialer    *kinproxy.Dialer
+	http      *http.Client
+	upstreams []string
+	preferred atomic.Int32
+}
+
+// parseDNSUpstreams splits a comma-separated dns_upstream value.
+func parseDNSUpstreams(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func New(cfg Config) (*Server, error) {
 	if cfg.ListenTCP == "" {
 		return nil, fmt.Errorf("listen tcp address is required")
 	}
-	if cfg.DNSUpstream == "" {
-		cfg.DNSUpstream = "https://1.1.1.1/dns-query"
+	upstreams := parseDNSUpstreams(cfg.DNSUpstream)
+	if len(upstreams) == 0 {
+		upstreams = append([]string(nil), DefaultDNSUpstreams...)
 	}
 	dialer, err := kinproxy.New(cfg.ProxyURL, 15*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
-		cfg:    cfg,
-		dialer: dialer,
+		cfg:       cfg,
+		dialer:    dialer,
+		upstreams: upstreams,
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -112,7 +142,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		go s.serveDNSTCP(ctx, dnsTCP)
 	}
 
-	log.Printf("kin-egress ready proxy_id=%s tcp=%s dns=%s", s.cfg.ProxyID, s.cfg.ListenTCP, s.cfg.ListenDNS)
+	log.Printf("kin-egress ready proxy_id=%s tcp=%s dns=%s dns_upstreams=%s", s.cfg.ProxyID, s.cfg.ListenTCP, s.cfg.ListenDNS, strings.Join(s.upstreams, ","))
 	go func() {
 		<-ctx.Done()
 		_ = tcpLn.Close()
@@ -319,15 +349,42 @@ func (s *Server) handleDNSTCP(ctx context.Context, conn net.Conn) {
 	_, _ = conn.Write(out)
 }
 
+// ResolveDNS tries each upstream in order, starting from the last one that
+// succeeded, and returns the first valid reply.
 func (s *Server) ResolveDNS(ctx context.Context, query []byte) ([]byte, error) {
-	if strings.HasPrefix(s.cfg.DNSUpstream, "https://") || strings.HasPrefix(s.cfg.DNSUpstream, "http://") {
-		return s.resolveDoH(ctx, query)
+	n := len(s.upstreams)
+	start := int(s.preferred.Load())
+	var errs []error
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		upstream := s.upstreams[idx]
+		attemptCtx, cancel := context.WithTimeout(ctx, dnsAttemptTimeout)
+		reply, err := s.resolveOne(attemptCtx, upstream, query)
+		cancel()
+		if err == nil {
+			if idx != start {
+				s.preferred.Store(int32(idx))
+				log.Printf("kin-egress dns upstream switched to %s", upstream)
+			}
+			return reply, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", upstream, err))
+		if ctx.Err() != nil {
+			break
+		}
 	}
-	return s.resolveDNSTCP(ctx, query)
+	return nil, errors.Join(errs...)
 }
 
-func (s *Server) resolveDoH(ctx context.Context, query []byte) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.DNSUpstream, bytes.NewReader(query))
+func (s *Server) resolveOne(ctx context.Context, upstream string, query []byte) ([]byte, error) {
+	if strings.HasPrefix(upstream, "https://") || strings.HasPrefix(upstream, "http://") {
+		return s.resolveDoH(ctx, upstream, query)
+	}
+	return s.resolveDNSTCP(ctx, upstream, query)
+}
+
+func (s *Server) resolveDoH(ctx context.Context, upstream string, query []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream, bytes.NewReader(query))
 	if err != nil {
 		return nil, err
 	}
@@ -351,13 +408,17 @@ func (s *Server) resolveDoH(ctx context.Context, query []byte) ([]byte, error) {
 	return body, nil
 }
 
-func (s *Server) resolveDNSTCP(ctx context.Context, query []byte) ([]byte, error) {
-	up, err := s.dialer.DialContext(ctx, "tcp", s.cfg.DNSUpstream)
+func (s *Server) resolveDNSTCP(ctx context.Context, upstream string, query []byte) ([]byte, error) {
+	up, err := s.dialer.DialContext(ctx, "tcp", upstream)
 	if err != nil {
 		return nil, err
 	}
 	defer up.Close()
-	_ = up.SetDeadline(time.Now().Add(10 * time.Second))
+	deadline := time.Now().Add(10 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = up.SetDeadline(deadline)
 	frame := make([]byte, 2+len(query))
 	binary.BigEndian.PutUint16(frame[:2], uint16(len(query)))
 	copy(frame[2:], query)
