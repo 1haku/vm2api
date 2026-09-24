@@ -154,7 +154,9 @@ export function createRoutingRuntime(ctx) {
     const skip = []
     const applied = { default: 0, pro: 0, max: 0, skipped: 0 }
     for (const vm of listVms(ctx.cfg.paths.project)) {
-      if (vm.policy?.rpmOverride) {
+      // listVms returns flattened summaries; override flags live in the raw record.
+      const storedVm = getVm(ctx.cfg.paths.project, vm.id)
+      if (storedVm?.policy?.rpmOverride) {
         skip.push(vm.id)
         if (vm.account_uuid) skip.push(vm.account_uuid)
         if (vm.claude?.account_uuid) skip.push(vm.claude.account_uuid)
@@ -163,7 +165,7 @@ export function createRoutingRuntime(ctx) {
       }
       const key = vmTierKey(vm)
       const next = Number(policies[key]?.max_rpm ?? 0)
-      const cur = Number(vm.policy?.maxRpm)
+      const cur = Number(storedVm?.policy?.maxRpm)
       if (cur === next) continue
       applyVmRpm(vm.id, next, { override: false })
       applied[key] += 1

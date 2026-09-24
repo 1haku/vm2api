@@ -95,3 +95,56 @@ test('tier synchronization does not rewrite an unchanged inherited VM record', (
   assert.equal(applied.default, 0)
   assert.equal(fs.readFileSync(f.vmPath, 'utf8'), before)
 })
+
+function rpmFixture(t, rpm, { override = true } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-rpm-'))
+  const accountId = 'test-account'
+  const quota = new AccountQuota({
+    dataDir: path.join(root, 'data'),
+    accounts: [{ account_id: accountId, vm_id: 'vm-02', max_rpm: rpm }],
+  })
+  const vmPath = path.join(root, 'vms/vm-02.json')
+  fs.mkdirSync(path.dirname(vmPath), { recursive: true })
+  fs.writeFileSync(
+    vmPath,
+    JSON.stringify({
+      id: 'vm-02',
+      claude: { account_uuid: accountId, account_tier: 'default' },
+      policy: { maxRpm: rpm, rpmOverride: override },
+    }),
+  )
+  const runtime = createRoutingRuntime({
+    cfg: { paths: { project: root } },
+    accountQuota: quota,
+    routingConfig: { tiers: {}, quota: {}, concurrency: {} },
+  })
+  t.after(() => {
+    quota.db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  return {
+    runtime,
+    vmPath,
+    policy: () => JSON.parse(fs.readFileSync(vmPath, 'utf8')).policy,
+    account: () => quota.repo.get(accountId),
+  }
+}
+
+test('tier RPM synchronization preserves a manual RPM value', (t) => {
+  const f = rpmFixture(t, 30)
+  const applied = f.runtime.applyRoutingTierRpm({ default: { max_rpm: 10 } })
+  assert.equal(applied.skipped, 1)
+  assert.equal(f.policy().maxRpm, 30)
+  assert.equal(f.policy().rpmOverride, true)
+  assert.equal(f.account().max_rpm, 30)
+})
+
+test('tier RPM synchronization updates inherited RPM and skips unchanged records', (t) => {
+  const f = rpmFixture(t, 10, { override: false })
+  const before = fs.readFileSync(f.vmPath, 'utf8')
+  assert.equal(f.runtime.applyRoutingTierRpm({ default: { max_rpm: 10 } }).default, 0)
+  assert.equal(fs.readFileSync(f.vmPath, 'utf8'), before)
+  assert.equal(f.runtime.applyRoutingTierRpm({ default: { max_rpm: 20 } }).default, 1)
+  assert.equal(f.policy().maxRpm, 20)
+  assert.equal(f.account().max_rpm, 20)
+})
