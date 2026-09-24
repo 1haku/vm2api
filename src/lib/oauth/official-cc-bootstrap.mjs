@@ -1,7 +1,7 @@
 /**
  * Required post-OAuth workflow: wipe first-use Claude Code files, start
  * official CLI with the imported credential, complete one hello turn, then
- * keep Claude Code resident (do not exit). Protocol /usage and seed follow.
+ * keep Claude Code resident (do not exit). Slot /usage and seed follow.
  * Credential ownership stays with Go; inference follows the slot engine.
  * Successful hello then aligns seed + official identity and reloads the slot
  * through the engine-aware lifecycle so both Go credentials and Rust inference
@@ -11,8 +11,8 @@
  *
  * Official CC egresses via a local HTTP CONNECT bridge → slot SOCKS5.
  * Node never dials Anthropic.
- * Quota after hello uses protocol GET /api/oauth/usage (Go worker + slot SOCKS5).
- * CLI /stats is a TUI, not the usage API; keep it as an opt-in fallback only.
+ * After hello, quota is CLI /usage inside the slot (one try, then two retries).
+ * Account tier comes from GET /api/oauth/profile via kin-worker oauth.
  */
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import {
   parseVmIndex,
   containerName,
+  officialCcUidGid,
   syncWorkerTelemetry,
   isSlotProxyDesynced,
   SLOT_MEMORY,
@@ -35,7 +36,7 @@ import {
 } from './oauth-credentials.mjs'
 import { canOfficialCc, credentialModeOfVm } from './credential-mode.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
-import { inferTierFromOfficialStats, parseOfficialCcStats } from './official-cc-stats.mjs'
+import { inferTierFromOfficialStats, parseOfficialCcStats, tierFromOauthProfile } from './official-cc-stats.mjs'
 import { defaultSeedPolicy } from '../protocol/seed-policy.mjs'
 import { loadVmIdentity, persistVmSettings } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm, readOfficialCcIdentity } from '../identity/official-fingerprint.mjs'
@@ -43,12 +44,15 @@ import { writeSlotSeedFiles, inferProjectRootFromCliHome } from '../vm/slot-seed
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import { atomicWriteJson, listVmRecordFiles } from '../vm/vm-file.mjs'
 import { normalizeOfficialCcInference, resolveOfficialCcInference } from '../vm/slot-engine.mjs'
+
+export { officialCcUidGid } from '../vm/vm-runtime.mjs'
 export const DEFAULT_HELLO_PROMPT = 'hello'
-export const DEFAULT_STATS_PROMPT = '/stats'
+/** `/stats` and `/cost` are aliases of `/usage` since Claude Code 2.1.28x. */
 export const DEFAULT_USAGE_PROMPT = '/usage'
 export const DEFAULT_PLAN_PROMPT = DEFAULT_HELLO_PROMPT
-
-export const DEFAULT_QUOTA_VIA = 'usage-api'
+/** `/usage` in the slot is retried at most this many times after the first try. */
+export const OFFICIAL_USAGE_RETRIES = 2
+export const OFFICIAL_USAGE_RETRY_DELAY_MS = 3000
 
 export const DEFAULT_OFFICIAL_CC_CONFIG = Object.freeze({
   enabled: true,
@@ -56,11 +60,7 @@ export const DEFAULT_OFFICIAL_CC_CONFIG = Object.freeze({
   apply_seed: true,
   reconcile_fingerprint: true,
   sync_telemetry: true,
-  quota_via: DEFAULT_QUOTA_VIA,
-  cli_stats: false,
-  usage_fallback: false,
   hello_prompt: DEFAULT_HELLO_PROMPT,
-  stats_prompt: DEFAULT_STATS_PROMPT,
   timeout_ms: 4 * 60 * 1000,
   memory: '500m',
   resident: false,
@@ -76,23 +76,13 @@ export function normalizeOfficialCcConfig(raw = {}) {
   const hello = String(src.hello_prompt ?? DEFAULT_HELLO_PROMPT)
     .trim()
     .slice(0, 200)
-  const stats = String(src.stats_prompt ?? DEFAULT_STATS_PROMPT)
-    .trim()
-    .slice(0, 80)
-  const quotaVia = String(src.quota_via || DEFAULT_QUOTA_VIA)
-    .trim()
-    .toLowerCase()
   return {
     enabled: src.enabled !== false,
     wipe: src.wipe !== false,
     apply_seed: src.apply_seed !== false,
     reconcile_fingerprint: src.reconcile_fingerprint !== false,
     sync_telemetry: src.sync_telemetry !== false,
-    quota_via: quotaVia === 'cli' ? 'cli' : DEFAULT_QUOTA_VIA,
-    cli_stats: src.cli_stats === true,
-    usage_fallback: src.usage_fallback === true,
     hello_prompt: hello || DEFAULT_HELLO_PROMPT,
-    stats_prompt: stats || DEFAULT_STATS_PROMPT,
     timeout_ms:
       Number.isFinite(timeout) && timeout >= 30_000 && timeout <= 15 * 60 * 1000
         ? Math.round(timeout)
@@ -134,24 +124,18 @@ export function applyOfficialCcConfig(opts = {}, config = null) {
   return {
     ...opts,
     prompt: opts.prompt || cfg.hello_prompt,
-    statsPrompt: opts.statsPrompt || cfg.stats_prompt,
     applySeed: opts.applySeed !== undefined ? opts.applySeed : cfg.apply_seed,
     timeoutMs: opts.timeoutMs || cfg.timeout_ms,
     wipe: opts.wipe !== undefined ? opts.wipe : cfg.wipe,
-    quotaVia: opts.quotaVia || cfg.quota_via,
-    cliStats: opts.cliStats !== undefined ? opts.cliStats : cfg.cli_stats,
-    usageFallback: opts.usageFallback !== undefined ? opts.usageFallback : cfg.usage_fallback,
     reconcileFingerprint:
       opts.reconcileFingerprint !== undefined ? opts.reconcileFingerprint : cfg.reconcile_fingerprint,
     syncTelemetry: opts.syncTelemetry !== undefined ? opts.syncTelemetry : cfg.sync_telemetry,
     memory: opts.memory || cfg.memory,
     resident: opts.resident !== undefined ? opts.resident : cfg.resident,
-    probeUsage: opts.probeUsage,
+    runTurn: opts.runTurn,
+    slotOauth: opts.slotOauth,
+    retryDelayMs: opts.retryDelayMs,
   }
-}
-
-export function officialCcUsesCliQuota(cfg = {}) {
-  return String(cfg.quota_via || cfg.quotaVia || '') === 'cli' || cfg.cli_stats === true || cfg.cliStats === true
 }
 
 export function officialCcQuotaSucceeded(usage) {
@@ -629,11 +613,6 @@ export function dockerGatewayIp(vmId) {
   return '172.17.0.1'
 }
 
-export function officialCcUidGid(vmId) {
-  const n = parseVmIndex(vmId) || 1
-  return { uid: 10000 + n, gid: Number(process.env.KIN_VM_GID || 987) }
-}
-
 export function readOfficialCcStatus(homeDir) {
   try {
     return JSON.parse(fs.readFileSync(officialCcStatusPath(homeDir), 'utf8'))
@@ -1029,7 +1008,7 @@ export function buildOfficialCcDockerArgs({
     containerName(vmId),
     '/home/kincli/.local/bin/claude',
     ...(slash
-      ? [text, '--print', '--permission-mode', 'bypassPermissions', '--output-format', 'json']
+      ? [text, '--print', '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose']
       : ['-p', text, '--permission-mode', 'bypassPermissions', '--output-format', 'json']),
   ]
 }
@@ -1185,16 +1164,51 @@ export function writeOfficialCcTelemetry(projectRoot, vmId) {
   }
 }
 
-async function probeOfficialCcUsage({ vmId, homeDir, vm, probeUsage, timeoutMs }) {
-  if (typeof probeUsage === 'function') {
-    return probeUsage({ vmId, homeDir, vm })
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Official `/usage` inside the slot (egress = slot SOCKS5 / transparent exit).
+ * One try plus OFFICIAL_USAGE_RETRIES. A reply without the server limits[]
+ * rows is retried too: that cached/seeded read is where Max loses Fable.
+ */
+export async function runOfficialCcUsage({
+  turn,
+  homeDir,
+  retries = OFFICIAL_USAGE_RETRIES,
+  retryDelayMs = OFFICIAL_USAGE_RETRY_DELAY_MS,
+}) {
+  const outFile = path.join(homeDir, '.claude', 'kin-official-usage.json')
+  const errFile = path.join(homeDir, '.claude', 'kin-official-usage.err')
+  let last = { turn: { ok: false, code: null, timed_out: false, error: null }, stats: null, attempts: 0 }
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0 && retryDelayMs > 0) await sleep(retryDelayMs)
+    const result = await turn({ prompt: DEFAULT_USAGE_PROMPT, outFile, errFile })
+    let stats = null
+    try {
+      stats = parseOfficialCcStats(fs.readFileSync(outFile, 'utf8'))
+    } catch {}
+    last = { turn: result, stats, attempts: attempt + 1 }
+    if (stats?.ok && stats.limits_present) break
   }
-  const { probeVmUsage } = await import('./crs-usage-probe.mjs')
-  return probeVmUsage({
-    exec: { vmId, homeDir, oauth: vm?.claude, vm },
-    includeFable: false,
-    timeoutMs: Math.min(20_000, Number(timeoutMs) || 20_000),
-  })
+  return last
+}
+
+/** Tier (from /api/oauth/profile) and model ids (from /v1/models) via the slot worker. */
+export async function collectOfficialCcAccount(exec, { slotOauth } = {}) {
+  const call = slotOauth || (await import('../transport/slot-oauth.mjs')).runSlotOauth
+  const [profile, models] = await Promise.all([
+    call(exec, 'profile', { timeoutMs: 30_000 }),
+    call(exec, 'models', { timeoutMs: 30_000 }),
+  ])
+  const tier = profile?.ok ? tierFromOauthProfile(profile.body) : null
+  const list = Array.isArray(models?.body?.data) ? models.body.data : []
+  return {
+    account_tier: tier,
+    profile_ok: !!profile?.ok,
+    profile_error: profile?.ok ? null : profile?.body?.error?.code || `http_${profile?.status || 0}`,
+    available_models: models?.ok ? list.map((m) => String(m?.id || '')).filter(Boolean) : null,
+    models_error: models?.ok ? null : models?.body?.error?.code || `http_${models?.status || 0}`,
+  }
 }
 
 export async function runOfficialCcBootstrap(rawOpts = {}) {
@@ -1204,21 +1218,19 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
     vmId,
     projectRoot,
     prompt,
-    statsPrompt,
     force = true,
     timeoutMs,
     collectIdentity = null,
     onStats = null,
     applySeed,
     wipe: doWipe,
-    quotaVia,
-    cliStats,
-    usageFallback,
     reconcileFingerprint,
     syncTelemetry,
     memory,
     resident,
-    probeUsage,
+    runTurn = runOfficialCcTurn,
+    slotOauth,
+    retryDelayMs,
   } = applyOfficialCcConfig(rawOpts, config)
   if (!vmId || !projectRoot) return { ok: false, error: 'vmId and projectRoot required' }
   const vmPath = path.join(projectRoot, 'vms', `${vmId}.json`)
@@ -1375,82 +1387,46 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       timeoutMs,
     })
     helloOk = !!hello.ok
-    const useCliQuota = officialCcUsesCliQuota({ quotaVia, cliStats })
-    let statsTurn = { ok: false, code: null, timed_out: false, error: null }
-    let stats = null
-    if (useCliQuota) {
-      writeOfficialCcStatus(homeDir, {
-        status: 'running',
-        vm_id: vmId,
-        started_at: startedAt,
-        wiped: wiped.wiped,
-        official_login: true,
-        claude_version: installed.version,
-        hello_ok: hello.ok,
-        force,
-        step: 'stats',
-      })
-      statsTurn = await runOfficialCcTurn({
-        vmId,
-        uid,
-        gid,
-        timezone,
-        locale,
-        prompt: statsPrompt,
-        outFile: path.join(homeDir, '.claude', 'kin-official-stats.json'),
-        errFile: path.join(homeDir, '.claude', 'kin-official-stats.err'),
-        timeoutMs,
-      })
-      try {
-        const raw = fs.readFileSync(path.join(homeDir, '.claude', 'kin-official-stats.json'), 'utf8')
-        stats = parseOfficialCcStats(raw)
-      } catch {}
-      if (usageFallback && !stats?.ok && statsPrompt !== DEFAULT_USAGE_PROMPT) {
-        statsTurn = await runOfficialCcTurn({
-          vmId,
-          uid,
-          gid,
-          timezone,
-          locale,
-          prompt: DEFAULT_USAGE_PROMPT,
-          outFile: path.join(homeDir, '.claude', 'kin-official-stats.json'),
-          errFile: path.join(homeDir, '.claude', 'kin-official-stats.err'),
-          timeoutMs,
-        })
-        try {
-          const raw = fs.readFileSync(path.join(homeDir, '.claude', 'kin-official-stats.json'), 'utf8')
-          stats = parseOfficialCcStats(raw)
-        } catch {}
-      }
-    }
-    try {
-      vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-      applySeedAfterOfficialInit(homeDir, vm, null, projectRoot)
-    } catch {}
-    if (!useCliQuota) {
-      writeOfficialCcStatus(homeDir, {
-        status: 'running',
-        vm_id: vmId,
-        started_at: startedAt,
-        wiped: wiped.wiped,
-        official_login: true,
-        claude_version: installed.version,
-        hello_ok: hello.ok,
-        force,
-        step: 'usage',
-      })
-      stats = await probeOfficialCcUsage({
-        vmId,
-        homeDir,
-        vm,
-        probeUsage,
-        timeoutMs,
-      })
-    }
-    if (stats && !stats.account_tier) {
+    const turn = ({ prompt: text, outFile, errFile }) =>
+      runTurn({ vmId, uid, gid, timezone, locale, prompt: text, outFile, errFile, timeoutMs })
+    writeOfficialCcStatus(homeDir, {
+      status: 'running',
+      vm_id: vmId,
+      started_at: startedAt,
+      wiped: wiped.wiped,
+      official_login: true,
+      claude_version: installed.version,
+      hello_ok: hello.ok,
+      force,
+      step: 'usage',
+    })
+    const usageRun = hello.ok
+      ? await runOfficialCcUsage({ turn, homeDir, retryDelayMs })
+      : { turn: { ok: false, code: null, timed_out: false, error: null }, stats: null, attempts: 0 }
+    const statsTurn = usageRun.turn
+    let stats = usageRun.stats
+
+    writeOfficialCcStatus(homeDir, {
+      status: 'running',
+      vm_id: vmId,
+      started_at: startedAt,
+      wiped: wiped.wiped,
+      official_login: true,
+      claude_version: installed.version,
+      hello_ok: hello.ok,
+      force,
+      step: 'profile',
+    })
+    const account = await collectOfficialCcAccount({ vmId, homeDir, vm }, { slotOauth })
+    let tierSource = account.account_tier ? 'profile' : null
+    if (account.account_tier) {
+      stats = { ...(stats || {}), account_tier: account.account_tier }
+    } else if (stats && !stats.account_tier) {
       const accountTier = inferTierFromOfficialStats('', stats)
       if (accountTier) stats = { ...stats, account_tier: accountTier }
     }
+    if (!tierSource && stats?.account_tier) tierSource = 'usage'
+    if (stats) stats = { ...stats, account_tier_source: tierSource }
     if (typeof onStats === 'function' && stats) {
       try {
         await onStats(stats, { vmId, projectRoot, homeDir })
@@ -1521,10 +1497,16 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       usage_ok: usageOk,
       usage_source: stats?.source || null,
       usage_via: stats?.via || null,
+      usage_attempts: usageRun.attempts,
+      usage_limits_present: stats?.limits_present === true,
       stats_ok: usageOk,
       wiped: wiped.wiped,
       official_login: true,
       account_tier: stats?.account_tier || null,
+      account_tier_source: tierSource,
+      available_models: account.available_models,
+      profile_error: account.profile_error,
+      models_error: account.models_error,
       force,
       step: ok ? 'done' : hello.ok ? 'usage' : 'hello',
       telemetry_wrote: telemetry.wrote,

@@ -138,38 +138,6 @@ export function OfficialCcSettingsPane({
                   onChange={(v) => set({ [key]: v })}
                 />
               ))}
-              <SwitchRow
-                id='occ-usage_fallback'
-                label='额度回退'
-                hint='协议失败时再跑 CLI /usage'
-                checked={config.usage_fallback === true}
-                onChange={(v) => set({ usage_fallback: v })}
-              />
-              <SwitchRow
-                id='occ-cli_stats'
-                label='CLI /stats'
-                hint='默认关。只在协议额度不够时才开'
-                checked={config.cli_stats === true}
-                onChange={(v) => set({ cli_stats: v })}
-              />
-            </div>
-
-            <div className='space-y-1.5'>
-              <Label htmlFor='occ-quota'>额度来源</Label>
-              <Select
-                value={config.quota_via === 'cli' ? 'cli' : 'usage-api'}
-                onValueChange={(v) => set({ quota_via: v })}
-              >
-                <SelectTrigger id='occ-quota'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='usage-api'>
-                    协议 /api/oauth/usage
-                  </SelectItem>
-                  <SelectItem value='cli'>CLI</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
 
             <div className='space-y-1.5'>
@@ -223,7 +191,8 @@ export function OfficialCcSettingsPane({
 
             <p className='text-xs text-muted-foreground'>
               推理固定 cli-hop，跟外部 inference.engine=rust。保存不会把
-              official_cc.inference 写成 http。 额度默认走协议 /usage。hello
+              official_cc.inference 写成 http。hello 之后在槽内跑 CLI
+              /usage，失败重试 2 次；账号等级以官方 profile 为准。hello
               默认不常驻。
             </p>
           </CollapsibleContent>

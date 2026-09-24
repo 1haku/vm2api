@@ -13,15 +13,25 @@ import (
 
 	"github.com/dofastted/kin-gateway/worker/internal/config"
 	"github.com/dofastted/kin-gateway/worker/internal/credential"
+	"github.com/dofastted/kin-gateway/worker/internal/oauthcmd"
 	"github.com/dofastted/kin-gateway/worker/internal/telemetry"
 	"github.com/dofastted/kin-gateway/worker/internal/upstream"
 )
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "telemetry" {
-		log.Fatalf("kin-worker hop engine removed; only `kin-worker telemetry` remains")
+	if len(os.Args) < 2 {
+		log.Printf("usage: kin-worker telemetry|oauth")
+		os.Exit(2)
 	}
-	os.Exit(runTelemetry(os.Args[2:]))
+	switch os.Args[1] {
+	case "telemetry":
+		os.Exit(runTelemetry(os.Args[2:]))
+	case "oauth":
+		os.Exit(oauthcmd.Run(os.Args[2:], os.Stdin, os.Stdout))
+	default:
+		log.Printf("unknown kin-worker command %q", os.Args[1])
+		os.Exit(2)
+	}
 }
 
 func runTelemetry(args []string) int {
