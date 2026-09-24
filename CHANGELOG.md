@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.43 — 2026-09-24
+
+- 内核页两个对等卡片：wrap（`cli-node`）和 crag（官方 Claude Code）。点卡片确认后切换，槽表显示每槽内核。Codex 不动。
+- crag wrapper 在槽内有 `glibc239` 时用它加载 ELF（debian-12 没有 GLIBC 2.39）。
+- HostDzire overlay 现在会铺 `share/crag/kin-kernel`。
+
+已部署机升级：覆盖控制面和前端并重启 Node 一次。内核页可在 wrap / crag 之间切换。不要 `docker rm` 槽。
+
 ## 1.3.42 — 2026-09-24
 
 - 内核页可切换数据面：wrap（`cli-node` 一进程 20 native 槽）或 crag（官方 Claude Code，一槽一 `claude -p`，懒启动）。

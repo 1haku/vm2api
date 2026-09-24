@@ -43,6 +43,10 @@ export function cragKernelWrapperScript() {
   return `#!/bin/sh
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BIN="$DIR/${WRAP_KERNEL_BIN}"
+LOADER="$DIR/${WRAP_GLIBC_DIR}/ld-linux-x86-64.so.2"
+if [ -x "$LOADER" ] && [ -x "$BIN" ]; then
+  exec "$LOADER" --library-path "$DIR/${WRAP_GLIBC_DIR}" "$BIN" "$@"
+fi
 if [ -x "$BIN" ]; then
   exec "$BIN" "$@"
 fi
