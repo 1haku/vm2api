@@ -24,6 +24,25 @@ export function KernelRoutingPane(props: {
         <CardTitle>Claude 内核</CardTitle>
       </CardHeader>
       <CardContent className='divide-y'>
+        <SettingRow
+          label='数据面'
+          desc='wrap = cli-node native 20 槽；crag = 官方 Claude Code，一槽一进程'
+        >
+          <Select
+            value={String(props.value.dataplane || 'wrap')}
+            onValueChange={(value) =>
+              props.onChange({ ...props.value, dataplane: value })
+            }
+          >
+            <SelectTrigger className='w-56'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='wrap'>wrap · cli-node</SelectItem>
+              <SelectItem value='crag'>crag · 官方 Claude Code</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
         <SettingRow label='推理路径'>
           <span className='text-sm'>Rust · Claude Code cli-hop</span>
         </SettingRow>
@@ -33,7 +52,11 @@ export function KernelRoutingPane(props: {
           </span>
         </SettingRow>
         <SettingRow label='预开 native 位'>
-          <span className='text-sm tabular-nums'>20（固定）</span>
+          <span className='text-sm tabular-nums'>
+            {String(props.value.dataplane || 'wrap') === 'crag'
+              ? '最多 20（懒启动）'
+              : '20（固定）'}
+          </span>
         </SettingRow>
         <SettingRow
           label='默认 session 槽位'

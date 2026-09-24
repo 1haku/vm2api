@@ -175,6 +175,8 @@ export type Vm = {
   resolved_inference_engine?: 'go' | 'rust' | null
   persona_preset?: string | null
   resolved_persona_preset?: string | null
+  dataplane?: 'wrap' | 'crag' | null
+  resolved_dataplane?: 'wrap' | 'crag' | null
   kernel?: string
   region?: string
   /** 槽位环境时区（容器 `TZ` + persona `# Environment`）。 */

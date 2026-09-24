@@ -30,7 +30,9 @@ import {
   installReleaseKernel,
   makeWrapSample,
   promoteWrapSample,
+  setKernelDataplane,
   syncWrapSample,
+  uploadCragKernelBinary,
   uploadKernelBinary,
   wrapSampleQueryOptions,
   type WrapKernelPayload,
@@ -308,11 +310,51 @@ export function WrapSamplePage() {
       const cli = result.release?.cli_node_size
         ? `，cli-node ${fmtBytes(result.release.cli_node_size)}`
         : ''
-      toast.success(`已下载 ${tag}${cli}。尚未铺到槽`)
+      const crag = result.release?.crag_size
+        ? `，crag ${fmtBytes(result.release.crag_size)}`
+        : result.release?.crag_skipped
+          ? '，此版无 kin-kernel-crag'
+          : ''
+      toast.success(`已下载 ${tag}${cli}${crag}。尚未铺到槽`)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
   })
+  const dataplane = useMutation({
+    mutationFn: (next: 'wrap' | 'crag') =>
+      setKernelDataplane({
+        dataplane: next,
+        ids: selected.length ? selected : undefined,
+        all: selected.length === 0,
+        restart,
+      }),
+    onSuccess: async (report, next) => {
+      const failed = Number(report.failed_count || 0)
+      if (failed) {
+        toast.error(
+          `已切 ${next}，${report.ok_count || 0}/${report.total || 0} 槽成功`
+        )
+      } else {
+        toast.success(
+          next === 'crag'
+            ? '已切换到 Crag · 官方 Claude Code'
+            : '已切换到 wrap · cli-node'
+        )
+      }
+      await invalidate()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const uploadCrag = useMutation({
+    mutationFn: (file: File) => uploadCragKernelBinary(file),
+    onSuccess: async () => {
+      toast.success('已写入 Crag kernel。再点切换铺到槽')
+      await invalidate()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const cragFileRef = useRef<HTMLInputElement>(null)
+
 
   const toggle = (id: string, on: boolean) => {
     setSelected((cur) =>
@@ -402,6 +444,70 @@ export function WrapSamplePage() {
           kernel。右侧可一键把 最新 <code>cli-node</code> 和 cli-hop{' '}
           <code>kin-kernel</code> 铺进全部槽。不改凭证、不改 SOCKS、不删容器。
         </p>
+        <Card className='mb-4'>
+          <CardHeader>
+            <CardTitle>数据面</CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            <p className='text-sm leading-relaxed text-muted-foreground'>
+              wrap 用 patched <code>cli-node</code> 一进程 20 native
+              槽。crag 用官方 Claude Code，一槽一 <code>claude -p</code>
+              。切换会改 kernel.json、铺对应 ELF，并重启 rust
+              kernel。不改凭证、不删容器。
+            </p>
+            <div className='flex flex-wrap items-end gap-3'>
+              <Select
+                value={data?.dataplane || 'wrap'}
+                onValueChange={(value) => {
+                  if (value === 'wrap' || value === 'crag') {
+                    dataplane.mutate(value)
+                  }
+                }}
+                disabled={dataplane.isPending || hopBusy}
+              >
+                <SelectTrigger className='w-64'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='wrap'>wrap · cli-node</SelectItem>
+                  <SelectItem value='crag' disabled={!data?.crag?.ok}>
+                    crag · 官方 Claude Code
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <input
+                ref={cragFileRef}
+                type='file'
+                className='hidden'
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (!file) return
+                  if (file.size > MAX_KERNEL_UPLOAD_BYTES) {
+                    toast.error('kernel 不能超过 32MB')
+                    return
+                  }
+                  uploadCrag.mutate(file)
+                }}
+              />
+              <Button
+                size='sm'
+                variant='outline'
+                disabled={uploadCrag.isPending || hopBusy}
+                loading={uploadCrag.isPending}
+                onClick={() => cragFileRef.current?.click()}
+              >
+                上传 Crag ELF
+              </Button>
+            </div>
+            <div className='text-xs font-medium text-muted-foreground'>
+              Crag kernel
+            </div>
+            <KernelPayload payload={data?.crag || undefined} />
+            <Flag ok={Boolean(data?.crag?.ok)} label='share/crag/kin-kernel' />
+          </CardContent>
+        </Card>
+
         <div className='grid gap-4 lg:grid-cols-2'>
           <Card>
             <CardHeader>

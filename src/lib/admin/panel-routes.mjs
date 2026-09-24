@@ -112,9 +112,11 @@ import { parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import {
   normalizeInferenceConfig,
   normalizeSessionSlots,
+  parseKernelDataplanePatch,
   parseSlotEnginePolicyPatch,
   parseSlotPolicyTargets,
   resolveInferenceEngine,
+  resolveKernelDataplane,
   SESSION_SLOT_MAX,
   SESSION_SLOT_MIN,
   validateInferenceRoutingPatch,
@@ -172,7 +174,9 @@ import {
   captureWrapSample,
   describeWrapSample,
   makeWrapSample,
+  materializeSlotDataplane,
   materializeWrapCli,
+  replaceCragKernelBinary,
   replaceKernelBinary,
   replaceCliNodeBinary,
   syncWrapSample,
@@ -226,7 +230,7 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   const all = listVms(project)
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
   const vms = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
-  const report = syncWrapSample(project, vms)
+  const report = syncWrapSample(project, vms, { routing: routingConfig })
   if (body.restart !== false) {
     for (const item of report.items || []) {
       if (!item.ok) continue
@@ -236,6 +240,7 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
         continue
       }
       if (resolveInferenceEngine(vm, routingConfig) !== 'rust') continue
+      writeKernelConfig(project, vm, { routing: routingConfig, timezone: vm.timezone })
       const exec = slotExec(project, vm)
       item.kernel = await restartRustKernel(exec).catch((e) => ({
         ok: false,
@@ -406,6 +411,10 @@ export function createPanelHandler(ctx) {
       if (patch.persona_preset) desired.persona_preset = patch.persona_preset
       else delete desired.persona_preset
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'dataplane')) {
+      if (patch.dataplane) desired.dataplane = patch.dataplane
+      else delete desired.dataplane
+    }
     return desired
   }
 
@@ -415,6 +424,8 @@ export function createPanelHandler(ctx) {
     const desired = vmWithSlotPolicyPatch(current, patch)
     const previousEngine = resolveInferenceEngine(current, ctx.routingConfig)
     const targetEngine = resolveInferenceEngine(desired, ctx.routingConfig)
+    const previousDataplane = resolveKernelDataplane(current, ctx.routingConfig)
+    const targetDataplane = resolveKernelDataplane(desired, ctx.routingConfig)
     let switched = null
     if (Object.prototype.hasOwnProperty.call(patch, 'inference_engine') && previousEngine !== targetEngine) {
       switched = await switchSlotInferenceEngine(desired, cfg.paths.project, targetEngine)
@@ -425,8 +436,33 @@ export function createPanelHandler(ctx) {
     try {
       const saved = persistSlotEnginePolicy(cfg.paths.project, id, patch)
       if (!saved) return { ok: false, id, code: 'vm_not_found', error: 'vm not found' }
-      if (Object.prototype.hasOwnProperty.call(patch, 'persona_preset') && !isCodexVm(saved)) {
+      if (
+        !isCodexVm(saved) &&
+        (Object.prototype.hasOwnProperty.call(patch, 'persona_preset') || previousDataplane !== targetDataplane)
+      ) {
+        if (previousDataplane !== targetDataplane) {
+          const laid = materializeSlotDataplane(cfg.paths.project, saved, targetDataplane || 'wrap')
+          if (!laid.ok) {
+            persistSlotEnginePolicy(cfg.paths.project, id, { dataplane: current.dataplane || '' })
+            return { ok: false, id, code: laid.code || 'dataplane_materialize_failed', error: laid.error }
+          }
+        }
         writeKernelConfig(cfg.paths.project, saved, { routing: ctx.routingConfig })
+        if (previousDataplane !== targetDataplane && saved.status === 'running') {
+          const exec = slotExec(cfg.paths.project, saved)
+          const restarted = await restartRustKernel(exec).catch((e) => ({
+            ok: false,
+            error: String(e?.message || e).slice(0, 200),
+          }))
+          if (!restarted?.ok) {
+            return {
+              ok: false,
+              id,
+              code: 'kernel_restart_failed',
+              error: restarted?.error || 'kernel restart failed',
+            }
+          }
+        }
       }
       return {
         ok: true,
@@ -434,6 +470,8 @@ export function createPanelHandler(ctx) {
         vm: saved,
         configured_engine: saved.inference_engine || null,
         resolved_engine: resolveInferenceEngine(saved, ctx.routingConfig),
+        dataplane: saved.dataplane || null,
+        resolved_dataplane: resolveKernelDataplane(saved, ctx.routingConfig),
         active_engine: switched?.active_engine || targetEngine,
         runtime: switched?.runtime || null,
       }
@@ -1264,7 +1302,77 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok(report))
       }
       if (req.method === 'GET' && p === '/api/panel/wrap-cli') {
-        return json(res, 200, panel.ok(describeWrapSample(cfg.paths.project)))
+        const sample = describeWrapSample(cfg.paths.project)
+        return json(
+          res,
+          200,
+          panel.ok({
+            ...sample,
+            dataplane: resolveKernelDataplane({}, ctx.routingConfig) || 'wrap',
+          }),
+        )
+      }
+      if (req.method === 'POST' && p === '/api/panel/dataplane') {
+        const body = await readBody(req, 8 * 1024).catch(() => ({}))
+        const parsed = parseKernelDataplanePatch(body.dataplane)
+        if (!parsed.ok || !parsed.value) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap or crag' },
+          })
+        }
+        const targets = parseSlotPolicyTargets({
+          ids: body.ids,
+          all: body.all === true || !Array.isArray(body.ids),
+        })
+        if (!targets.ok) {
+          return json(res, 400, { ok: false, error: { message: targets.error } })
+        }
+        const previous = structuredClone(ctx.routingConfig)
+        try {
+          if (targets.all) {
+            persistRoutingPatch({
+              inference: {
+                ...(ctx.routingConfig.inference || {}),
+                dataplane: parsed.value,
+              },
+            })
+          } else {
+            for (const id of targets.ids) {
+              persistSlotEnginePolicy(cfg.paths.project, id, { dataplane: parsed.value })
+            }
+          }
+        } catch (error) {
+          ctx.routingConfig = previous
+          return json(res, 503, {
+            ok: false,
+            error: { code: 'dataplane_persist_failed', message: String(error?.message || error) },
+          })
+        }
+        const report = await syncInstalledKernels({
+          project: cfg.paths.project,
+          routingConfig: ctx.routingConfig,
+          body: {
+            ids: targets.all ? undefined : targets.ids,
+            restart: body.restart !== false,
+          },
+        })
+        return json(
+          res,
+          report.ok ? 200 : 503,
+          panel.ok({
+            dataplane: parsed.value,
+            ...report,
+          }),
+        )
+      }
+      if (req.method === 'POST' && p === '/api/panel/wrap-cli/crag-kernel') {
+        const raw = await readRawBody(req, 32 * 1024 * 1024)
+        const written = replaceCragKernelBinary(cfg.paths.project, raw)
+        if (!written.ok) {
+          return json(res, 400, { ok: false, error: { code: written.code, message: written.error } })
+        }
+        return json(res, 200, panel.ok(written))
       }
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/make') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
@@ -1303,6 +1411,13 @@ export function createPanelHandler(ctx) {
         if (!cliNode.ok) {
           return json(res, 400, { ok: false, error: { code: cliNode.code, message: cliNode.error } })
         }
+        let cragWritten = { skipped: true }
+        if (downloaded.crag?.bytes) {
+          cragWritten = replaceCragKernelBinary(cfg.paths.project, downloaded.crag.bytes)
+          if (!cragWritten.ok) {
+            return json(res, 400, { ok: false, error: { code: cragWritten.code, message: cragWritten.error } })
+          }
+        }
         const report = await syncInstalledKernels({
           project: cfg.paths.project,
           routingConfig: ctx.routingConfig,
@@ -1315,6 +1430,9 @@ export function createPanelHandler(ctx) {
           size: downloaded.size,
           cli_node: downloaded.cliNode?.asset,
           cli_node_size: cliNode.size,
+          crag: downloaded.crag?.asset || null,
+          crag_size: cragWritten.size || 0,
+          crag_skipped: !!downloaded.crag?.skipped,
         }
         if (!report.ok) {
           return json(res, 400, {
