@@ -280,6 +280,8 @@ export async function handleCodexProtocol({
   const writeCfg = ops.writeCodexKernelConfig || writeCodexKernelConfig
   const ensure = ops.ensureCodexKernel || ensureCodexKernel
   const anthropicSse = protocol === 'anthropic.messages' ? createAnthropicSseState() : null
+  const chatSse =
+    protocol === 'openai.chat' || protocol === 'openai.completions' ? { id: 'codex', seq: 0, tools: new Map(), sawTool: false } : null
   const stickyKeys = picked.stickyKeys?.length ? picked.stickyKeys : picked.sessionKey ? [picked.sessionKey] : []
   const bindSticky = (vm) => {
     if (!picked.sessionKey) return
@@ -357,7 +359,7 @@ export async function handleCodexProtocol({
           }
           if (!res.headersSent) writeSSEHeaders(res)
           if (protocol === 'openai.chat' || protocol === 'openai.completions') {
-            const mapped = responsesSseToChatChunk(line)
+            const mapped = responsesSseToChatChunk(line, 'codex', chatSse)
             if (mapped) res.write(mapped)
             return
           }
