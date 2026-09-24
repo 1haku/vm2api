@@ -220,6 +220,32 @@ curl -sS https://ccmax20.cc/health
 
 客户端断开不计 SLA、不处罚账号。
 
+### `502 incomplete_response`
+
+```json
+{"error":{"type":"upstream_error","code":"incomplete_response","message":"Assistant hop ended without visible output or stop_reason"}}
+```
+
+含义：请求已交给槽内 CLI，但这一轮结束时既没有可见输出（text / tool_use / refusal），也没有 `stop_reason`。只有 thinking 也算。网关会先在同账号重试，再暂停该账号约 60 秒并换号；都失败才返回这个错误。
+
+常见原因与处理：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 同一个槽的请求**全部**失败，每次约 20–30 秒才返回；面板代理探测却是绿的 | 槽容器到宿主机 `kin-egress` 网关被宿主机防火墙拦截（常见于 UFW 入站默认拒绝）。容器内 DNS 和出站 TCP 都超时，CLI 重试到放弃，没有任何输出 | 放行 `keg*` 网卡到网关端口的入站，见 [DEPLOY.md「防火墙」](DEPLOY.md#防火墙ufw--firewalld) |
+| 偶发，重试后成功 | 上游流中断或模型只返回了 thinking | 客户端重试即可；网关已自动重试和换号 |
+| 某个槽持续失败，重启槽后恢复 | 槽内 CLI 卡死，slot 未释放 | 面板重启该槽 |
+
+面板代理探测是从宿主机本机连网关端口，不经过「容器 → 网关」这一跳，所以防火墙拦截时它仍显示正常。确认方法：
+
+```bash
+# 在宿主机上，进入出问题的槽容器测 DNS 和出站
+docker exec kin-<槽> getent hosts api.anthropic.com
+docker exec kin-<槽> curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 https://api.anthropic.com
+```
+
+两条都超时即为防火墙拦截；能解析且返回 HTTP 状态码（如 404）说明出口正常，再查上游和凭证。
+
 ## 交付与粘性
 
 ```mermaid
