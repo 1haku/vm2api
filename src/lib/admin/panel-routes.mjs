@@ -3520,7 +3520,12 @@ export function createPanelHandler(ctx) {
           })
         // DNS order change must reach running egress helpers; slots stay intact.
         const egress = []
-        if (body.dns_primary != null && body.dns_primary !== previousDnsPrimary && egressEnabled() && process.env.KIN_CRS_MOCK !== '1') {
+        if (
+          body.dns_primary != null &&
+          body.dns_primary !== previousDnsPrimary &&
+          egressEnabled() &&
+          process.env.KIN_CRS_MOCK !== '1'
+        ) {
           const dnsUpstream = dnsUpstreamChain(result.config.dns_primary)
           for (const proxy of proxyPool.snapshot().proxies) {
             if (isLocalEgressProxy(proxy) || !proxy.bound_vm_ids?.length) continue

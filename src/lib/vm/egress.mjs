@@ -274,7 +274,16 @@ function configuredDnsUpstream() {
   }
 }
 
-export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dnsPort, listenHost, bin = EGRESS_BIN, dnsUpstream = '' }) {
+export function startEgressProcess({
+  projectRoot,
+  proxyId,
+  proxyUrl,
+  tcpPort,
+  dnsPort,
+  listenHost,
+  bin = EGRESS_BIN,
+  dnsUpstream = '',
+}) {
   if (!listenHost) return { ok: false, error: 'egress listen host required' }
   const dir = egressRunDir(projectRoot, proxyId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -286,7 +295,12 @@ export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dn
   if (existing && pidAlive(existing)) {
     try {
       const old = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-      if (old.listen_tcp === listenTcp && old.listen_dns === listenDns && old.proxy_url === proxyUrl && (old.dns_upstream || '') === dnsUpstream) {
+      if (
+        old.listen_tcp === listenTcp &&
+        old.listen_dns === listenDns &&
+        old.proxy_url === proxyUrl &&
+        (old.dns_upstream || '') === dnsUpstream
+      ) {
         return { ok: true, pid: existing, reused: true, configPath: cfgPath }
       }
     } catch {}
@@ -412,7 +426,11 @@ export function ensureLocalProxyEgress(proxy, { runDocker = docker } = {}) {
   return { ok: true, mode: 'local', ...info, reused: false, proxy_id: proxyId }
 }
 
-export function ensureProxyEgress(projectRoot, proxy, { runDocker = docker, runIptables = iptables, dnsUpstream = configuredDnsUpstream() } = {}) {
+export function ensureProxyEgress(
+  projectRoot,
+  proxy,
+  { runDocker = docker, runIptables = iptables, dnsUpstream = configuredDnsUpstream() } = {},
+) {
   if (isLocalEgressProxy(proxy)) return ensureLocalProxyEgress(proxy, { runDocker })
   const proxyId = proxy?.id
   const proxyUrl = boundProxyUrl(proxy)
