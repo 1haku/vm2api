@@ -421,6 +421,7 @@ export function VmDetailPage() {
             reasoningEffort={reasoningEffort}
             credType={credType}
             isCodex={isCodexVm(vm)}
+            dataplane={vm.resolved_dataplane}
             result={testResult}
             running={testChat.isPending}
             modelsRefreshing={testModels.isFetching}
