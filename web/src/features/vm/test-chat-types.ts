@@ -57,6 +57,9 @@ export type TestChatResult = {
   error?: TestChatError | null
   via?: string
   credential_mode?: string
+  inference_engine?: string | null
+  dataplane?: string | null
+  official_cc_inference?: string | null
   debug?: Record<string, unknown>
 }
 
@@ -70,7 +73,7 @@ export type TestChatStage = {
 }
 
 const STAGE_RULES: [string, string, RegExp][] = [
-  ['start', '槽位', /^(开始测试|状态 )/],
+  ['start', '槽位', /^(开始测试|状态 |推理 )/],
   ['cred', '凭证', /^(凭证 |无 OAuth)/],
   ['proxy', '代理', /^(代理 |未绑定 SOCKS5)/],
   ['model', '模型', /^(模型|prompt=)/],

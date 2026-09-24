@@ -29,7 +29,12 @@ import { listGptPolicyModels, isGptModelEnabled, syncGptIdsIntoPolicy } from '..
 import { listOfficialModels, validateOfficialModel } from '../protocol/models.mjs'
 import { fetchChatgptModelCatalog, refreshCodexAccessToken, CODEX_USER_AGENT } from '../protocol/codex-models.mjs'
 import { isGptSeriesId } from '../protocol/gpt-ids.mjs'
-import { resolveInferenceEngine, resolveOfficialCcInference, resolveCliSystemLayout } from '../vm/slot-engine.mjs'
+import {
+  resolveInferenceEngine,
+  resolveOfficialCcInference,
+  resolveCliSystemLayout,
+  resolveKernelDataplane,
+} from '../vm/slot-engine.mjs'
 import {
   codexTextInput,
   DEFAULT_CODEX_REASONING_EFFORT,
@@ -807,9 +812,14 @@ export async function runVmTestChat(opts = {}) {
   const codex = isCodexVm(vm)
   const inferenceEngine = codex ? null : resolveInferenceEngine(vm, routing)
   const cliHop = !codex && resolveOfficialCcInference(vm, routing) === 'cli-hop'
+  const dataplane = codex ? null : resolveKernelDataplane(vm, routing) || 'wrap'
   push(
     'info',
-    codex ? '推理 codex-kernel / ChatGPT' : `推理 ${inferenceEngine} / ${cliHop ? 'cli-hop wrap' : 'http hop'}`,
+    codex
+      ? '推理 codex-kernel / ChatGPT'
+      : cliHop
+        ? `推理 ${inferenceEngine} / cli-hop ${dataplane}`
+        : `推理 ${inferenceEngine} / http hop`,
   )
 
   const credMode = testChatCredentialMode(vm)
@@ -1126,6 +1136,7 @@ export async function runVmTestChat(opts = {}) {
     via: 'v1-loopback',
     credential_mode: credMode,
     inference_engine: inferenceEngine,
+    dataplane,
     official_cc_inference: codex ? null : cliHop ? 'cli-hop' : 'http',
     debug: {
       path: v1Path,
@@ -1146,6 +1157,7 @@ export async function runVmTestChat(opts = {}) {
       hit_vm: result?.vm_id || null,
       upstream_model: result?.model || result?.body?.model || null,
       inference_engine: inferenceEngine,
+      dataplane,
       official_cc_inference: codex ? null : cliHop ? 'cli-hop' : 'http',
     },
     log,

@@ -144,7 +144,7 @@ export function FleetActions() {
         disabled={wrapSync.isPending}
         loading={wrapSync.isPending}
       >
-        重装 kernel
+        重装当前内核
       </Button>
 
       <Dialog open={fleetOpen} onOpenChange={setFleetOpen}>

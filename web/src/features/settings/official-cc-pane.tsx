@@ -97,9 +97,10 @@ export function OfficialCcSettingsPane({
       <CardContent className='space-y-3'>
         <p className='text-xs text-muted-foreground'>
           这是槽位外面的初装配置。启用时每次换票都重新 wipe 再跑官方
-          hello，不是只写票。 rust 槽推理固定 cli-hop，这里不能改成
-          HTTP。成功后按「同步遥测」写官方身份，并热更新槽内 worker.json。
-          虚拟机页的种子开关不能单独打开 DNT 来对抗这份配置。
+          hello，不是只写票。运输固定 Rust cli-hop，这里不能改成 HTTP。真正跑
+          CLI 的是数据面：wrap 用 cli-node，crag 用官方
+          claude。成功后按「同步遥测」写官方身份，并热更新槽内
+          worker.json。虚拟机页的种子开关不能单独打开 DNT 来对抗这份配置。
         </p>
 
         <div className='divide-y'>
@@ -190,10 +191,10 @@ export function OfficialCcSettingsPane({
             </div>
 
             <p className='text-xs text-muted-foreground'>
-              推理固定 cli-hop，跟外部 inference.engine=rust。保存不会把
-              official_cc.inference 写成 http。hello 之后在槽内跑 CLI
-              /usage，失败重试 2 次；账号等级以官方 profile 为准。hello
-              默认不常驻。
+              运输固定 cli-hop，跟 inference.engine=rust。保存不会把
+              official_cc.inference 写成 http。数据面 wrap/crag 在设置 →
+              协议或内核页切换。hello 之后在槽内跑 CLI /usage，失败重试 2
+              次；账号等级以官方 profile 为准。hello 默认不常驻。
             </p>
           </CollapsibleContent>
         </Collapsible>

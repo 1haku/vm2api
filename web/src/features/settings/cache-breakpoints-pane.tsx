@@ -64,9 +64,10 @@ export function CacheBreakpointsPane({
         </CardHeader>
         <CardContent className='space-y-3'>
           <p className='text-xs leading-relaxed text-muted-foreground'>
-            rust cli-hop 剥 tools / system / messages 上的 cache_control；kernel
-            按 Claude Code 重打 conversation 断点。官方入站跳过。关则只剥 last
-            user，调用方其余 conversation 断点保留。
+            Rust cli-hop 剥 tools / system / messages 上的 cache_control；kernel
+            按 Claude Code 重打 conversation 断点，wrap 与 crag
+            都走这条运输。官方入站跳过。关则只剥 last user，调用方其余
+            conversation 断点保留。
           </p>
           <SettingRow label='启用'>
             <Switch
