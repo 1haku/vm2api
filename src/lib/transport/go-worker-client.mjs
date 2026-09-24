@@ -7,13 +7,17 @@ import { sealClaudeCodeCch } from '../identity/cch.mjs'
 import { credentialModeFromOauth } from '../oauth/credential-mode.mjs'
 import { isCrsMock, writeCrsTrace, mockCrsPayload, emitMockSse } from './crs-mock.mjs'
 import {
+  classifyCredentialRefresh,
   hasAccessPresence,
   hasCredentialPresence,
   hasRefreshPresence,
+  needsRefresh,
+  readWorkerCredentialFile,
+  REFRESH_SKEW_MS,
   writeWorkerCredentialFile,
 } from '../oauth/oauth-credentials.mjs'
-import { refreshSlotCredentialIfNeeded } from '../oauth/host-token-refresh.mjs'
-import { hostCountTokens, hostModels, hostOauthUsage } from '../oauth/host-anthropic.mjs'
+import { isApiKeyMode } from '../oauth/credential-mode.mjs'
+import { runSlotOauth } from './slot-oauth.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
 import { isCompleteAssistantMessage } from '../core/errors.mjs'
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
@@ -766,18 +770,67 @@ export async function ensureWorkerCredential(exec, { force = false } = {}) {
       },
     }
   }
-  const result = await refreshSlotCredentialIfNeeded({
-    homeDir: exec.homeDir,
-    vm: exec.vm,
-    force: !!force,
-  })
+
+  const credential = readWorkerCredentialFile(exec.homeDir)
+  if (!credential) {
+    return {
+      ok: false,
+      status: 400,
+      refreshed: false,
+      error: { code: 'credential_required', message: 'slot has no credential file' },
+    }
+  }
+
+  const now = Date.now()
+  const apiKey = isApiKeyMode(credential.type || credential.mode)
+  const alreadyFresh = apiKey || (!force && !needsRefresh(credential.expires_at, now, REFRESH_SKEW_MS))
+  if (alreadyFresh) {
+    return {
+      ok: true,
+      status: 200,
+      refreshed: false,
+      refresh_class: 'already_fresh',
+      credential: credentialSummary(credential, now),
+    }
+  }
+
+  const result = await runSlotOauth(exec, 'refresh', { force: !!force })
+  const body = result?.body || {}
+  const refreshedCredential = readWorkerCredentialFile(exec.homeDir)
+  const mapped = {
+    ok: !!result?.ok,
+    status: result?.status || 0,
+    refreshed: !!body.refreshed,
+    refresh_class: result?.ok ? (body.refreshed ? 'rotated' : 'already_fresh') : undefined,
+    credential: result?.ok ? credentialSummary({ ...(refreshedCredential || {}), ...body }, Date.now()) : undefined,
+    error: result?.ok ? undefined : body.error,
+  }
+  if (!mapped.ok) mapped.refresh_class = classifyCredentialRefresh(mapped)
+  return mapped
+}
+
+function credentialSummary(credential, now = Date.now()) {
+  if (!credential) return undefined
+  const expiresAt = credential.expires_at ?? null
+  const expiresAtMs =
+    Number(expiresAt) && Number(expiresAt) < 10_000_000_000 ? Number(expiresAt) * 1000 : Number(expiresAt)
   return {
-    ok: !!result.ok,
-    status: result.ok ? 200 : 400,
-    refreshed: !!result.refreshed,
-    refresh_class: result.refresh_class,
-    credential: result.credential,
-    error: result.error,
+    type: credential.type || credential.mode || null,
+    mode: credential.mode || credential.type || null,
+    account_uuid: credential.account_uuid || null,
+    org_uuid: credential.org_uuid || null,
+    email: credential.email || null,
+    scope: credential.scope || null,
+    auth_scheme: credential.auth_scheme || null,
+    has_access: credential.has_access ?? !!(credential.access_token || credential.api_key),
+    has_refresh: credential.has_refresh ?? !!credential.refresh_token,
+    needs_refresh: isApiKeyMode(credential.type || credential.mode)
+      ? false
+      : needsRefresh(expiresAt, now, REFRESH_SKEW_MS),
+    expires_at: expiresAt,
+    ttl_seconds:
+      Number.isFinite(expiresAtMs) && expiresAtMs > 0 ? Math.max(0, Math.ceil((expiresAtMs - now) / 1000)) : null,
+    generation: credential._token_version || null,
   }
 }
 
@@ -866,12 +919,10 @@ export async function callWorkerGet(exec, requestPath, { timeoutMs = 30000, sign
     }
   }
   if (requestPath === '/internal/v1/models') {
-    const hop = await hostModels(exec, { timeoutMs })
-    return { ...hop, via: hop.via || 'host-socks' }
+    return runSlotOauth(exec, 'models', { timeoutMs })
   }
   if (requestPath === '/internal/oauth/usage') {
-    const hop = await hostOauthUsage(exec, { timeoutMs })
-    return { ...hop, via: hop.via || 'host-socks' }
+    return runSlotOauth(exec, 'usage', { timeoutMs })
   }
   try {
     const response = await workerRequest(exec, { requestPath, timeoutMs, signal })
@@ -897,10 +948,9 @@ export async function callWorkerGet(exec, requestPath, { timeoutMs = 30000, sign
   }
 }
 
-export async function countTokensViaWorker(exec, { body, headers = {}, timeoutMs = 45000, fetchImpl } = {}) {
+export async function countTokensViaWorker(exec, { body, headers = {}, timeoutMs = 45000 } = {}) {
   if (isCrsMock()) {
     return { ok: true, status: 200, body: { input_tokens: 8 }, headers: {}, via: 'go-worker-mock' }
   }
-  const hop = await hostCountTokens(exec, { body, headers, timeoutMs, fetchImpl })
-  return { ...hop, via: hop.via || 'host-socks' }
+  return runSlotOauth(exec, 'count-tokens', { body, headers, timeoutMs })
 }

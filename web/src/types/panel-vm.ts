@@ -315,6 +315,10 @@ export type OfficialCcStatus = {
   hello_ok?: boolean
   usage_ok?: boolean
   account_tier?: string
+  /** `profile` = 官方 /api/oauth/profile；`usage` = /usage 推断兜底。 */
+  account_tier_source?: string
+  /** 槽内 GET /v1/models 返回的模型 id。 */
+  available_models?: string[]
   exit_code?: number | null
   resident?: boolean
   resident_ok?: boolean

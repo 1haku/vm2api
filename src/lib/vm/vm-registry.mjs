@@ -136,15 +136,18 @@ export function getActiveVmId(projectRoot) {
   }
 }
 
-export function persistAccountTier(projectRoot, vmId, tier) {
+export function persistAccountTier(projectRoot, vmId, tier, { source = null } = {}) {
   const key = String(tier || '').toLowerCase()
   if (key !== 'pro' && key !== 'max') return null
   const file = path.join(projectRoot, 'vms', `${vmId}.json`)
   if (!fs.existsSync(file)) return null
   const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
   vm.claude = vm.claude || {}
-  if (vm.claude.account_tier === key) return vm
+  // Official /api/oauth/profile is authoritative; only a newer profile read may change it.
+  if (vm.claude.account_tier_source === 'profile' && source !== 'profile') return vm
+  if (vm.claude.account_tier === key && (vm.claude.account_tier_source || null) === source) return vm
   vm.claude.account_tier = key
+  vm.claude.account_tier_source = source
   vm.updated_at = new Date().toISOString()
   atomicWriteJson(file, vm, { mode: 0o600 })
   return vm

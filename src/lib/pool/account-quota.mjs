@@ -348,12 +348,14 @@ export class AccountQuota {
         probed_at: probe.probed_at || new Date().toISOString(),
       }
       const stored = String(acc.unified.account_tier || '').toLowerCase()
-      if (hasFableUsage || acc.unified.fable.ok) acc.unified.account_tier = 'max'
-      else if (acc.unified.fable.plan_denied && stored !== 'max') acc.unified.account_tier = 'pro'
+      // Official /api/oauth/profile is authoritative; Fable signals only fill in when it is absent.
+      const fromProfile = acc.unified.account_tier_source === 'profile'
+      if (!fromProfile && (hasFableUsage || acc.unified.fable.ok)) acc.unified.account_tier = 'max'
+      else if (!fromProfile && acc.unified.fable.plan_denied && stored !== 'max') acc.unified.account_tier = 'pro'
     } else if (usageOk) {
       const leftover = leftoverFable
       if (hasFableUsage) {
-        acc.unified.account_tier = 'max'
+        if (acc.unified.account_tier_source !== 'profile') acc.unified.account_tier = 'max'
         if (leftover.plan_denied || leftover.ok === false) {
           acc.unified.fable = {
             ...leftover,
@@ -906,14 +908,17 @@ export class AccountQuota {
     return this.repo.save(acc)
   }
 
-  setAccountTier(accountId, tier) {
+  setAccountTier(accountId, tier, { source = null } = {}) {
     const key = String(tier || '').toLowerCase()
     if (!accountId || (key !== 'pro' && key !== 'max')) return null
     const acc = this.repo.get(accountId)
     if (!acc) return null
-    if (acc.unified?.account_tier === key) return acc
+    // Only a newer profile read may change a profile-sourced tier.
+    if (acc.unified?.account_tier_source === 'profile' && source !== 'profile') return acc
+    if (acc.unified?.account_tier === key && (acc.unified?.account_tier_source || null) === source) return acc
     acc.unified = acc.unified || {}
     acc.unified.account_tier = key
+    acc.unified.account_tier_source = source
     acc.unified.updated_at = new Date().toISOString()
     return this.repo.save(acc)
   }
