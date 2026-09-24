@@ -102,12 +102,21 @@ export function ProxiesPage() {
   })
   const saveConfig = useMutation({
     mutationFn: (patch: Record<string, unknown>) =>
-      api('/api/panel/proxies/config', {
+      api<{
+        egress?: { proxy_id: string; ok: boolean; error?: string | null }[]
+      }>('/api/panel/proxies/config', {
         method: 'PUT',
         body: JSON.stringify(patch),
       }),
-    onSuccess: async (_data, patch) => {
-      if (patch.bind_limit != null) {
+    onSuccess: async (data, patch) => {
+      const failed = (data.egress || []).filter((entry) => !entry.ok)
+      if (failed.length) {
+        toast.warning(
+          `DNS 已保存，但 ${failed.length} 个出口重载失败：${failed.map((entry) => entry.proxy_id).join('、')}`
+        )
+      } else if (patch.dns_primary != null) {
+        toast.success('出口 DNS 已保存，运行中的出口已同步')
+      } else if (patch.bind_limit != null) {
         toast.success(`每条最多绑 ${String(patch.bind_limit)} 台`)
       } else if (patch.probe_interval_min != null) {
         toast.success(`探测间隔 ${String(patch.probe_interval_min)} 分钟`)
@@ -317,6 +326,10 @@ export function ProxiesPage() {
           }
           onProbeMinChange={(value) =>
             saveConfig.mutate({ probe_interval_min: value })
+          }
+          dnsPrimary={String(cfg.dns_primary || 'auto')}
+          onDnsPrimaryChange={(value) =>
+            saveConfig.mutate({ dns_primary: value })
           }
           followProxyTimezone={cfg.follow_proxy_timezone !== false}
           onFollowProxyTimezoneChange={(value) =>
