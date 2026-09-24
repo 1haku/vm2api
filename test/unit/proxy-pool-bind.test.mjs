@@ -16,6 +16,19 @@ function makePool() {
   return pool
 }
 
+test('proxy pool persists dns_primary and rejects unknown choices', () => {
+  const dir = tmpDir()
+  const pool = new ProxyPool({ dataDir: dir })
+  pool.stopScheduler()
+  assert.equal(pool.snapshot().config.dns_primary, 'auto')
+  assert.equal(pool.updateConfig({ dns_primary: '8.8.8.8:53' }).ok, true)
+  assert.equal(pool.updateConfig({ dns_primary: '9.9.9.9:53' }).error, 'invalid_dns_primary')
+  assert.equal(pool.snapshot().config.dns_primary, '8.8.8.8:53')
+  const reopened = new ProxyPool({ dataDir: dir })
+  reopened.stopScheduler()
+  assert.equal(reopened.snapshot().config.dns_primary, '8.8.8.8:53')
+})
+
 test('clampBindLimit defaults to 5 and stays in 1..32', () => {
   assert.equal(clampBindLimit(undefined), MAX_VMS_PER_PROXY)
   assert.equal(clampBindLimit(5), 5)

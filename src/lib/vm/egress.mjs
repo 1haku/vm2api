@@ -8,6 +8,8 @@
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { getDb, isDbOpen } from '../db/database.mjs'
+import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 
 export const EGRESS_BIN = process.env.KIN_EGRESS_BIN || '/opt/kin-gateway/bin/kin-egress'
 export const LOCAL_EGRESS_ID = 'px-local'
@@ -243,7 +245,36 @@ function removeIptables(plan, runIptables = iptables) {
   return { ok: true }
 }
 
-export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dnsPort, listenHost, bin = EGRESS_BIN }) {
+// Must mirror DefaultDNSUpstreams in worker/internal/egress/server.go.
+export const DNS_UPSTREAMS = Object.freeze([
+  'https://1.1.1.1/dns-query',
+  'https://8.8.8.8/dns-query',
+  '8.8.8.8:53',
+  '1.1.1.1:53',
+])
+export const DNS_PRIMARY_AUTO = 'auto'
+
+export function validDnsPrimary(value) {
+  return value === DNS_PRIMARY_AUTO || DNS_UPSTREAMS.includes(value)
+}
+
+// Operator picks which DNS to try first; the rest stay behind it as fallback.
+// 'auto' -> '' so kin-egress uses its built-in order.
+export function dnsUpstreamChain(primary) {
+  if (!DNS_UPSTREAMS.includes(primary)) return ''
+  return [primary, ...DNS_UPSTREAMS.filter((u) => u !== primary)].join(',')
+}
+
+function configuredDnsUpstream() {
+  if (!isDbOpen()) return ''
+  try {
+    return dnsUpstreamChain(new SettingsRepo(getDb()).get('proxy_pool_config')?.dns_primary)
+  } catch {
+    return ''
+  }
+}
+
+export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dnsPort, listenHost, bin = EGRESS_BIN, dnsUpstream = '' }) {
   if (!listenHost) return { ok: false, error: 'egress listen host required' }
   const dir = egressRunDir(projectRoot, proxyId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -255,7 +286,7 @@ export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dn
   if (existing && pidAlive(existing)) {
     try {
       const old = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-      if (old.listen_tcp === listenTcp && old.listen_dns === listenDns && old.proxy_url === proxyUrl) {
+      if (old.listen_tcp === listenTcp && old.listen_dns === listenDns && old.proxy_url === proxyUrl && (old.dns_upstream || '') === dnsUpstream) {
         return { ok: true, pid: existing, reused: true, configPath: cfgPath }
       }
     } catch {}
@@ -272,6 +303,7 @@ export function startEgressProcess({ projectRoot, proxyId, proxyUrl, tcpPort, dn
     listen_tcp: listenTcp,
     listen_dns: listenDns,
   }
+  if (dnsUpstream) cfg.dns_upstream = dnsUpstream
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
   const child = spawn(bin, ['-config', cfgPath], {
     detached: true,
@@ -380,7 +412,7 @@ export function ensureLocalProxyEgress(proxy, { runDocker = docker } = {}) {
   return { ok: true, mode: 'local', ...info, reused: false, proxy_id: proxyId }
 }
 
-export function ensureProxyEgress(projectRoot, proxy, { runDocker = docker, runIptables = iptables } = {}) {
+export function ensureProxyEgress(projectRoot, proxy, { runDocker = docker, runIptables = iptables, dnsUpstream = configuredDnsUpstream() } = {}) {
   if (isLocalEgressProxy(proxy)) return ensureLocalProxyEgress(proxy, { runDocker })
   const proxyId = proxy?.id
   const proxyUrl = boundProxyUrl(proxy)
@@ -405,6 +437,7 @@ export function ensureProxyEgress(projectRoot, proxy, { runDocker = docker, runI
     tcpPort: ports.tcp,
     dnsPort: ports.dns,
     listenHost,
+    dnsUpstream,
   })
   if (!started.ok) return started
   if (!waitListen(listenHost, ports.tcp))

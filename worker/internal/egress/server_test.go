@@ -219,6 +219,63 @@ func TestResolveDNSOverDoH(t *testing.T) {
 	}
 }
 
+func TestResolveDNSFallsBackToNextUpstream(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q, _ := io.ReadAll(r.Body)
+		reply := append([]byte{}, q...)
+		if len(reply) > 2 {
+			reply[2] |= 0x80
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(reply)
+	}))
+	defer ts.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "blocked", http.StatusBadGateway)
+	}))
+	defer dead.Close()
+
+	socksLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socksLn.Close()
+	for i := 0; i < 3; i++ {
+		go serveTestSOCKS(t, socksLn)
+	}
+
+	proxyURL := (&url.URL{Scheme: "socks5h", Host: socksLn.Addr().String()}).String()
+	srv, err := New(Config{
+		ProxyURL:    proxyURL,
+		ListenTCP:   "127.0.0.1:0",
+		DNSUpstream: dead.URL + "/dns-query, " + ts.URL + "/dns-query",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	reply, err := srv.ResolveDNS(context.Background(), query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply) < 3 || reply[0] != 0x12 || reply[2]&0x80 == 0 {
+		t.Fatalf("reply=%v", reply)
+	}
+	if got := srv.preferred.Load(); got != 1 {
+		t.Fatalf("preferred=%d want 1", got)
+	}
+}
+
+func TestDefaultDNSUpstreamsWhenEmpty(t *testing.T) {
+	srv, err := New(Config{ProxyURL: "socks5h://127.0.0.1:1", ListenTCP: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srv.upstreams) != len(DefaultDNSUpstreams) || srv.upstreams[0] != DefaultDNSUpstreams[0] {
+		t.Fatalf("upstreams=%v", srv.upstreams)
+	}
+}
+
 func serveTestSOCKS(t *testing.T, ln net.Listener) {
 	t.Helper()
 	c, err := ln.Accept()
