@@ -80,6 +80,19 @@ export function slotAccountLabel(
   return id || '未绑定账号'
 }
 
+/** `vm-01` without an email is unbound. A custom slot id is the name and stays visible. */
+export function slotNameLabel(vm?: {
+  id?: string | null
+  name?: string | null
+  email?: string | null
+}): string {
+  const name = String(vm?.name || vm?.id || '').trim()
+  const email = String(vm?.email || '').trim()
+  if (email || (name && !/^vm-\d+$/i.test(String(vm?.id || '').trim())))
+    return name || '未绑定账号'
+  return '未绑定账号'
+}
+
 /** 卡片 / 表格用：本地段优先，域名过长只留尾标。完整地址走 title。 */
 export function compactEmail(email: string, max = 22): string {
   const value = String(email || '').trim()

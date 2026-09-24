@@ -9,6 +9,8 @@
 
 ## 1.3.48 — 2026-09-24
 
+- 没有可见输出的跳不再改写成 502。它按空跳留在原 VM 重试，不再记成过载去换号。
+- Codex 流不再因为不是 Claude 完整消息就记成 `codex_upstream`。带 token 的 200 跳写入用量和费用，日志与 VM 计量条能显示实际计费。
 - 账号被额度硬闸踢出后，会话的全部粘滞别名一起解开，并让出该账号的会话窗座位，下一轮可以绑到别的 VM。
 - 选号失败不再被上一跳未完成的 assistant 改写成 502 `incomplete_response`。空池对客户端仍是 503 `overloaded_error`。空池日志不再打印 `soonest=0s`。
 - Haiku 子代理认母会话改为入站 `metadata.user_id.device_id`。同一 API key 上另一台设备的最近会话不再被占用。同一 `device_id` 两分钟内的母会话是这条主体 session；没有母会话时，该 `device_id` 的这批请求仍只占一个位。

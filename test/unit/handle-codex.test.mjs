@@ -400,3 +400,62 @@ test('nested Responses cached_tokens reaches the request log cache column', asyn
   assert.equal(logBag.cache_read_tokens, 8)
   fs.rmSync(root, { recursive: true, force: true })
 })
+
+test('incomplete Responses stream still bills tokens from the completed event', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-bill-'))
+  writeGptVm(root, 'vm-gpt-a')
+  const res = {
+    headersSent: false,
+    write() {
+      this.headersSent = true
+    },
+    end() {
+      this.ended = true
+    },
+  }
+  const logBag = {}
+  const stats = { errors: 0, requests: 0, by_route: {} }
+  await handleCodexProtocol({
+    req: { headers: {} },
+    res,
+    protocol: 'openai.responses',
+    ctx: { body: { model: 'gpt-5.5', input: [], stream: true } },
+    inbound: { stream: true },
+    logBag,
+    stats,
+    json: (_res, status, body) => {
+      res.statusCode = status
+      res.body = body
+      return body
+    },
+    writeSSEHeaders() {
+      res.headersSent = true
+    },
+    routing: {},
+    projectRoot: root,
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async ({ onEvent }) => {
+        await onEvent('data: {"type":"response.output_text.delta","delta":"Hi"}')
+        await onEvent(
+          'data: {"type":"response.completed","response":{"service_tier":"priority","usage":{"input_tokens":40,"output_tokens":2,"input_tokens_details":{"cached_tokens":5}}}}',
+        )
+        return {
+          ok: false,
+          status: 200,
+          terminalState: 'incomplete',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        }
+      },
+    },
+  })
+  assert.equal(logBag.input_tokens, 40)
+  assert.equal(logBag.output_tokens, 2)
+  assert.equal(logBag.cache_read_tokens, 5)
+  assert.equal(logBag.usage.service_tier, 'priority')
+  assert.equal(logBag.error_code, undefined)
+  assert.equal(logBag.final_state, 'verified')
+  assert.equal(stats.errors, 0)
+  fs.rmSync(root, { recursive: true, force: true })
+})

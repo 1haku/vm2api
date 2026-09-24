@@ -19,7 +19,7 @@ import {
 import { isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { runSlotOauth } from './slot-oauth.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
-import { isCompleteAssistantMessage } from '../core/errors.mjs'
+import { isCompleteAssistantMessage, isWrapConnectionError } from '../core/errors.mjs'
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
@@ -257,32 +257,44 @@ export function restoreKernelErrorStatus(result = {}, { now = Date.now() } = {})
 }
 
 /**
- * Uncommitted hop that streamed an error, or ended with no visible output,
- * gets a real status. A thinking/text hop already committed and never lands here.
+ * Uncommitted hop that streamed a real provider error gets that status.
+ * A hop that ended with no visible output stays on its 2xx status and is an
+ * empty hop. Promoting it to 502 makes a healthy VM look overloaded.
  */
+function unfinishedEmptyHop(result) {
+  return {
+    ...result,
+    ok: false,
+    terminalState: 'incomplete',
+    body: {
+      type: 'error',
+      error: {
+        type: 'api_error',
+        code: 'empty_response',
+        message: 'Upstream stream ended without visible output',
+      },
+    },
+  }
+}
+
 export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
   if (!result || result.committed || result.ok) return result
   if (Number(result.status) < 200 || Number(result.status) >= 300) return result
   const body = result.body
   if (body?.type === 'error' || body?.error) {
     const status = semanticStatusForStreamError(body)
+    const message = String(body?.error?.message || body?.message || '')
+    if (status === 502 && !/overload|usage policy/i.test(message)) {
+      if (isWrapConnectionError(message)) return { ...result, ok: false, terminalState: 'incomplete' }
+      return unfinishedEmptyHop(result)
+    }
     const headers =
-      status === 429
-        ? extraHeadersFromLimitError(String(body?.error?.message || ''), result.headers || {}, now)
-        : result.headers
-    // A generic 502 stream error may have left the CLI slot busy; keep it incomplete so it recycles.
+      status === 429 ? extraHeadersFromLimitError(String(message), result.headers || {}, now) : result.headers
     const terminalState = status === 502 ? result.terminalState : 'rejected'
     return { ...result, status, headers, terminalState, streamError: status !== 502 }
   }
   if (Array.isArray(body?.content) && body.content.length) return result
-  return {
-    ...result,
-    status: 502,
-    body: {
-      type: 'error',
-      error: { type: 'api_error', code: 'empty_response', message: 'Upstream stream ended without visible output' },
-    },
-  }
+  return unfinishedEmptyHop(result)
 }
 
 function dumpSessionEnvelope(envelope) {
