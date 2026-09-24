@@ -33,14 +33,16 @@ function withCredentialRefreshLock(key, fn) {
   })
   const tail = prev.catch(() => {}).then(() => gate)
   credentialRefreshTail.set(key, tail)
-  return prev.catch(() => {}).then(async () => {
-    try {
-      return await fn()
-    } finally {
-      release()
-      if (credentialRefreshTail.get(key) === tail) credentialRefreshTail.delete(key)
-    }
-  })
+  return prev
+    .catch(() => {})
+    .then(async () => {
+      try {
+        return await fn()
+      } finally {
+        release()
+        if (credentialRefreshTail.get(key) === tail) credentialRefreshTail.delete(key)
+      }
+    })
 }
 
 export function workerPaths(exec = {}) {

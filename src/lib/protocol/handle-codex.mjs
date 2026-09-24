@@ -281,7 +281,9 @@ export async function handleCodexProtocol({
   const ensure = ops.ensureCodexKernel || ensureCodexKernel
   const anthropicSse = protocol === 'anthropic.messages' ? createAnthropicSseState() : null
   const chatSse =
-    protocol === 'openai.chat' || protocol === 'openai.completions' ? { id: 'codex', seq: 0, tools: new Map(), sawTool: false } : null
+    protocol === 'openai.chat' || protocol === 'openai.completions'
+      ? { id: 'codex', seq: 0, tools: new Map(), sawTool: false }
+      : null
   const stickyKeys = picked.stickyKeys?.length ? picked.stickyKeys : picked.sessionKey ? [picked.sessionKey] : []
   const bindSticky = (vm) => {
     if (!picked.sessionKey) return

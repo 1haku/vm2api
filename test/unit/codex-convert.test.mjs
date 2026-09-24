@@ -49,7 +49,10 @@ test('chat tool turns become function_call items', () => {
       },
     ],
   })
-  assert.equal(body.input.some((item) => item.role === 'assistant' && !item.content?.[0]?.text), false)
+  assert.equal(
+    body.input.some((item) => item.role === 'assistant' && !item.content?.[0]?.text),
+    false,
+  )
   assert.deepEqual(body.input[1], {
     type: 'function_call',
     call_id: 'call_1',

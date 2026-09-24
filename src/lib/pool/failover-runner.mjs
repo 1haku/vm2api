@@ -227,11 +227,7 @@ function permanentOAuthRevoke(policy) {
 }
 
 function isCredentialDeath(policy) {
-  return (
-    policy?.action === 'disable' ||
-    policy?.reason === 'oauth_no_refresh' ||
-    policy?.reason === 'oauth_revoked'
-  )
+  return policy?.action === 'disable' || policy?.reason === 'oauth_no_refresh' || policy?.reason === 'oauth_revoked'
 }
 
 /**
@@ -655,10 +651,7 @@ export class FailoverRunner {
           continue
         }
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
-        if (
-          !pinVmId &&
-          isCredentialDeath(policy)
-        ) {
+        if (!pinVmId && isCredentialDeath(policy)) {
           this.forgetCredential(selected, policy)
         }
         if (!shouldContinue(policy)) {
@@ -772,10 +765,7 @@ export class FailoverRunner {
           }
         }
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
-        if (
-          !pinVmId &&
-          isCredentialDeath(policy)
-        ) {
+        if (!pinVmId && isCredentialDeath(policy)) {
           this.forgetCredential(selected, policy)
         }
         policy = await this.recoverCredential(selected, policy)

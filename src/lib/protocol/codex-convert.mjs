@@ -316,7 +316,10 @@ export function responsesSseToChatChunk(line, id = 'codex', state = null) {
     return null
   }
   const type = event.type || ''
-  if (type === 'response.output_item.added' && (event.item?.type === 'function_call' || event.item?.type === 'custom_tool_call')) {
+  if (
+    type === 'response.output_item.added' &&
+    (event.item?.type === 'function_call' || event.item?.type === 'custom_tool_call')
+  ) {
     const slot = bindTool(session, [event.output_index, event.item_id, event.item.call_id, event.item.id], {
       id: event.item.call_id || event.item.id,
       name: event.item.name,
@@ -345,7 +348,10 @@ export function responsesSseToChatChunk(line, id = 'codex', state = null) {
   if (type.startsWith('response.reasoning_') && typeof event.delta === 'string' && event.delta) {
     return chatChunk(session.id, { reasoning_content: event.delta })
   }
-  if (type === 'response.output_text.delta' || (typeof event.delta === 'string' && event.delta && type !== 'response.completed' && type !== 'response.done')) {
+  if (
+    type === 'response.output_text.delta' ||
+    (typeof event.delta === 'string' && event.delta && type !== 'response.completed' && type !== 'response.done')
+  ) {
     return chatChunk(session.id, { content: event.delta || event.text || '' })
   }
   if (type === 'response.completed' || type === 'response.done') {

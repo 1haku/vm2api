@@ -66,12 +66,7 @@ export function attachFailureDecision(policy) {
  * Selection exhaustion does not clear the exclusion set.
  */
 export class AttemptCoordinator {
-  constructor({
-    maxSameUnitRetries = 1,
-    maxUnitSwitches = 10,
-    deadlineMs = 120_000,
-    startedAt = Date.now(),
-  } = {}) {
+  constructor({ maxSameUnitRetries = 1, maxUnitSwitches = 10, deadlineMs = 120_000, startedAt = Date.now() } = {}) {
     this.maxSameUnitRetries = maxSameUnitRetries
     this.maxUnitSwitches = maxUnitSwitches
     this.deadline = startedAt + deadlineMs
