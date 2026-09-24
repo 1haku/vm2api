@@ -226,7 +226,7 @@ curl -sS https://ccmax20.cc/health
 {"error":{"type":"upstream_error","code":"incomplete_response","message":"Assistant hop ended without visible output or stop_reason"}}
 ```
 
-含义：请求已交给槽内 CLI，但这一轮结束时既没有可见输出（text / tool_use / refusal），也没有 `stop_reason`。只有 thinking 也算。网关会先在同账号重试，再暂停该账号约 60 秒并换号；都失败才返回这个错误。
+含义：请求已交给槽内 CLI，但这一轮结束时既没有可见输出（text / tool_use / refusal），也没有 `stop_reason`。只有 thinking 也算。网关会先在同账号重试，再暂停该账号约 60 秒并换号。还有可调度账号就继续；池里已经没有可调度账号时，客户端收到 503 `overloaded_error`（`号池负载过高，稍后再试`），不再把空池伪装成这个 502。换号次数或总尝试用尽、或诊断钉死在某一个槽时，才返回这个错误。
 
 常见原因与处理：
 
