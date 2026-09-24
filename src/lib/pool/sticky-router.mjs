@@ -335,7 +335,11 @@ export class StickyRouter {
     }
   }
 
-  bind(key, { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {}, { countHit = true, ifGeneration = null } = {}) {
+  bind(
+    key,
+    { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {},
+    { countHit = true, ifGeneration = null } = {},
+  ) {
     if (!key || !this.config.enabled) return false
     const ttl = (this.config.ttl_seconds || 86400) * 1000
     const prev = this.repo.get(key) || {}
@@ -344,7 +348,11 @@ export class StickyRouter {
     const locked = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
     const nextAccount = locked ? prev.account_id : accountId
     const nextVm = locked ? prev.vm_id : vmId
-    const nextSlot = locked ? (prev.slot_index ?? null) : slotIndex == null ? (prev.slot_index ?? null) : Number(slotIndex)
+    const nextSlot = locked
+      ? (prev.slot_index ?? null)
+      : slotIndex == null
+        ? (prev.slot_index ?? null)
+        : Number(slotIndex)
     const changed = !!(
       prev.vm_id &&
       (nextAccount !== prev.account_id || nextVm !== prev.vm_id || (slotIndex != null && nextSlot !== prev.slot_index))
