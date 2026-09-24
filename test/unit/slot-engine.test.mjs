@@ -71,19 +71,24 @@ test('vm engine overrides routing, empty inherits rust', () => {
   assert.equal(resolveInferenceEngine({ inference_engine: 'rust' }, { inference: { engine: 'go' } }), 'rust')
 })
 
-test('kernel dataplane defaults wrap and accepts crag', () => {
+test('kernel dataplane defaults wrap and accepts cc and crag', () => {
   assert.equal(resolveKernelDataplane({}, {}), 'wrap')
   assert.equal(resolveKernelDataplane({}, { inference: { dataplane: 'crag' } }), 'crag')
+  assert.equal(resolveKernelDataplane({}, { inference: { dataplane: 'cc-node' } }), 'cc')
   assert.equal(resolveKernelDataplane({ dataplane: 'wrap' }, { inference: { dataplane: 'crag' } }), 'wrap')
   assert.equal(normalizeKernelDataplane('cli-node'), 'wrap')
+  assert.equal(normalizeKernelDataplane('cc'), 'cc')
   assert.equal(normalizeKernelDataplane('official-cli'), 'crag')
   assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'nope' } }), [
-    'inference.dataplane 必须是 wrap 或 crag',
+    'inference.dataplane 必须是 wrap、cc 或 crag',
   ])
-  assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'crag' } }), [])
-  const patch = parseSlotEnginePolicyPatch({ dataplane: 'crag' })
+  assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'cc' } }), [])
+  const patch = parseSlotEnginePolicyPatch({ dataplane: 'cc' })
   assert.equal(patch.ok, true)
-  assert.equal(patch.patch.dataplane, 'crag')
+  assert.equal(patch.patch.dataplane, 'cc')
+  const cragPatch = parseSlotEnginePolicyPatch({ dataplane: 'crag' })
+  assert.equal(cragPatch.ok, true)
+  assert.equal(cragPatch.patch.dataplane, 'crag')
 })
 
 test('resolveCliSystemLayout follows persona_preset, not leftover inject-only', () => {

@@ -41,6 +41,7 @@ export function KernelRoutingPane(props: {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value='wrap'>{dataplaneLabel('wrap')}</SelectItem>
+              <SelectItem value='cc'>{dataplaneLabel('cc')}</SelectItem>
               <SelectItem value='crag'>{dataplaneLabel('crag')}</SelectItem>
             </SelectContent>
           </Select>
@@ -53,14 +54,13 @@ export function KernelRoutingPane(props: {
         </SettingRow>
         <SettingRow label='凭证归属'>
           <span className='text-sm'>
-            宿主机写 credentials.json，槽内 kernel 与 wrap cli-node / 官方
-            claude 只读
+            宿主机写 credentials.json，槽内 kernel 与 cli-node / cc-node 只读
           </span>
         </SettingRow>
         <SettingRow label='预开 native 位'>
           <span className='text-sm tabular-nums'>
             {String(props.value.dataplane || 'wrap') === 'crag'
-              ? '最多 20（懒启动）'
+              ? '最多 20（cc-node 一进程）'
               : '20（固定）'}
           </span>
         </SettingRow>
