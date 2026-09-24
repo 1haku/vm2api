@@ -17,7 +17,13 @@ import { OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import { setVmSchedulable, listVms, getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
-import { KERNEL_NATIVE_SLOT_COUNT, resolveCliSystemLayout, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
+import {
+  CONTAINER_CRAG_CLAUDE_BIN,
+  KERNEL_NATIVE_SLOT_COUNT,
+  resolveCliSystemLayout,
+  resolveKernelDataplane,
+  resolveSlotPersonaPreset,
+} from '../vm/slot-engine.mjs'
 import {
   ensureOfficialCredentialLink,
   slotUidGidFromHomeDir,
@@ -557,7 +563,9 @@ export function writeKernelConfig(
   if (!secret) secret = String(previous.internal_token || '').trim()
   if (secret) replaceSlotOwnedFile(tokenPath, secret + '\n', vm)
   const testEndpoints = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1'
-  const claudeBin = String(process.env.KIN_CLAUDE_BIN || '').trim() || CONTAINER_CLAUDE_BIN
+  const dataplane = resolveKernelDataplane(vm, routing || {}) || 'wrap'
+  const envBin = String(process.env.KIN_CLAUDE_BIN || '').trim()
+  const claudeBin = envBin || (dataplane === 'crag' ? CONTAINER_CRAG_CLAUDE_BIN : CONTAINER_CLAUDE_BIN)
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
   const defaultCacheTtl = routing != null ? cacheTtlFromRouting(routing) : normalizeCacheTtl(previous.default_cache_ttl)
 
@@ -579,11 +587,9 @@ export function writeKernelConfig(
     runtime_kind: 'docker',
     test_endpoints: testEndpoints,
     provider: 'local_cli',
+    dataplane,
     claude_bin: claudeBin,
     slots_per_worker: wrapSlotCount(vm, routing || {}),
-    // Authoritative three-way switch (official / official_full / zero / custom).
-    // Kernel hot-reads this file. system_layout stays the layout it executes:
-    // zero → zero, every other preset → identity.
     persona_preset: resolveSlotPersonaPreset(vm, routing || {}),
     system_layout: resolveCliSystemLayout(vm, routing || {}),
     cli_version: OFFICIAL_CLI_VERSION,

@@ -19,7 +19,12 @@ import {
   setVmSchedulable,
 } from '../vm/vm-registry.mjs'
 import { clearRecoverableVmCooldown } from '../oauth/oauth-credentials.mjs'
-import { resolveInferenceEngine, resolveSessionSlots, resolveSlotPersonaPreset } from '../vm/slot-engine.mjs'
+import {
+  resolveInferenceEngine,
+  resolveKernelDataplane,
+  resolveSessionSlots,
+  resolveSlotPersonaPreset,
+} from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
 import { queryOpenaiQuota, resetOpenaiQuota } from '../oauth/openai-quota.mjs'
 import { canOfficialUsage, credentialModeOfVm } from '../oauth/credential-mode.mjs'
@@ -1341,8 +1346,10 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     kernel: v.kernel || null,
     inference_engine: v.inference_engine || null,
     persona_preset: v.persona_preset || null,
+    dataplane: v.dataplane || null,
     resolved_inference_engine: resolveInferenceEngine(v, extras.routingConfig || {}),
     resolved_persona_preset: resolveSlotPersonaPreset(v, extras.routingConfig || {}),
+    resolved_dataplane: resolveKernelDataplane(v, extras.routingConfig || {}),
     note: v.note || null,
     region: v.region || null,
     timezone: v.timezone || null,

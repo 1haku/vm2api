@@ -279,6 +279,10 @@ function applySlotEnginePatch(vm, patch = {}) {
     if (patch.persona_preset) vm.persona_preset = patch.persona_preset
     else delete vm.persona_preset
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'dataplane')) {
+    if (patch.dataplane) vm.dataplane = patch.dataplane
+    else delete vm.dataplane
+  }
 }
 
 export function persistSlotEnginePolicy(projectRoot, vmId, patch = {}) {
