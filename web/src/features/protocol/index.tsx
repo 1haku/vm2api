@@ -59,15 +59,19 @@ export function ProtocolPage() {
                 </Button>
               </div>
               <p className='text-muted-foreground'>
-                内核与人设只在{' '}
+                人设在{' '}
                 <Link
                   to='/settings/$tab'
                   params={{ tab: 'protocol' }}
                   className='underline underline-offset-4'
                 >
                   设置 → 协议
-                </Link>{' '}
-                配置。蒸馏拦截与拒答缓存在本页保存。
+                </Link>
+                。wrap / crag 数据面在设置 → 协议或{' '}
+                <Link to='/wrap' className='underline underline-offset-4'>
+                  内核页
+                </Link>
+                。蒸馏拦截与拒答缓存在本页保存。
               </p>
             </CardContent>
           </Card>

@@ -31,6 +31,7 @@ import { SlotIdentity } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { CodexKernelHealthFields } from '@/features/vm/codex-kernel-health-card'
 import { ConcRpmEditor } from '@/features/vm/conc-rpm-editor'
+import { dataplaneLabel } from '@/features/vm/dataplane-contract'
 import {
   Field,
   Meter,
@@ -133,7 +134,7 @@ function slotVerdict(
 
 function workerLabel(value: unknown) {
   const raw = String(value || '').trim()
-  if (raw === 'go' || raw === 'rust') return 'Rust · Claude Code cli-hop'
+  if (raw === 'go' || raw === 'rust') return 'Rust · cli-hop'
   return raw || '—'
 }
 
@@ -379,6 +380,9 @@ export function VmStatusBoard(props: Props) {
               <>
                 <Field label='cli-hop' compact>
                   {rust}
+                </Field>
+                <Field label='内核' compact>
+                  {isCodexVm(vm) ? '—' : dataplaneLabel(vm.resolved_dataplane)}
                 </Field>
                 <Field label='拓扑' compact>
                   {topologyLabel(topology)}

@@ -12,6 +12,11 @@ import {
 } from '@/components/ui/select'
 import { TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  DATAPLANE_HINT,
+  HOP_TRANSPORT_LABEL,
+  dataplaneLabel,
+} from '@/features/vm/dataplane-contract'
 import { TestChatResultCard } from '@/features/vm/test-chat-result-card'
 import type { TestChatResult } from '@/features/vm/test-chat-types'
 
@@ -23,6 +28,7 @@ type VmTestTabProps = {
   reasoningEffort: string
   credType: CredType
   isCodex?: boolean
+  dataplane?: string | null
   result: TestChatResult | null
   running: boolean
   modelsRefreshing: boolean
@@ -52,6 +58,7 @@ export function VmTestTab(props: VmTestTabProps) {
     reasoningEffort,
     credType,
     isCodex = false,
+    dataplane,
     result,
     running,
     modelsRefreshing,
@@ -145,6 +152,15 @@ export function VmTestTab(props: VmTestTabProps) {
                     }`}
             </p>
           </div>
+          {isCodex ? null : (
+            <div className='space-y-1'>
+              <Label>内核</Label>
+              <p className='text-xs text-muted-foreground'>
+                {HOP_TRANSPORT_LABEL} · {dataplaneLabel(dataplane)}。
+                {DATAPLANE_HINT}
+              </p>
+            </div>
+          )}
           <div className='flex gap-2'>
             <Button onClick={onTest} disabled={running} loading={running}>
               开始测试

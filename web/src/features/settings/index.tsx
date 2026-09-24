@@ -445,7 +445,7 @@ function settingsSaveToast(
 
 function protocolFollowError(message: string) {
   if (/config_missing|kernel_start_failed|wrap_cli_missing/i.test(message)) {
-    return 'wrap 配置缺失，先到 Wrap 页同步母样本，再切 rust cli-hop'
+    return '内核文件缺失，先到内核页拉取 wrap/crag 二进制再同步'
   }
   return message
 }
