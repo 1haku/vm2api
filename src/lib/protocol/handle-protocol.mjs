@@ -114,6 +114,7 @@ import {
   rewriteToolNames,
   restoreToolNames,
   restoreToolNamesInSSELine,
+  wantsFastMode,
 } from './anthropic-policy.mjs'
 import { materializeRemoteImageSources } from './images.mjs'
 
@@ -1023,6 +1024,8 @@ export function createHandleProtocol(deps) {
     logBag.upstream_status = result?.status ?? null
     logBag.usage = result?.body?.usage || result?.usage || null
     if (logBag.usage && cacheTtl) logBag.usage = applyCacheTtlToUsage(logBag.usage, cacheTtl)
+    // Fast mode bills 2x; upstream usage.speed wins, the request speed is only a fallback.
+    if (logBag.usage && wantsFastMode(ctx.body)) logBag.usage = { ...logBag.usage, requested_speed: 'fast' }
     logBag.upstream_model = result?.body?.model || result?.model || null
     logBag.first_token_ms = result?.ttftMs ?? null
     logBag.stop_reason = result?.body?.stop_reason || result?.stopReason || null

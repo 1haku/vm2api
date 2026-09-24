@@ -7,7 +7,7 @@
  */
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import { extractOpenaiUsage } from '../protocol/openai-usage.mjs'
-import { OPENAI_PRICING_SOURCE, resolveOpenaiOfficialRates } from './openai-pricing.mjs'
+import { OPENAI_PRICING_SOURCE, resolveOpenaiOfficialRates, selectOpenaiRates } from './openai-pricing.mjs'
 
 export const PRICING_SOURCE = 'anthropic-official-2026-08'
 export const PRICING_CURRENCY = 'USD'
@@ -22,9 +22,49 @@ export const OFFICIAL_RATES = {
   'opus-4.5': { input: 5, output: 25, cache_5m: 6.25, cache_1h: 10, cache_read: 0.5 },
   'opus-4': { input: 15, output: 75, cache_5m: 18.75, cache_1h: 30, cache_read: 1.5 },
   'sonnet-5': { input: 2, output: 10, cache_5m: 2.5, cache_1h: 4, cache_read: 0.2 },
+  'sonnet-4.6': { input: 3, output: 15, cache_5m: 3.75, cache_1h: 6, cache_read: 0.3 },
   'sonnet-4': { input: 3, output: 15, cache_5m: 3.75, cache_1h: 6, cache_read: 0.3 },
   'haiku-4.5': { input: 1, output: 5, cache_5m: 1.25, cache_1h: 2, cache_read: 0.1 },
   'haiku-3.5': { input: 0.8, output: 4, cache_5m: 1, cache_1h: 1.6, cache_read: 0.08 },
+}
+
+/**
+ * Long-context premium: only Sonnet 4 / 4.5 (1M beta). Claude 4.6+ bill the full 1M
+ * window at standard rates. Above 200K prompt tokens (input + cache read + cache write)
+ * the whole request switches: input/cache 2×, output 1.5×.
+ */
+export const ANTHROPIC_LONG_CONTEXT_THRESHOLD = 200_000
+export const LONG_CONTEXT_RATES = {
+  'sonnet-4': { input: 6, output: 22.5, cache_5m: 7.5, cache_1h: 12, cache_read: 0.6 },
+}
+
+/**
+ * Fast mode (research preview, Claude API only): Opus 5.5 $8/$40, Opus 5 / 4.8 $10/$50.
+ * Applies across the full context; cache multipliers stack on the fast input price
+ * (5m 1.25×, 1h 2×, read 0.1× — Opus 5.5 read 0.05×).
+ */
+export const FAST_MODE_RATES = {
+  'opus-5.5': { input: 8, output: 40, cache_5m: 10, cache_1h: 16, cache_read: 0.4 },
+  'opus-5': { input: 10, output: 50, cache_5m: 12.5, cache_1h: 20, cache_read: 1 },
+  'opus-4.8': { input: 10, output: 50, cache_5m: 12.5, cache_1h: 20, cache_read: 1 },
+}
+
+/** Fast-mode pricing row for a model, or null when the model has no fast mode (4.6 runs standard, 4.7 errors). */
+export function resolveFastModeKey(raw) {
+  const key = resolvePricingKey(raw)
+  if (key === 'opus-5.5' || key === 'opus-5') return key
+  if (key === 'opus-4.5' && /opus-4[-.]8(?![0-9])/.test(normalizeModelId(raw))) return 'opus-4.8'
+  return null
+}
+
+/** Response `usage.speed` is authoritative; request `speed` is the fallback. */
+export function billedSpeed(usage = {}) {
+  const raw = usage?.speed ?? usage?.requested_speed
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase() === 'fast'
+    ? 'fast'
+    : 'standard'
 }
 
 const FAMILY_ALIASES = {
@@ -71,6 +111,7 @@ export function resolvePricingKey(raw) {
   if (/haiku-3-5|haiku-3\.5/.test(m)) return 'haiku-3.5'
   if (/haiku/.test(m)) return 'haiku-4.5'
   if (/sonnet-5/.test(m)) return 'sonnet-5'
+  if (/sonnet-4[-.][6-9]/.test(m)) return 'sonnet-4.6'
   if (/sonnet/.test(m)) return 'sonnet-4'
   if (/opus-5(?:[-.]5)(?:-|$)/.test(m)) return 'opus-5.5'
   if (/opus-5/.test(m)) return 'opus-5'
@@ -145,7 +186,7 @@ export function calculateCost(usage = {}, model = null) {
   const openai = resolveOpenaiOfficialRates(mid)
   const anthropic = resolveOfficialRates(mid)
   const resolved = openai.known ? openai : anthropic
-  const rates = resolved.rates
+  let rates = resolved.rates
   const outputTokens = n(u.output_tokens)
   const cacheRead = n(u.cache_read_tokens)
   let cache5m = n(u.cache_creation_5m_tokens ?? u.cache_creation?.ephemeral_5m_input_tokens)
@@ -154,7 +195,8 @@ export function calculateCost(usage = {}, model = null) {
   const inputTokens = n(u.input_tokens)
 
   if (openai.known) {
-    if (cacheRead + cacheCreate > inputTokens) {
+    const selected = selectOpenaiRates(resolved.key, { serviceTier: u.service_tier, inputTokens })
+    if (cacheRead + cacheCreate > inputTokens || !selected) {
       return emptyCost({
         model: mid || null,
         pricing_key: null,
@@ -166,6 +208,7 @@ export function calculateCost(usage = {}, model = null) {
         cache_creation_1h_tokens: 0,
       })
     }
+    rates = selected.rates
     const billedRead = rates.cache_read ? cacheRead : 0
     const billedWrite = rates.cache_write ? cacheCreate : 0
     const uncached = inputTokens - billedRead - billedWrite
@@ -181,6 +224,8 @@ export function calculateCost(usage = {}, model = null) {
       currency: PRICING_CURRENCY,
       known: true,
       rates,
+      service_tier: selected.service_tier,
+      long_context: selected.long_context,
       input_tokens: uncached,
       output_tokens: outputTokens,
       cache_read_tokens: billedRead,
@@ -217,6 +262,12 @@ export function calculateCost(usage = {}, model = null) {
     })
   }
 
+  const fastKey = billedSpeed(u) === 'fast' ? resolveFastModeKey(mid) : null
+  const promptTokens = inputTokens + cacheRead + cache5m + cache1h
+  const longContext = !fastKey && !!LONG_CONTEXT_RATES[resolved.key] && promptTokens > ANTHROPIC_LONG_CONTEXT_THRESHOLD
+  if (fastKey) rates = { ...FAST_MODE_RATES[fastKey] }
+  else if (longContext) rates = { ...LONG_CONTEXT_RATES[resolved.key] }
+
   const input_cost = usd(inputTokens, rates.input)
   const output_cost = usd(outputTokens, rates.output)
   const cache_read_cost = usd(cacheRead, rates.cache_read)
@@ -232,6 +283,8 @@ export function calculateCost(usage = {}, model = null) {
     currency: PRICING_CURRENCY,
     known: true,
     rates,
+    speed: fastKey ? 'fast' : 'standard',
+    long_context: longContext,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cache_read_tokens: cacheRead,
