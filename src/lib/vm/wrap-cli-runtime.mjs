@@ -13,6 +13,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { kernelBinPath } from '../transport/rust-kernel-supervisor.mjs'
+import { isCodexVm } from './vm-kind.mjs'
+import { resolveKernelDataplane } from './slot-engine.mjs'
 
 export const WRAP_CLI_FILES = Object.freeze(['cli-node'])
 export const WRAP_KERNEL_BIN = 'kin-kernel.bin'
@@ -35,6 +37,35 @@ if [ -x "$BIN" ]; then
 fi
 exec "$DIR/${WRAP_KERNEL_WRAPPER}.real" "$@"
 `
+}
+
+export function cragKernelWrapperScript() {
+  return `#!/bin/sh
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN="$DIR/${WRAP_KERNEL_BIN}"
+if [ -x "$BIN" ]; then
+  exec "$BIN" "$@"
+fi
+exec "$DIR/${WRAP_KERNEL_WRAPPER}.real" "$@"
+`
+}
+
+export function cragTemplateDir(projectRoot) {
+  const env = String(process.env.KIN_CRAG_KERNEL_ROOT || '').trim()
+  if (env) return env
+  if (!projectRoot) return ''
+  return path.join(projectRoot, 'share', 'crag')
+}
+
+export function cragKernelPath(projectRoot) {
+  const env = String(process.env.KIN_CRAG_KERNEL_BIN || '').trim()
+  if (env && isFile(env)) return env
+  const dir = cragTemplateDir(projectRoot)
+  if (!dir) return ''
+  const bin = path.join(dir, 'kin-kernel')
+  if (isFile(bin)) return bin
+  const alt = path.join(dir, WRAP_KERNEL_BIN)
+  return isFile(alt) ? alt : ''
 }
 
 export function wrapCliTemplateDir(projectRoot) {
@@ -270,6 +301,86 @@ function chownTree(root, uid, gid) {
   walk(root)
 }
 
+function writeCragWrapper(destDir) {
+  const wrapper = path.join(destDir, WRAP_KERNEL_WRAPPER)
+  const body = cragKernelWrapperScript()
+  try {
+    if (fs.readFileSync(wrapper, 'utf8') === body) return
+  } catch {}
+  const tmp = path.join(destDir, `.${WRAP_KERNEL_WRAPPER}.${process.pid}.new`)
+  fs.writeFileSync(tmp, body, { mode: 0o755 })
+  try {
+    fs.unlinkSync(wrapper)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      try {
+        fs.unlinkSync(tmp)
+      } catch {}
+      throw error
+    }
+  }
+  fs.renameSync(tmp, wrapper)
+}
+
+export function describeCragPayload(projectRoot) {
+  const chosen = cragKernelPath(projectRoot)
+  const info = fileInfo(chosen)
+  return {
+    source: info ? 'sample' : 'missing',
+    path: info?.path || '',
+    size: info?.size || 0,
+    mtime: info?.mtime || '',
+    ok: Boolean(info),
+  }
+}
+
+export function materializeCragKernel(projectRoot, vm, { uid = null, gid = null } = {}) {
+  if (!projectRoot || !vm?.id) {
+    return { ok: false, code: 'vm_required', error: 'projectRoot and vm id required' }
+  }
+  const src = cragKernelPath(projectRoot)
+  if (!src) {
+    return {
+      ok: false,
+      code: 'crag_kernel_missing',
+      error: 'Crag kernel ELF missing (share/crag/kin-kernel)',
+    }
+  }
+  const dest = wrapCliHomeDir(projectRoot, vm.id)
+  fs.mkdirSync(dest, { recursive: true })
+  copyFile(src, path.join(dest, WRAP_KERNEL_BIN))
+  writeCragWrapper(dest)
+  chownTree(dest, uid, gid)
+  return {
+    ok: true,
+    dest,
+    src,
+    dataplane: 'crag',
+    glibc_shim: false,
+    wrapper: isFile(path.join(dest, WRAP_KERNEL_WRAPPER)),
+    kernel_bin: isFile(path.join(dest, WRAP_KERNEL_BIN)),
+  }
+}
+
+export function replaceCragKernelBinary(projectRoot, buf) {
+  const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || [])
+  const check = inspectLinuxAmd64Elf(bytes)
+  if (!check.ok) {
+    return { ok: false, code: check.code || 'kernel_not_elf', error: check.error }
+  }
+  const destDir = cragTemplateDir(projectRoot)
+  if (!destDir) return { ok: false, code: 'crag_template_missing', error: 'crag kernel dir unset' }
+  fs.mkdirSync(destDir, { recursive: true })
+  const dest = path.join(destDir, 'kin-kernel')
+  writeKernelBytes(dest, bytes)
+  return { ok: true, written: [dest], size: bytes.length, dataplane: 'crag' }
+}
+
+export function materializeSlotDataplane(projectRoot, vm, dataplane, opts = {}) {
+  if (dataplane === 'crag') return materializeCragKernel(projectRoot, vm, opts)
+  return materializeWrapCli(projectRoot, vm, opts)
+}
+
 function writeWrapper(destDir) {
   const wrapper = path.join(destDir, WRAP_KERNEL_WRAPPER)
   const body = wrapKernelWrapperScript()
@@ -402,6 +513,7 @@ export function describeWrapSample(projectRoot) {
     meta,
     kernel: describeKernelPayload(projectRoot),
     cli_node: describeCliNodePayload(projectRoot),
+    crag: describeCragPayload(projectRoot),
   }
 }
 
@@ -547,24 +659,41 @@ export function replaceCliNodeBinary(projectRoot, buf) {
   return { ok: true, written: [dest], size: bytes.length }
 }
 
-export function syncWrapSample(projectRoot, vms, { uidOf } = {}) {
+export function syncWrapSample(projectRoot, vms, { uidOf, routing } = {}) {
   const sample = describeWrapSample(projectRoot)
-  if (!sample.ok) return { ok: false, ...sample, items: [] }
+  const crag = describeCragPayload(projectRoot)
   const items = []
   for (const vm of vms || []) {
+    if (isCodexVm(vm)) continue
+    const dataplane = resolveKernelDataplane(vm, routing) || 'wrap'
+    if (dataplane === 'wrap' && !sample.ok) {
+      items.push({ id: vm.id, dataplane, ok: false, code: sample.code, error: sample.error })
+      continue
+    }
+    if (dataplane === 'crag' && !crag.ok) {
+      items.push({
+        id: vm.id,
+        dataplane,
+        ok: false,
+        code: 'crag_kernel_missing',
+        error: crag.error || 'Crag kernel ELF missing (share/crag/kin-kernel)',
+      })
+      continue
+    }
     const uid = typeof uidOf === 'function' ? uidOf(vm) : null
     const gid = uid?.gid
-    const out = materializeWrapCli(projectRoot, vm, {
+    const out = materializeSlotDataplane(projectRoot, vm, dataplane, {
       uid: uid?.uid ?? uid,
       gid: gid ?? null,
     })
-    items.push({ id: vm.id, ...out })
+    items.push({ id: vm.id, dataplane, ...out })
   }
   const failed = items.filter((item) => !item.ok)
   return {
     ok: failed.length === 0,
     src: sample.dir,
     meta: sample.meta,
+    crag,
     total: items.length,
     ok_count: items.length - failed.length,
     failed_count: failed.length,
