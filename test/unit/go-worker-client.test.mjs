@@ -299,7 +299,27 @@ unixTest('streamGoWorker marks a hop with no content as empty_response', async (
       body: { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.status, 502)
+    assert.equal(result.status, 200)
+    assert.equal(result.body.error.code, 'empty_response')
+    assert.equal(result.terminalState, 'incomplete')
+  } finally {
+    await fx.close()
+  }
+})
+
+unixTest('streamGoWorker does not turn a generic stream error into HTTP 502', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('event: error\ndata: {"type":"error","error":{"type":"api_error","message":"provider error"}}\n\n')
+    res.end()
+  })
+  try {
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: () => {},
+    })
+    assert.equal(result.status, 200)
     assert.equal(result.body.error.code, 'empty_response')
     assert.equal(result.terminalState, 'incomplete')
   } finally {

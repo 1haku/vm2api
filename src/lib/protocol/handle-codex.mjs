@@ -116,6 +116,34 @@ export function serviceTierFromSseLine(line) {
   }
 }
 
+/** Responses `usage` object from one SSE data line, if it carries token counts. */
+export function usageFromSseLine(line) {
+  if (typeof line !== 'string' || !line.startsWith('data:') || !line.includes('usage')) return null
+  try {
+    const ev = JSON.parse(line.slice(5).trim())
+    const usage = ev?.response?.usage || ev?.usage
+    return usage && typeof usage === 'object' ? usage : null
+  } catch {
+    return null
+  }
+}
+
+function usageTokens(usage) {
+  const extracted = extractOpenaiUsage(usage)
+  if (!extracted) return 0
+  return (
+    (extracted.input_tokens || 0) +
+    (extracted.output_tokens || 0) +
+    (extracted.cached_tokens || 0) +
+    (extracted.cache_write_tokens || 0)
+  )
+}
+
+function preferUsage(left, right) {
+  if (usageTokens(right) > usageTokens(left)) return right
+  return left || right || null
+}
+
 export async function runCodexKernelHop({ hop, args = {}, onEvent } = {}) {
   let emitted = false
   const wrapped = async (line) => {
@@ -305,6 +333,7 @@ export async function handleCodexProtocol({
     try {
       const chunks = []
       let responseServiceTier = null
+      let streamedUsage = null
       const result = await runCodexKernelHop({
         hop,
         args: {
@@ -320,6 +349,8 @@ export async function handleCodexProtocol({
         onEvent: async (line) => {
           const tier = serviceTierFromSseLine(line)
           if (tier) responseServiceTier = tier
+          const seen = usageFromSseLine(line)
+          if (seen) streamedUsage = preferUsage(streamedUsage, seen)
           if (!stream) {
             chunks.push(line)
             return
@@ -341,13 +372,16 @@ export async function handleCodexProtocol({
       ingestCodexHop(projectRoot, vm.id, result)
       if (result?.transport_retried) logBag.transport_retried = true
       last = result
-      if (result?.ok) {
+      const hopUsage = result.usage || result.body?.usage || result.body?.response?.usage || null
+      const usage = preferUsage(hopUsage, streamedUsage)
+      // Responses SSE is not a Claude assistant message, so the stream client
+      // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
+      const delivered = result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0)
+      if (delivered) {
         attemptKind = 'succeeded'
         bindSticky(vm)
-        const usage = result.usage || result.body?.usage || result.body?.response?.usage || null
         const extracted = extractOpenaiUsage(usage)
-        // Billing band: upstream-reported tier wins over the requested one (codex-proxy-rs observation).
-        const serviceTier = responseServiceTier || converted.body?.service_tier || null
+        const serviceTier = responseServiceTier || converted.body?.service_tier || usage?.service_tier || null
         logBag.usage = usage && serviceTier ? { ...usage, service_tier: serviceTier } : usage
         logBag.input_tokens = extracted?.input_tokens ?? usage?.input_tokens ?? usage?.prompt_tokens ?? null
         logBag.output_tokens = extracted?.output_tokens ?? usage?.output_tokens ?? usage?.completion_tokens ?? null
@@ -360,7 +394,7 @@ export async function handleCodexProtocol({
           null
         logBag.first_token_ms = result.ttftMs ?? null
         reportOpenAIAttempt(vm.id, 'succeeded', result.ttftMs ?? null)
-        logBag.final_state = result.terminalState || 'verified'
+        logBag.final_state = result?.ok ? result.terminalState || 'verified' : 'verified'
         logBag.upstream_model = converted.body.model
         if (i > 0) logBag.codex_failed_over = true
         if (!stream) {
