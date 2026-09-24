@@ -16,6 +16,8 @@ VM2API_DB_SECRET='再一串'
 
 抄本：[deploy/env.example](deploy/env.example)。`VM2API_*` 优先于 `KIN_*`。
 
+宿主机开了 UFW / firewalld 且入站默认拒绝时，必须先放行槽出口网关，见下文「防火墙」。否则槽内请求全部 `502 incomplete_response`，面板代理探测却显示正常。
+
 ## 该看到什么容器
 
 | 容器 | 说明 |
@@ -82,6 +84,50 @@ docker exec vm2api python3 -c 'import urllib.request; print(urllib.request.urlop
 ```
 
 槽位安装、同步和模板制作优先使用 `KIN_KERNEL_BIN` / `bin/kin-kernel`；母样本或槽内快照只在主内核不可用时使用。更新或上传主内核后，仍需同步并重启目标槽。控制面重启本身不会替换正在运行的槽内进程。
+
+## 防火墙（UFW / firewalld）
+
+绑定远程 SOCKS5 的槽，出站走这条路：
+
+```
+kin-<槽> 容器 → keg* 网桥 → 宿主机 kin-egress（网关 IP:端口）→ SOCKS5 → 上游
+```
+
+控制面用 iptables 把容器的 TCP 和 DNS 重定向到宿主机上的 `kin-egress`。这一跳的目的地是宿主机本身，要经过宿主机 **INPUT** 链。UFW 默认入站 `DROP`，而 vm2api 不改你的 INPUT 规则，所以需要手动放行：
+
+| 项 | 值 |
+|---|---|
+| 网卡 | `keg` 开头，每个 SOCKS5 出口一个（`ip -br link \| grep '^keg'`） |
+| 网关 | 该网桥网段的 `.1`（`docker network inspect kin-eg-<代理id>`） |
+| 端口 | 20000–35999 内，按代理 id 固定：偶数为 TCP，下一个奇数为 DNS（TCP + UDP） |
+
+**UFW：**
+
+```bash
+sudo ufw allow in on keg+ to any port 20000:35999 proto tcp
+sudo ufw allow in on keg+ to any port 20000:35999 proto udp
+sudo ufw reload
+```
+
+**firewalld：**
+
+```bash
+for br in $(ip -br link | awk '/^keg/{print $1}'); do
+  sudo firewall-cmd --permanent --zone=trusted --add-interface="$br"
+done
+sudo firewall-cmd --reload
+```
+
+新增 SOCKS5 出口会出现新的 `keg*` 网卡。UFW 的 `keg+` 通配会自动覆盖；firewalld 需要对新网卡再执行一次。
+
+**验证**（在宿主机上，对已启动的槽）：
+
+```bash
+docker exec kin-<槽> getent hosts api.anthropic.com
+docker exec kin-<槽> curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 https://api.anthropic.com
+```
+
+能解析且打印 HTTP 状态码（如 `404`）即通。两条都超时就是仍被拦截。本地出口（`px-local`）不经过 `kin-egress`，不需要这一步。
 
 ## 上线后
 

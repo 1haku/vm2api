@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 文档：`502 incomplete_response` 的含义、常见原因和自查命令写进 [docs/API.md](docs/API.md)。同一个槽全部失败、每次约 20–30 秒、面板代理探测却是绿的，多半是宿主机防火墙拦住了槽容器到 `kin-egress` 网关这一跳。
+- 部署：[docs/DEPLOY.md](docs/DEPLOY.md) 新增「防火墙（UFW / firewalld）」。绑远程 SOCKS5 的槽要放行 `keg*` 网卡到 20000–35999 端口（TCP + UDP）的入站；vm2api 不改宿主 INPUT 规则。本地出口不涉及。
+
+已部署机：代码未变，无需升级。开了 UFW / firewalld 入站默认拒绝的机器，按 DEPLOY.md 放行一次。
+
 ## 1.3.40 — 2026-09-24
 
 - 额度、刷新、profile、models、count-tokens 改到槽内 `kin-worker oauth`。Node 不再直连 Anthropic。
