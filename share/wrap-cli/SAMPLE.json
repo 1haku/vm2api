@@ -2,10 +2,11 @@
   "source_vm": "vm-13",
   "captured_at": "2026-09-13T09:03:27.449686Z",
   "files": [
-    "cli-node"
+    "cli-node",
+    "cc-node"
   ],
   "kernel": "kin-kernel.bin",
   "glibc_shim": true,
   "source": "manual",
-  "cli_version": "2.1.263"
+  "cli_version": "2.1.281"
 }

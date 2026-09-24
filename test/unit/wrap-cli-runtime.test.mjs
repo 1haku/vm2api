@@ -4,10 +4,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  WRAP_CLI_BIN,
+  WRAP_CLI_FILES,
+  CC_NODE_BIN,
   captureWrapSample,
   inspectLinuxAmd64Elf,
   inspectWrapCliDir,
   makeWrapSample,
+  materializeSlotDataplane,
   materializeWrapCli,
   replaceKernelBinary,
   syncWrapSample,
@@ -30,7 +34,7 @@ after(() => {
 function seedTemplate(root) {
   const src = path.join(root, 'share', 'wrap-cli')
   fs.mkdirSync(src, { recursive: true })
-  for (const name of ['cli-node', 'kin-kernel']) {
+  for (const name of [...WRAP_CLI_FILES, 'kin-kernel']) {
     fs.writeFileSync(path.join(src, name), name)
     fs.chmodSync(path.join(src, name), 0o644)
   }
@@ -52,7 +56,7 @@ function fakeElf64Amd64(payload = 'host-kernel') {
   return buf
 }
 
-test('materializeWrapCli copies compiled cli-node into slot home', () => {
+test('materializeWrapCli copies both CLIs into slot home', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-'))
   try {
     seedTemplate(project)
@@ -61,10 +65,27 @@ test('materializeWrapCli copies compiled cli-node into slot home', () => {
     assert.equal(result.ok, true)
     const dest = wrapCliHomeDir(project, 'vm-13')
     assert.equal(result.dest, dest)
-    assert.equal(fs.existsSync(path.join(dest, 'cli-node')), true)
+    assert.equal(fs.existsSync(path.join(dest, WRAP_CLI_BIN)), true)
+    assert.equal(fs.readFileSync(path.join(dest, CC_NODE_BIN), 'utf8'), 'cc-node')
     assert.equal(fs.existsSync(path.join(dest, 'kin-kernel')), true)
-    const mode = fs.statSync(path.join(dest, 'cli-node')).mode & 0o111
+    const mode = fs.statSync(path.join(dest, WRAP_CLI_BIN)).mode & 0o111
     assert.ok(mode !== 0)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('crag materialize copies the crag kernel and cc-node', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-crag-cc-'))
+  try {
+    seedTemplate(project)
+    fs.mkdirSync(path.join(project, 'share', 'crag'), { recursive: true })
+    fs.writeFileSync(path.join(project, 'share', 'crag', 'kin-kernel'), 'crag-kernel')
+    const result = materializeSlotDataplane(project, { id: 'vm-13' }, 'crag')
+    assert.equal(result.ok, true)
+    const dest = wrapCliHomeDir(project, 'vm-13')
+    assert.equal(fs.readFileSync(path.join(dest, 'kin-kernel.bin'), 'utf8'), 'crag-kernel')
+    assert.equal(fs.readFileSync(path.join(dest, CC_NODE_BIN), 'utf8'), 'cc-node')
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }
@@ -75,7 +96,7 @@ test('materializeWrapCli does not recopy identical wrap files', () => {
   try {
     seedTemplate(project)
     materializeWrapCli(project, { id: 'vm-13' })
-    const cli = path.join(wrapCliHomeDir(project, 'vm-13'), 'cli-node')
+    const cli = path.join(wrapCliHomeDir(project, 'vm-13'), WRAP_CLI_BIN)
     const wrapper = path.join(wrapCliHomeDir(project, 'vm-13'), 'kin-kernel')
     const cliM = fs.statSync(cli).mtimeMs
     const wrapM = fs.statSync(wrapper).mtimeMs
@@ -126,17 +147,17 @@ test('captureWrapSample promotes a proven slot into share/wrap-cli', () => {
   try {
     seedTemplate(project)
     assert.equal(materializeWrapCli(project, { id: 'vm-05' }).ok, true)
-    fs.writeFileSync(path.join(wrapCliHomeDir(project, 'vm-05'), 'cli-node'), 'proven-cli\n')
+    fs.writeFileSync(path.join(wrapCliHomeDir(project, 'vm-05'), WRAP_CLI_BIN), 'proven-cli\n')
     const captured = captureWrapSample(project, { id: 'vm-05' })
     assert.equal(captured.ok, true)
-    const sample = fs.readFileSync(path.join(wrapCliTemplateDir(project), 'cli-node'), 'utf8')
+    const sample = fs.readFileSync(path.join(wrapCliTemplateDir(project), WRAP_CLI_BIN), 'utf8')
     assert.equal(sample, 'proven-cli\n')
     const meta = JSON.parse(fs.readFileSync(path.join(wrapCliTemplateDir(project), 'SAMPLE.json'), 'utf8'))
     assert.equal(meta.source_vm, 'vm-05')
     const synced = syncWrapSample(project, [{ id: 'vm-10' }])
     assert.equal(synced.ok, true)
     assert.equal(synced.ok_count, 1)
-    assert.equal(fs.readFileSync(path.join(wrapCliHomeDir(project, 'vm-10'), 'cli-node'), 'utf8'), 'proven-cli\n')
+    assert.equal(fs.readFileSync(path.join(wrapCliHomeDir(project, 'vm-10'), WRAP_CLI_BIN), 'utf8'), 'proven-cli\n')
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }
@@ -169,14 +190,14 @@ test('materializeWrapCli replaces a busy dest via unlink', () => {
     seedTemplate(project)
     const dest = wrapCliHomeDir(project, 'vm-13')
     fs.mkdirSync(dest, { recursive: true })
-    const cli = path.join(dest, 'cli-node')
+    const cli = path.join(dest, WRAP_CLI_BIN)
     fs.writeFileSync(cli, 'old-cli')
     fs.chmodSync(cli, 0o755)
     const fd = fs.openSync(cli, 'r')
     try {
       const result = materializeWrapCli(project, { id: 'vm-13' })
       assert.equal(result.ok, true, result.error)
-      assert.equal(fs.readFileSync(path.join(dest, 'cli-node'), 'utf8'), 'cli-node')
+      assert.equal(fs.readFileSync(path.join(dest, WRAP_CLI_BIN), 'utf8'), WRAP_CLI_BIN)
     } finally {
       fs.closeSync(fd)
     }
@@ -214,7 +235,7 @@ test('materializeWrapCli fails when the template is missing', () => {
 test('inspectWrapCliDir requires kernel payload', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-bad-'))
   try {
-    fs.writeFileSync(path.join(dir, 'cli-node'), 'x')
+    fs.writeFileSync(path.join(dir, WRAP_CLI_BIN), 'x')
     const missing = inspectWrapCliDir(dir)
     assert.equal(missing.ok, false)
     assert.equal(missing.code, 'wrap_cli_incomplete')

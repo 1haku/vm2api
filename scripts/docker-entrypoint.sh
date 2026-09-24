@@ -65,7 +65,7 @@ if [ -d /opt/vm2api/image-wrap-cli ]; then
     WRAP_CHANGED=1
   fi
   # cli-node 也随镜像覆盖：只在缺失时复制会让升级用户一直留着旧 ELF（#120 baseline 换不进去）。
-  for name in kin-kernel.bin kin-kernel cli-node; do
+  for name in kin-kernel.bin kin-kernel cli-node cc-node; do
     src="/opt/vm2api/image-wrap-cli/$name"
     dest="$ROOT/share/wrap-cli/$name"
     if [ -f "$src" ]; then

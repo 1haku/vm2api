@@ -15,8 +15,10 @@ import { isCodexVm } from './vm-kind.mjs'
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero'])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
-export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'crag'])
-export const CONTAINER_CRAG_CLAUDE_BIN = '/home/kincli/.local/bin/claude'
+export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag'])
+export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
+export const CONTAINER_CC_NODE_BIN = '/home/kincli/.kin/cc-node'
+export const CONTAINER_CRAG_CLAUDE_BIN = CONTAINER_CC_NODE_BIN
 
 export const KERNEL_NATIVE_SLOT_COUNT = 20
 export const SESSION_SLOT_MIN = 1
@@ -119,6 +121,7 @@ export function normalizeKernelDataplane(value, { inherit = false } = {}) {
   if (raw === 'wrap' || raw === 'cli-node' || raw === 'native-messages' || raw === 'nativemessages') {
     return 'wrap'
   }
+  if (raw === 'cc' || raw === 'cc-node') return 'cc'
   if (raw === 'crag' || raw === 'official-cli' || raw === 'official-cc' || raw === 'claude-code') {
     return 'crag'
   }
@@ -137,7 +140,7 @@ export function parseKernelDataplanePatch(value) {
   const parsed = normalizeKernelDataplane(value, { inherit: true })
   if (!parsed) return { ok: true, value: '' }
   if (!KERNEL_DATAPLANES.includes(parsed)) {
-    return { ok: false, error: 'dataplane must be wrap or crag' }
+    return { ok: false, error: 'dataplane must be wrap, cc, or crag' }
   }
   return { ok: true, value: parsed }
 }
@@ -334,7 +337,7 @@ export function validateInferenceRoutingPatch(body = {}) {
   if (Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
     const parsed = parseKernelDataplanePatch(body.inference.dataplane)
     if (!parsed.ok) errors.push(parsed.error)
-    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap 或 crag')
+    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap、cc 或 crag')
   }
   return errors
 }

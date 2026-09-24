@@ -180,6 +180,7 @@ import {
   replaceCragKernelBinary,
   replaceKernelBinary,
   replaceCliNodeBinary,
+  replaceCcNodeBinary,
   syncWrapSample,
   wrapCliHomeDir,
 } from '../vm/wrap-cli-runtime.mjs'
@@ -1319,7 +1320,7 @@ export function createPanelHandler(ctx) {
         if (!parsed.ok || !parsed.value) {
           return json(res, 400, {
             ok: false,
-            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap or crag' },
+            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap, cc, or crag' },
           })
         }
         const targets = parseSlotPolicyTargets({
@@ -1412,12 +1413,13 @@ export function createPanelHandler(ctx) {
         if (!cliNode.ok) {
           return json(res, 400, { ok: false, error: { code: cliNode.code, message: cliNode.error } })
         }
-        let cragWritten = { skipped: true }
-        if (downloaded.crag?.bytes) {
-          cragWritten = replaceCragKernelBinary(cfg.paths.project, downloaded.crag.bytes)
-          if (!cragWritten.ok) {
-            return json(res, 400, { ok: false, error: { code: cragWritten.code, message: cragWritten.error } })
-          }
+        const ccNode = replaceCcNodeBinary(cfg.paths.project, downloaded.ccNode?.bytes)
+        if (!ccNode.ok) {
+          return json(res, 400, { ok: false, error: { code: ccNode.code, message: ccNode.error } })
+        }
+        const cragWritten = replaceCragKernelBinary(cfg.paths.project, downloaded.crag?.bytes)
+        if (!cragWritten.ok) {
+          return json(res, 400, { ok: false, error: { code: cragWritten.code, message: cragWritten.error } })
         }
         const report = await syncInstalledKernels({
           project: cfg.paths.project,
@@ -1431,9 +1433,11 @@ export function createPanelHandler(ctx) {
           size: downloaded.size,
           cli_node: downloaded.cliNode?.asset,
           cli_node_size: cliNode.size,
+          cc_node: downloaded.ccNode?.asset,
+          cc_node_size: ccNode.size,
           crag: downloaded.crag?.asset || null,
           crag_size: cragWritten.size || 0,
-          crag_skipped: !!downloaded.crag?.skipped,
+          crag_skipped: false,
         }
         if (!report.ok) {
           return json(res, 400, {

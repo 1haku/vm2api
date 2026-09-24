@@ -26,6 +26,7 @@ import { PageHeader } from '@/components/page-header'
 import { CardGridSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
 import { dashboardQueryOptions } from '@/features/overview/queries'
+import { dataplaneLabel } from '@/features/vm/dataplane-contract'
 import {
   inferenceEngineLabel,
   normalizeInferenceEngine,
@@ -75,9 +76,15 @@ function engineOf(vm: Vm) {
   return vm.resolved_inference_engine || vm.inference_engine || 'auto'
 }
 
-function dataplaneOf(vm: Vm) {
+function selectedDataplane(
+  value: string | null | undefined
+): 'wrap' | 'cc' | 'crag' {
+  return value === 'cc' || value === 'crag' ? value : 'wrap'
+}
+
+function dataplaneOf(vm: Vm): 'wrap' | 'cc' | 'crag' | '—' {
   if (isCodexVm(vm)) return '—'
-  return vm.resolved_dataplane === 'crag' ? 'crag' : 'wrap'
+  return selectedDataplane(vm.resolved_dataplane)
 }
 
 function DataplaneOption({
@@ -88,7 +95,7 @@ function DataplaneOption({
   disabled,
   children,
 }: {
-  value: 'wrap' | 'crag'
+  value: 'wrap' | 'cc' | 'crag'
   title: string
   desc: string
   current: boolean
@@ -151,7 +158,7 @@ function slotSyncFailed(report: WrapSyncReport, id: string) {
 function HopProgress({ job }: { job: HopJob }) {
   const label =
     job.phase === 'download'
-      ? '拉取 GitHub wrap kernel、cli-node 和 crag kernel'
+      ? '拉取 GitHub wrap kernel、cli-node、cc-node 和 crag kernel'
       : job.phase === 'done'
         ? job.failed.length
           ? `内核重装结束，失败 ${job.failed.length}`
@@ -202,10 +209,10 @@ function KernelPayload({
       ? '仓内最新 kernel'
       : payload?.source === 'sample'
         ? kind === 'cli'
-          ? '仓内 cli-node'
+          ? '仓内 CLI'
           : '母样本 kernel'
         : kind === 'cli'
-          ? '未找到 cli-node'
+          ? '未找到 CLI'
           : '未找到 kernel'
   return (
     <div className='space-y-2 text-sm'>
@@ -239,7 +246,7 @@ export function WrapSamplePage() {
   const [restart, setRestart] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
   const [pendingDataplane, setPendingDataplane] = useState<
-    'wrap' | 'crag' | null
+    'wrap' | 'cc' | 'crag' | null
   >(null)
   const [promoteId, setPromoteId] = useState<string | null>(null)
   const [makeOpen, setMakeOpen] = useState(false)
@@ -373,18 +380,19 @@ export function WrapSamplePage() {
       const cli = result.release?.cli_node_size
         ? `，cli-node ${fmtBytes(result.release.cli_node_size)}`
         : ''
+      const cc = result.release?.cc_node_size
+        ? `，cc-node ${fmtBytes(result.release.cc_node_size)}`
+        : ''
       const crag = result.release?.crag_size
         ? `，crag ${fmtBytes(result.release.crag_size)}`
-        : result.release?.crag_skipped
-          ? '，此版无 kin-kernel-crag'
-          : ''
-      toast.success(`已下载 ${tag}${cli}${crag}。尚未铺到槽`)
+        : ''
+      toast.success(`已下载 ${tag}${cli}${cc}${crag}。尚未铺到槽`)
       await invalidate()
     },
     onError: (error: Error) => toast.error(error.message),
   })
   const dataplane = useMutation({
-    mutationFn: (next: 'wrap' | 'crag') => {
+    mutationFn: (next: 'wrap' | 'cc' | 'crag') => {
       const ids = selected.filter((id) => {
         const vm = vms.find((item) => item.id === id)
         return Boolean(vm && !isCodexVm(vm))
@@ -411,8 +419,10 @@ export function WrapSamplePage() {
       } else {
         toast.success(
           next === 'crag'
-            ? '已切换到 crag · 官方 Claude Code'
-            : '已切换到 wrap · cli-node'
+            ? '已切换到 crag + cc-node'
+            : next === 'cc'
+              ? '已切换到 cc-node + kernel'
+              : '已切换到 cli-node + kernel'
         )
       }
       await invalidate()
@@ -513,10 +523,10 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          两个 Claude 内核，点卡片切换。wrap 跑仓内 patched{' '}
-          <code>cli-node</code>（一进程 20 native 槽）；crag 跑槽内官方{' '}
-          <code>/home/kincli/.local/bin/claude</code>
-          （一槽一进程，懒启动）。未勾选槽时改全局默认；勾选后只切这些 Claude
+          三种搭配，点卡片切换。默认是 <code>cli-node + kernel</code>
+          （一进程 20 native 槽）。<code>cc-node + kernel</code> 用同一份 wrap
+          kernel。<code>crag + cc-node</code> 用 crag kernel，claude_bin
+          指向仓内 cc-node。未勾选槽时改全局默认；勾选后只切这些 Claude
           槽。Codex 不动。不改凭证、不删容器。
         </p>
         <Card className='mb-4'>
@@ -525,22 +535,21 @@ export function WrapSamplePage() {
           </CardHeader>
           <CardContent className='space-y-3'>
             <RadioGroup
-              value={data?.dataplane === 'crag' ? 'crag' : 'wrap'}
+              value={selectedDataplane(data?.dataplane)}
               onValueChange={(value) => {
-                if (value !== 'wrap' && value !== 'crag') return
-                if (value === (data?.dataplane === 'crag' ? 'crag' : 'wrap')) {
+                if (value !== 'wrap' && value !== 'cc' && value !== 'crag')
                   return
-                }
+                if (value === selectedDataplane(data?.dataplane)) return
                 setPendingDataplane(value)
               }}
               disabled={dataplane.isPending || hopBusy}
-              className='grid gap-3 md:grid-cols-2'
+              className='grid gap-3 lg:grid-cols-3'
             >
               <DataplaneOption
                 value='wrap'
-                title='wrap · cli-node'
-                desc='patched cli-node，一进程 20 native 槽。kernel.json.claude_bin 指向仓内 cli-node。'
-                current={data?.dataplane !== 'crag'}
+                title='cli-node + kernel'
+                desc='默认。patched cli-node，一进程 20 native 槽。kernel.json.claude_bin 指向仓内 cli-node。'
+                current={data?.dataplane !== 'cc' && data?.dataplane !== 'crag'}
                 disabled={!data?.ok}
               >
                 <KernelPayload payload={data?.kernel} />
@@ -552,17 +561,33 @@ export function WrapSamplePage() {
                 <Flag ok={data?.kernel_bin} label='kernel.bin' />
               </DataplaneOption>
               <DataplaneOption
+                value='cc'
+                title='cc-node + kernel'
+                desc='同一份 wrap kernel。claude_bin 指向仓内 cc-node。'
+                current={data?.dataplane === 'cc'}
+                disabled={!data?.cc_node?.size}
+              >
+                <KernelPayload payload={data?.kernel} />
+                <div className='pt-1 text-xs font-medium text-muted-foreground'>
+                  cc-node
+                </div>
+                <KernelPayload payload={data?.cc_node} kind='cli' />
+                <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
+                <Flag ok={data?.kernel_bin} label='kernel.bin' />
+              </DataplaneOption>
+              <DataplaneOption
                 value='crag'
-                title='crag · 官方 Claude Code'
-                desc='槽内必须已有官方 claude。一槽一 claude -p，懒启动。'
+                title='crag + cc-node'
+                desc='crag kernel，一进程多槽。claude_bin 指向仓内 cc-node。'
                 current={data?.dataplane === 'crag'}
-                disabled={!data?.crag?.ok}
+                disabled={!data?.crag?.ok || !data?.cc_node?.size}
               >
                 <KernelPayload payload={data?.crag || undefined} />
                 <Flag
                   ok={Boolean(data?.crag?.ok)}
                   label='share/crag/kin-kernel'
                 />
+                <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
                 <input
                   ref={cragFileRef}
                   type='file'
@@ -630,9 +655,9 @@ export function WrapSamplePage() {
             </CardHeader>
             <CardContent className='space-y-3 text-sm leading-relaxed text-muted-foreground'>
               <p>
-                按各槽当前数据面铺内核：wrap 铺 cli-node 和 wrap
-                kin-kernel，crag 铺官方 Claude kernel。可先从 GitHub Release 拉
-                linux amd64 文件。不改凭证、不改 SOCKS、不删容器。
+                按各槽当前数据面铺内核：cli-node + kernel、cc-node + kernel，或
+                crag + cc-node。可先从 GitHub Release 拉 linux amd64
+                文件。不改凭证、不改 SOCKS、不删容器。
               </p>
               <Button
                 size='sm'
@@ -709,7 +734,9 @@ export function WrapSamplePage() {
                             )}
                           </td>
                           <td className='py-2 font-mono text-xs'>
-                            {dataplaneOf(vm)}
+                            {dataplaneOf(vm) === '—'
+                              ? '—'
+                              : dataplaneLabel(dataplaneOf(vm))}
                           </td>
                           <td className='py-2 text-muted-foreground'>
                             {source ? '当前母本' : rust ? '可收成' : '只收文件'}
@@ -761,13 +788,17 @@ export function WrapSamplePage() {
         }}
         title={
           pendingDataplane === 'crag'
-            ? '切到 crag · 官方 Claude Code？'
-            : '切到 wrap · cli-node？'
+            ? '切到 crag + cc-node？'
+            : pendingDataplane === 'cc'
+              ? '切到 cc-node + kernel？'
+              : '切到 cli-node + kernel？'
         }
         desc={
           pendingDataplane === 'crag'
-            ? `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 crag ELF，claude_bin 指向 /home/kincli/.local/bin/claude，并重启 rust kernel。槽内必须已有官方 claude。Codex 不动。不改凭证、不删容器。`
-            : `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 wrap ELF 和 cli-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
+            ? `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 crag kernel，claude_bin 指向 /home/kincli/.kin/cc-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
+            : pendingDataplane === 'cc'
+              ? `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 wrap kernel 和 cc-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
+              : `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 wrap kernel 和 cli-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
         }
         confirmText='切换'
         cancelBtnText='取消'
@@ -838,8 +869,8 @@ export function WrapSamplePage() {
       <ConfirmDialog
         open={releaseOpen}
         onOpenChange={setReleaseOpen}
-        title='拉取 GitHub wrap/crag 内核？'
-        desc='下载最新 Release 的 linux amd64 wrap kin-kernel、cli-node 和 crag kin-kernel 到仓内。不改槽、不重启。'
+        title='拉取 GitHub 内核？'
+        desc='下载最新 Release 的 linux amd64 wrap kin-kernel、cli-node、cc-node 和 crag kin-kernel 到仓内。不改槽、不重启。'
         confirmText='下载'
         cancelBtnText='取消'
         isLoading={releaseUpdate.isPending}
@@ -861,7 +892,7 @@ export function WrapSamplePage() {
           hopIds.length === 1
             ? '按该槽当前数据面铺内核并重启 rust kernel。不改凭证，不删容器。'
             : pullLatest
-              ? '先从 GitHub 拉 wrap/crag 二进制，再按各槽数据面逐槽换上。不改凭证，不删容器。'
+              ? '先从 GitHub 拉 wrap kernel、cli-node、cc-node 和 crag kernel，再按各槽数据面逐槽换上。不改凭证，不删容器。'
               : '按各槽当前数据面铺仓内内核并显示进度。不改凭证，不删容器。'
         }
         confirmText={

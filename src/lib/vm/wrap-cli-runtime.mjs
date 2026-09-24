@@ -1,13 +1,11 @@
 /**
- * Wrap inference CLI lives in the slot home, next to the Go worker.
- * Create/start copies a prebuilt cli-node ELF (not JS dist / in-slot patch).
- * Engine rust|go only chooses which process serves /v1; both stay on disk.
- * CLI always pre-opens 20 native_messages slots; Node maxConcurrency uses N.
- *
- * Mother sample: share/wrap-cli (or KIN_WRAP_CLI_ROOT) still holds cli-node
- * and glibc. Kernel payload prefers KIN_KERNEL_BIN, then project bin/kin-kernel,
- * then the sample ELF. Promote copies a proven slot; sync overlays the
- * configured kernel. Never copies credentials or proxy URLs.
+ * Wrap inference CLIs live in the slot home, next to the kernel.
+ * share/wrap-cli holds both cli-node and cc-node. The dataplane picks which
+ * one kernel.json.claude_bin runs:
+ *   wrap: cli-node + wrap kin-kernel
+ *   cc:   cc-node + wrap kin-kernel
+ *   crag: cc-node + share/crag/kin-kernel
+ * Engine rust only chooses which process serves /v1. Credentials stay out.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -16,7 +14,9 @@ import { kernelBinPath } from '../transport/rust-kernel-supervisor.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { resolveKernelDataplane } from './slot-engine.mjs'
 
-export const WRAP_CLI_FILES = Object.freeze(['cli-node'])
+export const WRAP_CLI_BIN = 'cli-node'
+export const CC_NODE_BIN = 'cc-node'
+export const WRAP_CLI_FILES = Object.freeze([WRAP_CLI_BIN, CC_NODE_BIN])
 export const WRAP_KERNEL_BIN = 'kin-kernel.bin'
 export const WRAP_KERNEL_WRAPPER = 'kin-kernel'
 export const WRAP_GLIBC_DIR = 'glibc239'
@@ -142,9 +142,9 @@ export function describeKernelPayload(projectRoot) {
     mtime: info?.mtime || '',
   }
 }
-export function describeCliNodePayload(projectRoot) {
+export function describeCliPayload(projectRoot, name) {
   const dir = wrapCliTemplateDir(projectRoot)
-  const chosen = path.join(dir, 'cli-node')
+  const chosen = path.join(dir, name)
   const info = fileInfo(chosen)
   return {
     source: info ? 'sample' : 'missing',
@@ -152,6 +152,14 @@ export function describeCliNodePayload(projectRoot) {
     size: info?.size || 0,
     mtime: info?.mtime || '',
   }
+}
+
+export function describeCliNodePayload(projectRoot) {
+  return describeCliPayload(projectRoot, WRAP_CLI_BIN)
+}
+
+export function describeCcNodePayload(projectRoot) {
+  return describeCliPayload(projectRoot, CC_NODE_BIN)
 }
 
 export function inspectLinuxAmd64Elf(buf) {
@@ -350,9 +358,18 @@ export function materializeCragKernel(projectRoot, vm, { uid = null, gid = null 
       error: 'Crag kernel ELF missing (share/crag/kin-kernel)',
     }
   }
+  const cliSrc = path.join(wrapCliTemplateDir(projectRoot) || '', CC_NODE_BIN)
+  if (!isFile(cliSrc)) {
+    return {
+      ok: false,
+      code: 'cc_node_missing',
+      error: 'cc-node missing (share/wrap-cli/cc-node)',
+    }
+  }
   const dest = wrapCliHomeDir(projectRoot, vm.id)
   fs.mkdirSync(dest, { recursive: true })
   copyFile(src, path.join(dest, WRAP_KERNEL_BIN))
+  copyFile(cliSrc, path.join(dest, CC_NODE_BIN))
   writeCragWrapper(dest)
   chownTree(dest, uid, gid)
   return {
@@ -517,7 +534,7 @@ export function describeWrapSample(projectRoot) {
     meta,
     kernel: describeKernelPayload(projectRoot),
     cli_node: describeCliNodePayload(projectRoot),
-    crag: describeCragPayload(projectRoot),
+    cc_node: describeCcNodePayload(projectRoot),
   }
 }
 
@@ -541,7 +558,7 @@ export function makeWrapSample(projectRoot, { glibcFromDir = '' } = {}) {
   if (!check.ok) {
     return {
       ...check,
-      error: `${check.error}。单独制作需要 share/wrap-cli 已有 cli-node；kernel 可从主机 kin-kernel 补。不要从正在跑 wrap 的槽原地覆盖。`,
+      error: `${check.error}。单独制作需要 share/wrap-cli 已有 cli-node 和 cc-node；kernel 可从主机 kin-kernel 补。不要从正在跑 wrap 的槽原地覆盖。`,
     }
   }
   fs.writeFileSync(
@@ -650,17 +667,30 @@ export function replaceKernelBinary(projectRoot, buf, extra = {}) {
   const described = describeWrapSample(projectRoot)
   return { ...described, ok: true, sample_ok: described.ok, written }
 }
-export function replaceCliNodeBinary(projectRoot, buf) {
+function replaceNamedCliBinary(projectRoot, buf, name) {
   const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || [])
   const check = inspectLinuxAmd64Elf(bytes)
-  if (!check.ok)
-    return { ok: false, code: 'cli_node_not_elf', error: check.error || 'cli-node binary is not a linux amd64 ELF' }
+  if (!check.ok) {
+    return {
+      ok: false,
+      code: `${name.replace('-', '_')}_not_elf`,
+      error: check.error || `${name} binary is not a linux amd64 ELF`,
+    }
+  }
   const destDir = wrapCliTemplateDir(projectRoot)
   if (!destDir) return { ok: false, code: 'wrap_cli_template_missing', error: 'wrap CLI template dir unset' }
   fs.mkdirSync(destDir, { recursive: true })
-  const dest = path.join(destDir, 'cli-node')
+  const dest = path.join(destDir, name)
   writeKernelBytes(dest, bytes)
   return { ok: true, written: [dest], size: bytes.length }
+}
+
+export function replaceCliNodeBinary(projectRoot, buf) {
+  return replaceNamedCliBinary(projectRoot, buf, WRAP_CLI_BIN)
+}
+
+export function replaceCcNodeBinary(projectRoot, buf) {
+  return replaceNamedCliBinary(projectRoot, buf, CC_NODE_BIN)
 }
 
 export function syncWrapSample(projectRoot, vms, { uidOf, routing } = {}) {
@@ -670,7 +700,7 @@ export function syncWrapSample(projectRoot, vms, { uidOf, routing } = {}) {
   for (const vm of vms || []) {
     if (isCodexVm(vm)) continue
     const dataplane = resolveKernelDataplane(vm, routing) || 'wrap'
-    if (dataplane === 'wrap' && !sample.ok) {
+    if ((dataplane === 'wrap' || dataplane === 'cc') && !sample.ok) {
       items.push({ id: vm.id, dataplane, ok: false, code: sample.code, error: sample.error })
       continue
     }

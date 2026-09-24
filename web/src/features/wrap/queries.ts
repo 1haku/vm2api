@@ -29,8 +29,9 @@ export type WrapSample = {
   meta?: WrapSampleMeta | null
   kernel?: WrapKernelPayload | null
   cli_node?: WrapKernelPayload | null
+  cc_node?: WrapKernelPayload | null
   crag?: (WrapKernelPayload & { ok?: boolean }) | null
-  dataplane?: 'wrap' | 'crag'
+  dataplane?: 'wrap' | 'cc' | 'crag'
   written?: string[]
   sample_ok?: boolean
 }
@@ -102,6 +103,8 @@ export type WrapReleaseUpdate = {
     size?: number
     cli_node?: string
     cli_node_size?: number
+    cc_node?: string
+    cc_node_size?: number
     crag?: string | null
     crag_size?: number
     crag_skipped?: boolean
@@ -136,12 +139,12 @@ export function uploadCragKernelBinary(file: Blob) {
 }
 
 export function setKernelDataplane(body: {
-  dataplane: 'wrap' | 'crag'
+  dataplane: 'wrap' | 'cc' | 'crag'
   ids?: string[]
   all?: boolean
   restart?: boolean
 }) {
-  return api<WrapSyncReport & { dataplane?: 'wrap' | 'crag' }>(
+  return api<WrapSyncReport & { dataplane?: 'wrap' | 'cc' | 'crag' }>(
     '/api/panel/dataplane',
     {
       method: 'POST',

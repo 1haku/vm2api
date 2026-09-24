@@ -18,7 +18,8 @@ import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mj
 import { setVmSchedulable, listVms, getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import {
-  CONTAINER_CRAG_CLAUDE_BIN,
+  CONTAINER_CC_NODE_BIN,
+  CONTAINER_CLI_NODE_BIN,
   KERNEL_NATIVE_SLOT_COUNT,
   resolveCliSystemLayout,
   resolveKernelDataplane,
@@ -34,7 +35,7 @@ import {
 const starts = new Map()
 const CONTAINER_KERNEL_BIN = '/home/kincli/.kin/kin-kernel'
 const CONTAINER_KERNEL_CONFIG = '/run/kin/kernel.json'
-export const CONTAINER_CLAUDE_BIN = '/home/kincli/.kin/cli-node'
+export const CONTAINER_CLAUDE_BIN = CONTAINER_CLI_NODE_BIN
 
 export const WRAP_SLOT_MIN = 1
 export const WRAP_SLOT_MAX = KERNEL_NATIVE_SLOT_COUNT
@@ -249,7 +250,7 @@ async function killWrapDataplane(container, runDockerExec) {
         'for d in /proc/[0-9]*; do',
         '  exe=$(readlink "$d/exe" 2>/dev/null || true)',
         '  case "$exe" in',
-        '    */.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*)',
+        '    */.kin/cc-node*|*/.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*)',
         '      kill -KILL "${d#/proc/}" 2>/dev/null || true',
         '  esac',
         'done',
@@ -266,7 +267,7 @@ export function wrapNewerThanKernel(exec) {
   if (!home) return false
   const kin = path.join(home, '.kin')
   let wrapM = 0
-  for (const name of ['kin-kernel', 'kin-kernel.bin', 'cli-node']) {
+  for (const name of ['kin-kernel', 'kin-kernel.bin', 'cc-node', 'cli-node']) {
     try {
       wrapM = Math.max(wrapM, fs.statSync(path.join(kin, name)).mtimeMs)
     } catch {}
@@ -565,7 +566,7 @@ export function writeKernelConfig(
   const testEndpoints = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1'
   const dataplane = resolveKernelDataplane(vm, routing || {}) || 'wrap'
   const envBin = String(process.env.KIN_CLAUDE_BIN || '').trim()
-  const claudeBin = envBin || (dataplane === 'crag' ? CONTAINER_CRAG_CLAUDE_BIN : CONTAINER_CLAUDE_BIN)
+  const claudeBin = envBin || (dataplane === 'wrap' ? CONTAINER_CLI_NODE_BIN : CONTAINER_CC_NODE_BIN)
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
   const defaultCacheTtl = routing != null ? cacheTtlFromRouting(routing) : normalizeCacheTtl(previous.default_cache_ttl)
 

@@ -662,6 +662,20 @@ test('writeKernelConfig cli-hop writes local_cli without secrets', () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('writeKernelConfig points cc and crag at cc-node', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-cc-cfg-'))
+  try {
+    for (const dataplane of ['cc', 'crag']) {
+      const written = writeKernelConfig(root, { id: 'vm-09', dataplane }, { token: 'tok' })
+      const doc = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+      assert.equal(doc.dataplane, dataplane)
+      assert.equal(doc.claude_bin, '/home/kincli/.kin/cc-node')
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('writeKernelConfig uses identity layout when persona_inject is rewrite', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-identity-'))
   const written = writeKernelConfig(
