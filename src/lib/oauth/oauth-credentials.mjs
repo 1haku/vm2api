@@ -1,8 +1,7 @@
 /**
  * OAuth credential normalization + metadata persistence.
  *
- * Host Node is the only writer of slot credentials.json and the only
- * refresh owner (grant_type=refresh_token over bound SOCKS5).
+ * The slot worker owns refresh and writes slot credentials.json.
  * Slot kernel/CLI read AT; vm.json / SQLite / panel keep metadata only.
  *
  * persistOauthToVm writes presence flags + expiry/identity, then strips
@@ -310,7 +309,7 @@ function sealSlotCredentialFile(file) {
   } catch {}
 }
 
-/** Write slot credentials.json. Host import/refresh is the only writer. */
+/** Write slot credentials.json for imports and worker-owned credential updates. */
 
 export function writeWorkerCredentialFile(homeDir, cred) {
   const file = slotWorkerCredentialPath(homeDir)

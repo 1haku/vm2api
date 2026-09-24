@@ -104,11 +104,12 @@ export function createImportCommit(ctx) {
         } catch {}
       }
       if (stats?.account_tier === 'pro' || stats?.account_tier === 'max') {
+        const source = stats.account_tier_source || null
         try {
-          ctx.accountQuota.setAccountTier(accountId, stats.account_tier)
+          ctx.accountQuota.setAccountTier(accountId, stats.account_tier, { source })
         } catch {}
         try {
-          persistAccountTier(ctx.cfg.paths.project, vmId, stats.account_tier)
+          persistAccountTier(ctx.cfg.paths.project, vmId, stats.account_tier, { source })
         } catch {}
         try {
           const vm = getVm(ctx.cfg.paths.project, vmId)

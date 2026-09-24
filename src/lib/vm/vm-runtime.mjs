@@ -101,6 +101,11 @@ export function containerName(vmId) {
   return `kin-${String(vmId || '').replace(/^vm-/, '')}`
 }
 
+export function officialCcUidGid(vmId) {
+  const n = parseVmIndex(vmId) || 1
+  return { uid: UID_BASE + n, gid: Number(process.env.KIN_VM_GID || GID) }
+}
+
 export function displayName(vmId) {
   return String(vmId || '').replace(/^vm-/, '')
 }

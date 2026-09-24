@@ -1066,3 +1066,20 @@ test('elapsed header reset wipes Extra and becomes schedulable', () => {
   assert.equal(Number(saved.unified.headers['5h'].utilization), 0)
   assert.equal(saved.unified.headers['5h'].status, 'active')
 })
+
+test('profile-sourced tier is not overwritten by Fable signals or non-profile writes', async () => {
+  const quota = new AccountQuota({ dataDir: tmpDir(), config: {} })
+  quota.ensure({ account_id: 'acct-profile', vm_id: 'vm-01' })
+  quota.setAccountTier('acct-profile', 'pro', { source: 'profile' })
+  quota.setAccountTier('acct-profile', 'max')
+  assert.equal(quota.repo.get('acct-profile').unified.account_tier, 'pro')
+  quota.ingestOAuthUsage('acct-profile', {
+    ok: true,
+    usage_status: 200,
+    usage_has_fable: true,
+    seven_day_oi: { utilization: 0.2, resets_at: '2026-09-30T00:00:00Z' },
+  })
+  assert.equal(quota.repo.get('acct-profile').unified.account_tier, 'pro')
+  quota.setAccountTier('acct-profile', 'max', { source: 'profile' })
+  assert.equal(quota.repo.get('acct-profile').unified.account_tier, 'max')
+})
