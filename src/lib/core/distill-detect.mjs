@@ -232,6 +232,12 @@ function matchNeedles(text, needles) {
   }
   return ''
 }
+function isNegatedExtraction(text, index) {
+  // A ban on disclosing reasoning is not itself a request to extract it.
+  // Only ignore a directly negated match; another match later in the prompt still blocks.
+  return /\b(?:do not|don't|never|must not|should not)\s+$/i.test(text.slice(0, index))
+}
+
 function matchPatterns(text, patterns) {
   const hay = normalizeText(text)
   if (!hay) return ''
@@ -240,12 +246,13 @@ function matchPatterns(text, patterns) {
     if (!source || source.length > 400) continue
     let re
     try {
-      re = new RegExp(source, 'i')
+      re = new RegExp(source, 'gi')
     } catch {
       continue
     }
-    const found = re.exec(hay)
-    if (found?.[0]) return String(found[0]).slice(0, 80)
+    for (const found of hay.matchAll(re)) {
+      if (!isNegatedExtraction(hay, found.index)) return String(found[0]).slice(0, 80)
+    }
   }
   return ''
 }
