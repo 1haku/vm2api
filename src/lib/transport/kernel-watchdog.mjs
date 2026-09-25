@@ -2,8 +2,19 @@
  * Host watchdog for rust PID-1 slots. Restarts the container via
  * ensureRustKernel; never falls back to kin-worker hop.
  */
-import { rustKernelHealth, rustKernelReachable, rustKernelBusy, rustKernelPaths } from './rust-kernel-client.mjs'
-import { ensureRustKernel, readExistingKernelConfig, WRAP_SLOT_MAX } from './rust-kernel-supervisor.mjs'
+import {
+  rustKernelHealth,
+  rustKernelReachable,
+  rustKernelBusy,
+  rustKernelProcessUp,
+  rustKernelPaths,
+} from './rust-kernel-client.mjs'
+import {
+  ensureRustKernel,
+  readExistingKernelConfig,
+  dataplaneUsesCcNode,
+  WRAP_SLOT_MAX,
+} from './rust-kernel-supervisor.mjs'
 import { normalizeInferenceEngine } from '../vm/slot-engine.mjs'
 
 export const DEFAULT_KERNEL_WATCHDOG = Object.freeze({
@@ -70,6 +81,8 @@ export function createKernelWatchdog({
         }
         const current = await health(exec, { timeoutMs: 800 })
         if (rustKernelBusy(current)) continue
+        // cc-node is the crag worker. Restarting a live kernel SIGKILLs it.
+        if (dataplaneUsesCcNode(exec) && rustKernelProcessUp(current)) continue
         if (rustKernelReachable(current) && !kernelSlotMismatch(exec)) continue
         await ensure(exec, { timeoutMs: config.timeout_ms })
       }
