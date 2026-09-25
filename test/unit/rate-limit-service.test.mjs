@@ -189,6 +189,41 @@ test('clearExpired drops elapsed rate limit and overload columns', () => {
   }
 })
 
+test('a second distinct empty hop parks only that account', () => {
+  const { service, runtimeRepo, close } = setup({ empty_response_cooldown_sec: 60 })
+  try {
+    const first = service.noteDistinctEmptyHop({
+      accountId: 'acc-1',
+      vmId: 'vm-01',
+      requestId: 'req-1',
+      now: 1_700_000_000_000,
+    })
+    assert.equal(first.parked, false)
+    assert.equal(first.count, 1)
+    assert.equal(runtimeRepo.get('acc-1').cooldown_until, null)
+    const retry = service.noteDistinctEmptyHop({
+      accountId: 'acc-1',
+      vmId: 'vm-01',
+      requestId: 'req-1',
+      now: 1_700_000_000_000,
+    })
+    assert.equal(retry.duplicate, true)
+    assert.equal(retry.parked, false)
+    const second = service.noteDistinctEmptyHop({
+      accountId: 'acc-1',
+      vmId: 'vm-01',
+      requestId: 'req-2',
+      now: 1_700_000_000_000,
+    })
+    assert.equal(second.parked, true)
+    assert.equal(second.kind, 'empty_response')
+    assert.equal(runtimeRepo.get('acc-1').cooldown_reason, 'empty_response')
+    assert.equal(runtimeRepo.get('acc-1').cooldown_until, 1_700_000_000_000 + 60_000)
+  } finally {
+    close()
+  }
+})
+
 test('anthropic429Reset prefers an exhausted 7d window over 5h', () => {
   const now = 1_700_000_000_000
   const out = anthropic429Reset(

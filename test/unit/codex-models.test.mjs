@@ -46,6 +46,8 @@ test('parseCodexModelCatalog uses official slug/display_name and drops luna-wm',
     models: [
       { slug: 'gpt-5.6', display_name: 'GPT-5.6' },
       { slug: 'gpt-5.4-mini', display_name: 'GPT-5.4 Mini' },
+      { slug: 'gpt-6-sol', display_name: 'GPT-6 Sol' },
+      { slug: 'gpt-6-luna', display_name: 'GPT-6 Luna' },
       { slug: 'gpt-5.6-luna-wm', display_name: 'Luna' },
       { slug: 'whisper-1' },
       { slug: 'claude-sonnet-5' },
@@ -53,7 +55,7 @@ test('parseCodexModelCatalog uses official slug/display_name and drops luna-wm',
   })
   assert.deepEqual(
     models.map((m) => m.id),
-    ['gpt-5.6', 'gpt-5.4-mini'],
+    ['gpt-5.6', 'gpt-5.4-mini', 'gpt-6-sol', 'gpt-6-luna'],
   )
   assert.equal(models[0].display_name, 'GPT-5.6')
   assert.deepEqual(parseChatgptModelIds({ models: [{ slug: 'gpt-5.6' }] }), ['gpt-5.6'])
@@ -74,6 +76,8 @@ test('fetchChatgptModelCatalog hits /codex/models and does not treat 401 as succ
           models: [
             { slug: 'gpt-5.6', display_name: 'GPT-5.6' },
             { slug: 'gpt-5.4', display_name: 'GPT-5.4' },
+            { slug: 'gpt-6-sol', display_name: 'GPT-6 Sol' },
+            { slug: 'gpt-6-luna', display_name: 'GPT-6 Luna' },
             { slug: 'gpt-5.6-luna-wm', display_name: 'Luna' },
           ],
         }),
@@ -81,7 +85,7 @@ test('fetchChatgptModelCatalog hits /codex/models and does not treat 401 as succ
     },
   })
   assert.equal(ok.ok, true)
-  assert.deepEqual(ok.ids, ['gpt-5.6', 'gpt-5.4'])
+  assert.deepEqual(ok.ids, ['gpt-5.6', 'gpt-5.4', 'gpt-6-sol', 'gpt-6-luna'])
   assert.equal(ok.models[0].display_name, 'GPT-5.6')
   assert.match(String(calls[0].url), /\/backend-api\/codex\/models/)
   assert.equal(calls[0].headers.authorization, 'Bearer tok')
