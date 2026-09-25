@@ -11,6 +11,7 @@ import {
   PROMPT_CACHING_SCOPE_BETA,
   MID_CONVERSATION_SYSTEM_BETA,
   alignSamplingWithThinking,
+  ensureClearThinkingContextManagement,
 } from '../../src/lib/protocol/anthropic-policy.mjs'
 
 test('request policy strips empty blocks, caps cache controls and keeps forced-tool thinking', () => {
@@ -318,6 +319,28 @@ test('Haiku inbound context_management is stripped', () => {
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
   })
   assert.equal(body.context_management, undefined)
+})
+
+test('Haiku inbound context_management is stripped when thinking is off or disabled', () => {
+  for (const thinking of [undefined, { type: 'disabled' }]) {
+    const body = ensureClearThinkingContextManagement({
+      model: 'claude-haiku-4-5-20251001',
+      ...(thinking ? { thinking } : {}),
+      context_management: { edits: [{ type: 'clear_thinking_20251015' }] },
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    })
+    assert.equal(body.context_management, undefined, `thinking=${JSON.stringify(thinking)}`)
+  }
+})
+
+test('Sonnet keeps caller context_management when thinking is off', () => {
+  const edits = [{ type: 'clear_tool_uses_20250919' }]
+  const body = ensureClearThinkingContextManagement({
+    model: 'claude-sonnet-5',
+    context_management: { edits },
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  })
+  assert.deepEqual(body.context_management.edits, edits)
 })
 
 test('unofficial missing thinking/effort fills official 2.1.241 defaults', () => {

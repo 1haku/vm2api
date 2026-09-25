@@ -142,6 +142,19 @@ test('prepareCliHopBody disables thinking on Haiku so wrap CLI cannot inherit ad
   assert.equal(body.context_management, undefined)
 })
 
+test('prepareCliHopBody drops caller context_management on Haiku (thinking pinned off)', () => {
+  // Claude Code 的 Haiku 旁路请求会带 clear_thinking。cli-hop 把 Haiku thinking 固定为 disabled
+  // 且跳过 beta 清洗，所以必须在这里删掉该字段，否则上游会杀掉 CLI。
+  const body = prepareCliHopBody({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 512,
+    context_management: { edits: [{ type: 'clear_thinking_20251015' }] },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(body.thinking?.type, 'disabled')
+  assert.equal(body.context_management, undefined)
+})
+
 test('prepareCliHopBody disables Haiku adaptive thinking', () => {
   const body = prepareCliHopBody({
     model: 'claude-haiku-4-5',
