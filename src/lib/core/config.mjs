@@ -68,7 +68,7 @@ export function loadConfig() {
     },
     distill: loadDistillRules(path.join(ROOT, 'config', 'distill-rules.json')),
     limits: {
-      max_body_bytes: Number(process.env.KIN_MAX_BODY || 32 * 1024 * 1024),
+      max_body_bytes: Number(process.env.KIN_MAX_BODY || 128 * 1024 * 1024),
       // First-byte wait for worker HTTP headers. Matches sub2api
       // gateway.response_header_timeout (600s). Idle is stream_idle_timeout_ms.
       upstream_timeout_ms: Number(process.env.KIN_UPSTREAM_TIMEOUT || 600000),
