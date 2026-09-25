@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { createKernelWatchdog, isKernelWatchdogTarget } from '../../src/lib/transport/kernel-watchdog.mjs'
 
@@ -32,4 +35,26 @@ test('watchdog ensure is called only when rust is unreachable', async () => {
   })
   await wd.tick()
   assert.deepEqual(ensured, ['vm-down', 'vm-go'])
+})
+
+test('watchdog does not restart a live crag slot', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wd-crag-'))
+  const home = path.join(root, 'vms', 'vm-crag', 'cli-home')
+  const run = path.join(root, 'vms', 'vm-crag', 'run')
+  fs.mkdirSync(home, { recursive: true })
+  fs.mkdirSync(run, { recursive: true })
+  fs.writeFileSync(path.join(run, 'kernel.json'), JSON.stringify({ dataplane: 'crag' }))
+  const ensured = []
+  const wd = createKernelWatchdog({
+    listTargets: () => [{ id: 'vm-crag', inference_engine: 'rust' }],
+    homeDirFor: () => home,
+    health: async () => ({ ok: true, engine: 'rust', ready_slots: 0, cli_pid: 0 }),
+    ensure: async (exec) => {
+      ensured.push(exec.vmId)
+      return { ok: true }
+    },
+  })
+  await wd.tick()
+  assert.deepEqual(ensured, [])
+  fs.rmSync(root, { recursive: true, force: true })
 })

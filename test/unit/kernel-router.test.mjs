@@ -8,6 +8,7 @@ import {
   resolveHopEngine,
   dispatchStreamInference,
   dispatchCallInference,
+  isDeadWrapHop,
   rustHealthTtlMs,
   rustSlotWaitMs,
   resolveHopSlotWaitMs,
@@ -41,6 +42,29 @@ import { socksUidFor } from '../../src/lib/vm/vm-runtime.mjs'
 
 const unix = process.platform !== 'win32'
 const unixTest = unix ? test : test.skip
+
+test('empty assistant hop does not SIGKILL the supervisor', () => {
+  assert.equal(
+    isDeadWrapHop({
+      ok: false,
+      status: 200,
+      terminalState: 'incomplete',
+      transportError: false,
+      body: { type: 'message', role: 'assistant', content: [], stop_reason: null },
+    }),
+    false,
+  )
+  assert.equal(
+    isDeadWrapHop({
+      ok: false,
+      status: 0,
+      terminalState: 'transport_error',
+      transportError: true,
+      body: { error: { message: 'socket hang up' } },
+    }),
+    true,
+  )
+})
 
 test('wrap system error is not a credential ensure; 401 still is', () => {
   assert.equal(
