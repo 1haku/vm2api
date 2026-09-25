@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.52 — 2026-09-25
+
+- 空跳或只有 thinking、没有 `stop_reason` 的请求，同号重试一次后返回 502 `incomplete_response`。这一次请求不再停调、不换号。同一个号在另一次请求里再次空跳，才暂停该号 60 秒。（#131）
+- 入站体上限默认 128MB。超限在选号前返回 413 `body_too_large`。（#131）
+- Codex 模型同步带上 `gpt-6-sol` 和 `gpt-6-luna`。（#131）
+- Haiku 的 cli-hop 在 thinking 关闭时丢掉 `context_management`，避免旁路请求把槽打成 502 后拖垮号池。（#121）
+- 「不要透露隐藏推理」这类否定句不再被蒸馏守卫拦成 403。（#129）
+
+已部署机升级：只覆盖控制面并重启 Node 一次。二进制未变，不必 `wrap-cli/sync`。不要 `docker rm` 槽。
+
 ## 1.3.51 — 2026-09-25
 
 - crag 不再把写死的 “persistent Crag request slot” 当作 agent 提示词。系统内容改跟槽位人设：0 注入、官方提示词、完整官方提示词。
