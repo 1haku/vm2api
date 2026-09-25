@@ -58,7 +58,7 @@ x-api-key: sk-vm-…
 | 钉槽（仅 master） | 虚拟机测试 loopback |
 | `X-Request-ID` | 原样回写响应头 |
 
-体大小上限默认 2MB。超限 `400 body_too_large`。
+体大小上限默认 128MB（`KIN_MAX_BODY` 可覆盖）。超限在选号之前返回 `413 body_too_large`，不进入号池。
 
 ## Messages
 
@@ -226,14 +226,14 @@ curl -sS https://ccmax20.cc/health
 {"error":{"type":"upstream_error","code":"incomplete_response","message":"Assistant hop ended without visible output or stop_reason"}}
 ```
 
-含义：请求已交给槽内 CLI，但这一轮结束时既没有可见输出（text / tool_use / refusal），也没有 `stop_reason`。只有 thinking 也算。网关会先在同账号重试，再暂停该账号约 60 秒并换号。还有可调度账号就继续；池里已经没有可调度账号时，客户端收到 503 `overloaded_error`（`号池负载过高，稍后再试`），不再把空池伪装成这个 502。换号次数或总尝试用尽、或诊断钉死在某一个槽时，才返回这个错误。
+含义：请求已交给槽内 CLI，但这一轮结束时既没有可见输出（text / tool_use / refusal），也没有 `stop_reason`。只有 thinking 也算。网关在同账号重试一次，仍没有完整输出就把这个 502 交回客户端。这一次请求不停调、不换号。同一个号在另一次请求里再次空跳，才暂停该号约 60 秒。诊断钉死在某一个槽时，停在该槽并返回这个错误。
 
 常见原因与处理：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 同一个槽的请求**全部**失败，每次约 20–30 秒才返回；面板代理探测却是绿的 | 槽容器到宿主机 `kin-egress` 网关被宿主机防火墙拦截（常见于 UFW 入站默认拒绝）。容器内 DNS 和出站 TCP 都超时，CLI 重试到放弃，没有任何输出 | 放行 `keg*` 网卡到网关端口的入站，见 [DEPLOY.md「防火墙」](DEPLOY.md#防火墙ufw--firewalld) |
-| 偶发，重试后成功 | 上游流中断或模型只返回了 thinking | 客户端重试即可；网关已自动重试和换号 |
+| 偶发，重试后成功 | 上游流中断或模型只返回了 thinking | 客户端重试即可；网关已在同号自动重试一次 |
 | 某个槽持续失败，重启槽后恢复 | 槽内 CLI 卡死，slot 未释放 | 面板重启该槽 |
 
 面板代理探测是从宿主机本机连网关端口，不经过「容器 → 网关」这一跳，所以防火墙拦截时它仍显示正常。确认方法：
