@@ -128,7 +128,7 @@ export function resolveHopEngine(_vm, _routing = {}, { rustReady = null, binPath
  * the transport restored (429 limit, 529, 401, stream error) is a response,
  * not a dead slot — SIGKILLing the CLI there is how a layout mismatch loops.
  */
-function isDeadWrapHop(result) {
+export function isDeadWrapHop(result) {
   if (!result) return false
   if (result.transportError) return true
   const msg = String(result?.body?.error?.message || '')
@@ -136,10 +136,12 @@ function isDeadWrapHop(result) {
   if (result.streamError) return false
   const status = Number(result.status) || 0
   if (status === 429 || status === 529 || status === 401 || status === 403) return false
-  return result.terminalState === 'incomplete'
+  // No visible output is not a leaked CLI. Recycling here SIGKILLs the
+  // supervisor child, then the same-account retry dies on the restart.
+  return false
 }
 
-/** Incomplete hop occupied a kernel CLI slot. Release it now; do not wait out the recycle cooldown. */
+/** Transport failure may have leaked a CLI slot. Release it now; do not wait out the recycle cooldown. */
 function releaseLeakedSlots(exec, recycleWrap) {
   clearRustHealthCache(cacheKey(exec))
   if (typeof recycleWrap === 'function') {
