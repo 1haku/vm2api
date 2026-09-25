@@ -3,7 +3,7 @@
  * Live ids from ChatGPT sync; seed is empty-catalog fallback.
  */
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
-import { isGptSeriesId } from './gpt-ids.mjs'
+import { isGptSeriesId, isSyncableGptCatalogId } from './gpt-ids.mjs'
 
 const SETTINGS_KEY = 'gpt_model_policy'
 
@@ -34,6 +34,8 @@ function entry(id, extra = {}) {
 export function seedGptPolicy() {
   const models = {}
   for (const [id, extra] of [
+    ['gpt-6-sol', { display_name: 'GPT-6 Sol', sort: 70 }],
+    ['gpt-6-luna', { display_name: 'GPT-6 Luna', sort: 71 }],
     ['gpt-5.6', { display_name: 'GPT-5.6', sort: 76 }],
     ['gpt-5.5', { display_name: 'GPT-5.5', sort: 77 }],
     ['gpt-5.4', { display_name: 'GPT-5.4', sort: 80, aliases: ['codex'] }],
@@ -146,7 +148,7 @@ export function syncGptIdsIntoPolicy(ids = []) {
   const seen = new Set()
   for (const item of ids || []) {
     const id = String(typeof item === 'string' ? item : item?.id || '').trim()
-    if (!isGptSeriesId(id) || seen.has(id.toLowerCase()) || /(?:^|[-_])(luna|wm)(?:[-_]|$)/i.test(id)) continue
+    if (!isSyncableGptCatalogId(id) || seen.has(id.toLowerCase())) continue
     seen.add(id.toLowerCase())
     live.push({
       id,

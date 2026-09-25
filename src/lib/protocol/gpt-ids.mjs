@@ -9,3 +9,11 @@ export function isGptSeriesId(id) {
   const s = String(id || '').trim()
   return GPT_ID_PREFIX.test(s) && !SKIP_GPT.test(s)
 }
+
+/** ChatGPT 网页目录里的 wm / luna-wm 变体，Codex 账号请求会 400。gpt-6-luna 是正式模型。 */
+export function isSyncableGptCatalogId(id) {
+  const slug = String(id || '').trim()
+  if (!isGptSeriesId(slug)) return false
+  if (/luna-wm/i.test(slug) || /(?:^|[-_])wm(?:[-_]|$)/i.test(slug)) return false
+  return true
+}
