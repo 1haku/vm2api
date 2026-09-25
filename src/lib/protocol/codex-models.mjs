@@ -6,9 +6,9 @@
  */
 import fetch from 'node-fetch'
 import { SocksProxyAgent } from 'socks-proxy-agent'
-import { isGptSeriesId } from './gpt-ids.mjs'
+import { isSyncableGptCatalogId } from './gpt-ids.mjs'
 
-export { SKIP_GPT, GPT_ID_PREFIX, isGptSeriesId } from './gpt-ids.mjs'
+export { SKIP_GPT, GPT_ID_PREFIX, isGptSeriesId, isSyncableGptCatalogId } from './gpt-ids.mjs'
 
 export const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models'
 export const CHATGPT_MODELS_URL = CODEX_MODELS_URL
@@ -24,11 +24,7 @@ export const CODEX_APP_VERSION = '0.153.4'
 export const CODEX_USER_AGENT = 'codex_cli_rs/0.153.4 (linux x86_64)'
 
 function isCodexRequestSlug(id) {
-  const slug = String(id || '').trim()
-  if (!isGptSeriesId(slug)) return false
-  // ChatGPT 网页目录里的 luna/wm 变体，Codex ChatGPT 账号会 400。
-  if (/(?:^|[-_])(luna|wm)(?:[-_]|$)/i.test(slug)) return false
-  return true
+  return isSyncableGptCatalogId(id)
 }
 
 /**
