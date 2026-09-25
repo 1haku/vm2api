@@ -4,7 +4,7 @@
  * One writer for the hard columns the scheduler gates on:
  *   429 → rate_limit_reset_at (+ session_window rejected)
  *   529 → overload_until
- *   empty stream → temp_unschedulable (short cooldown)
+ *   empty stream → counted per request; the second distinct request parks the account
  * Passive Extra utilization stays in account-quota for the panel; it never
  * clears these columns. Only a live `5h-status=allowed` header or the reset
  * passing lifts a rate limit (sub2api UpdateSessionWindow → ClearRateLimit).
@@ -88,6 +88,7 @@ export class RateLimitService {
     this.accountQuota = accountQuota
     this.config = normalizeRateLimitConfig(config)
     this.onUsageProbe = onUsageProbe
+    this.emptyHopRequests = new Map()
   }
 
   setConfig(config = {}) {
@@ -97,7 +98,8 @@ export class RateLimitService {
   /**
    * sub2api HandleUpstreamError: writes the hard column for this failure. Returns the block, or null.
    * The classifier decides the scope; a model / Fable 429 stays a model cooldown.
-   * Empty hops are parked by the failover loop via tempUnschedule after same-account retries.
+   * Empty hops are noted by the failover loop after the same-account retry.
+   * The first distinct request does not park. A later request does.
    */
   handleUpstreamError({ accountId, vmId, result = {}, policy = null, now = Date.now() } = {}) {
     if (!accountId || !this.runtimeRepo || result?.committed) return null
@@ -149,6 +151,21 @@ export class RateLimitService {
     const until = now + this.config.empty_response_cooldown_sec * 1000
     this.runtimeRepo.markCooldown?.(accountId, { vmId, until, reason: EMPTY_RESPONSE_REASON, status: 'cooldown' })
     return { kind: 'empty_response', until }
+  }
+
+  /**
+   * One empty hop per request. Retries inside that request must reuse requestId.
+   * The second distinct request parks only this account.
+   */
+  noteDistinctEmptyHop({ accountId, vmId, requestId, now = Date.now() } = {}) {
+    if (!accountId) return { parked: false, count: 0 }
+    const id = String(requestId || '')
+    const prev = this.emptyHopRequests.get(accountId) || { requestId: null, count: 0 }
+    if (id && prev.requestId === id) return { parked: false, count: prev.count, duplicate: true }
+    const count = prev.count + 1
+    this.emptyHopRequests.set(accountId, { requestId: id || null, count })
+    if (count < 2) return { parked: false, count }
+    return { parked: true, count, ...this.tempUnschedule({ accountId, vmId, now }) }
   }
 
   /**

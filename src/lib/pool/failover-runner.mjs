@@ -230,12 +230,14 @@ function isCredentialDeath(policy) {
   return policy?.action === 'disable' || policy?.reason === 'oauth_no_refresh' || policy?.reason === 'oauth_revoked'
 }
 
-/**
- * Same-account budget spent on an empty / thinking-only hop: park the slot
- * briefly and switch (sub2api TempUnscheduleRetryableError → tempUnscheduleEmptyResponse).
- */
+/** Empty / thinking-only hop. Same-account retry only; never a reason to walk the pool. */
 function isRetryableEmptyHop(policy) {
   return policy?.reason === 'incomplete_assistant' || policy?.reason === 'empty_response'
+}
+
+function unfinishedExhausted(result, policy, fallback, extras = {}) {
+  if (!isUnfinishedLastResult(result, policy)) return null
+  return { ...fallback, ...extras }
 }
 
 function dropIncompleteSession(scheduler, selected, bindKeys, result, policy) {
@@ -675,43 +677,49 @@ export class FailoverRunner {
           }
           continue
         }
-        // Same-account budget spent on an empty / thinking-only hop: park this
-        // slot briefly and move on (sub2api tempUnscheduleEmptyResponse). Pinned
-        // diagnostics keep the old stop so a master pin never hops.
+        // Same-account budget spent on an empty / thinking-only hop: return 502.
+        // One request must not park or rotate the pool. A later request that
+        // empty-hops the same account is what noteDistinctEmptyHop may park.
         if (isRetryableEmptyHop(policy)) {
-          if (pinVmId) {
-            return {
-              ...incompleteAssistantClientError(result),
-              via: result?.via || 'pool-failover',
-              accountId: selected.accountId,
-              vmId: selected.vmId,
-              attemptCount: attemptNo,
-              finalState: 'incomplete',
-              policy,
-            }
+          if (!pinVmId) {
+            try {
+              this.rateLimitService?.noteDistinctEmptyHop?.({
+                accountId: selected.accountId,
+                vmId: selected.vmId,
+                requestId,
+              })
+            } catch {}
           }
-          try {
-            this.rateLimitService?.tempUnschedule?.({ accountId: selected.accountId, vmId: selected.vmId })
-          } catch {}
+          return {
+            ...incompleteAssistantClientError(result),
+            via: result?.via || 'pool-failover',
+            accountId: selected.accountId,
+            vmId: selected.vmId,
+            attemptCount: attemptNo,
+            finalState: 'incomplete',
+            policy,
+          }
         }
 
         const switchesExhausted = budget.noteSwitch(selected.accountId, selected.vmId, {
           spill: policy.reason === 'slot_busy',
         })
         if (switchesExhausted) {
-          return preferLastResult(
-            result,
-            policy,
-            poolError('max_account_switches_exceeded', 'Maximum account switches exceeded', {
-              attempt_count: attemptNo,
-              last_scope: policy.scope,
-            }),
-            {
-              accountId: selected.accountId,
-              vmId: selected.vmId,
-              attemptCount: attemptNo,
-            },
-          )
+          const exhausted = poolError('max_account_switches_exceeded', 'Maximum account switches exceeded', {
+            attempt_count: attemptNo,
+            last_scope: policy.scope,
+          })
+          const unfinished = unfinishedExhausted(result, policy, exhausted, {
+            accountId: selected.accountId,
+            vmId: selected.vmId,
+            attemptCount: attemptNo,
+          })
+          if (unfinished) return unfinished
+          return preferLastResult(result, policy, exhausted, {
+            accountId: selected.accountId,
+            vmId: selected.vmId,
+            attemptCount: attemptNo,
+          })
         }
       } catch (error) {
         result = {
@@ -786,12 +794,11 @@ export class FailoverRunner {
         selected.release?.()
       }
     }
-    return preferLastResult(
-      lastResult,
-      lastPolicy,
-      poolError('attempts_exhausted', 'Maximum account attempts exhausted', {
-        max_attempts: this.config.max_total_attempts,
-      }),
-    )
+    const attemptsExhausted = poolError('attempts_exhausted', 'Maximum account attempts exhausted', {
+      max_attempts: this.config.max_total_attempts,
+    })
+    const unfinished = unfinishedExhausted(lastResult, lastPolicy, attemptsExhausted)
+    if (unfinished) return unfinished
+    return preferLastResult(lastResult, lastPolicy, attemptsExhausted)
   }
 }

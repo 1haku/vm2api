@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applySseSocketTuning, createRespond } from '../../src/lib/http/respond.mjs'
+import fs from 'node:fs'
+import { Readable } from 'node:stream'
+import { applySseSocketTuning, createRespond, readBody } from '../../src/lib/http/respond.mjs'
+import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 
 test('applySseSocketTuning flushes headers and enables TCP_NODELAY', () => {
   let flushed = false
@@ -34,4 +37,41 @@ test('writeSSEHeaders uses optional tcpNodelay getter', () => {
   }
   writeSSEHeaders(res)
   assert.equal(nodelay, null)
+})
+
+test('default max body fallback is 128MB', () => {
+  const src = fs.readFileSync(new URL('../../src/lib/core/config.mjs', import.meta.url), 'utf8')
+  assert.match(src, /KIN_MAX_BODY \|\| 128 \* 1024 \* 1024/)
+})
+
+test('oversized protocol body returns 413 before scheduling', async () => {
+  let scheduled = false
+  const { handleProtocol } = createHandleProtocol({
+    cfg: { limits: { max_body_bytes: 8 }, rewrite: { enabled: false } },
+    json(res, status, body) {
+      res.statusCode = status
+      res.body = body
+    },
+    readBody,
+    requireAuth: () => true,
+    requestLog: {
+      start: () => ({ request_id: 'req-413' }),
+      finish() {},
+    },
+    stats: { errors: 0 },
+    groupsRepo: { rateMultiplier: () => 1 },
+    getFailoverRunner() {
+      scheduled = true
+      throw new Error('scheduler called')
+    },
+  })
+  const req = Readable.from([
+    Buffer.from('{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hello hello"}]}'),
+  ])
+  req.headers = {}
+  const res = { statusCode: 0, body: null, on() {} }
+  await handleProtocol(req, res, 'anthropic.messages', '/v1/messages')
+  assert.equal(scheduled, false)
+  assert.equal(res.statusCode, 413)
+  assert.equal(res.body.error.code, 'body_too_large')
 })
