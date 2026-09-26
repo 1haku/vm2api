@@ -6,7 +6,7 @@
  * Pin with master-only x-kin-vm. Does not call the Go worker directly.
  *
  * Full OAuth Claude slots mimic official Claude Code (UA + 4-block rewrite).
- * Setup Token / Console Key are inference-only: unofficial test UA, no
+ * Setup Token / Console Key use inference-style inbound: unofficial test UA, no
  * official four-gate inbound (context-1m / CC session scope would 401).
  */
 import http from 'node:http'

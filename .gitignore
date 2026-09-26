@@ -20,8 +20,7 @@ bin/*
 !bin/kin-egress
 !bin/kin-worker
 !bin/kin-codex-kernel
-!bin/kin-cookie-auth
-share/*
+!bin/kin-oauth-auth
 !share/wrap-cli/
 !share/wrap-cli/**
 share/wrap-cli/cli-dist/

@@ -76,7 +76,7 @@ export function apiKeyBetaHeader(header = '') {
   return stripped || API_KEY_BETAS.join(',')
 }
 
-/** Setup Token is user:inference only. Claude Code session betas 401 it. */
+/** Setup Token runtime uses the inference-compatible beta set. Claude Code session betas 401 it. */
 export function setupTokenBetaHeader(modelId = '') {
   if (/haiku/i.test(String(modelId || ''))) return HAIKU_BETA_HEADER
   return joinBetas([BETA_OAUTH, BETA_INTERLEAVED, BETA_CONTEXT_MANAGEMENT])

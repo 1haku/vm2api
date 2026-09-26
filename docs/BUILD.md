@@ -29,15 +29,14 @@ git push origin v1.2.22
 | `kin-kernel` | Claude Code 槽内核（仓内预编译，推理必带） |
 | `kin-egress` | 远程 SOCKS5 透明网关 |
 | `kin-worker` | **只** `telemetry`，不是 hop |
-| `kin-codex-kernel` | Codex 槽；仓内 `bin/` 已带 |
-| `kin-cookie-auth` | sessionKey / 授权码换票 helper；仓内预编译 ELF |
-
+| `kin-codex-kernel` | Codex 槽；仓内预编译 |
+| `kin-oauth-auth` | OAuth / Setup Token 换票服务二进制；源码不随部署上传 |
 没有 tag、只点 workflow_dispatch 时，产物进 artifact，不会建 Release。
 
 装到机器上（Compose 部署可跳过，仓内 `bin/` 已有同名文件）：
 
 ```bash
-install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-cookie-auth /opt/vm2api/bin/
+install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-oauth-auth /opt/vm2api/bin/
 ```
 
 然后按 [DEPLOY.md](DEPLOY.md) 指环境变量。槽进程不是 root：权限必须是 `755`，不要 `700`。
@@ -46,7 +45,7 @@ install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-cookie-auth
 
 ## 本机构建
 
-依赖：Node 22、Go 1.25、pnpm 10、python3（官方 CLI PTY 脚本）。换票走仓内 `bin/kin-cookie-auth`。kernel / wrap CLI 用仓内 ELF，不要在本机 cargo / 重编 Claude Code。
+依赖：Node 22、Go 1.25、pnpm 10、python3（官方 CLI PTY 脚本）。OAuth 换票由控制面 spawn `bin/kin-oauth-auth` 完成；`auth.js` 只保留在本地构建目录，不上传到控制面。kernel / wrap CLI 用仓内 ELF，不要在本机 cargo / 重编 Claude Code。
 
 ```bash
 npm ci
