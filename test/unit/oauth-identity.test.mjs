@@ -137,7 +137,7 @@ test('normalizeOauth and import commit keep nested oauth_account', () => {
   assert.equal(imported.type, 'setup-token')
 })
 
-test('full-scope setup-token export stays OAuth during import', () => {
+test('explicit full-scope setup-token export stays setup-token during import', () => {
   const { importedCredentialFromOauth } = createImportCommit({})
   const imported = importedCredentialFromOauth(
     {
@@ -148,7 +148,7 @@ test('full-scope setup-token export stays OAuth during import', () => {
     },
     {},
   )
-  assert.equal(imported.type, 'oauth')
+  assert.equal(imported.type, 'setup-token')
   assert.deepEqual(imported.scopes, ['user:profile', 'user:inference', 'user:sessions:claude_code'])
 })
 

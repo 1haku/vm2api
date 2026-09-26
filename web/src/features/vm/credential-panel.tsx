@@ -386,15 +386,15 @@ function ClaudeCredentialPanel({
           <Hint>
             {kind === 'setup-token'
               ? !sessionKey.trim()
-                ? '同一套 sessionKey 换票，scope 只有 user:inference。sk-ant-sid 经该槽 SOCKS5 换票；其它值按 access token 落盘。不跑官方初装。'
+                ? 'sessionKey 经槽出口申请完整 OAuth 权限（含 profile、inference、sessions），采集身份并开启账号 Grove（Help improve Claude）。以 Setup Token 模式运行，不跑官方初装；直接粘贴 access token 不增加权限。'
                 : SESSION_KEY_PREFIX.test(sessionKey.trim())
-                  ? '识别为 sessionKey，将经该槽 SOCKS5 换成 Setup Token。'
-                  : '识别为 access token，将按 Setup Token 直接落盘。'
+                  ? '识别为 sessionKey，将申请完整 OAuth 权限、采集身份并开启账号 Grove，以 Setup Token 模式运行。'
+                  : '识别为 access token，将按 Setup Token 直接落盘，不增加权限。'
               : !sessionKey.trim()
-                ? '按前缀自动识别：sk-ant-sid 开头经该槽 SOCKS5 换票，否则按 access token 直接落盘。'
+                ? 'sk-ant-sid 经槽出口申请完整 OAuth 权限、采集身份并开启账号 Grove（Help improve Claude）；其它值按 access token 直接落盘，不增加权限。'
                 : SESSION_KEY_PREFIX.test(sessionKey.trim())
-                  ? '识别为 sessionKey，将经该槽 SOCKS5 换票。'
-                  : '识别为 access token，将直接落盘。'}
+                  ? '识别为 sessionKey，将申请完整 OAuth 权限、采集身份并开启账号 Grove（Help improve Claude）。'
+                  : '识别为 access token，将直接落盘，不增加权限。'}
           </Hint>
           <Button
             size='sm'
@@ -470,15 +470,15 @@ function ClaudeCredentialPanel({
           </div>
           <Hint>
             {kind === 'setup-token'
-              ? `连接形式换票，scope 只有 user:inference。浏览器须走 ${proxyHint || '同一 SOCKS5'}。授权码必须含 # 后半段。不跑官方初装。`
-              : `浏览器须走 ${proxyHint || '同一 SOCKS5'}。授权码必须含 # 后半段。`}
+              ? `申请完整 OAuth 权限，换票后采集身份并开启账号 Grove（Help improve Claude）。浏览器须走 ${proxyHint || '同一槽出口'}，授权码须含 # 后半段。以 Setup Token 模式运行，不跑官方初装。`
+              : `浏览器须走 ${proxyHint || '同一槽出口'}，授权码须含 # 后半段。换票后采集身份并开启账号 Grove（Help improve Claude）。`}
           </Hint>
         </div>
       ) : (
         <div className='space-y-2'>
           <Hint>
             {kind === 'setup-token'
-              ? `连接形式：生成 user:inference 授权链接。换票经槽 SOCKS5，浏览器须走 ${proxyHint || '同一 SOCKS5'}。`
+              ? `连接形式：生成完整 OAuth 权限授权链接。换票经槽 SOCKS5，浏览器须走 ${proxyHint || '同一槽出口'}；落盘后仍以 Setup Token 模式运行。`
               : activeMethod === 'cc'
                 ? '官方 Claude Code 授权页。换票经槽 SOCKS5，打开链接仍是本机浏览器。'
                 : `换票经槽 SOCKS5，浏览器须走 ${proxyHint || '同一 SOCKS5'}。`}

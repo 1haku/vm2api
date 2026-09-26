@@ -145,9 +145,6 @@ func (s *Store) Load() (Credential, map[string]any, error) {
 	if typed := firstString(oauth, "type"); typed != "" && credential.Type == TypeOAuth {
 		credential.Type = NormalizeType(typed)
 	}
-	if hasFullOAuthScope(scopes) {
-		credential.Type = TypeOAuth
-	}
 	if api := nestedMap(document, "anthropicApiKey"); api != nil {
 		if key := firstString(api, "apiKey", "api_key"); key != "" {
 			credential.Type = TypeAPIKey
@@ -184,9 +181,6 @@ func (s *Store) Save(credential Credential, document map[string]any) (Credential
 		document = make(map[string]any)
 	}
 	credential.Type = NormalizeType(credential.Type)
-	if hasFullOAuthScope(credential.Scopes) {
-		credential.Type = TypeOAuth
-	}
 	credential.AuthScheme = NormalizeAuthScheme(credential.AuthScheme, credential.Type)
 	document["type"] = credential.Type
 	document["authScheme"] = credential.AuthScheme
@@ -414,15 +408,6 @@ func asInt64(value any) int64 {
 		return 0
 	}
 }
-func hasFullOAuthScope(scopes []string) bool {
-	for _, scope := range scopes {
-		if scope == "user:profile" || scope == "user:office" || scope == "user:sessions:claude_code" {
-			return true
-		}
-	}
-	return false
-}
-
 func stringSlice(value any) []string {
 	switch typed := value.(type) {
 	case []string:
@@ -472,9 +457,6 @@ func DecodeImport(reader io.Reader, maxBytes int64) (Credential, error) {
 		expiry = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second).UnixMilli()
 	}
 	typ := NormalizeType(payload.Type)
-	if hasFullOAuthScope(payload.Scopes) {
-		typ = TypeOAuth
-	}
 	apiKey := strings.TrimSpace(payload.APIKey)
 	if apiKey == "" && typ == TypeAPIKey {
 		apiKey = strings.TrimSpace(payload.AccessToken)

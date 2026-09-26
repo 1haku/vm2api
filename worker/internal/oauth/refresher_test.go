@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -71,6 +72,45 @@ func TestEnsureDeduplicatesConcurrentRefresh(t *testing.T) {
 	}
 	if current.RefreshToken != "refresh-2" || current.AccessToken != "access-2" {
 		t.Fatalf("stored credential = %#v", current)
+	}
+}
+
+func TestEnsurePreservesSetupTokenTypeAndFullScopes(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":28800,"scope":"user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"}`))
+	}))
+	defer upstream.Close()
+
+	store := credential.NewStore(filepath.Join(t.TempDir(), "credentials.json"))
+	if _, err := store.Save(credential.Credential{
+		Type:         credential.TypeSetupToken,
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(-time.Minute).UnixMilli(),
+		Scopes: []string{
+			"user:profile",
+			"user:inference",
+			"user:sessions:claude_code",
+			"user:mcp_servers",
+			"user:file_upload",
+		},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	refresher := &Refresher{Store: store, Client: upstream.Client(), TokenURL: upstream.URL, MaxTries: 1}
+	if _, err := refresher.Ensure(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Type != credential.TypeSetupToken || current.RefreshToken != "refresh-2" {
+		t.Fatalf("stored credential = %#v, want setup-token with rotated refresh", current)
+	}
+	if got := strings.Join(current.Scopes, " "); got != "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload" {
+		t.Fatalf("scopes = %q", got)
 	}
 }
 
