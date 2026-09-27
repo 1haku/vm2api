@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LineChart,
   List,
+  MessageSquareText,
   Monitor,
   Network,
   Puzzle,
@@ -26,6 +27,7 @@ export type ViewId =
   | 'models'
   | 'loadtest'
   | 'protocol'
+  | 'system'
   | 'keys'
   | 'api'
   | 'logs'
@@ -44,6 +46,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   models: '模型',
   loadtest: '压测',
   protocol: '协议',
+  system: 'system提示词',
   keys: '密钥',
   api: 'API',
   logs: '日志',
@@ -67,6 +70,7 @@ export const NAV_ITEMS: {
   { id: 'models', url: '/models', icon: List },
   { id: 'loadtest', url: '/loadtest/reports', icon: Gauge },
   { id: 'protocol', url: '/protocol', icon: Box },
+  { id: 'system', url: '/system', icon: MessageSquareText },
   { id: 'keys', url: '/keys', icon: KeyRound },
   { id: 'logs', url: '/logs', icon: ScrollText },
   { id: 'database', url: '/database', icon: Database },

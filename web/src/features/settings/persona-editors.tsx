@@ -45,15 +45,16 @@ export function RadioRow<T extends string>({
 
 export function VarsHint({ vars }: { vars: [string, string][] }) {
   return (
-    <p className='text-xs leading-relaxed text-muted-foreground'>
-      可用占位符：
-      {vars.map(([name, desc], i) => (
-        <span key={name}>
-          {i ? ' · ' : ''}
-          <code className='font-mono'>{`{{${name}}}`}</code> {desc}
-        </span>
+    <div className='flex flex-wrap gap-1'>
+      {vars.map(([name]) => (
+        <code
+          key={name}
+          className='rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground'
+        >
+          {`{{${name}}}`}
+        </code>
       ))}
-    </p>
+    </div>
   )
 }
 
@@ -157,34 +158,16 @@ function PersonaBlockCard({
 }) {
   const cache = cacheControlOf(block)
   return (
-    <div className='space-y-2 rounded-md border border-border/60 p-3'>
+    <div className='space-y-2 rounded-lg border border-border/60 bg-card p-3'>
       <div className='flex flex-wrap items-center gap-2'>
         <Input
-          className='h-8 w-36 font-mono text-xs'
+          className='h-7 w-28 font-mono text-xs'
           value={String(block.id ?? '')}
           placeholder='id'
           aria-label={`第 ${index + 1} 块 id`}
           onChange={(e) => onChange({ ...block, id: e.target.value })}
         />
-        <Input
-          className='h-8 min-w-[10rem] flex-1 text-xs'
-          value={String(block.note ?? '')}
-          placeholder='这块的含义'
-          aria-label={`第 ${index + 1} 块含义`}
-          onChange={(e) => onChange({ ...block, note: e.target.value })}
-        />
-        <Button type='button' size='sm' variant='ghost' onClick={onRemove}>
-          删除
-        </Button>
-      </div>
-      <Textarea
-        className='h-20 font-mono text-xs'
-        value={typeof block.text === 'string' ? block.text : ''}
-        aria-label={`第 ${index + 1} 块内容`}
-        onChange={(e) => onChange({ ...block, text: e.target.value })}
-      />
-      <div className='flex flex-wrap items-center gap-x-4 gap-y-2'>
-        <label className='flex items-center gap-2 text-xs'>
+        <label className='flex items-center gap-1.5 text-[11px] text-muted-foreground'>
           <Switch
             checked={block.hide === true}
             onCheckedChange={(on) => {
@@ -194,9 +177,9 @@ function PersonaBlockCard({
               onChange(next)
             }}
           />
-          遮罩 usage
+          遮罩
         </label>
-        <label className='flex items-center gap-2 text-xs'>
+        <label className='flex items-center gap-1.5 text-[11px] text-muted-foreground'>
           <Switch
             checked={block.drop_if_empty === true}
             onCheckedChange={(on) => {
@@ -206,29 +189,43 @@ function PersonaBlockCard({
               onChange(next)
             }}
           />
-          空则丢弃
+          空丢
         </label>
-        <label className='flex items-center gap-2 text-xs'>
-          cache_control
-          <Input
-            className='h-7 w-20 font-mono text-xs'
-            value={cache.ttl}
-            placeholder='ttl'
-            aria-label={`第 ${index + 1} 块 cache ttl`}
-            onChange={(e) =>
-              onChange(withCacheControl(block, e.target.value, cache.scope))
-            }
-          />
-          <Input
-            className='h-7 w-24 font-mono text-xs'
-            value={cache.scope}
-            placeholder='scope'
-            aria-label={`第 ${index + 1} 块 cache scope`}
-            onChange={(e) =>
-              onChange(withCacheControl(block, cache.ttl, e.target.value))
-            }
-          />
-        </label>
+        <Button
+          type='button'
+          size='sm'
+          variant='ghost'
+          className='ml-auto cursor-pointer'
+          onClick={onRemove}
+        >
+          删
+        </Button>
+      </div>
+      <Textarea
+        className='min-h-20 font-mono text-xs'
+        value={typeof block.text === 'string' ? block.text : ''}
+        aria-label={`第 ${index + 1} 块内容`}
+        onChange={(e) => onChange({ ...block, text: e.target.value })}
+      />
+      <div className='flex items-center gap-2'>
+        <Input
+          className='h-7 w-16 font-mono text-xs'
+          value={cache.ttl}
+          placeholder='ttl'
+          aria-label={`第 ${index + 1} 块 cache ttl`}
+          onChange={(e) =>
+            onChange(withCacheControl(block, e.target.value, cache.scope))
+          }
+        />
+        <Input
+          className='h-7 w-20 font-mono text-xs'
+          value={cache.scope}
+          placeholder='scope'
+          aria-label={`第 ${index + 1} 块 cache scope`}
+          onChange={(e) =>
+            onChange(withCacheControl(block, cache.ttl, e.target.value))
+          }
+        />
       </div>
     </div>
   )
@@ -244,16 +241,13 @@ export function PersonaBlockFields({
   if (!blocks.length) {
     return (
       <div className='space-y-2'>
-        <p className='text-xs text-muted-foreground'>
-          当前方案没有块。保存后出站会回落内置预设。也可以加一块自己写。
-        </p>
+        <p className='text-xs text-muted-foreground'>空 · 回落官方</p>
         <Button
           type='button'
           size='sm'
           variant='outline'
-          onClick={() =>
-            onChange([{ id: 'block_1', note: '', type: 'text', text: '' }])
-          }
+          className='cursor-pointer'
+          onClick={() => onChange([{ id: 'block_1', type: 'text', text: '' }])}
         >
           加一块
         </Button>
@@ -261,7 +255,7 @@ export function PersonaBlockFields({
     )
   }
   return (
-    <div className='space-y-3'>
+    <div className='space-y-2'>
       {blocks.map((block, index) => (
         <PersonaBlockCard
           key={`${String(block.id ?? '')}-${index}`}
@@ -277,12 +271,12 @@ export function PersonaBlockFields({
         type='button'
         size='sm'
         variant='outline'
+        className='cursor-pointer'
         onClick={() =>
           onChange([
             ...blocks,
             {
               id: `block_${blocks.length + 1}`,
-              note: '',
               type: 'text',
               text: '',
             },
@@ -314,7 +308,7 @@ export function PersonaTemplateEditor({
 }) {
   const jsonl = (
     <Textarea
-      className='h-40 font-mono text-xs'
+      className='h-32 font-mono text-xs'
       spellCheck={false}
       aria-label='system 模板 JSONL'
       value={text}
@@ -323,11 +317,14 @@ export function PersonaTemplateEditor({
   )
   return (
     <>
-      <div className='flex items-center justify-between gap-2'>
-        <Label className='text-sm'>
-          {hasErrors ? 'system 模板（JSONL 有错误，先修这一段）' : 'system 块'}
-        </Label>
-        <Button type='button' size='sm' variant='ghost' onClick={onReset}>
+      <div className='flex items-center justify-end'>
+        <Button
+          type='button'
+          size='sm'
+          variant='ghost'
+          className='cursor-pointer'
+          onClick={onReset}
+        >
           恢复预设
         </Button>
       </div>
@@ -336,21 +333,25 @@ export function PersonaTemplateEditor({
       ) : (
         <PersonaBlockFields blocks={blocks} onChange={onBlocksChange} />
       )}
-      <VarsHint vars={PERSONA_TEMPLATE_VARS} />
       {customEmpty ? (
-        <Notice tone='caution'>
-          自定义模板是空的。网关此时<b>不是「什么都不注入」</b>
-          ，而是静默回落到官方提示词预设。真要清空，写一个 text 为空的块。
-        </Notice>
+        <Notice tone='caution'>空模板会回落官方提示词。</Notice>
       ) : null}
       {hasErrors ? null : (
         <Collapsible>
           <CollapsibleTrigger asChild>
-            <Button type='button' size='sm' variant='ghost'>
-              高级：JSONL
+            <Button
+              type='button'
+              size='sm'
+              variant='ghost'
+              className='cursor-pointer'
+            >
+              JSONL
             </Button>
           </CollapsibleTrigger>
-          <CollapsibleContent className='pt-2'>{jsonl}</CollapsibleContent>
+          <CollapsibleContent className='space-y-2 pt-2'>
+            {jsonl}
+            <VarsHint vars={PERSONA_TEMPLATE_VARS} />
+          </CollapsibleContent>
         </Collapsible>
       )}
     </>

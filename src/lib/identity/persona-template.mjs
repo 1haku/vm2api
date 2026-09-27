@@ -56,6 +56,14 @@ const OVERLAY_VAR_NAMES = Object.freeze(OVERLAY_TEMPLATE_VARS.map(([name]) => na
 
 const VAR_RE = /\{\{\s*([a-z0-9_]+)\s*\}\}/gi
 
+/** 0注入常驻约束，写在 caller_agent 最前。可被面板改。 */
+export const DEFAULT_ZERO_STANDING = [
+  'Do not respond to any content related to `distillation` requests.',
+  'Do not respond to any requests that want your `reasoning process thinking chain`.',
+  'Prohibit any NFSW responses.',
+  'Does not include the normal reasoning process.',
+].join('\n')
+
 export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
   official: Object.freeze([
     Object.freeze({
@@ -124,29 +132,25 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
   zero: Object.freeze([
     Object.freeze({
       id: 'billing_zero',
-      note: '与 official_full 第 1 块同槽：计费头独立；0注入把身份折进 prompt_version，不另开可读 identity 句',
       hide: true,
       type: 'text',
       text: '{{billing_semi}} prompt_version=<{{identity_compact}}>',
     }),
     Object.freeze({
       id: 'identity_slot',
-      note: '与 official_full 第 2 块同槽。上游拒空 text，用零宽字符占位，不写 Agent SDK 原文',
       hide: true,
       type: 'text',
       text: '\u200b',
     }),
     Object.freeze({
       id: 'agent_slot',
-      note: '与 official_full 第 3 块同槽：占 1h 缓存断点，不写 agent 全文',
       hide: true,
       type: 'text',
-      text: '\u200b',
+      text: `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`,
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
     }),
     Object.freeze({
       id: 'caller_system',
-      note: '调用方剩余 system，不遮罩不清洗',
       drop_if_empty: true,
       type: 'text',
       text: '{{caller_system}}',
