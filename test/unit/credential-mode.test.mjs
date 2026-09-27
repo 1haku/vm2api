@@ -45,8 +45,14 @@ test('credentialModeFromOauth infers from type, prefix, and scope', () => {
   assert.equal(credentialModeFromOauth({ scope: 'user:inference' }), 'setup-token')
   assert.equal(credentialModeFromOauth({ type: 'oauth', scope: 'user:inference' }), 'setup-token')
   assert.equal(credentialModeFromOauth({ scope: 'user:profile user:inference' }), 'oauth')
-  assert.equal(credentialModeFromOauth({ type: 'setup-token', scopes: ['user:profile', 'user:inference'] }), 'oauth')
-  assert.equal(credentialModeFromOauth({ mode: 'setup-token', scope: 'user:inference user:sessions:claude_code' }), 'oauth')
+  assert.equal(
+    credentialModeFromOauth({ type: 'setup-token', scopes: ['user:profile', 'user:inference'] }),
+    'setup-token',
+  )
+  assert.equal(
+    credentialModeFromOauth({ mode: 'setup-token', scope: 'user:inference user:sessions:claude_code' }),
+    'setup-token',
+  )
   assert.equal(looksLikeConsoleApiKey('sk-ant-api03-abc'), true)
   assert.equal(looksLikeOauthAccessToken('sk-ant-oat01-abc'), true)
   assert.equal(looksLikeOauthAccessToken('sk-ant-api03-abc'), false)
@@ -73,7 +79,7 @@ test('liveOauthToSetupToken keeps refresh and real expiry', () => {
   assert.equal(oauth.access_token, 'sk-ant-oat01-live')
   assert.equal(oauth.refresh_token, 'sk-ant-ort01-live')
   assert.equal(oauth.expires_at, expires)
-  assert.equal(oauth.scope, 'user:inference')
+  assert.equal(oauth.scope, 'user:profile user:inference')
   assert.equal(oauth.source, 'oauth-to-setup-token')
 })
 

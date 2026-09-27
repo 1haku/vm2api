@@ -3,24 +3,22 @@
 活票只写在槽位 `credentials.json`。换票由控制面 host `RefreshIfNeeded` 经槽 SOCKS5 完成；`vm.json`、SQLite 只存脱敏元数据。Go `kin-worker` 不再做 hop / refresh。
 
 ```text
-sessionKey（默认 Setup Token）或 授权码
+sessionKey（默认 Setup Token）或授权码
    │ 必须先有 VM + 槽位 SOCKS5（禁止 direct fallback）
    ▼
-bin/kin-cookie-auth（控制面 spawn；过程不在 Node）
-   │ 先展平 helper/token 里的 oauth_account / account
-   │ 身份仍缺则经同一条槽 SOCKS5 GET /api/claude_cli/bootstrap
-   │ 不靠官方初装，不 PATCH Grove
+bin/kin-oauth-auth（控制面 spawn；OAuth 源码只在本地构建）
+   │ sessionKey → /api/organizations → 完整 scope authorize → token
+   │ bootstrap 读取 oauth_account，并 PATCH Grove 账号设置
    ▼
 槽 ~/.claude/credentials.json   ← 活票只在这里（含 email / account_uuid / org_uuid）
    │ host RefreshIfNeeded（推理临期 或 面板显式 refresh）
    │ 无后台定时器；401 不强制换票
-   │ GET /v1/models 走 host SOCKS，避免 401 烧 refresh
    ▼
 https://platform.claude.com/v1/oauth/token
    │
    ▼
-commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
-                   → setup-token / apikey 不初装
+commitImportedOauth → 仅完整 OAuth 运行模式排队官方 Claude Code 初装
+                   → Setup Token 运行模式保留完整授权 scope，但不初装
 ```
 
 ## 导入门控
@@ -29,10 +27,10 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 
 | 入口 | 路径 | 说明 |
 |------|------|------|
-| sessionKey（默认） | `POST /api/panel/vms/import` `{ type: "setup-token", sessionKey }` | 面板默认。`sk-ant-sid*` 经槽 SOCKS5 交给 `kin-cookie-auth`，scope 只有 `user:inference`，不跑官方初装。无 `type` 仍是完整 OAuth。 |
-| 已有 OAuth → Setup Token | `POST /api/panel/vms/:id/oauth/to-setup-token` | 读 worker 活票，改 `type=setup-token`，保留 access/refresh/真实过期。禁止把短 oat 盖成一年期。 |
-| 授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | 完整 OAuth 用。默认 CAI / sub2api。`{ flavor: "claude_code" }` 走官方 Claude Code 授权页。Setup Token 不走 CLI；`{ flavor: "setup_token" }` 只是 PKCE `user:inference`。服务端 PKCE，30min；无代理不能生成 URL。 |
-| 粘贴授权码 | `POST /api/panel/vms/:id/oauth/exchange-code` | 经槽 SOCKS5 换票，redirect / token URL 以服务端 session 为准，再 `commitImportedOauth` |
+| sessionKey（默认 Setup Token） | `POST /api/panel/vms/import` `{ type: "setup-token", sessionKey }` | `sk-ant-sid*` 经槽位 SOCKS5 申请完整 OAuth scope（profile、inference、sessions、MCP、文件），采集 bootstrap 身份并 PATCH Grove；落盘后以 Setup Token 运行模式执行，不跑官方初装。 |
+| 已有 OAuth → Setup Token | `POST /api/panel/vms/:id/oauth/to-setup-token` | 读 worker 活票，仅切换运行模式；保留 access、refresh、真实过期时间和全部实际 scope。不会凭空增加权限，也不会删 scope。 |
+| 授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | CAI、Claude Code、Setup Token flavor 都请求完整 OAuth scope。Setup Token flavor 仍只改变运行模式；服务端 PKCE，30min；无代理不能生成 URL。 |
+| 粘贴授权码 | `POST /api/panel/vms/:id/oauth/exchange-code` | 经槽 SOCKS5 换票，再执行 bootstrap 与 Grove PATCH，最后 `commitImportedOauth`。 |
 
 换出的 access/refresh 只写入 credentials.json。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。Claude 面板默认选 Setup Token + Cookie。
 
@@ -58,8 +56,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 以下请求共用该槽绑定的 SOCKS5（控制面 host 或 kernel 透明出口），不允许 VPS 直连 Anthropic：
 
 - `/v1/messages`（Rust kernel cli-hop）
-- `/api/oauth/usage`、`/v1/models`（额度与模型，槽内 worker；完整 OAuth 可打官方 usage。Setup Token 只有 `user:inference` 时 usage 会报 scope 不足，仍不跑官方初装）
-- `/v1/oauth/token`（refresh / 授权码）
+- `/api/oauth/usage`、`/v1/models`（额度与模型，槽内 worker；Setup Token 运行模式若保存了完整 OAuth scope，同样可打官方 usage；独立的官方一年期 `claude setup-token` 仍只有 `user:inference`）
 - 健康 / 额度探测
 - 遥测 sidecar 的 event_logging / eval（若开启）
 
@@ -96,7 +93,7 @@ commitImportedOauth → 仅完整 OAuth 排队官方 Claude Code 初装
 
 ## 用量刻度
 
-面板探测走槽内 `kin-worker oauth`（usage、models）。完整 OAuth 打官方 `/api/oauth/usage`；Setup Token 若只有 `user:inference` 会得到 scope 错误，面板保留失败原因并提示需完整 OAuth。出口是槽的 SOCKS5 或透明网络，Node 不直连 Anthropic：
+- 面板探测走槽内 `kin-worker oauth`（usage、models）。Setup Token 运行模式如果凭证实际 scope 完整，可打官方 `/api/oauth/usage`；scope 只有 `user:inference` 的独立官方 Setup Token 会得到 scope 错误。出口是槽的 SOCKS5 或透明网络，Node 不直连 Anthropic：
 
 - `five_hour` / `seven_day` utilization 0–100
 - 成功且完整的官方 `/usage`：有 5h、7d，且能确定 Fable 7d 是否存在；有 Fable 即 Max，没有即 Pro。失败、scope 不足、只有 5h 或 CLI 文本不完整都不改套餐

@@ -13,10 +13,11 @@ import {
   OAUTH_FLAVORS,
 } from '../../src/lib/oauth/oauth-auth-url.mjs'
 
-test('generateAuthUrl requires vm + SOCKS5', () => {
+test('generateAuthUrl requires a non-empty VM SOCKS5', () => {
   resetAuthUrlSessions()
   assert.throws(() => generateAuthUrl({}), /vm_id required/)
   assert.throws(() => generateAuthUrl({ vmId: 'vm-01' }), /SOCKS5/)
+  assert.throws(() => generateAuthUrl({ vmId: 'vm-01', proxyUrl: '' }), /SOCKS5/)
 })
 
 test('generateAuthUrl builds Claude authorize URL and stores PKCE', () => {
@@ -62,7 +63,7 @@ test('generateAuthUrl claude_code uses official authorize and callback', () => {
   assert.equal(session.source, 'oauth-claude-code')
 })
 
-test('generateAuthUrl setup_token uses inference scope on CAI', () => {
+test('generateAuthUrl setup_token uses full scope on CAI but keeps setup-token flavor', () => {
   resetAuthUrlSessions()
   const spec = OAUTH_FLAVORS.setup_token
   const out = generateAuthUrl({
@@ -73,11 +74,26 @@ test('generateAuthUrl setup_token uses inference scope on CAI', () => {
   assert.equal(out.flavor, 'setup_token')
   assert.match(out.auth_url, /^https:\/\/claude\.com\/cai\/oauth\/authorize\?code=true/)
   assert.ok(out.auth_url.includes(encodeURIComponent(spec.scope).replace(/%20/g, '+')))
-  assert.ok(!out.auth_url.includes('user%3Aprofile') && !out.auth_url.includes('user:profile'))
+  assert.ok(out.auth_url.includes('user%3Aprofile'))
   const session = peekAuthUrlSession(out.session_id)
   assert.equal(session.flavor, 'setup_token')
   assert.equal(session.scope, spec.scope)
   assert.equal(session.source, 'oauth-setup-token')
+})
+
+test('exchangeAuthCode rejects callback state mismatch', async () => {
+  resetAuthUrlSessions()
+  const out = generateAuthUrl({ vmId: 'vm-01', proxyUrl: 'socks5h://127.0.0.1:1080' })
+  await assert.rejects(
+    () =>
+      exchangeAuthCode({
+        sessionId: out.session_id,
+        code: 'abc#wrong-state',
+        proxyUrl: 'socks5h://127.0.0.1:1080',
+        vmId: 'vm-01',
+      }),
+    (e) => e.code === 'state_mismatch',
+  )
 })
 
 test('buildAuthorizationURL matches sub2api parameter order', () => {
@@ -110,7 +126,7 @@ test('fake exchange writes tokens without network', async () => {
   const out = generateAuthUrl({ vmId: 'vm-01', proxyUrl: 'socks5h://127.0.0.1:1080' })
   const cred = await exchangeAuthCode({
     sessionId: out.session_id,
-    code: 'pasted-code#state',
+    code: 'pasted-code',
     proxyUrl: 'socks5h://127.0.0.1:1080',
     vmId: 'vm-01',
   })
@@ -124,7 +140,7 @@ test('fake exchange writes tokens without network', async () => {
   })
   const ccCred = await exchangeAuthCode({
     sessionId: cc.session_id,
-    code: 'pasted-code#state',
+    code: 'pasted-code',
     proxyUrl: 'socks5h://127.0.0.1:1080',
     vmId: 'vm-01',
   })

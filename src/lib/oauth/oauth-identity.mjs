@@ -4,8 +4,8 @@
  * This is part of ticket exchange, not official Claude Code first-run.
  */
 import { makeSocksFetch } from '../protocol/codex-models.mjs'
-import { OFFICIAL_CLAUDE_CLI_UA, OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
-import { BETA_OAUTH } from '../protocol/claude-code-betas.mjs'
+import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
+import { BETA_OAUTH, BOOTSTRAP_UA } from './oauth-contract.mjs'
 
 export const CLAUDE_CLI_BOOTSTRAP_URL =
   'https://api.anthropic.com/api/claude_cli/bootstrap?entrypoint=claude-vscode&model=claude-opus-5'
@@ -78,7 +78,7 @@ export function bootstrapRequestHeaders(accessToken) {
   return {
     accept: 'application/json',
     authorization: `Bearer ${String(accessToken || '').trim()}`,
-    'user-agent': OFFICIAL_CLAUDE_CLI_UA,
+    'user-agent': BOOTSTRAP_UA,
     'anthropic-beta': BETA_OAUTH,
     'anthropic-version': '2023-06-01',
     'x-stainless-lang': OFFICIAL_STAINLESS.stainless_lang,

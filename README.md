@@ -268,7 +268,7 @@ git push origin v1.3.14
    `bin/kin-*` 为 **755**、挂了 `docker.sock`、控制面容器名与 `VM2API_CONTAINER_NAME` 一致（自省宿主路径用）。先添加本地出口再启动槽——首次启动会自动补一个本机出口 `px-local`。
 
 8. **`exec: "/usr/local/bin/kin-kernel": permission denied`？**  
-   `chmod 755 bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel bin/kin-cookie-auth`。不要用 `700`。
+   `chmod 755 bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel`。不要用 `700`。
 
 9. **本机 `curl 127.0.0.1:8787` 失败，容器却是 healthy？**  
    Docker Desktop 的 `network_mode: host` 不在 WSL/macOS localhost。用 `docker exec vm2api …` 探活，或改 Ubuntu + Docker Engine。
