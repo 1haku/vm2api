@@ -45,6 +45,7 @@ import {
   normalizePersonaAgent,
   wrapMandatoryConstraint,
 } from '../../src/lib/identity/crs-persona.mjs'
+import { DEFAULT_ZERO_STANDING } from '../../src/lib/identity/persona-template.mjs'
 import { officialSystemKinds } from '../../src/lib/protocol/case-features.mjs'
 import { sanitizeInboundCwd } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 import { officialMessagesBody } from '../../src/lib/protocol/anthropic-messages.mjs'
@@ -1164,7 +1165,7 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
   assert.ok(!/\n/.test(out.system[0].text))
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
   assert.ok(!out.system.some((b) => String(b?.text || '').includes('# Environment')))
@@ -1173,6 +1174,18 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
   assert.equal(out.system.filter((block) => String(block?.text || '').trim() === CRS_OFFICIAL_SYSTEM).length, 0)
   assert.equal(firstUserContent(out), '你好呀。')
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))
+})
+
+test('zero inject prepends standing constraints to caller_agent', () => {
+  const agent = 'You are an interactive agent that helps users with software engineering tasks.'
+  const out = applyCrsUnofficialPersona(
+    {
+      system: agent,
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+    { mode: 'zero' },
+  )
+  assert.equal(out.system[2].text, `${DEFAULT_ZERO_STANDING}\n${agent}`)
 })
 
 test('zero inject ignores persona_agent and writes env timezone without agent', () => {
@@ -1186,7 +1199,7 @@ test('zero inject ignores persona_agent and writes env timezone without agent', 
   assert.match(out.system[0].text, /prompt_version=</)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_PROMPT_REQUIRED))
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.ok(!out.system.some((b) => String(b?.text || '').includes('# Environment')))
   assert.deepEqual(officialSystemKinds(out.system), ['billing', 'identity', 'block_2'])
@@ -1202,7 +1215,7 @@ test('zero inject with no caller system is billing plus env timezone', () => {
   assert.equal(out.system.length, 3)
   assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
   assert.ok(!out.system.some((b) => String(b?.text || '').includes('# Environment')))
   assert.deepEqual(officialSystemKinds(out.system), ['billing', 'identity', 'block_2'])
@@ -1218,11 +1231,11 @@ test('refreshOfficialSystemEnvironment rewrites zero inject timezone after VM pi
   )
   assert.equal(first.system.length, 3)
   assert.equal(first.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(first.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(first.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   const refreshed = refreshOfficialSystemEnvironment(first, { timezone: 'Europe/London' }, 'claude-sonnet-5')
   assert.equal(refreshed.system[0].text, first.system[0].text)
   assert.equal(refreshed.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(refreshed.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(refreshed.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.ok(!refreshed.system.some((b) => String(b?.text || '').includes('# Environment')))
 })
 

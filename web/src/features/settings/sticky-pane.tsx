@@ -48,7 +48,9 @@ export function StickyPane({ value: sticky, onChange }: StickyPaneProps) {
         >
           <Select
             value={String(sticky.outbound_session || 'rebuild')}
-            onValueChange={(outboundSession) => onChange({ ...sticky, outbound_session: outboundSession })}
+            onValueChange={(outboundSession) =>
+              onChange({ ...sticky, outbound_session: outboundSession })
+            }
           >
             <SelectTrigger className='w-40'>
               <SelectValue />

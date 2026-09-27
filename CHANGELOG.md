@@ -1,6 +1,14 @@
 # Changelog
 
 
+## 1.3.73 — 2026-09-28
+
+- 人设从设置 → 协议迁到独立页 `system提示词`
+- 配置弹窗改为块编辑 + 出站预览，去掉长说明
+- 0 注入默认把常驻约束写在 `caller_agent` 最前，可编辑；模板去掉 note 字段
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`（未改过的 0 注入会跟新内置常驻约束）。
+
 ## 1.3.72 — 2026-09-28
 
 - 预热拦截改为照搬 sub2api `detectInterceptType`：haiku `max_tokens=1` 探测需 `claude-cli` UA；messages/system 必须是 `{type,text}` 数组，含字符串 content 的请求不拦截；模拟响应（含流式）与 sub2api 一致。

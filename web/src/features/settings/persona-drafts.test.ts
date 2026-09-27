@@ -58,10 +58,8 @@ describe('persona drafts payload', () => {
     const drafts = seedPersonaDrafts({ persona_templates: {} })
     expect(personaDraftStoresEmpty(drafts.custom, 'custom')).toBe(true)
     expect(personaDraftStoresEmpty(drafts.official, 'official')).toBe(true)
-    expect(personaSchemeSummary(drafts.custom, 'custom')).toContain(
-      '回落官方提示词'
-    )
-    expect(personaSchemeSummary(drafts.zero, 'zero')).toContain('跟随内置预设')
-    expect(personaSchemeSummary(drafts.zero, 'zero')).toContain('billing_zero')
+    expect(personaSchemeSummary(drafts.custom, 'custom')).toContain('回落官方')
+    expect(personaSchemeSummary(drafts.zero, 'zero')).toContain('内置')
+    expect(personaSchemeSummary(drafts.zero, 'zero')).toContain('常驻约束')
   })
 })

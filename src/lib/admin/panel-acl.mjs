@@ -16,6 +16,7 @@ export const PANEL_VIEWS = [
   'models',
   'loadtest',
   'protocol',
+  'system',
   'keys',
   'api',
   'logs',
