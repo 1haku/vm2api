@@ -1181,3 +1181,77 @@ test('fable 403 marks pro and failovers without credential cooldown', async () =
   assert.deepEqual(accepted, ['account-2'])
   assert.equal(scheduler.cooldowns.length, 0)
 })
+
+function leasingScheduler(candidates, cap = 2) {
+  const state = { inflight: 0, selects: [] }
+  return {
+    state,
+    async selectAndReserve(opts) {
+      state.selects.push(opts)
+      const vmId = opts.pinVmId || opts.familyVmId || candidates[0].vmId
+      const found = candidates.find((item) => item.vmId === vmId)
+      if (!found || state.inflight >= cap) return { ok: false, reason: 'all_accounts_busy', eligible: 1 }
+      state.inflight++
+      let released = false
+      return {
+        ...found,
+        ok: true,
+        release() {
+          if (released) return
+          released = true
+          state.inflight--
+        },
+      }
+    },
+    markCooldown() {},
+    markSuccess() {},
+  }
+}
+
+test('family redirect returns the reservation it will not use', async () => {
+  const scheduler = leasingScheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({
+    scheduler,
+    stickyRouter: {
+      resolve: (key) => (key === 'family2:root' ? { accountId: 'account-2', vmId: 'vm-02' } : null),
+      bind: () => true,
+    },
+  })
+  const result = await runner.run({
+    requestId: 'req-family-redirect',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    familyKey: 'family2:root',
+    callAttempt: () => success(),
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.vmId, 'vm-02')
+  assert.equal(scheduler.state.selects[1].familyVmId, 'vm-02')
+  assert.equal(scheduler.state.inflight, 0)
+})
+
+test('explicit VM pin is not redirected by a family locked elsewhere', async () => {
+  const scheduler = leasingScheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({
+    scheduler,
+    stickyRouter: {
+      resolve: (key) => (key === 'family2:root' ? { accountId: 'account-2', vmId: 'vm-02' } : null),
+      bind: () => true,
+    },
+  })
+  for (let i = 0; i < 3; i++) {
+    const result = await runner.run({
+      requestId: `req-pinned-${i}`,
+      canonicalBody: { model: 'claude-haiku-test' },
+      model: 'claude-haiku-test',
+      pinVmId: 'vm-01',
+      familyKey: 'family2:root',
+      familyVmId: 'vm-02',
+      callAttempt: () => success(),
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.vmId, 'vm-01')
+  }
+  assert.equal(scheduler.state.selects.length, 3)
+  assert.equal(scheduler.state.inflight, 0)
+})
