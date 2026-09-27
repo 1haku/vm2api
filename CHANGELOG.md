@@ -1,7 +1,13 @@
 # Changelog
 
+## 1.3.67 — 2026-09-28
+
+- 发布出站 session 重建到 HostDzire。线上已有 1.3.66 控制面（非本提交），本次用独立版本号覆盖。
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。`cli-node` 已单独同步，不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
 
 ## 1.3.66 — 2026-09-28
+
 
 - 出站 session 默认重建：入站 session 只作调度身份，不再透传到上游。同一 VM 保持重建值，切换 VM（含切回）换代。
 - `X-Claude-Code-Session-Id` 与 `metadata.user_id.session_id` 使用同一重建值。官方 Claude Code 2.1.281 出站头对齐。
