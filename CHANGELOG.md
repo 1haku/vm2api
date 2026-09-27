@@ -1,5 +1,14 @@
 # Changelog
 
+
+## 1.3.68 — 2026-09-28
+
+- GPT 槽按 VM `allowed_models` 过滤；OpenAI 号池增加 RPM 窗口与等待队列（满员排队，默认 100）。
+- Codex 官方客户端识别补 `codex_cli_rs` / `originator`。
+- worker OAuth UA 与 telemetry CLI 版本对齐 2.1.281。
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
+
 ## 1.3.67 — 2026-09-28
 
 - 发布出站 session 重建到 HostDzire。线上已有 1.3.66 控制面（非本提交），本次用独立版本号覆盖。

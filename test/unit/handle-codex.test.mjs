@@ -461,6 +461,99 @@ test('incomplete Responses stream still bills tokens from the completed event', 
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('panel allowed_models on the VM record rejects other GPT models before the hop', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-allow-'))
+  writeGptVm(root, 'vm-gpt-a')
+  const file = path.join(root, 'vms', 'vm-gpt-a.json')
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  fs.writeFileSync(file, JSON.stringify({ ...raw, policy: { allowed_models: ['gpt-5.5'] } }))
+  let hops = 0
+  const run = (model) => {
+    const res = { headersSent: false, write() {}, end() {} }
+    return handleCodexProtocol({
+      req: { headers: { 'user-agent': 'curl/8.0' } },
+      res,
+      protocol: 'openai.responses',
+      ctx: { path: '/v1/responses', body: { model, input: 'hi', stream: false } },
+      inbound: { stream: false },
+      logBag: {},
+      stats: { errors: 0, requests: 0, by_route: {} },
+      json: (_res, status, body) => ({ status, body }),
+      writeSSEHeaders() {},
+      routing: {},
+      projectRoot: root,
+      ops: {
+        writeCodexKernelConfig() {},
+        ensureCodexKernel: async () => ({ ok: true }),
+        streamCodexKernel: async ({ onEvent }) => {
+          hops++
+          await onEvent('data: {"type":"response.completed"}')
+          return { ok: true, status: 200, terminalState: 'verified' }
+        },
+      },
+    })
+  }
+  const denied = await run('gpt-5.4')
+  assert.equal(denied.status, 400)
+  assert.equal(denied.body.error.code, 'model_not_allowed')
+  assert.equal(hops, 0)
+  await run('gpt-5.5')
+  assert.equal(hops, 1)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('GPT slot at max concurrency queues until a seat frees instead of 503', async () => {
+  const rt = await import('../../src/lib/pool/openai-account-runtime.mjs')
+  rt.resetOpenAIAccountRuntime()
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-queue-'))
+  writeGptVm(root, 'vm-gpt-a')
+  const file = path.join(root, 'vms', 'vm-gpt-a.json')
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  fs.writeFileSync(file, JSON.stringify({ ...raw, policy: { maxConcurrency: 1 } }))
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let hops = 0
+  const run = (wait) =>
+    handleCodexProtocol({
+      req: { headers: { 'user-agent': 'curl/8.0' } },
+      res: { headersSent: false, write() {}, end() {} },
+      protocol: 'openai.responses',
+      ctx: { path: '/v1/responses', body: { model: 'gpt-5.5', input: 'hi', stream: false } },
+      inbound: { stream: false },
+      logBag: {},
+      stats: { errors: 0, requests: 0, by_route: {} },
+      json: (_res, status, body) => ({ status, body }),
+      writeSSEHeaders() {},
+      routing: { pool: { fallback_wait_timeout_ms: 5000 } },
+      projectRoot: root,
+      ops: {
+        writeCodexKernelConfig() {},
+        ensureCodexKernel: async () => ({ ok: true }),
+        streamCodexKernel: async ({ onEvent }) => {
+          hops++
+          if (wait) await gate
+          await onEvent('data: {"type":"response.completed"}')
+          return { ok: true, status: 200, terminalState: 'verified' }
+        },
+      },
+    })
+  const busy = run(true)
+  await new Promise((resolve) => setImmediate(resolve))
+  const queued = run(false)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(hops, 1)
+  assert.equal(rt.openAIWaiterCount(), 1)
+  release()
+  const [a, b] = await Promise.all([busy, queued])
+  assert.equal(a.status, 200)
+  assert.equal(b.status, 200)
+  assert.equal(hops, 2)
+  rt.resetOpenAIAccountRuntime()
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 function emptyCodexRes() {
   return { headersSent: false, write() {}, end() {} }
 }
@@ -499,7 +592,6 @@ async function hopCodex({ root, stickyRouter, routing = {}, headers = {}, body, 
   })
   return { out, envelopes, res }
 }
-
 
 test('codex rebuild outbound session is not the inbound session', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-sess-'))
