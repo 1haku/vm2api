@@ -17,9 +17,9 @@ export const HEALTH_VIA_UNAVAILABLE = 'health_unavailable'
 export const HEALTH_PROBE_UA = 'kin-health-probe/1.0'
 
 export const DEFAULT_HEALTH_PROBE = Object.freeze({
-  // Off unless an operator turns it on: the cache replays a real upstream
-  // Messages body, so it must never arm itself on a fresh config.
-  enabled: false,
+  // On by default: third-party health checks replay a real cached reply
+  // instead of taking a seat. Operators can turn it off in settings.
+  enabled: true,
   interval_sec: 600,
   cache_ttl_sec: 900,
   max_stale_sec: 900,
@@ -27,7 +27,7 @@ export const DEFAULT_HEALTH_PROBE = Object.freeze({
   cache_model: '',
   intercept_unofficial: true,
   // Claude Code warmup / title / suggestion / haiku ping: mock before scheduling.
-  intercept_warmup: false,
+  intercept_warmup: true,
   fail_closed: true,
   run_on_start: true,
   real: Object.freeze({
@@ -156,7 +156,7 @@ export function normalizeHealthProbeConfig(raw = {}) {
       .trim()
       .slice(0, 120),
     intercept_unofficial: asBool(src.intercept_unofficial, true),
-    intercept_warmup: asBool(src.intercept_warmup, false),
+    intercept_warmup: asBool(src.intercept_warmup, DEFAULT_HEALTH_PROBE.intercept_warmup),
     fail_closed: asBool(src.fail_closed, true),
     run_on_start: asBool(src.run_on_start, true),
     real: {
