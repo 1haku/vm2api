@@ -71,6 +71,7 @@ import {
 } from '../identity/persona-template.mjs'
 import { PERSONA_STANDING_MAX } from '../identity/crs-persona.mjs'
 import { MESSAGES_BREAKPOINT_MODES } from '../protocol/cache-ttl.mjs'
+import { normalizeCodexRouting } from '../protocol/codex-route.mjs'
 
 export function ok(data, meta) {
   const out = { ok: true, data }
@@ -1108,6 +1109,7 @@ export function buildRouting({ routingConfig, stickyRouter }) {
     failover: routingConfig?.failover || {},
     compatibility: routingConfig?.compatibility || {},
     inference: routingConfig?.inference || {},
+    codex: normalizeCodexRouting(routingConfig?.codex),
     official_cc: normalizeOfficialCcConfig(routingConfig?.official_cc),
     health_probe: normalizeHealthProbeConfig(routingConfig?.health_probe),
     usage_probe: normalizeUsageProbeConfig(routingConfig?.usage_probe),
