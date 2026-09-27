@@ -502,7 +502,7 @@ export function createHandleProtocol(deps) {
       protocol === 'anthropic.messages' &&
       getHealthMonitor()?.getConfig?.()?.intercept_warmup === true
     ) {
-      const warmupKind = detectWarmupIntercept(inbound)
+      const warmupKind = detectWarmupIntercept(inbound, { userAgent: req.headers['user-agent'] || '' })
       if (warmupKind) {
         stats.requests++
         stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
