@@ -287,6 +287,12 @@ export class PoolScheduler {
         sessionKey: stickyKey,
         ownerScope,
       })
+      // The family VM is gated (quota, rate limit, credential, excluded) —
+      // not merely busy, which still yields a waitable candidate. The family
+      // must move; the runner releases its pins and selects again.
+      if (familyVmId && !pinned && candidates.length === 0) {
+        return fail('family_vm_unavailable', candidates, [])
+      }
       const available = candidates.filter((candidate) => this.isReservable(candidate))
       let selected = this.pick(available, {
         model,

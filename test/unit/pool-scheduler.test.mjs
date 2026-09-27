@@ -8,6 +8,11 @@ import { SessionLimitRegistry } from '../../src/lib/pool/session-limit.mjs'
 import { AccountQuota } from '../../src/lib/pool/account-quota.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
+import {
+  applyCrsIdentityReplace,
+  rebuildOutboundSession,
+  resolveOutboundSessionId,
+} from '../../src/lib/identity/identity-rewrite.mjs'
 
 function project() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-pool-scheduler-'))
@@ -2483,4 +2488,368 @@ test('family without pin schedules parent and child on one VM and two seats', as
   assert.equal(after.ok, true)
   assert.equal(after.vmId, otherVm)
   after.release()
+})
+
+test('family whose VM is gated moves as a whole and releases its sticky pins', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const runtimeRepo = new RuntimeRepo()
+  const pool = scheduler(root, { runtimeRepo, stickyRouter: sticky })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4 },
+  })
+  const parentKey = sticky.canonicalSessionKey('parent-sess')
+  const childKey = sticky.canonicalSessionKey('child-sess')
+  const familyKey = sticky.canonicalFamilyKey('parent-sess')
+  const first = await runner.run({
+    requestId: 'parent-1',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    callAttempt: () => verifiedHop('one'),
+  })
+  assert.equal(first.ok, true)
+  const home = sticky.resolve(familyKey)
+  assert.equal(home.vmId, first.vmId)
+  // The home VM hits its 5h window: gated for the next hour.
+  runtimeRepo.upsert({ account_id: home.accountId, vm_id: home.vmId, rate_limit_reset_at: Date.now() + 3_600_000 })
+  const again = await runner.run({
+    requestId: 'parent-2',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    familyVmId: home.vmId,
+    callAttempt: () => verifiedHop('two'),
+  })
+  assert.equal(again.ok, true)
+  assert.notEqual(again.vmId, home.vmId)
+  assert.equal(sticky.resolve(familyKey).vmId, again.vmId)
+  assert.equal(sticky.resolve(parentKey).vmId, again.vmId)
+  const child = await runner.run({
+    requestId: 'child-1',
+    canonicalBody: { model: 'claude-sonnet-test' },
+    model: 'claude-sonnet-test',
+    stickyKey: childKey,
+    familyKey,
+    familyVmId: sticky.resolve(familyKey).vmId,
+    callAttempt: () => verifiedHop('child'),
+  })
+  assert.equal(child.ok, true)
+  assert.equal(child.vmId, again.vmId)
+})
+
+test('family VM left only for kernel slot_busy keeps the family pin', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const pool = scheduler(root, { stickyRouter: sticky })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4, max_same_account_retries: 0 },
+  })
+  const parentKey = sticky.canonicalSessionKey('parent-sess')
+  const familyKey = sticky.canonicalFamilyKey('parent-sess')
+  const first = await runner.run({
+    requestId: 'p1',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    callAttempt: () => verifiedHop('one'),
+  })
+  const home = sticky.resolve(familyKey)
+  const busy = await runner.run({
+    requestId: 'p2',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    familyVmId: home.vmId,
+    callAttempt: () => ({
+      ok: false,
+      status: 503,
+      terminalState: 'rejected',
+      body: {
+        type: 'error',
+        error: { type: 'worker_error', code: 'slot_busy', message: 'rust kernel has no free slot' },
+      },
+    }),
+  })
+  assert.equal(first.ok, true)
+  assert.equal(busy.ok, false)
+  assert.equal(sticky.resolve(familyKey).vmId, home.vmId)
+})
+
+function applyRebuildAttempt(callerSession, stickyBound, extra = {}) {
+  return async (_body, selected, attemptExtra = {}) => {
+    const sessionId = resolveOutboundSessionId(callerSession, {
+      mode: 'rebuild',
+      officialClient: true,
+      boundSessionId: stickyBound?.sessionId || '',
+      boundVmId: stickyBound?.vmId || '',
+      vmId: selected.vmId,
+      epoch: extra.epoch ?? attemptExtra.attemptStartedAt ?? Date.now(),
+    })
+    extra.seen?.push({ vmId: selected.vmId, sessionId })
+    const identity = { deviceId: 'dev', accountUuid: 'acc', vmId: selected.vmId }
+    const inbound = { metadata: { user_id: { session_id: callerSession } } }
+    const out = applyCrsIdentityReplace(inbound, identity, inbound, {}, { officialClient: true, sessionId })
+    const uid = JSON.parse(out.metadata.user_id)
+    extra.headers?.push({
+      'x-claude-code-session-id': uid.session_id,
+      metadata_session_id: uid.session_id,
+    })
+    return { body: out, meta: { sessionId } }
+  }
+}
+
+test('rebuild outbound session stays on one VM and changes after failover', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const pool = scheduler(root, { stickyRouter: sticky, accountQuota: { canAccept: () => ({ ok: true }) } })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4, max_same_account_retries: 0 },
+  })
+  const caller = 'inbound-A'
+  const stickyKey = sticky.canonicalSessionKey(caller)
+  const seen = []
+  const headers = []
+  const firstBound = sticky.resolve(stickyKey)
+  const first = await runner.run({
+    requestId: 'rebuild-1',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt: applyRebuildAttempt(caller, firstBound, { seen, headers, epoch: 1000 }),
+    callAttempt: () => verifiedHop('one'),
+  })
+  assert.equal(first.ok, true)
+  assert.equal(seen.length, 1)
+  assert.notEqual(seen[0].sessionId, caller)
+  assert.equal(seen[0].sessionId, rebuildOutboundSession({ identity: caller, epoch: 1000 }))
+  assert.equal(sticky.resolve(stickyKey).sessionId, seen[0].sessionId)
+  assert.equal(headers[0]['x-claude-code-session-id'], headers[0].metadata_session_id)
+  assert.equal(headers[0]['x-claude-code-session-id'], seen[0].sessionId)
+
+  const secondBound = sticky.resolve(stickyKey)
+  const secondSeen = []
+  const second = await runner.run({
+    requestId: 'rebuild-2',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt: applyRebuildAttempt(caller, secondBound, { seen: secondSeen, epoch: 2000 }),
+    callAttempt: () => verifiedHop('two'),
+  })
+  assert.equal(second.ok, true)
+  assert.equal(second.vmId, first.vmId)
+  assert.equal(secondSeen[0].sessionId, seen[0].sessionId)
+  assert.equal(sticky.resolve(stickyKey).sessionId, seen[0].sessionId)
+})
+
+test('family migration remints parent and child outbound sessions', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const pool = scheduler(root, { stickyRouter: sticky, accountQuota: { canAccept: () => ({ ok: true }) } })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4 },
+  })
+  const parentKey = sticky.canonicalSessionKey('parent-A')
+  const childKey = sticky.canonicalSessionKey('child-A')
+  const familyKey = sticky.canonicalFamilyKey('parent-A')
+  const parentSeen = []
+  const parent = await runner.run({
+    requestId: 'fam-parent-1',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    applyAttempt: applyRebuildAttempt('parent-A', sticky.resolve(parentKey), { seen: parentSeen, epoch: 11 }),
+    callAttempt: () => verifiedHop('parent'),
+  })
+  const childSeen = []
+  const child = await runner.run({
+    requestId: 'fam-child-1',
+    canonicalBody: { model: 'claude-sonnet-test' },
+    model: 'claude-sonnet-test',
+    stickyKey: childKey,
+    familyKey,
+    familyVmId: sticky.resolve(familyKey).vmId,
+    applyAttempt: applyRebuildAttempt('child-A', sticky.resolve(childKey), { seen: childSeen, epoch: 12 }),
+    callAttempt: () => verifiedHop('child'),
+  })
+  assert.equal(parent.ok, true)
+  assert.equal(child.ok, true)
+  assert.equal(child.vmId, parent.vmId)
+  const parentS1 = parentSeen[0].sessionId
+  const childS1 = childSeen[0].sessionId
+  assert.notEqual(parentS1, 'parent-A')
+  assert.notEqual(childS1, 'child-A')
+
+  const otherVm = parent.vmId === 'vm-01' ? 'vm-02' : 'vm-01'
+  const otherAccount = parent.accountId === 'account-1' ? 'account-2' : 'account-1'
+  sticky.rebindFamily(familyKey, { accountId: otherAccount, vmId: otherVm })
+
+  const parentAfter = []
+  const childAfter = []
+  const parent2 = await runner.run({
+    requestId: 'fam-parent-2',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: parentKey,
+    familyKey,
+    familyVmId: otherVm,
+    applyAttempt: applyRebuildAttempt('parent-A', sticky.resolve(parentKey), { seen: parentAfter, epoch: 21 }),
+    callAttempt: () => verifiedHop('parent-2'),
+  })
+  const child2 = await runner.run({
+    requestId: 'fam-child-2',
+    canonicalBody: { model: 'claude-sonnet-test' },
+    model: 'claude-sonnet-test',
+    stickyKey: childKey,
+    familyKey,
+    familyVmId: otherVm,
+    applyAttempt: applyRebuildAttempt('child-A', sticky.resolve(childKey), { seen: childAfter, epoch: 22 }),
+    callAttempt: () => verifiedHop('child-2'),
+  })
+  assert.equal(parent2.ok, true)
+  assert.equal(child2.ok, true)
+  assert.equal(parent2.vmId, otherVm)
+  assert.equal(child2.vmId, otherVm)
+  assert.notEqual(parentAfter[0].sessionId, parentS1)
+  assert.notEqual(childAfter[0].sessionId, childS1)
+  assert.equal(sticky.resolve(parentKey).sessionId, parentAfter[0].sessionId)
+  assert.equal(sticky.resolve(childKey).sessionId, childAfter[0].sessionId)
+})
+
+test('intra-request failover remints and persists the second outbound session', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const pool = scheduler(root, { stickyRouter: sticky, accountQuota: { canAccept: () => ({ ok: true }) } })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4, max_same_account_retries: 0 },
+  })
+  const caller = 'fail-A'
+  const stickyKey = sticky.canonicalSessionKey(caller)
+  const seen = []
+  const snapshot = sticky.resolve(stickyKey)
+  let attempts = 0
+  const result = await runner.run({
+    requestId: 'rebuild-fail',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt: async (body, selected, attemptExtra) =>
+      applyRebuildAttempt(caller, snapshot, { seen, epoch: attemptExtra.attemptNo })(body, selected, attemptExtra),
+    callAttempt: () => {
+      attempts += 1
+      if (attempts === 1) {
+        return {
+          ok: false,
+          status: 429,
+          terminalState: 'rejected',
+          body: { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
+        }
+      }
+      return verifiedHop('ok')
+    },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(seen.length, 2)
+  assert.notEqual(seen[0].vmId, seen[1].vmId)
+  assert.notEqual(seen[0].sessionId, seen[1].sessionId)
+  assert.notEqual(seen[1].sessionId, caller)
+  assert.equal(sticky.resolve(stickyKey).vmId, seen[1].vmId)
+  assert.equal(sticky.resolve(stickyKey).sessionId, seen[1].sessionId)
+})
+
+test('returning to a previously used VM mints a new outbound session', async (t) => {
+  const root = project()
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  t.after(() => {
+    try {
+      sticky.db?.close?.()
+    } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const pool = scheduler(root, { stickyRouter: sticky, accountQuota: { canAccept: () => ({ ok: true }) } })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0, max_total_attempts: 4 },
+  })
+  const caller = 'return-A'
+  const stickyKey = sticky.canonicalSessionKey(caller)
+  const firstSeen = []
+  const first = await runner.run({
+    requestId: 'return-1',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt: applyRebuildAttempt(caller, sticky.resolve(stickyKey), { seen: firstSeen, epoch: 1 }),
+    callAttempt: () => verifiedHop('one'),
+  })
+  const firstVm = first.vmId
+  const firstS = firstSeen[0].sessionId
+  const otherVm = firstVm === 'vm-01' ? 'vm-02' : 'vm-01'
+  const otherAccount = first.accountId === 'account-1' ? 'account-2' : 'account-1'
+  sticky.unbind(stickyKey)
+  sticky.bind(stickyKey, { accountId: otherAccount, vmId: otherVm, sessionId: 'S-other' })
+
+  const backSeen = []
+  sticky.unbind(stickyKey)
+  const back = await runner.run({
+    requestId: 'return-2',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    pinVmId: firstVm,
+    applyAttempt: applyRebuildAttempt(caller, sticky.resolve(stickyKey), { seen: backSeen, epoch: 3 }),
+    callAttempt: () => verifiedHop('back'),
+  })
+  assert.equal(back.ok, true)
+  assert.equal(back.vmId, firstVm)
+  assert.notEqual(backSeen[0].sessionId, firstS)
+  assert.notEqual(backSeen[0].sessionId, 'S-other')
+  assert.equal(sticky.resolve(stickyKey).sessionId, backSeen[0].sessionId)
 })
