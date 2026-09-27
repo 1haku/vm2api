@@ -144,13 +144,13 @@ export function PoolPane(props: PoolPaneProps) {
         </SettingRow>
         <SettingRow
           label='每账号等待人数'
-          desc='max_waiters_per_account，默认 32'
+          desc='max_waiters_per_account，默认 100'
         >
           <Input
             className='w-24'
             type='number'
             min={1}
-            value={Number(pool.max_waiters_per_account ?? 32)}
+            value={Number(pool.max_waiters_per_account ?? 100)}
             onChange={(event) =>
               onPoolChange({
                 ...pool,

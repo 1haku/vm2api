@@ -19,8 +19,19 @@ import { extractOpenaiUsage } from './openai-usage.mjs'
 import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
 import { boundProxyUrl } from '../vm/egress.mjs'
-import { orderCodexSessionSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
-import { acquireOpenAISlot, releaseOpenAISlot, reportOpenAIAttempt } from '../pool/openai-account-runtime.mjs'
+import {
+  orderCodexSessionSlots,
+  codexSlotAllowsModel,
+  isCodexFailoverError,
+  CODEX_FAILOVER_MAX,
+} from '../pool/codex-slot-pool.mjs'
+import {
+  acquireOpenAISlot,
+  releaseOpenAISlot,
+  reportOpenAIAttempt,
+  waitForOpenAICapacity,
+  wakeOpenAIWaiter,
+} from '../pool/openai-account-runtime.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
 import { extractCallerSession, outboundSessionMode, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
 import { extractFirstUserText } from '../identity/crs-persona.mjs'
@@ -74,9 +85,11 @@ function pinnedVmId(req) {
 
 export function pickCodexCandidates(projectRoot, req, { stickyRouter = null, sessions = null, body = null } = {}) {
   const pin = pinnedVmId(req)
+  const model = body?.model || null
   if (pin) {
     const vm = getVm(projectRoot, pin)
     if (!vm || !isCodexVm(vm)) return { error: 'platform_mismatch', pin, ids: [] }
+    if (!codexSlotAllowsModel(vm, model)) return { error: 'model_not_allowed', pin, ids: [] }
     return { ids: [vm.id], pin, sticky: false, sessionKey: null, stickyKeys: [] }
   }
   for (const item of listVms(projectRoot)) {
@@ -90,6 +103,7 @@ export function pickCodexCandidates(projectRoot, req, { stickyRouter = null, ses
     boundVmId: bound?.vmId || null,
     sessionKey,
     sessionLimit: sessions,
+    model,
   })
   if (bound?.vmId && sessionKey && !ordered.sticky && !ordered.error) {
     for (const key of stickyKeys.length ? stickyKeys : [sessionKey]) stickyRouter?.unbind?.(key)
@@ -173,6 +187,63 @@ function preferUsage(left, right) {
   return left || right || null
 }
 
+const WAIT_TIMEOUT_MIN_MS = 1000
+const WAIT_TIMEOUT_MAX_MS = 120000
+const DEFAULT_WAIT_TIMEOUT_MS = 30000
+
+/** Same knob and clamp as the Claude pool's fallback wait. */
+function codexWaitTimeoutMs(routing) {
+  const n = Number(routing?.pool?.fallback_wait_timeout_ms)
+  if (!Number.isFinite(n)) return DEFAULT_WAIT_TIMEOUT_MS
+  return Math.min(WAIT_TIMEOUT_MAX_MS, Math.max(WAIT_TIMEOUT_MIN_MS, n))
+}
+
+function clientGoneSignal(req, res) {
+  const controller = new AbortController()
+  const onGone = () => controller.abort()
+  req?.once?.('aborted', onGone)
+  res?.once?.('close', onGone)
+  return {
+    signal: controller.signal,
+    settle() {
+      req?.off?.('aborted', onGone)
+      res?.off?.('close', onGone)
+    },
+  }
+}
+
+/**
+ * Concurrency / RPM full queues like a Claude slot: wait for a released
+ * seat or the RPM window, up to the pool wait timeout.
+ */
+async function pickCodexCandidatesWaiting(projectRoot, req, res, opts, routing) {
+  let picked = pickCodexCandidates(projectRoot, req, opts)
+  if (picked.error !== 'capacity_unavailable') return picked
+  const deadline = Date.now() + codexWaitTimeoutMs(routing)
+  const gone = clientGoneSignal(req, res)
+  try {
+    while (picked.error === 'capacity_unavailable') {
+      const now = Date.now()
+      if (now >= deadline) break
+      const retryAt = Number(picked.retryAt)
+      const sliceDeadline = Number.isFinite(retryAt) && retryAt > now ? Math.min(deadline, retryAt) : deadline
+      let waited
+      try {
+        waited = await waitForOpenAICapacity({ deadline: sliceDeadline, signal: gone.signal })
+      } catch (error) {
+        if (error?.code === 'pool_wait_queue_full') return { error: 'pool_wait_queue_full', ids: [] }
+        throw error
+      }
+      if (waited.aborted) return { error: 'client_cancelled', ids: [] }
+      picked = pickCodexCandidates(projectRoot, req, opts)
+      if (waited.woken && picked.error === 'capacity_unavailable') wakeOpenAIWaiter()
+    }
+    return picked
+  } finally {
+    gone.settle()
+  }
+}
+
 export async function runCodexKernelHop({ hop, args = {}, onEvent } = {}) {
   let emitted = false
   const wrapped = async (line) => {
@@ -250,11 +321,18 @@ export async function handleCodexProtocol({
     converted: converted.converted,
     outboundBody: converted.body,
   })
-  const picked = pickCodexCandidates(projectRoot, req, {
-    stickyRouter,
-    sessions,
-    body: body || converted.body || inbound,
-  })
+  const picked = await pickCodexCandidatesWaiting(
+    projectRoot,
+    req,
+    res,
+    { stickyRouter, sessions, body: body || converted.body || inbound },
+    routing,
+  )
+  if (picked.error === 'client_cancelled') {
+    logBag.via = 'codex-kernel'
+    logBag.final_state = 'cancelled'
+    return
+  }
   if (picked.error === 'platform_mismatch') {
     stats.errors++
     logBag.via = 'codex-kernel'
@@ -267,10 +345,24 @@ export async function handleCodexProtocol({
       },
     })
   }
+  if (picked.error === 'model_not_allowed') {
+    stats.errors++
+    logBag.via = 'codex-kernel'
+    logBag.error_code = 'model_not_allowed'
+    return json(res, 400, {
+      error: {
+        type: 'invalid_request_error',
+        code: 'model_not_allowed',
+        message: `model '${converted.body?.model || ''}' is not allowed on any GPT slot`,
+        param: 'model',
+      },
+    })
+  }
   if (
     picked.error === 'session_window_full' ||
     picked.error === 'quota_exhausted' ||
-    picked.error === 'capacity_unavailable'
+    picked.error === 'capacity_unavailable' ||
+    picked.error === 'pool_wait_queue_full'
   ) {
     stats.errors++
     logBag.via = 'codex-kernel'
@@ -280,7 +372,9 @@ export async function handleCodexProtocol({
         ? 'OpenAI 号池的会话窗口已满'
         : picked.error === 'quota_exhausted'
           ? 'OpenAI 号池额度已耗尽'
-          : 'OpenAI 号池并发已满'
+          : picked.error === 'pool_wait_queue_full'
+            ? 'OpenAI 号池等待队列已满'
+            : 'OpenAI 号池并发已满，等待超时'
     return json(res, 503, {
       error: {
         type: 'api_error',

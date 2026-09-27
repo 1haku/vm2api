@@ -31,3 +31,28 @@ test('third-party OpenAI clients are allowed', () => {
   const unknown = restrictCodexClient({ 'user-agent': 'curl/8.0' }, {}, routing)
   assert.equal(unknown.ok, true)
 })
+
+test('real Codex CLI user agents classify as official_codex', () => {
+  for (const ua of [
+    'codex_cli_rs/0.46.0 (Ubuntu 22.04; x86_64) xterm-256color',
+    'codex_exec/0.46.0 (Mac OS 15.1; arm64)',
+    'codex_vscode/0.1.0',
+  ]) {
+    assert.equal(classifyCodexClient({ 'user-agent': ua }, { input: [] }, 'openai.responses'), 'official_codex', ua)
+  }
+  assert.equal(
+    classifyCodexClient({ 'user-agent': 'x', originator: 'codex_cli_rs' }, { input: [] }, 'openai.responses'),
+    'official_codex',
+  )
+  const blocked = restrictCodexClient(
+    { 'user-agent': 'codex_cli_rs/0.46.0' },
+    { input: [] },
+    { codex: normalizeCodexRouting({ clients: { official_codex: 'reject' } }) },
+    'openai.responses',
+  )
+  assert.equal(blocked.ok, false)
+  assert.equal(
+    classifyCodexClient({ 'user-agent': 'my-codex-helper/1.0' }, { input: [] }, 'openai.responses'),
+    'openai_compatible',
+  )
+})

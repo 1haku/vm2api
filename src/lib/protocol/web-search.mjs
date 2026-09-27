@@ -21,7 +21,7 @@ const WEB_SEARCH_BASE = Object.freeze({
   name: 'web_search',
 })
 
-/** Injected tool, same as Claude Code 2.1.280's own server search definition. */
+/** Injected tool, same as Claude Code 2.1.281's own server search definition. */
 export const CLAUDE_WEB_SEARCH_TOOL = Object.freeze({
   ...WEB_SEARCH_BASE,
   max_uses: 8,
