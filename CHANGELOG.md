@@ -1,6 +1,17 @@
 # Changelog
 
 
+## 1.3.70 — 2026-09-28
+
+- 探测/测试请求不再占主会话席位：单条短 user、无 tools 的一次性请求（sub2api 账号测试、new-api 渠道测试、验证脚本）跳过 session seat，只占并发。粘性身份不变。
+- 新增「拦截预热请求」全局开关（设置 → 探测，默认关）：仅 Claude 模型 `/v1/messages`，Claude Code 的 Warmup、标题生成、SUGGESTION MODE、haiku `max_tokens=1` 连通性检查在选号前直接返回模拟响应。流式 haiku 探测与非流式一致返回 `#` / `max_tokens`。
+- 新增 `max_tokens` 下限（默认开，128，可关、可改）：所有 Claude 出站路径（含 chat/responses 转换）生效；开启 thinking 时保证 `max_tokens` 大于 `budget_tokens`。cli-hop 原有 ≤64→1024 保留。
+- 健康缓存兼容 new-api / sub2api / CLIProxyAPI：识别 new-api 不带 max_tokens 的 chat/responses 测试和 sub2api 账号测试载荷；Claude 与 GPT 分开快照（GPT 探测模型留空则不缓存 GPT）；Chat 流式末块带 usage 与 `[DONE]`，Responses 流式补 `response.created` / `response.completed`。
+- 新增 `GET/HEAD /healthz`（无鉴权，`{"status":"ok"}`）。
+- 设置「探测」页改为结构化开关与快照状态。
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`（下限缺省即开启 128；预热拦截与健康缓存需在面板打开）。
+
 ## 1.3.69 — 2026-09-28
 
 - 修复调度座位泄漏：family 锁定在另一台 VM 时，已占用的并发/session seat/配额不释放，直到重启 Node。用 `x-kin-vm` 指定非 family 所在 VM 的请求每次泄漏 2 个座位，把该 VM 占满后主会话持续 `all_accounts_busy`（45s 后 503）。现在重选前先归还座位；显式指定 VM 优先于 family 绑定。

@@ -153,6 +153,32 @@ export function isParentSessionCompanion(body = {}) {
   return /x-anthropic-billing-header/i.test(system) && /you are claude code/i.test(system)
 }
 
+export const SHORT_PROBE_MAX_CHARS = 64
+
+/**
+ * One-shot test calls: sub2api account test, new-api channel test, verify
+ * scripts. One short text user turn, no tools, any max_tokens. They carry no
+ * conversation, so they must not hold a session seat or move a sticky pin.
+ */
+export function isShortProbeRequest(body = {}) {
+  const msgs = Array.isArray(body?.messages) ? body.messages : []
+  if (msgs.length !== 1 || String(msgs[0]?.role || '').toLowerCase() !== 'user') return false
+  const tools = body?.tools
+  if (Array.isArray(tools) ? tools.length > 0 : !!tools) return false
+  const content = msgs[0].content
+  let text = ''
+  if (typeof content === 'string') text = content
+  else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === 'string') text += part
+      else if (part?.type === 'text' && typeof part.text === 'string') text += part.text
+      else return false
+    }
+  } else return false
+  text = text.trim()
+  return text.length > 0 && text.length <= SHORT_PROBE_MAX_CHARS
+}
+
 export function explicitParentSessionId(body = {}, headers = {}) {
   const parsed = parseUserId(body?.metadata?.user_id) || {}
   const meta = body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : {}

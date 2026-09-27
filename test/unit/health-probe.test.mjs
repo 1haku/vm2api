@@ -412,3 +412,125 @@ test('failed real probe keeps a still-valid cached snapshot', async () => {
 test('default match tokens stay below default real probe budget', () => {
   assert.ok(DEFAULT_HEALTH_PROBE.match.max_tokens < DEFAULT_HEALTH_PROBE.real.max_tokens)
 })
+
+const cc = "You are Claude Code, Anthropic's official CLI for Claude."
+
+test('sub2api account test shape matches even with a claude-cli UA', () => {
+  const body = {
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 1024,
+    temperature: 1,
+    stream: true,
+    system: [{ type: 'text', text: cc, cache_control: { type: 'ephemeral' } }],
+    metadata: { user_id: 'user_x_account__session_y' },
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }] }],
+  }
+  const headers = { 'user-agent': 'claude-cli/2.1.258 (external, cli)', 'x-app': 'cli' }
+  assert.equal(isHealthShape(headers, body, cfg, 'anthropic.messages'), true)
+  assert.equal(isHealthShape(headers, { ...body, max_tokens: 2048 }, cfg, 'anthropic.messages'), false)
+  assert.equal(isHealthShape(headers, { ...body, tools: [{ name: 'Bash' }] }, cfg, 'anthropic.messages'), false)
+  assert.equal(
+    isHealthShape(
+      headers,
+      { ...body, messages: [{ role: 'user', content: 'refactor this' }] },
+      cfg,
+      'anthropic.messages',
+    ),
+    false,
+  )
+  const off = normalizeHealthProbeConfig({ enabled: true, match: { sub2api_account_test: false } })
+  assert.equal(isHealthShape(headers, body, off, 'anthropic.messages'), false)
+})
+
+test('new-api and sub2api chat / responses tests without max_tokens match', () => {
+  const chat = { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] }
+  assert.equal(isHealthShape(unofficial, chat, cfg, 'openai.chat'), true)
+  const responses = {
+    model: 'gpt-5.4',
+    stream: true,
+    instructions: 'You are Codex, based on GPT-5. '.repeat(20),
+    input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+  }
+  assert.equal(isHealthShape(unofficial, responses, cfg, 'openai.responses'), true)
+  assert.equal(
+    isHealthShape(unofficial, { model: 'gpt-5.4', input: [{ role: 'user', content: 'hi' }] }, cfg, 'openai.responses'),
+    true,
+  )
+  // A missing max_tokens never counts on /v1/messages.
+  assert.equal(isHealthShape(unofficial, chat, cfg, 'anthropic.messages'), false)
+  // Real chat turns still pass through.
+  assert.equal(
+    isHealthShape(unofficial, { ...chat, messages: [{ role: 'user', content: 'write a parser' }] }, cfg, 'openai.chat'),
+    false,
+  )
+})
+
+test('decide routes GPT models to the openai snapshot', async () => {
+  const monitor = createHealthProbeMonitor({
+    config: { enabled: true, run_on_start: false, real: { openai_model: 'gpt-5.4' } },
+    listTargets: () => [
+      { id: 'vm-01', platform: 'anthropic', schedulable: true, status: 'running', has_token: true },
+      { id: 'vm-codex', platform: 'openai', schedulable: true, status: 'running', has_token: true },
+    ],
+    runChat: async (vm, real) => ({
+      ok: true,
+      status: 200,
+      text: vm.id,
+      vm_id: vm.id,
+      model: real.model,
+      body: {
+        id: `msg_${vm.id}`,
+        content: [{ type: 'text', text: vm.id }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+  })
+  await monitor.runRealProbe()
+  const gpt = monitor.decide(unofficial, { model: 'gpt-5.4', input: 'hi' }, 'openai.responses')
+  assert.equal(gpt.action, 'cache')
+  assert.equal(gpt.snapshot.vm_id, 'vm-codex')
+  const claude = monitor.decide(unofficial, hiBody, 'anthropic.messages')
+  assert.equal(claude.snapshot.vm_id, 'vm-01')
+  assert.equal(monitor.getSnapshots().openai.ok, true)
+  monitor.stop()
+})
+
+test('no openai_model leaves GPT probes to the pool', async () => {
+  const monitor = createHealthProbeMonitor({
+    config: { enabled: true, run_on_start: false },
+    listTargets: () => [{ id: 'vm-01', platform: 'anthropic', schedulable: true, status: 'running', has_token: true }],
+    runChat: async () => ({ ok: true, status: 200, text: 'x', body: { id: 'msg_x', content: [] } }),
+  })
+  await monitor.runRealProbe()
+  assert.equal(monitor.decide(unofficial, { model: 'gpt-5.4', input: 'hi' }, 'openai.responses').action, 'pass')
+  monitor.stop()
+})
+
+test('streamed shapes satisfy sub2api and new-api stream checks', () => {
+  const snap = cachedSnap()
+  const chat = formatHealthSse('openai.chat', { model: 'claude-haiku-4-5' }, snap, cfg)
+  const chatData = chat.split('\n').filter((l) => l.startsWith('data: '))
+  assert.equal(chatData.at(-1), 'data: [DONE]')
+  const finish = JSON.parse(chatData.at(-2).slice(6))
+  assert.equal(finish.choices[0].finish_reason, 'stop')
+  assert.ok(finish.usage && Number.isFinite(finish.usage.prompt_tokens))
+
+  const resp = formatHealthSse('openai.responses', { model: 'gpt-5.4' }, snap, cfg)
+  const events = resp
+    .split('\n')
+    .filter((l) => l.startsWith('event: '))
+    .map((l) => l.slice(7))
+  assert.deepEqual(events, ['response.created', 'response.output_text.delta', 'response.completed'])
+  const completed = JSON.parse(
+    resp
+      .split('\n')
+      .filter((l) => l.startsWith('data: '))
+      .at(-1)
+      .slice(6),
+  )
+  assert.equal(completed.response.status, 'completed')
+  assert.ok(completed.response.usage)
+
+  const msg = formatHealthSse('anthropic.messages', hiBody, snap, cfg)
+  assert.match(msg, /event: message_stop/)
+})

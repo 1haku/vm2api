@@ -621,3 +621,31 @@ test('request without trusted session id keeps the legacy scoped sticky key', as
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('one-shot test call skips the session seat but keeps its sticky key', async () => {
+  const { dir, router } = realStickyRouter()
+  try {
+    const probe = await captureRunOpts({
+      body: sessionBody({ device_id: 'dev-probe', session_id: 'sess-probe' }, { max_tokens: 1024 }),
+      stickyRouter: router,
+    })
+    assert.equal(probe.skipSessionSeat, true)
+    assert.equal(probe.stickyKey, 'sess:sess-probe')
+    const turn = await captureRunOpts({
+      body: sessionBody(
+        { device_id: 'dev-probe', session_id: 'sess-probe' },
+        {
+          messages: [
+            { role: 'user', content: 'hello' },
+            { role: 'assistant', content: 'hi' },
+            { role: 'user', content: 'go on' },
+          ],
+        },
+      ),
+      stickyRouter: router,
+    })
+    assert.equal(turn.skipSessionSeat, false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

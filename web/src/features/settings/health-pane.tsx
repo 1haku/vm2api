@@ -1,40 +1,244 @@
+import { useQuery } from '@tanstack/react-query'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { RawConfigFields } from '@/features/settings/raw-config-fields'
+import { SettingRow } from '@/components/setting-row'
+import {
+  healthProbeQueryOptions,
+  type HealthSnapshotView,
+} from '@/features/settings/queries'
+
+type Obj = Record<string, unknown>
 
 type HealthPaneProps = {
   title: string
-  failover: Record<string, unknown>
-  healthProbe: Record<string, unknown> | undefined
-  onFailoverChange: (next: Record<string, unknown>) => void
+  failover: Obj
+  healthProbe: Obj | undefined
+  compatibility: Obj
+  onFailoverChange: (next: Obj) => void
+  onHealthProbeChange: (next: Obj) => void
+  onCompatibilityChange: (next: Obj) => void
+}
+
+function obj(value: unknown): Obj {
+  return value && typeof value === 'object' ? (value as Obj) : {}
+}
+
+function clampInt(raw: string, min: number, max: number, fallback: number) {
+  const n = Math.round(Number(raw))
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
 }
 
 export function HealthPane(props: HealthPaneProps) {
-  const { title, failover, healthProbe, onFailoverChange } = props
+  const {
+    title,
+    failover,
+    healthProbe,
+    compatibility,
+    onFailoverChange,
+    onHealthProbeChange,
+    onCompatibilityChange,
+  } = props
+  const probe = obj(healthProbe)
+  const real = obj(probe.real)
+  const minTokens = obj(compatibility.min_max_tokens)
+  const setProbe = (patch: Obj) => onHealthProbeChange({ ...probe, ...patch })
+  const setReal = (patch: Obj) => setProbe({ real: { ...real, ...patch } })
+  const setMinTokens = (patch: Obj) =>
+    onCompatibilityChange({
+      ...compatibility,
+      min_max_tokens: { enabled: true, value: 128, ...minTokens, ...patch },
+    })
+
   return (
     <>
-      <SignatureRepairCard failover={failover} onChange={onFailoverChange} />
       <Card>
         <CardHeader>
           <CardTitle>{title}</CardTitle>
-        </CardHeader>
-        <CardContent className='space-y-2 text-sm text-muted-foreground'>
-          <p>
-            当前配置随「保存」写入 GET/PUT /api/panel/routing（含 official_cc /
-            health_probe / compatibility）。
+          <p className='text-xs text-muted-foreground'>
+            探测和测试请求在进入调度前就地应答，不占并发、会话席位和粘性。
           </p>
-          <RawConfigFields value={healthProbe} />
+        </CardHeader>
+        <CardContent className='divide-y'>
+          <SettingRow
+            label='拦截预热请求'
+            desc='仅 Claude 模型的 /v1/messages。Claude Code 的 Warmup、标题生成、SUGGESTION MODE、haiku max_tokens=1 连通性检查直接返回模拟响应，不打上游。'
+          >
+            <Switch
+              checked={probe.intercept_warmup === true}
+              onCheckedChange={(checked) =>
+                setProbe({ intercept_warmup: checked })
+              }
+              aria-label='拦截预热请求'
+            />
+          </SettingRow>
+          <SettingRow
+            label='max_tokens 下限'
+            desc='Claude 出站时把过小的 max_tokens 抬到下限，避免探测请求在输出前被截断。未传 max_tokens 的请求不受影响。'
+          >
+            <div className='flex items-center gap-3'>
+              <Input
+                className='w-24'
+                type='number'
+                min={1}
+                max={4096}
+                disabled={minTokens.enabled === false}
+                value={Number(minTokens.value ?? 128)}
+                onChange={(event) =>
+                  setMinTokens({
+                    value: clampInt(event.target.value, 1, 4096, 128),
+                  })
+                }
+                aria-label='max_tokens 下限'
+              />
+              <Switch
+                checked={minTokens.enabled !== false}
+                onCheckedChange={(checked) =>
+                  setMinTokens({ enabled: checked })
+                }
+                aria-label='启用 max_tokens 下限'
+              />
+            </div>
+          </SettingRow>
         </CardContent>
       </Card>
+      <HealthCacheCard
+        probe={probe}
+        real={real}
+        onProbeChange={setProbe}
+        onRealChange={setReal}
+      />
+      <SignatureRepairCard failover={failover} onChange={onFailoverChange} />
     </>
   )
 }
+
+function HealthCacheCard({
+  probe,
+  real,
+  onProbeChange,
+  onRealChange,
+}: {
+  probe: Obj
+  real: Obj
+  onProbeChange: (patch: Obj) => void
+  onRealChange: (patch: Obj) => void
+}) {
+  const status = useQuery(healthProbeQueryOptions())
+  const snaps = status.data?.snapshots
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>健康缓存</CardTitle>
+        <p className='text-xs text-muted-foreground'>
+          定时用真实槽位跑一次对话并缓存结果。new-api 渠道测试、sub2api
+          账号测试这类 hi / ping 请求直接回放缓存，覆盖
+          Messages、Chat、Responses 的流式和非流式。
+        </p>
+      </CardHeader>
+      <CardContent className='divide-y'>
+        <SettingRow label='启用' desc='关闭时探测请求照常进入调度'>
+          <Switch
+            checked={probe.enabled === true}
+            onCheckedChange={(checked) => onProbeChange({ enabled: checked })}
+            aria-label='启用健康缓存'
+          />
+        </SettingRow>
+        <SettingRow label='探测间隔' desc='秒，30–86400'>
+          <Input
+            className='w-28'
+            type='number'
+            min={30}
+            max={86400}
+            value={Number(probe.interval_sec ?? 600)}
+            onChange={(event) =>
+              onProbeChange({
+                interval_sec: clampInt(event.target.value, 30, 86400, 600),
+              })
+            }
+            aria-label='探测间隔'
+          />
+        </SettingRow>
+        <SettingRow label='缓存有效期' desc='秒，过期后探测请求照常进入调度'>
+          <Input
+            className='w-28'
+            type='number'
+            min={30}
+            max={172800}
+            value={Number(probe.cache_ttl_sec ?? 900)}
+            onChange={(event) =>
+              onProbeChange({
+                cache_ttl_sec: clampInt(event.target.value, 30, 172800, 900),
+              })
+            }
+            aria-label='缓存有效期'
+          />
+        </SettingRow>
+        <SettingRow label='Claude 探测模型' desc='在 Claude 槽上跑真实探测'>
+          <Input
+            className='w-56'
+            value={String(real.model ?? 'claude-haiku-4-5')}
+            onChange={(event) => onRealChange({ model: event.target.value })}
+            aria-label='Claude 探测模型'
+          />
+        </SettingRow>
+        <SettingRow
+          label='GPT 探测模型'
+          desc='在 GPT 槽上跑真实探测。留空则 GPT 模型的探测请求不走缓存。'
+        >
+          <Input
+            className='w-56'
+            placeholder='gpt-5.4'
+            value={String(real.openai_model ?? '')}
+            onChange={(event) =>
+              onRealChange({ openai_model: event.target.value })
+            }
+            aria-label='GPT 探测模型'
+          />
+        </SettingRow>
+        <SettingRow label='最近快照'>
+          <div className='flex flex-col items-end gap-1 text-xs'>
+            <SnapshotLine label='Claude' snap={snaps?.anthropic} />
+            <SnapshotLine label='GPT' snap={snaps?.openai} />
+          </div>
+        </SettingRow>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SnapshotLine({
+  label,
+  snap,
+}: {
+  label: string
+  snap: HealthSnapshotView | undefined
+}) {
+  if (!snap?.at) {
+    return <span className='text-muted-foreground'>{label}：暂无</span>
+  }
+  const tone = snap.ok ? 'default' : snap.error ? 'destructive' : 'secondary'
+  const text = snap.ok ? '可用' : snap.error ? '失败' : '已过期'
+  return (
+    <span className='flex items-center gap-2'>
+      <span className='text-muted-foreground'>
+        {label} · {snap.vm_id || '—'} · {snap.model || '—'}
+      </span>
+      <Badge variant={tone} title={snap.error || undefined}>
+        {text}
+      </Badge>
+    </span>
+  )
+}
+
 function SignatureRepairCard({
   failover,
   onChange,
 }: {
-  failover: Record<string, unknown>
-  onChange: (next: Record<string, unknown>) => void
+  failover: Obj
+  onChange: (next: Obj) => void
 }) {
   // 默认值在 gateway HEAD 与工作区之间相反（!== false vs === true），
   // 所以不硬编码默认态，严格按 GET /routing 的实际值回显。
