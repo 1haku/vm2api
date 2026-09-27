@@ -3,14 +3,21 @@
  * third-party clients are allowed; Claude Code is rejected.
  */
 
-const OFFICIAL_CODEX_UA = /(?:^|[^\w])codex(?:_cli)?(?:\/|\s|$)/i
+const OFFICIAL_CODEX_UA = /(?:^|[^\w-])codex(?:_cli_rs|_cli|_exec|_vscode)?(?:\/|\s|$)/i
+const OFFICIAL_CODEX_ORIGINATOR = /^codex(?:_cli_rs|_exec|_vscode)?$/i
 const CLAUDE_CODE_UA = /claude-cli|claude-code|anthropic-ai\/sdk/i
 const OPENAI_SDK_UA = /openai\/|openai-node|openai-python|ChatGPT-User/i
 
 export function classifyCodexClient(headers = {}, body = {}, protocol = '') {
   const ua = String(headers['user-agent'] || headers['User-Agent'] || '')
   if (CLAUDE_CODE_UA.test(ua)) return 'claude_code'
-  if (OFFICIAL_CODEX_UA.test(ua) || headers['x-codex-installation-id'] || headers['session-id']) {
+  const originator = String(headers.originator || '')
+  if (
+    OFFICIAL_CODEX_UA.test(ua) ||
+    OFFICIAL_CODEX_ORIGINATOR.test(originator) ||
+    headers['x-codex-installation-id'] ||
+    headers['session-id']
+  ) {
     if (!CLAUDE_CODE_UA.test(ua)) return 'official_codex'
   }
   if (

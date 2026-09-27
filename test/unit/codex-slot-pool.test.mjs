@@ -172,3 +172,92 @@ test('a bound OpenAI session stays on its VM and a full window is skipped', () =
   const full = orderCodexSessionSlots(vms, { sessionKey: 'conv-c', sessionLimit: sessions })
   assert.equal(full.error, 'session_window_full')
 })
+
+test('panel max_concurrency on the listVms summary is the candidate cap (#150)', async () => {
+  const { codexAccountCandidate } = await import('../../src/lib/pool/codex-slot-pool.mjs')
+  const signals = { inFlight: 0 }
+  assert.equal(codexAccountCandidate(gpt('vm-a', { max_concurrency: 4 }), Date.now(), signals).concurrency, 4)
+  assert.equal(
+    codexAccountCandidate(gpt('vm-a', { policy: { maxConcurrency: 3 } }), Date.now(), signals).concurrency,
+    3,
+  )
+  const vms = [gpt('vm-a', { max_concurrency: 4 })]
+  const { acquireOpenAISlot, resetOpenAIAccountRuntime } = await import('../../src/lib/pool/openai-account-runtime.mjs')
+  resetOpenAIAccountRuntime()
+  acquireOpenAISlot('vm-a')
+  acquireOpenAISlot('vm-a')
+  assert.deepEqual(orderCodexSessionSlots(vms).ids, ['vm-a'])
+  acquireOpenAISlot('vm-a')
+  acquireOpenAISlot('vm-a')
+  assert.equal(orderCodexSessionSlots(vms).error, 'capacity_unavailable')
+  resetOpenAIAccountRuntime()
+})
+
+test('panel max_rpm caps starts per minute on a GPT slot', async () => {
+  const { acquireOpenAISlot, releaseOpenAISlot, resetOpenAIAccountRuntime } = await import(
+    '../../src/lib/pool/openai-account-runtime.mjs'
+  )
+  resetOpenAIAccountRuntime()
+  const now = Date.parse('2026-09-27T00:00:00.000Z')
+  const vms = [gpt('vm-a', { max_rpm: 2 }), gpt('vm-b', { max_rpm: 0 })]
+  for (let i = 0; i < 2; i++) {
+    acquireOpenAISlot('vm-a', now)
+    releaseOpenAISlot('vm-a')
+  }
+  assert.deepEqual(orderCodexSessionSlots(vms, { now: now + 1000 }).ids, ['vm-b'])
+  assert.ok(orderCodexSessionSlots(vms, { now: now + 61_000 }).ids.includes('vm-a'))
+  resetOpenAIAccountRuntime()
+})
+
+test('panel allowed_models keeps a GPT slot out of other models', () => {
+  const vms = [gpt('vm-a', { allowed_models: ['gpt-5.5'] }), gpt('vm-b')]
+  assert.deepEqual(orderCodexSessionSlots(vms, { model: 'gpt-5.4' }).ids, ['vm-b'])
+  assert.ok(orderCodexSessionSlots(vms, { model: 'gpt-5.5' }).ids.includes('vm-a'))
+  const only = orderCodexSessionSlots([vms[0]], { model: 'gpt-5.4' })
+  assert.equal(only.error, 'model_not_allowed')
+  assert.equal(orderCodexSessionSlots([vms[0]], { pin: 'vm-a', model: 'gpt-5.4' }).error, 'model_not_allowed')
+})
+
+test('GPT wait queue wakes FIFO on release and caps at 100 waiters', async () => {
+  const rt = await import('../../src/lib/pool/openai-account-runtime.mjs')
+  rt.resetOpenAIAccountRuntime()
+  assert.equal(rt.OPENAI_MAX_WAITERS, 100)
+  const deadline = Date.now() + 5000
+  const order = []
+  const first = rt.waitForOpenAICapacity({ deadline }).then((r) => order.push(['a', r.woken]))
+  const second = rt.waitForOpenAICapacity({ deadline }).then((r) => order.push(['b', r.woken]))
+  rt.acquireOpenAISlot('vm-a')
+  rt.releaseOpenAISlot('vm-a')
+  await first
+  assert.deepEqual(order, [['a', true]])
+  rt.releaseOpenAISlot('vm-a')
+  await second
+  assert.deepEqual(order, [
+    ['a', true],
+    ['b', true],
+  ])
+  const parked = Array.from({ length: 100 }, () => rt.waitForOpenAICapacity({ deadline }))
+  assert.equal(rt.openAIWaiterCount(), 100)
+  await assert.rejects(rt.waitForOpenAICapacity({ deadline }), { code: 'pool_wait_queue_full' })
+  const ac = new AbortController()
+  rt.resetOpenAIAccountRuntime()
+  await Promise.all(parked)
+  const aborted = rt.waitForOpenAICapacity({ deadline, signal: ac.signal })
+  ac.abort()
+  assert.deepEqual(await aborted, { woken: false, aborted: true })
+  assert.equal(rt.openAIWaiterCount(), 0)
+})
+
+test('RPM-only capacity miss reports when the window reopens', async () => {
+  const { acquireOpenAISlot, releaseOpenAISlot, resetOpenAIAccountRuntime } = await import(
+    '../../src/lib/pool/openai-account-runtime.mjs'
+  )
+  resetOpenAIAccountRuntime()
+  const now = Date.parse('2026-09-27T00:00:00.000Z')
+  acquireOpenAISlot('vm-a', now)
+  releaseOpenAISlot('vm-a')
+  const full = orderCodexSessionSlots([gpt('vm-a', { max_rpm: 1 })], { now: now + 1000 })
+  assert.equal(full.error, 'capacity_unavailable')
+  assert.equal(full.retryAt, now + 60_000)
+  resetOpenAIAccountRuntime()
+})

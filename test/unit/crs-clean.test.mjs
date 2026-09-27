@@ -286,7 +286,7 @@ test('legacy user_id: device becomes VM, unofficial session is minted, account f
   assert.match(uid.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 })
 
-test('legacy user_id: official Claude Code keeps caller session', () => {
+test('legacy user_id: official Claude Code keeps caller session under passthrough', () => {
   const inbound = { metadata: { user_id: 'user_devA_account__session_sess9' } }
   const out = applyCrsIdentityReplace(
     { model: 'x' },
@@ -297,7 +297,7 @@ test('legacy user_id: official Claude Code keeps caller session', () => {
     },
     inbound,
     {},
-    { officialClient: true },
+    { officialClient: true, mode: 'passthrough' },
   )
   const uid = JSON.parse(out.metadata.user_id)
   assert.equal(uid.session_id, 'sess9')
