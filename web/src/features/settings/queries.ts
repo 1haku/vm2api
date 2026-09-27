@@ -84,3 +84,30 @@ export function changelogQueryOptions() {
     staleTime: 60_000,
   })
 }
+
+export type HealthSnapshotView = {
+  ok: boolean
+  at: string | null
+  stale: boolean
+  vm_id: string | null
+  model: string | null
+  error: string | null
+  age_ms: number | null
+}
+
+export type HealthProbePayload = {
+  config: Record<string, unknown>
+  snapshot: HealthSnapshotView | null
+  snapshots: {
+    anthropic: HealthSnapshotView
+    openai: HealthSnapshotView
+  } | null
+}
+
+export function healthProbeQueryOptions() {
+  return queryOptions({
+    queryKey: ['panel', 'health-probe'] as const,
+    queryFn: () => api<HealthProbePayload>('/api/panel/health-probe'),
+    refetchInterval: 30_000,
+  })
+}

@@ -7,6 +7,7 @@ import {
   StickyRouter,
   childDeclaredWithoutParent,
   explicitParentSessionId,
+  isShortProbeRequest,
   mergeStickyConfig,
 } from '../../src/lib/pool/sticky-router.mjs'
 import { ProxyPool } from '../../src/lib/vm/proxy-pool.mjs'
@@ -772,4 +773,45 @@ test('disconnect_on_error config persists and runtime failure disables slot', ()
   assert.match(disconnected[0].reason, /proxy_disconnect/)
   assert.equal(disabled.length, 0, 'runtime disconnect should not also fire probe disable')
   pool2.stopScheduler()
+})
+
+test('isShortProbeRequest matches one-shot test calls of any max_tokens', () => {
+  // sub2api account test
+  assert.equal(
+    isShortProbeRequest({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 1024,
+      system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }] }],
+    }),
+    true,
+  )
+  // new-api channel test
+  assert.equal(isShortProbeRequest({ max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }), true)
+  assert.equal(
+    isShortProbeRequest({ max_tokens: 32, messages: [{ role: 'user', content: 'verify-session f4: reply OK' }] }),
+    true,
+  )
+})
+
+test('isShortProbeRequest leaves conversations alone', () => {
+  const user = { role: 'user', content: 'hi' }
+  assert.equal(isShortProbeRequest({ messages: [user, { role: 'assistant', content: 'x' }, user] }), false)
+  assert.equal(isShortProbeRequest({ messages: [user], tools: [{ name: 'Bash' }] }), false)
+  assert.equal(isShortProbeRequest({ messages: [{ role: 'user', content: 'x'.repeat(65) }] }), false)
+  assert.equal(
+    isShortProbeRequest({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: {} },
+            { type: 'text', text: 'hi' },
+          ],
+        },
+      ],
+    }),
+    false,
+  )
+  assert.equal(isShortProbeRequest({ messages: [{ role: 'user', content: '  ' }] }), false)
 })

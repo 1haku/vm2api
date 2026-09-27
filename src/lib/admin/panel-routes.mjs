@@ -3119,6 +3119,7 @@ export function createPanelHandler(ctx) {
           panel.ok({
             config: ctx.healthMonitor?.getConfig?.() || ctx.routingConfig.health_probe,
             snapshot: ctx.healthMonitor?.getSnapshot?.() || null,
+            snapshots: ctx.healthMonitor?.getSnapshots?.() || null,
           }),
         )
       }
@@ -3130,6 +3131,7 @@ export function createPanelHandler(ctx) {
           panel.ok({
             config: ctx.healthMonitor.getConfig(),
             snapshot,
+            snapshots: ctx.healthMonitor.getSnapshots?.() || null,
           }),
         )
       }
