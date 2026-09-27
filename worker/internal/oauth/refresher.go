@@ -245,6 +245,7 @@ func (r *Refresher) request(ctx context.Context, current credential.Credential) 
 		scopes = strings.Fields(decoded.Scope)
 	}
 	return credential.Credential{
+		Type:         current.Type,
 		AccessToken:  strings.TrimSpace(decoded.AccessToken),
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
@@ -253,6 +254,7 @@ func (r *Refresher) request(ctx context.Context, current credential.Credential) 
 		AccountUUID:  current.AccountUUID,
 		OrgUUID:      current.OrgUUID,
 		Scopes:       scopes,
+		AuthScheme:   current.AuthScheme,
 	}, nil
 }
 

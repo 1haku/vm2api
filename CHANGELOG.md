@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.65 — 2026-09-27
+
+- 修复官方 Claude Code 客户端工具 `WebSearch` 被改写成服务端 `web_search`：ToolSearch 加载 `WebSearch` 后必定 502 `incomplete_response`（#134）。现在带 `input_schema` 的 `WebSearch` 原样转发，模型调用的是客户端 `WebSearch`；请求里已有它时不再额外注入服务端搜索。
+- 自定义工具保留 `defer_loading: true`，Claude Code 延迟加载的工具不再每次全量发送。
+- 提示词触发注入的服务端搜索与 Claude Code 自身定义对齐：`web_search_20250305` / `web_search` / `max_uses: 8`。调用方自带的 `web_search` 保留原参数。
+
+已部署机升级：只覆盖控制面并重启 Node 一次。二进制未变，不必 `wrap-cli/sync`。不要 `docker rm` 槽。
+
+## 1.3.64 — 2026-09-27
+
+- 更新 OAuth 换票：完整 scope、Setup Token 运行模式、二进制换票服务与 VM SOCKS5 出口。
+- 更新 usage 用量获取：完整 OAuth 正常采集 5h / 7d 官方用量。
+- 更新套餐获取：按官方 usage / Fable 结果判定 Pro / Max。
+
 ## 1.3.63 — 2026-09-27
 
 - 修复 GPT 槽 5h / 7d 额度在 Web 上显示为 0%、无重置时间：落盘的 usage 视图读回时被当成原始 extra 二次解析而全部清空；现从 `codex.extra` 重建，并兼容已存视图。
@@ -11,7 +25,6 @@
 
 - 修复带 `type: setup-token` 标签但实际包含 `user:profile` / `user:sessions:claude_code` 的完整 OAuth 导入被错误降级为 inference-only。现在以实际 scope 集合为准，保留 profile 权限并允许官方 `/profile` / `/usage`。
 
-## Unreleased
 
 ## 1.3.61 — 2026-09-26
 

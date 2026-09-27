@@ -1,24 +1,80 @@
 /**
- * Host helper client for sessionKey / auth-code import.
- * Protocol lives in bin/kin-cookie-auth. This module only spawns it and
- * maps stdout JSON / stderr codes. Node does not implement the exchange.
+ * OAuth import surface. Production exchange runs in the local-only
+ * `kin-oauth-auth` binary; auth.js is loaded dynamically only by tests.
  */
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { enrichOauthIdentity } from './oauth-identity.mjs'
+import { CAI_AUTHORIZE_URL, CLIENT_ID, FULL_OAUTH_SCOPE, REDIRECT_URI } from './oauth-contract.mjs'
 
-export const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
-export const REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback'
-const CAI_AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize'
-const SCOPE_INFERENCE = 'user:inference'
+export { CLIENT_ID, REDIRECT_URI }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+function findOAuthAuthBin() {
+  const named = process.env.KIN_OAUTH_AUTH_BIN
+  const candidates = [
+    named,
+    path.join(__dirname, '..', '..', '..', 'bin', 'kin-oauth-auth'),
+    '/opt/vm2api/bin/kin-oauth-auth',
+    '/opt/kin-gateway/bin/kin-oauth-auth',
+  ].filter(Boolean)
+  return candidates.find((item) => fs.existsSync(item)) || null
+}
+
+function serviceFailure(code, message) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+function runOAuthAuthService(payload) {
+  const bin = findOAuthAuthBin()
+  if (!bin) return Promise.reject(serviceFailure('oauth_auth_bin_missing', 'kin-oauth-auth not found'))
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, [], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('error', (error) => reject(serviceFailure('oauth_auth_spawn_failed', error.message)))
+    child.on('close', (code) => {
+      const lines = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      let result = null
+      try {
+        result = lines.length ? JSON.parse(lines[lines.length - 1]) : null
+      } catch {}
+      if (!result || typeof result !== 'object') {
+        reject(serviceFailure('oauth_auth_output_invalid', stderr.trim().slice(0, 300) || `service exited ${code}`))
+        return
+      }
+      if (result.ok !== true) {
+        reject(
+          serviceFailure(result.error?.code || 'oauth_auth_failed', result.error?.message || 'OAuth service failed'),
+        )
+        return
+      }
+      resolve(result.credential)
+    })
+    child.stdin.end(JSON.stringify(payload) + '\n')
+  })
+}
+
+async function loadLocalAuthForTest() {
+  return import('./auth.js')
+}
+
 export function buildSetupTokenAuthorizeURL(state, codeChallenge) {
   const encodedRedirectURI = encodeURIComponent(REDIRECT_URI)
-  const encodedScope = encodeURIComponent(SCOPE_INFERENCE).replace(/%20/g, '+')
+  const encodedScope = encodeURIComponent(FULL_OAUTH_SCOPE).replace(/%20/g, '+')
   return `${CAI_AUTHORIZE_URL}?code=true&client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodedRedirectURI}&scope=${encodedScope}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${state}`
 }
 
@@ -61,8 +117,8 @@ export function extractOAuthCodeFromRedirect(raw) {
 
 function redact(s, keep = 12) {
   if (!s || typeof s !== 'string') return s
-  if (s.length <= keep * 2) return s.slice(0, 4) + '…'
-  return s.slice(0, keep) + '…' + s.slice(-8)
+  if (s.length <= keep * 2) return s.slice(0, 4) + '...'
+  return s.slice(0, keep) + '...' + s.slice(-8)
 }
 
 function isCloudflareChallenge(s) {
@@ -84,8 +140,11 @@ function isSessionStale(s) {
 export function classifyImportHelperOutput(stderr) {
   const t = String(stderr || '')
   if (isSessionStale(t)) return 'session_stale_relogin'
+  if (/state_mismatch/i.test(t)) return 'state_mismatch'
   if (/authorize_no_code/i.test(t)) return 'authorize_no_code'
   if (/proxy_auth_rejected|user was rejected by the socks5 server/i.test(t)) return 'proxy_auth_rejected'
+  if (/bootstrap/i.test(t)) return 'bootstrap_failed'
+  if (/grove_settings|grove/i.test(t)) return 'grove_settings_failed'
   if (isCloudflareChallenge(t)) return 'cloudflare_challenge'
   return 'cookie_auth_failed'
 }
@@ -95,6 +154,7 @@ export function publicImportError(raw) {
   if (isSessionStale(s)) {
     return 'sessionKey 不够新，Anthropic 拒绝授权（Session is not fresh enough）。请重新登录 claude.ai 后立刻复制最新 sessionKey，不要用旧 cookie。'
   }
+  if (/state_mismatch/i.test(s)) return 'OAuth state 校验失败，请重新生成授权链接后再导入。'
   if (/authorize_no_code/i.test(s)) {
     return '官方 CAI 授权页没有返回 code。sessionKey 可能未完成 claude.ai SSO，请重新登录 claude.ai 后立刻复制最新 sessionKey。'
   }
@@ -104,7 +164,10 @@ export function publicImportError(raw) {
   if (isCloudflareChallenge(s)) {
     return 'Cloudflare 拦截了该槽位 SOCKS5 出口。请换住宅代理或稍后重试。'
   }
-  const compact = s.replace(/\s+/g, ' ').trim()
+  const compact = s
+    .replace(/sk-ant-[A-Za-z0-9._~+/-]+/g, '[redacted-token]')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (/<!doctype|<html[\s>]/i.test(compact)) {
     const status = (compact.match(/\b([45]\d\d)\b/) || [])[1] || ''
     return `导入失败${status ? `: ${status}` : ''} 上游返回了网页而不是 JSON`
@@ -115,7 +178,7 @@ export function publicImportError(raw) {
 export function panelImportErrorPayload(err) {
   const raw = String(err?.message || err || '')
   const code = err?.code || classifyImportHelperOutput(raw)
-  const stale = code === 'session_stale_relogin' || code === 'authorize_no_code'
+  const stale = code === 'session_stale_relogin' || code === 'authorize_no_code' || code === 'state_mismatch'
   const proxyAuth = code === 'proxy_auth_rejected'
   const cf =
     !stale && !proxyAuth && (code === 'cloudflare_challenge' || /just a moment|cloudflare|doctype html/i.test(raw))
@@ -125,7 +188,9 @@ export function panelImportErrorPayload(err) {
       code: stale
         ? code === 'authorize_no_code'
           ? 'authorize_no_code'
-          : 'session_stale_relogin'
+          : code === 'state_mismatch'
+            ? 'state_mismatch'
+            : 'session_stale_relogin'
         : proxyAuth
           ? 'proxy_auth_rejected'
           : cf
@@ -136,112 +201,12 @@ export function panelImportErrorPayload(err) {
   }
 }
 
-function cookieAuthBinName() {
-  return process.platform === 'win32' ? 'kin-cookie-auth.exe' : 'kin-cookie-auth'
-}
-
-export function findCookieAuthBin() {
-  const named = process.env.KIN_COOKIE_AUTH_BIN
-  const candidates = [
-    named,
-    path.join(__dirname, '..', '..', '..', 'bin', cookieAuthBinName()),
-    path.join(__dirname, '..', '..', '..', 'bin', 'kin-cookie-auth'),
-    '/opt/vm2api/bin/kin-cookie-auth',
-    '/opt/kin-gateway/bin/kin-cookie-auth',
-  ].filter(Boolean)
-  return candidates.find((p) => fs.existsSync(p)) || null
-}
-
-function normalizeSocks(proxyUrl) {
-  if (!proxyUrl) return null
-  const s = String(proxyUrl)
-  if (s.startsWith('socks5://') && !s.startsWith('socks5h://')) {
-    return 'socks5h://' + s.slice('socks5://'.length)
-  }
-  return s
-}
-
-function spawnCookieHelper(envExtra, sessionKey) {
-  const bin = findCookieAuthBin()
-  if (!bin) {
-    const err = new Error('kin-cookie-auth not found')
-    err.code = 'no_cookie_auth_bin'
-    return Promise.reject(err)
-  }
-  return new Promise((resolve, reject) => {
-    const child = spawn(bin, [], {
-      env: {
-        ...process.env,
-        ...envExtra,
-        ...(sessionKey ? { SESSION_KEY: sessionKey } : {}),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => {
-      stdout += d.toString('utf8')
-    })
-    child.stderr.on('data', (d) => {
-      stderr += d.toString('utf8')
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      const label = path.basename(bin)
-      if (stderr.trim()) console.warn(`[${label}]`, publicImportError(stderr))
-      if (code !== 0) {
-        const classified = classifyImportHelperOutput(stderr)
-        const err = new Error(publicImportError(stderr.trim() || `${label} exited ${code}`))
-        err.code = classified === 'cookie_auth_failed' && /proxy_required/i.test(stderr) ? 'proxy_required' : classified
-        reject(err)
-        return
-      }
-      try {
-        const cred = JSON.parse(stdout.trim())
-        if (!cred?.access_token) throw new Error(`${label} returned no access_token`)
-        resolve(cred)
-      } catch (e) {
-        reject(e)
-      }
-    })
-  })
-}
-
-export async function exchangeTokenViaCookieAuth({
-  code,
-  codeVerifier,
-  state = '',
-  proxyUrl = null,
-  redirectUri = null,
-  tokenUrls = null,
-} = {}) {
-  const direct = proxyUrl === ''
-  const px = direct ? '' : normalizeSocks(proxyUrl)
-  if (!direct && !px) {
-    const err = new Error('slot SOCKS5 is required for token exchange')
-    err.code = 'proxy_required'
-    throw err
-  }
-  const urls = Array.isArray(tokenUrls) ? tokenUrls.map((u) => String(u || '').trim()).filter(Boolean) : []
-  return spawnCookieHelper(
-    {
-      IMPORT_MODE: 'token_exchange',
-      ...(px ? { PROXY_URL: px } : {}),
-      AUTH_CODE: String(code || ''),
-      CODE_VERIFIER: String(codeVerifier || ''),
-      OAUTH_STATE: String(state || ''),
-      ...(redirectUri ? { OAUTH_REDIRECT_URI: String(redirectUri) } : {}),
-      ...(urls.length ? { OAUTH_TOKEN_URLS: urls.join(',') } : {}),
-    },
-    '',
-  )
-}
-
 function fakeOauth(scope) {
   const now = Math.floor(Date.now() / 1000)
+  const setup = String(scope || '').toLowerCase() === 'inference'
   return {
-    type: scope === 'inference' ? 'setup-token' : 'oauth',
-    mode: scope === 'inference' ? 'setup-token' : 'oauth',
+    type: setup ? 'setup-token' : 'oauth',
+    mode: setup ? 'setup-token' : 'oauth',
     access_token: 'sk-ant-oat01-FAKE-SIM',
     refresh_token: 'sk-ant-ort01-FAKE-SIM',
     expires_at: now + 8 * 3600,
@@ -250,39 +215,97 @@ function fakeOauth(scope) {
     account_uuid: 'acct-fake-sim',
     org_uuid: 'org-fake-sim',
     source: 'KIN_FAKE_SESSION_OAUTH',
-    scope,
+    scope: FULL_OAUTH_SCOPE,
   }
 }
 
-export async function sessionKeyToOAuth(sessionKey, { scope = 'full', proxyUrl = null, fetchImpl = null } = {}) {
+function parseFullCode(code, state = '') {
+  const raw = String(code || '').trim()
+  const hash = raw.indexOf('#')
+  if (hash === -1) return { code: raw, state: String(state || '') }
+  return { code: raw.slice(0, hash), state: raw.slice(hash + 1) }
+}
+
+export async function exchangeTokenViaCookieAuth({
+  code,
+  codeVerifier,
+  state = '',
+  proxyUrl = null,
+  redirectUri = null,
+  fetchImpl = null,
+  timeoutMs = 15000,
+} = {}) {
+  const parsed = parseFullCode(code, state)
+  if (!fetchImpl) {
+    return runOAuthAuthService({
+      operation: 'exchange_code',
+      code: parsed.code,
+      code_verifier: codeVerifier,
+      state: parsed.state,
+      redirect_uri: redirectUri || REDIRECT_URI,
+      proxy_url: proxyUrl,
+      timeout_ms: timeoutMs,
+    })
+  }
+  const auth = await loadLocalAuthForTest()
+  const token = await auth.exchangeAuthorizationCode({
+    code: parsed.code,
+    codeVerifier,
+    state: parsed.state,
+    proxyUrl,
+    redirectUri: redirectUri || REDIRECT_URI,
+    fetchImpl,
+    timeoutMs,
+  })
+  return auth.completeAuthorizedToken({ token, proxyUrl, fetchImpl, timeoutMs })
+}
+
+export async function sessionKeyToOAuth(
+  sessionKey,
+  { scope = 'full', proxyUrl = null, fetchImpl = null, timeoutMs = 15000 } = {},
+) {
   const sk = String(sessionKey || '')
     .trim()
-    .replace(/^["']|["']$/g, '')
+    .replace(/^['"]|['"]$/g, '')
   if (!sk.startsWith('sk-ant-sid')) {
     throw new Error(`expected sk-ant-sid* sessionKey, got: ${redact(sk)}`)
   }
   if (process.env.KIN_FAKE_SESSION_OAUTH === '1' || process.env.KIN_FAKE_SESSION_OAUTH === 'true') {
     return fakeOauth(scope)
   }
-  const direct = proxyUrl === ''
-  const px = direct ? '' : normalizeSocks(proxyUrl)
-  if (!direct && !px) {
-    const err = new Error('slot SOCKS5 is required for sessionKey import')
-    err.code = 'proxy_required'
-    throw err
-  }
   try {
-    const cred = await spawnCookieHelper({ SCOPE: scope, ...(px ? { PROXY_URL: px } : {}) }, sk)
-    const typed = {
+    const requestedScope = FULL_OAUTH_SCOPE
+    const setup = String(scope || '').toLowerCase() === 'inference'
+    const cred = !fetchImpl
+      ? await runOAuthAuthService({
+          operation: 'session_key',
+          session_key: sk,
+          scope: requestedScope,
+          runtime_mode: setup ? 'setup-token' : 'oauth',
+          proxy_url: proxyUrl,
+          timeout_ms: timeoutMs,
+        })
+      : await (async () => {
+          const auth = await loadLocalAuthForTest()
+          return auth.sessionKeyToAuthorizedOAuth({
+            sessionKey: sk,
+            scope: requestedScope,
+            proxyUrl,
+            fetchImpl,
+            timeoutMs,
+          })
+        })()
+    return {
       ...cred,
-      type: cred.type || (scope === 'inference' ? 'setup-token' : 'oauth'),
-      mode: cred.mode || (scope === 'inference' ? 'setup-token' : 'oauth'),
+      type: setup ? 'setup-token' : cred.type || 'oauth',
+      mode: setup ? 'setup-token' : cred.mode || 'oauth',
+      scope: cred.scope || requestedScope,
+      source: cred.source || 'sessionKey-cookie-auth',
     }
-    console.log('[import]', typed.source || 'cookie-auth', 'socks5h', redact(typed.access_token || ''))
-    return enrichOauthIdentity(typed, { proxyUrl: px, fetchImpl })
   } catch (e) {
     const err = new Error(publicImportError(e.message || 'session import failed'))
-    err.code = e.code || 'cookie_auth_failed'
+    const classified = classifyImportHelperOutput(e.message)
+    err.code = classified === 'cookie_auth_failed' ? e.code || classified : classified
     throw err
   }
 }

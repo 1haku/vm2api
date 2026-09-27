@@ -1,16 +1,16 @@
 /**
  * Browser OAuth-link import.
  * CAI (sub2api) and official Claude Code share PKCE + paste-code,
- * then exchange via the slot SOCKS5, or the control-plane default route
- * when the slot is bound to local egress (`proxyUrl` empty string).
+ * then exchange via the current VM's SOCKS5 egress.
+ * Local/direct control-plane egress is not allowed for OAuth auth.
  */
 import crypto from 'node:crypto'
 import { exchangeTokenViaCookieAuth } from './cookie-auth.mjs'
 import { enrichOauthIdentity, flattenOauthIdentity } from './oauth-identity.mjs'
+import { FULL_OAUTH_SCOPE } from './oauth-contract.mjs'
 
 export const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 export const SESSION_TTL_MS = 30 * 60 * 1000
-export const SCOPE_INFERENCE = 'user:inference'
 
 export const OAUTH_FLAVORS = Object.freeze({
   cai: {
@@ -18,7 +18,7 @@ export const OAUTH_FLAVORS = Object.freeze({
     authorizeUrl: 'https://claude.com/cai/oauth/authorize',
     redirectUri: 'https://platform.claude.com/oauth/code/callback',
     tokenUrls: ['https://platform.claude.com/v1/oauth/token', 'https://api.anthropic.com/v1/oauth/token'],
-    scope: 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
+    scope: FULL_OAUTH_SCOPE,
     source: 'oauth-auth-url',
   },
   claude_code: {
@@ -30,7 +30,7 @@ export const OAUTH_FLAVORS = Object.freeze({
       'https://api.anthropic.com/v1/oauth/token',
       'https://console.anthropic.com/v1/oauth/token',
     ],
-    scope: 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers',
+    scope: FULL_OAUTH_SCOPE,
     source: 'oauth-claude-code',
   },
   setup_token: {
@@ -38,7 +38,7 @@ export const OAUTH_FLAVORS = Object.freeze({
     authorizeUrl: 'https://claude.com/cai/oauth/authorize',
     redirectUri: 'https://platform.claude.com/oauth/code/callback',
     tokenUrls: ['https://platform.claude.com/v1/oauth/token', 'https://api.anthropic.com/v1/oauth/token'],
-    scope: SCOPE_INFERENCE,
+    scope: FULL_OAUTH_SCOPE,
     source: 'oauth-setup-token',
   },
 })
@@ -82,12 +82,9 @@ function fail(code, message) {
 }
 
 function normalizeSocks(proxyUrl) {
-  if (!proxyUrl) return null
-  const s = String(proxyUrl)
-  if (s.startsWith('socks5://') && !s.startsWith('socks5h://')) {
-    return 'socks5h://' + s.slice('socks5://'.length)
-  }
-  return s
+  const s = String(proxyUrl || '').trim()
+  if (!s) return null
+  return s.replace(/^socks5:\/\//i, 'socks5h://')
 }
 
 export function normalizeOauthFlavor(raw) {
@@ -123,7 +120,7 @@ export function buildAuthorizationURL(state, codeChallenge, scope = SCOPE_OAUTH,
 export function generateAuthUrl({ vmId, proxyUrl, flavor } = {}) {
   sweepExpired()
   if (!vmId) throw fail('vm_required', 'vm_id required (先创建虚拟机)')
-  if (proxyUrl == null) {
+  if (normalizeSocks(proxyUrl) == null) {
     throw fail('proxy_required', '虚拟机未绑定 SOCKS5，请先分配代理再生成授权链接')
   }
   const spec = oauthFlavorSpec(flavor)
@@ -161,7 +158,7 @@ function parseAuthCode(fullCode) {
 }
 
 async function exchangeCodeForToken(authCode, codeVerifier, state, proxyUrl, session) {
-  const px = proxyUrl === '' ? '' : normalizeSocks(proxyUrl)
+  const px = normalizeSocks(proxyUrl)
   if (px == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
   return exchangeTokenViaCookieAuth({
     code: authCode,
@@ -185,6 +182,8 @@ export async function exchangeAuthCode({ sessionId, code, proxyUrl, vmId, fetchI
   }
   const parsed = parseAuthCode(code)
   if (!parsed.code) throw fail('code_required', '请粘贴授权码')
+  if (parsed.state && parsed.state !== session.state)
+    throw fail('state_mismatch', '授权 state 不匹配，请重新生成授权链接')
   const px = proxyUrl ?? session.proxyUrl
   if (px == null) throw fail('proxy_required', '虚拟机未绑定 SOCKS5，无法换票')
 
