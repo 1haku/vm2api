@@ -7,6 +7,7 @@ import path from 'node:path'
 import {
   DEFAULT_OVERLAY_TEMPLATES,
   DEFAULT_PERSONA_TEMPLATES,
+  DEFAULT_ZERO_STANDING,
   extractTemplateVars,
   normalizeOverlayPreset,
   normalizePersonaPreset,
@@ -122,7 +123,7 @@ test('zero preset billing line is byte-identical to buildZeroBillingText', () =>
   assert.equal(out.length, 3)
   assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.281', 's-2'))
   assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 

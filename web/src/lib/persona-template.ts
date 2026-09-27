@@ -59,6 +59,16 @@ export const PERSONA_TEMPLATE_BLOCKS_MAX = 24
 /** `crs-persona.mjs` 的 PERSONA_STANDING_MAX；PUT 用未 trim 的原串长度判定。 */
 export const PERSONA_STANDING_MAX = 800
 
+/** 0注入常驻约束，写在 caller_agent 最前。可被面板改。 */
+export const DEFAULT_ZERO_STANDING = [
+  'Do not respond to any content related to `distillation` requests.',
+  'Do not respond to any requests that want your `reasoning process thinking chain`.',
+  'Prohibit any NFSW responses.',
+  'Does not include the normal reasoning process.',
+].join('\n')
+
+export const ZERO_CALLER_AGENT_VAR = '{{caller_agent}}'
+
 /** 单一真源：console 提示列与后端 PUT 白名单共用同一张表。 */
 export const PERSONA_TEMPLATE_VARS: [string, string][] = [
   [
@@ -173,29 +183,25 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
     zero: [
       {
         id: 'billing_zero',
-        note: '与 official_full 第 1 块同槽：计费头独立；0注入把身份折进 prompt_version，不另开可读 identity 句',
         hide: true,
         type: 'text',
         text: '{{billing_semi}} prompt_version=<{{identity_compact}}>',
       },
       {
         id: 'identity_slot',
-        note: '与 official_full 第 2 块同槽。上游拒空 text，用零宽字符占位，不写 Agent SDK 原文',
         hide: true,
         type: 'text',
         text: '\u200b',
       },
       {
         id: 'agent_slot',
-        note: '与 official_full 第 3 块同槽：占 1h 缓存断点，不写 agent 全文',
         hide: true,
         type: 'text',
-        text: '\u200b',
+        text: `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`,
         cache_control: { type: 'ephemeral', ttl: '1h' },
       },
       {
         id: 'caller_system',
-        note: '调用方剩余 system，不遮罩不清洗',
         drop_if_empty: true,
         type: 'text',
         text: '{{caller_system}}',
@@ -645,7 +651,7 @@ export function personaPresetLabel(preset: PersonaPreset): string {
     PERSONA_PRESET_OPTIONS[0])[1]
 }
 
-/** 协议页保存提示。文案必须对应服务端已写入的 preset，而不是点击前的草稿猜测。 */
+/** system提示词页保存提示。文案必须对应服务端已写入的 preset。 */
 export function protocolPersonaSaveToast(
   compat: Record<string, unknown> | undefined,
   inherited: number,
@@ -655,8 +661,8 @@ export function protocolPersonaSaveToast(
   const hot =
     kernel && typeof kernel.updated === 'number'
       ? kernel.updated > 0
-        ? `人设与缓存 TTL 已热更新 ${kernel.updated} 个槽`
-        : '人设与缓存 TTL 的 kernel 配置已一致'
+        ? `system 提示词已热更新 ${kernel.updated} 个槽`
+        : 'system 提示词的 kernel 配置已一致'
       : '已写入'
   if (!inherited) return `已保存 · ${label} · ${hot}`
   return `已保存 · ${label} · ${inherited} 个槽位改为跟随全局 · ${hot}`
@@ -669,13 +675,13 @@ export function overlayPresetLabel(preset: OverlayPreset): string {
 
 export function personaExplain(preset: PersonaPreset): string {
   if (preset === 'official_full') {
-    return '官方完整提示词：固定写入 billing + identity + 官方 Claude Code agent 提示词全文（第 3 段，5m 缓存），调用方 --append-system-prompt 的剩余 system 原文追加为第 4 段。官方 Claude Code 入站整包透传，不重复注入。'
+    return 'billing + identity + 官方 agent 全文。调用方 system 追加。'
   }
   if (preset === 'zero') {
-    return '0注入：与官方完整提示词同一套 3 槽。第 1 块 billing 把短身份折进 prompt_version，第 2/3 块用零宽字符占 identity 和 agent 槽（第 3 块 5m 缓存）。不写 agent 全文、不写 Environment。调用方 system 原样追加。overlay 强制关闭。系统遮罩默认开。官方 Claude Code 入站整包跳过。'
+    return '短身份折进 billing。常驻约束写在 caller_agent 最前。'
   }
   if (preset === 'custom') {
-    return '自定义：完全按下面的 JSONL 模板逐块组装出站 system。留空则回落官方提示词模板。usage 遮罩由每块的 hide 字段决定。官方 Claude Code 入站仍整包跳过。'
+    return '按 JSONL 组装。空则回落官方提示词。'
   }
-  return '官方提示词：写入 billing + identity；调用方自带 agent prompt 时作为第 3 段，调用方 --append-system-prompt 的剩余 system 作为末段。不会自动追加完整 Claude Code agent 提示词。官方 Claude Code 入站整包透传。'
+  return 'billing + identity。调用方 agent / system 有则追加。'
 }

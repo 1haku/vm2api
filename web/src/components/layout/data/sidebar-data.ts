@@ -8,6 +8,7 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  MessageSquareText,
   ScrollText,
   Server,
   Settings,
@@ -32,6 +33,7 @@ const ALL_GROUPS: NavGroup[] = [
     items: [
       { title: '模型', url: '/models', icon: Sparkles },
       { title: '协议', url: '/protocol', icon: Shield },
+      { title: 'system提示词', url: '/system', icon: MessageSquareText },
       { title: '密钥', url: '/keys', icon: KeyRound },
       { title: '压测', url: '/loadtest', icon: Activity },
     ],

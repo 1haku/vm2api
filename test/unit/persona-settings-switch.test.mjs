@@ -28,6 +28,7 @@ import {
   personaOptionsFromRoutingFile,
   wrapMandatoryConstraint,
 } from '../../src/lib/identity/crs-persona.mjs'
+import { DEFAULT_ZERO_STANDING } from '../../src/lib/identity/persona-template.mjs'
 
 const SETTINGS_RADIOS = Object.freeze(['rewrite', 'official_prompt', 'overwrite', 'zero', 'none'])
 
@@ -146,7 +147,7 @@ test('settings save rewrite/official_prompt/overwrite/zero/none hot-reads withou
     assert.match(zero.system[0].text, /x-anthropic-billing-header:/)
     assert.match(zero.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
     assert.equal(zero.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-    assert.equal(zero.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+    assert.equal(zero.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
     assert.ok(!envTextAt(zero).includes('# Environment'))
     assert.ok(!zero.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
     assert.ok(!firstUser(zero).includes('MANDATORY constraints for this turn'))
@@ -183,7 +184,7 @@ test('persona_agent does not change zero; leftover rewrite agent does not flip d
     assert.equal(zeroDefault.system.length, 3)
     assert.match(zeroDefault.system[0].text, /prompt_version=</)
     assert.equal(zeroDefault.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-    assert.equal(zeroDefault.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+    assert.equal(zeroDefault.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
 
     persistSettings(file, { persona_inject: 'zero', persona_agent: 'rewrite' })
     const full = applyFromSettings(file)
