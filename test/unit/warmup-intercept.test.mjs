@@ -14,18 +14,36 @@ test('detects haiku max_tokens=1 ping', () => {
   assert.equal(detectWarmupIntercept({ model: 'claude-haiku-4-5', max_tokens: 2, messages: [user('quota')] }), null)
 })
 
-test('detects suggestion mode on the last user turn only', () => {
+test('detects suggestion mode on a bare side call', () => {
   const body = {
     model: 'claude-opus-5-5',
-    messages: [
-      user('hello'),
-      { role: 'assistant', content: 'x' },
-      user([{ type: 'text', text: '[SUGGESTION MODE: next]' }]),
-    ],
+    messages: [user([{ type: 'text', text: '[SUGGESTION MODE: next]' }])],
   }
   assert.equal(detectWarmupIntercept(body), 'suggestion')
-  body.messages.push({ role: 'assistant', content: 'y' }, user('real turn'))
-  assert.equal(detectWarmupIntercept(body), null)
+})
+
+test('a long conversation that quotes the prompts is never intercepted', () => {
+  const title = 'Please write a 5-10 word title for the following conversation: x'
+  const history = [
+    user(title),
+    { role: 'assistant', content: 'Warmup' },
+    user([{ type: 'text', text: 'Warmup' }]),
+    { role: 'assistant', content: 'ok' },
+    user('[SUGGESTION MODE: next]'),
+  ]
+  assert.equal(detectWarmupIntercept({ model: 'claude-opus-5-5', messages: history }), null)
+  assert.equal(
+    detectWarmupIntercept({ model: 'claude-opus-5-5', messages: [user(title)], tools: [{ name: 'Bash' }] }),
+    null,
+  )
+  assert.equal(
+    detectWarmupIntercept({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1,
+      messages: [user('a'), { role: 'assistant', content: 'b' }, user('c')],
+    }),
+    null,
+  )
 })
 
 test('detects warmup and title generation', () => {
@@ -93,7 +111,7 @@ test('streaming haiku ping keeps "#" and max_tokens', () => {
   assert.equal(data[4].delta.stop_reason, 'max_tokens')
 })
 
-test('intercept_warmup defaults off and survives normalization', () => {
-  assert.equal(normalizeHealthProbeConfig({}).intercept_warmup, false)
-  assert.equal(normalizeHealthProbeConfig({ intercept_warmup: true }).intercept_warmup, true)
+test('intercept_warmup defaults on and can be turned off', () => {
+  assert.equal(normalizeHealthProbeConfig({}).intercept_warmup, true)
+  assert.equal(normalizeHealthProbeConfig({ intercept_warmup: false }).intercept_warmup, false)
 })
