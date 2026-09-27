@@ -11,12 +11,20 @@
  * Caller-declared search is forwarded as-is.
  *
  * Schema is Anthropic-only: { type: "web_search_20250305", name: "web_search" }.
- * Do not add description / input_schema — the native type is the whole prompt.
+ * Anthropic requires name "web_search"; replaying a server_tool_use under any
+ * other name is rejected. Do not add description / input_schema — the native
+ * type is the whole prompt.
  */
 
-export const CLAUDE_WEB_SEARCH_TOOL = Object.freeze({
+const WEB_SEARCH_BASE = Object.freeze({
   type: 'web_search_20250305',
   name: 'web_search',
+})
+
+/** Injected tool, same as Claude Code 2.1.280's own server search definition. */
+export const CLAUDE_WEB_SEARCH_TOOL = Object.freeze({
+  ...WEB_SEARCH_BASE,
+  max_uses: 8,
 })
 
 export const WEB_SEARCH_HEADER = 'x-kin-web-search'
@@ -30,15 +38,27 @@ function searchToolName(tool) {
     .replace(/-/g, '_')
 }
 
+/**
+ * Claude Code's own `WebSearch` is a client tool (it has input_schema and the
+ * client runs it). Rewriting it to the server tool breaks ToolSearch
+ * `tool_reference` blocks that still point at `WebSearch`.
+ */
+function isClaudeCodeClientWebSearch(tool, type) {
+  return tool.name === 'WebSearch' && tool.input_schema != null && !type.startsWith('web_search')
+}
+
 export function isWebSearchTool(tool) {
   if (!tool || typeof tool !== 'object') return false
   const type = String(tool.type || '').toLowerCase()
+  if (isClaudeCodeClientWebSearch(tool, type)) return false
   const name = searchToolName(tool)
   return type.startsWith('web_search') || type === 'google_search' || WEB_SEARCH_NAMES.has(name)
 }
 
-/** Client search tools (Rikka search_web). Not Anthropic's built-in web_search. */
+/** Client search tools (Rikka search_web, Claude Code WebSearch). Not Anthropic's built-in web_search. */
 export function isCallerClientSearchTool(tool) {
+  if (!tool || typeof tool !== 'object') return false
+  if (isClaudeCodeClientWebSearch(tool, String(tool.type || '').toLowerCase())) return true
   const name = searchToolName(tool)
   return name === 'search_web' || name === 'scrape_web'
 }
@@ -218,6 +238,8 @@ export function toAnthropicCustomTool(tool) {
   const out = { name, input_schema }
   if (description) out.description = description
   if (tool.cache_control) out.cache_control = tool.cache_control
+  // Claude Code defers most tools and loads them through ToolSearch.
+  if (tool.defer_loading === true) out.defer_loading = true
   return out
 }
 
@@ -231,7 +253,8 @@ export function sanitizeAnthropicTools(tools) {
   return tools.map((tool) => {
     if (!tool || typeof tool !== 'object') return tool
     if (isWebSearchTool(tool)) {
-      const out = { ...CLAUDE_WEB_SEARCH_TOOL }
+      // Caller-declared search keeps its own options; no injected defaults.
+      const out = { ...WEB_SEARCH_BASE }
       const type = String(tool.type || '')
       if (type.startsWith('web_search_')) out.type = type
       for (const key of WEB_SEARCH_KEEP) {
