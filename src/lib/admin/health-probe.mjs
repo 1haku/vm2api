@@ -9,6 +9,7 @@ import { isOfficialClaudeCodeTraffic } from '../identity/crs-persona.mjs'
 import { vmHasClaudeCredential } from '../vm/vm-registry.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
 import { fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions, fromClaudeToResponses } from '../protocol/convert.mjs'
+import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 
 export const HEALTH_REAL_HEADER = 'x-kin-health-real'
 export const HEALTH_VIA_CACHE = 'health-cache'
@@ -25,6 +26,8 @@ export const DEFAULT_HEALTH_PROBE = Object.freeze({
   cache_models: Object.freeze([]),
   cache_model: '',
   intercept_unofficial: true,
+  // Claude Code warmup / title / suggestion / haiku ping: mock before scheduling.
+  intercept_warmup: false,
   fail_closed: true,
   run_on_start: true,
   real: Object.freeze({
@@ -34,6 +37,8 @@ export const DEFAULT_HEALTH_PROBE = Object.freeze({
     timeout_ms: 60_000,
     outbound_mode: 'official',
     vm_ids: Object.freeze([]),
+    // GPT snapshot for chat/responses on GPT models. Empty = no Codex probe.
+    openai_model: '',
   }),
   match: Object.freeze({
     max_tokens: 32,
@@ -44,6 +49,10 @@ export const DEFAULT_HEALTH_PROBE = Object.freeze({
     require_single_user: true,
     skip_official: true,
     ua_regex: '',
+    // new-api / sub2api chat and responses tests send no max_tokens at all.
+    allow_missing_max_tokens: true,
+    // sub2api account test: CC banner system + "hi" + 1024 + temperature 1.
+    sub2api_account_test: true,
   }),
 })
 
@@ -147,6 +156,7 @@ export function normalizeHealthProbeConfig(raw = {}) {
       .trim()
       .slice(0, 120),
     intercept_unofficial: asBool(src.intercept_unofficial, true),
+    intercept_warmup: asBool(src.intercept_warmup, false),
     fail_closed: asBool(src.fail_closed, true),
     run_on_start: asBool(src.run_on_start, true),
     real: {
@@ -159,6 +169,9 @@ export function normalizeHealthProbeConfig(raw = {}) {
       timeout_ms: clampInt(realSrc.timeout_ms, 10_000, 180_000, DEFAULT_HEALTH_PROBE.real.timeout_ms),
       outbound_mode: modeRaw === 'unofficial' ? 'unofficial' : 'official',
       vm_ids: normalizeVmIds(realSrc.vm_ids),
+      openai_model: String(realSrc.openai_model || '')
+        .trim()
+        .slice(0, 120),
     },
     match: {
       max_tokens: clampInt(matchSrc.max_tokens, 1, 4096, DEFAULT_HEALTH_PROBE.match.max_tokens),
@@ -168,6 +181,8 @@ export function normalizeHealthProbeConfig(raw = {}) {
       require_no_tools: asBool(matchSrc.require_no_tools, true),
       require_single_user: asBool(matchSrc.require_single_user, true),
       skip_official: asBool(matchSrc.skip_official, true),
+      allow_missing_max_tokens: asBool(matchSrc.allow_missing_max_tokens, true),
+      sub2api_account_test: asBool(matchSrc.sub2api_account_test, true),
       ua_regex: String(matchSrc.ua_regex || '')
         .trim()
         .slice(0, 200),
@@ -247,11 +262,41 @@ function normalizeProbeText(text) {
     .trim()
 }
 
-export function isHealthShape(headers = {}, body = {}, cfg = DEFAULT_HEALTH_PROBE) {
+const CC_BANNER = "You are Claude Code, Anthropic's official CLI for Claude."
+
+function matchesProbePrompt(text, match) {
+  if (!text || text.length > match.max_prompt_chars) return false
+  const needle = normalizeProbeText(text)
+  return (match.prompts || []).map((p) => normalizeProbeText(p)).includes(needle)
+}
+
+/**
+ * sub2api AccountTestService payload: official CC banner as the whole system,
+ * one "hi" user turn, max_tokens 1024, temperature 1, no tools. It carries a
+ * claude-cli UA, so it is matched before the official-client skip.
+ */
+export function isSub2apiAccountTest(body = {}) {
+  if (!body || typeof body !== 'object') return false
+  if (Number(body.max_tokens) !== 1024 || Number(body.temperature) !== 1) return false
+  if (Array.isArray(body.tools) ? body.tools.length : body.tools) return false
+  if (systemText(body.system) !== CC_BANNER) return false
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  if (messages.length !== 1 || String(messages[0]?.role || '').toLowerCase() !== 'user') return false
+  return normalizeProbeText(messageText(messages[0])) === 'hi'
+}
+
+/**
+ * @param {string} [protocol] inbound protocol; a missing max_tokens only counts
+ *   for OpenAI chat / responses (new-api and sub2api send none there).
+ */
+export function isHealthShape(headers = {}, body = {}, cfg = DEFAULT_HEALTH_PROBE, protocol = '') {
   const match = cfg?.match || DEFAULT_HEALTH_PROBE.match
+  if (isHealthRealBypass(headers)) return false
+  if (match.sub2api_account_test !== false && protocol !== 'openai.responses' && isSub2apiAccountTest(body)) {
+    return true
+  }
   if (isOfficialClaudeCodeTraffic(headers, body)) return false
   if (match.skip_official !== false && isOfficialClaudeUa(headerUa(headers))) return false
-  if (isHealthRealBypass(headers)) return false
   if (match.ua_regex) {
     try {
       if (!new RegExp(match.ua_regex, 'i').test(headerUa(headers))) return false
@@ -260,16 +305,21 @@ export function isHealthShape(headers = {}, body = {}, cfg = DEFAULT_HEALTH_PROB
     }
   }
   const maxTokens = inboundMaxTokens(body)
-  if (!maxTokens || maxTokens > match.max_tokens) return false
+  const openaiSide = protocol === 'openai.chat' || protocol === 'openai.responses'
+  const missingOk =
+    match.allow_missing_max_tokens !== false &&
+    openaiSide &&
+    body?.max_tokens == null &&
+    body?.max_completion_tokens == null &&
+    body?.max_output_tokens == null
+  if (!missingOk && (!maxTokens || maxTokens > match.max_tokens)) return false
+  // Responses tests carry a long instructions prompt; only system is checked.
   if (match.require_no_system !== false && systemText(body?.system)) return false
   const tools = Array.isArray(body?.tools) ? body.tools : []
   if (match.require_no_tools !== false && tools.length) return false
   const extracted = extractProbeUserText(body)
   if (match.require_single_user !== false && (extracted.messages !== 1 || extracted.users !== 1)) return false
-  if (!extracted.text || extracted.text.length > match.max_prompt_chars) return false
-  const needle = normalizeProbeText(extracted.text)
-  const allowed = (match.prompts || []).map((p) => normalizeProbeText(p))
-  return allowed.includes(needle)
+  return matchesProbePrompt(extracted.text, match)
 }
 
 export function sanitizeCachedMessage(body, fallback = {}) {
@@ -345,15 +395,22 @@ export function healthUnavailableError(snapshot = null, requestId = null) {
   return { type: 'error', error }
 }
 
+/** Which cached snapshot answers this inbound model: GPT models use the Codex probe. */
+export function healthPlatformOf(body = {}) {
+  const platform = detectInboundPlatform(body?.model)
+  return platform.ok && platform.platform === 'openai' ? 'openai' : 'anthropic'
+}
+
 export function decideHealthIntercept({
   headers = {},
   body = {},
   cfg = DEFAULT_HEALTH_PROBE,
   snapshot = null,
   now = Date.now(),
+  protocol = '',
 } = {}) {
   if (!cfg?.enabled || !cfg.intercept_unofficial) return { action: 'pass' }
-  if (!isHealthShape(headers, body, cfg)) return { action: 'pass' }
+  if (!isHealthShape(headers, body, cfg, protocol)) return { action: 'pass' }
   if (!inboundMatchesCacheModels(body, cfg)) return { action: 'pass' }
   if (isSnapshotValid(snapshot, cfg, now) && hasCachedMessage(snapshot)) {
     return { action: 'cache', snapshot, via: HEALTH_VIA_CACHE }
@@ -415,11 +472,13 @@ export function formatHealthSse(protocol, inbound, snapshot, cfg = DEFAULT_HEALT
       model: chat.model,
       choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
     })
+    // new-api test sets stream_options.include_usage and requires parseable usage.
     ev(null, {
       id: chat.id,
       object: 'chat.completion.chunk',
       model: chat.model,
       choices: [{ index: 0, delta: {}, finish_reason: chat.choices?.[0]?.finish_reason || 'stop' }],
+      ...(chat.usage ? { usage: chat.usage } : {}),
     })
     lines.push('data: [DONE]', '')
     return lines.join('\n')
@@ -442,11 +501,19 @@ export function formatHealthSse(protocol, inbound, snapshot, cfg = DEFAULT_HEALT
       .filter((b) => b.type === 'text')
       .map((b) => b.text || '')
       .join('')
-    ev('response.output_text.delta', { type: 'response.output_text.delta', delta: text })
-    ev('response.completed', {
-      type: 'response.completed',
-      response: fromClaudeToResponses(claude, claude.model),
+    // sub2api processOpenAIStream fails a stream that never sends response.completed.
+    const response = fromClaudeToResponses(claude, claude.model)
+    ev('response.created', {
+      type: 'response.created',
+      response: { id: response.id, object: 'response', status: 'in_progress', model: response.model, output: [] },
     })
+    ev('response.output_text.delta', {
+      type: 'response.output_text.delta',
+      output_index: 0,
+      content_index: 0,
+      delta: text,
+    })
+    ev('response.completed', { type: 'response.completed', response })
     return lines.join('\n')
   }
   ev('message_start', {
@@ -535,7 +602,8 @@ export function selectHealthProbeTargets(vms = [], cfg = DEFAULT_HEALTH_PROBE) {
 
 export function createHealthProbeMonitor(opts = {}) {
   let config = normalizeHealthProbeConfig(opts.config)
-  let snapshot = null
+  // anthropic: Claude slot probe (legacy single snapshot). openai: Codex slot probe.
+  const snapshots = { anthropic: null, openai: null }
   let lastRunAt = 0
   let inflight = null
   let timer = null
@@ -547,90 +615,106 @@ export function createHealthProbeMonitor(opts = {}) {
     return new Date(lastRunAt + config.interval_sec * 1000).toISOString()
   }
 
-  const getSnapshot = () => viewSnapshot(snapshot, config, nowFn(), nextAtIso())
+  const getSnapshot = (platform = 'anthropic') =>
+    viewSnapshot(snapshots[platform] || null, config, nowFn(), nextAtIso())
 
-  const decide = (headers, body) =>
-    decideHealthIntercept({
+  const decide = (headers, body, protocol = '') => {
+    const platform = healthPlatformOf(body)
+    return decideHealthIntercept({
       headers,
       body,
+      protocol,
       cfg: config,
-      snapshot,
+      snapshot: snapshots[platform],
       now: nowFn(),
     })
+  }
+
+  const probePlatform = async (platform, real, started) => {
+    const vms = typeof opts.listTargets === 'function' ? opts.listTargets() || [] : []
+    const targets = selectHealthProbeTargets(vms, config).filter(
+      (vm) => (String(vm.platform || '').toLowerCase() === 'openai' ? 'openai' : 'anthropic') === platform,
+    )
+    if (!targets.length) {
+      snapshots[platform] = {
+        ok: false,
+        at: new Date(started).toISOString(),
+        vm_id: null,
+        model: real.model,
+        text: null,
+        status: 0,
+        error: 'no_schedulable_credential',
+        duration_ms: nowFn() - started,
+      }
+      return
+    }
+    let lastError = null
+    for (const vm of targets) {
+      if (typeof opts.runChat !== 'function') {
+        lastError = 'runChat missing'
+        break
+      }
+      try {
+        const result = await opts.runChat(vm, real)
+        if (result?.ok) {
+          const body = sanitizeCachedMessage(result.body, {
+            text: result.text,
+            model: result.model || real.model,
+            stop_reason: result.stop_reason,
+            usage: result.usage,
+          })
+          snapshots[platform] = {
+            ok: true,
+            at: new Date(nowFn()).toISOString(),
+            vm_id: result.vm_id || vm.id,
+            model: body.model || result.model || real.model,
+            text: String(result.text || 'ok').slice(0, 4000),
+            status: result.status || 200,
+            error: null,
+            duration_ms: nowFn() - started,
+            body,
+          }
+          return
+        }
+        lastError = result?.error?.message || result?.error || 'probe_failed'
+      } catch (e) {
+        lastError = String(e?.message || e).slice(0, 300)
+      }
+    }
+    const failedAt = new Date(nowFn()).toISOString()
+    const prev = snapshots[platform]
+    if (prev?.ok && isSnapshotValid(prev, config, nowFn())) {
+      snapshots[platform] = {
+        ...prev,
+        last_error: String(lastError || 'probe_failed').slice(0, 300),
+        last_failed_at: failedAt,
+      }
+      return
+    }
+    snapshots[platform] = {
+      ok: false,
+      at: failedAt,
+      vm_id: targets[0]?.id || null,
+      model: real.model,
+      text: null,
+      status: 0,
+      error: String(lastError || 'probe_failed').slice(0, 300),
+      duration_ms: nowFn() - started,
+    }
+  }
 
   const runRealProbe = async () => {
     if (inflight) return inflight
     inflight = (async () => {
       const started = nowFn()
       lastRunAt = started
-      const vms = typeof opts.listTargets === 'function' ? opts.listTargets() || [] : []
-      const targets = selectHealthProbeTargets(vms, config)
-      if (!targets.length) {
-        snapshot = {
-          ok: false,
-          at: new Date(started).toISOString(),
-          vm_id: null,
-          model: config.real.model,
-          text: null,
-          status: 0,
-          error: 'no_schedulable_credential',
-          duration_ms: nowFn() - started,
-        }
-        return getSnapshot()
+      await probePlatform('anthropic', config.real, started)
+      if (config.real.openai_model) {
+        await probePlatform('openai', { ...config.real, model: config.real.openai_model }, started)
+      } else {
+        snapshots.openai = null
       }
-      let lastError = null
-      for (const vm of targets) {
-        if (typeof opts.runChat !== 'function') {
-          lastError = 'runChat missing'
-          break
-        }
-        try {
-          const result = await opts.runChat(vm, config.real)
-          if (result?.ok) {
-            const body = sanitizeCachedMessage(result.body, {
-              text: result.text,
-              model: result.model || config.real.model,
-              stop_reason: result.stop_reason,
-              usage: result.usage,
-            })
-            snapshot = {
-              ok: true,
-              at: new Date(nowFn()).toISOString(),
-              vm_id: result.vm_id || vm.id,
-              model: body.model || result.model || config.real.model,
-              text: String(result.text || 'ok').slice(0, 4000),
-              status: result.status || 200,
-              error: null,
-              duration_ms: nowFn() - started,
-              body,
-            }
-            return getSnapshot()
-          }
-          lastError = result?.error?.message || result?.error || 'probe_failed'
-        } catch (e) {
-          lastError = String(e?.message || e).slice(0, 300)
-        }
-      }
-      const failedAt = new Date(nowFn()).toISOString()
-      if (snapshot?.ok && isSnapshotValid(snapshot, config, nowFn())) {
-        snapshot = {
-          ...snapshot,
-          last_error: String(lastError || 'probe_failed').slice(0, 300),
-          last_failed_at: failedAt,
-        }
-        return getSnapshot()
-      }
-      snapshot = {
-        ok: false,
-        at: failedAt,
-        vm_id: targets[0]?.id || null,
-        model: config.real.model,
-        text: null,
-        status: 0,
-        error: String(lastError || 'probe_failed').slice(0, 300),
-        duration_ms: nowFn() - started,
-      }
-      return getSnapshot()
+      return getSnapshot('anthropic')
     })().finally(() => {
       inflight = null
     })
@@ -669,7 +753,8 @@ export function createHealthProbeMonitor(opts = {}) {
     getConfig,
     setConfig,
     getSnapshot,
-    rawSnapshot: () => snapshot,
+    getSnapshots: () => ({ anthropic: getSnapshot('anthropic'), openai: getSnapshot('openai') }),
+    rawSnapshot: (platform = 'anthropic') => snapshots[platform] || null,
     decide,
     runRealProbe,
     start,

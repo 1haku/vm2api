@@ -84,6 +84,7 @@ import {
   childDeclaredWithoutParent,
   explicitParentSessionId,
   isParentSessionCompanion,
+  isShortProbeRequest,
 } from '../pool/sticky-router.mjs'
 import {
   applyCrsUnofficialPersona,
@@ -124,6 +125,8 @@ import {
   wantsFastMode,
 } from './anthropic-policy.mjs'
 import { materializeRemoteImageSources } from './images.mjs'
+import { applyMinMaxTokens } from './min-max-tokens.mjs'
+import { detectWarmupIntercept, formatWarmupSse, warmupMockMessage } from './warmup-intercept.mjs'
 
 export function createHandleProtocol(deps) {
   const json = (...args) => deps.json(...args)
@@ -407,7 +410,7 @@ export function createHandleProtocol(deps) {
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
 
     const fp = fingerprintRequest(req, inbound)
-    const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound)
+    const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
     if (healthDecision?.action === 'fail') {
       stats.requests++
       stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
@@ -494,6 +497,29 @@ export function createHandleProtocol(deps) {
     }
     // Codex returns before conversion. Distill does not apply to OpenAI platform models.
     // Refusal still scans here so a cached refusal never reaches a slot.
+    if (
+      platform.platform !== 'openai' &&
+      protocol === 'anthropic.messages' &&
+      getHealthMonitor()?.getConfig?.()?.intercept_warmup === true
+    ) {
+      const warmupKind = detectWarmupIntercept(inbound)
+      if (warmupKind) {
+        stats.requests++
+        stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
+        const mock = warmupMockMessage(warmupKind, inbound?.model)
+        logBag.via = 'warmup-intercept'
+        logBag.attempt_count = 0
+        logBag.usage = mock.usage
+        logBag.stop_reason = mock.stop_reason
+        logBag.final_state = 'warmup-intercept'
+        if (isClientStream(inbound, req.headers)) {
+          writeSSEHeaders(res)
+          res.write(formatWarmupSse(warmupKind, inbound?.model))
+          return res.end()
+        }
+        return json(res, 200, mock)
+      }
+    }
     if (applyDistillGuard({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
       return
     }
@@ -591,6 +617,7 @@ export function createHandleProtocol(deps) {
     else stats.convert++
 
     ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', { ...ctx, body: converted.claude })
+    ctx.body = applyMinMaxTokens(ctx.body, getRouting()?.compatibility?.min_max_tokens)
 
     if (applyDistillGuard({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
       return
@@ -637,6 +664,9 @@ export function createHandleProtocol(deps) {
       )
     }
     const isProbe = isParentSessionCompanion(inbound) || isParentSessionCompanion(ctx.body)
+    // One-shot test calls (sub2api account test, new-api channel test) keep their
+    // sticky identity but never hold a session seat the main conversation needs.
+    const seatless = isProbe || isShortProbeRequest(inbound)
     const sessionKeys = stickyRouter?.sessionPoolKeys
       ? stickyRouter.sessionPoolKeys(req, inbound, {
           sessionId: inboundIdentity.sessionId,
@@ -870,7 +900,7 @@ export function createHandleProtocol(deps) {
         stickyKeys: isProbe ? [] : stickyKeys,
         stickyDeviceId,
         deviceKey,
-        skipSessionSeat: isProbe,
+        skipSessionSeat: seatless,
         familyKey,
         familyVmId,
         pinVmId,
