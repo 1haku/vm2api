@@ -25,7 +25,7 @@ test('ensureClaudeWebSearch appends native server tool when missing', () => {
     tools: [{ name: 'read_file', input_schema: { type: 'object' } }],
   })
   assert.equal(out.tools.length, 2)
-  assert.deepEqual(out.tools[1], { type: 'web_search_20250305', name: 'web_search' })
+  assert.deepEqual(out.tools[1], { type: 'web_search_20250305', name: 'web_search', max_uses: 8 })
 })
 
 test('ensureClaudeWebSearch is a no-op when search already present', () => {
@@ -337,4 +337,50 @@ test('officialMessagesBody and cli-hop strip tools.1 web_search extras', () => {
   const hop = prepareCliHopBody(inbound)
   assert.equal(hop.tools[1].input_schema, undefined)
   assert.equal(hop.tools[1].type, 'web_search_20250305')
+})
+
+test('Claude Code client WebSearch stays a client tool (issue #134)', () => {
+  const schema = { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
+  const tool = { name: 'WebSearch', description: 'Search the web.', defer_loading: true, input_schema: schema }
+  assert.equal(isWebSearchTool(tool), false)
+  assert.equal(hasClaudeWebSearch([tool]), false)
+  const out = officialMessagesBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 1024,
+    tools: [{ name: 'ToolSearch', input_schema: { type: 'object' } }, tool],
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.deepEqual(out.tools[1], {
+    name: 'WebSearch',
+    input_schema: schema,
+    description: 'Search the web.',
+    defer_loading: true,
+  })
+  // Server-search spellings keep mapping to the native tool.
+  assert.equal(isWebSearchTool({ name: 'websearch' }), true)
+  assert.equal(isWebSearchTool({ name: 'web_search', input_schema: schema }), true)
+  assert.equal(isWebSearchTool({ type: 'web_search_20250305', name: 'WebSearch', input_schema: schema }), true)
+  assert.equal(isWebSearchTool({ name: 'WebSearch' }), true)
+})
+
+test('custom tools keep defer_loading only when literally true', () => {
+  const out = sanitizeAnthropicTools([
+    { name: 'Lazy', input_schema: { type: 'object' }, defer_loading: true },
+    { name: 'Eager', input_schema: { type: 'object' }, defer_loading: 'true' },
+  ])
+  assert.equal(out[0].defer_loading, true)
+  assert.equal(Object.prototype.hasOwnProperty.call(out[1], 'defer_loading'), false)
+})
+
+test('ensureClaudeWebSearch does not overlay native web_search onto Claude Code WebSearch', () => {
+  const tool = { name: 'WebSearch', input_schema: { type: 'object' }, defer_loading: true }
+  const body = { tools: [tool], messages: [{ role: 'user', content: 'search the docs' }] }
+  assert.equal(ensureClaudeWebSearch(body), body)
+})
+
+test('caller-declared web_search is not given injected defaults', () => {
+  const [out] = sanitizeAnthropicTools([{ type: 'web_search_20250305', name: 'web_search' }])
+  assert.deepEqual(out, { type: 'web_search_20250305', name: 'web_search' })
+  const [capped] = sanitizeAnthropicTools([{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }])
+  assert.equal(capped.max_uses, 3)
 })
