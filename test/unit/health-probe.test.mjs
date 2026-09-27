@@ -52,17 +52,16 @@ function cachedSnap(extra = {}) {
   }
 }
 
-test('probe cache is off until an operator enables it', () => {
-  assert.equal(DEFAULT_HEALTH_PROBE.enabled, false)
-  assert.equal(normalizeHealthProbeConfig().enabled, false)
-  assert.equal(normalizeHealthProbeConfig({}).enabled, false)
-  assert.equal(normalizeHealthProbeConfig({ enabled: true }).enabled, true)
+test('probe cache is on by default and can be turned off', () => {
+  assert.equal(DEFAULT_HEALTH_PROBE.enabled, true)
+  assert.equal(normalizeHealthProbeConfig().enabled, true)
+  assert.equal(normalizeHealthProbeConfig({ enabled: false }).enabled, false)
   // Off means a third-party hello runs a real probe instead of a replay.
   assert.equal(
     decideHealthIntercept({
       headers: unofficial,
       body: hiBody,
-      cfg: normalizeHealthProbeConfig(),
+      cfg: normalizeHealthProbeConfig({ enabled: false }),
       snapshot: cachedSnap(),
     }).action,
     'pass',

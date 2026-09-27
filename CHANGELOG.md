@@ -1,7 +1,7 @@
 # Changelog
 
 
-## 1.3.71 — 2026-09-28
+## 1.3.73 — 2026-09-28
 
 - 人设从设置 → 协议迁到独立页 `system提示词`
 - 配置弹窗改为块编辑 + 出站预览，去掉长说明
@@ -9,6 +9,19 @@
 
 已部署机升级：覆盖控制面与前端并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`（未改过的 0 注入会跟新内置常驻约束）。
 
+## 1.3.72 — 2026-09-28
+
+- 预热拦截改为照搬 sub2api `detectInterceptType`：haiku `max_tokens=1` 探测需 `claude-cli` UA；messages/system 必须是 `{type,text}` 数组，含字符串 content 的请求不拦截；模拟响应（含流式）与 sub2api 一致。
+- 额外一条保护：带 tools 的请求一律不拦截，避免长对话里提到 `Warmup` 或标题生成句被误回 "New Conversation"。
+
+已部署机升级：覆盖控制面并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
+
+## 1.3.71 — 2026-09-28
+
+- 修复预热拦截误伤正常对话：旧逻辑扫描整段历史，长会话里只要出现过 `Warmup` 或标题生成句就被回 "New Conversation"。现在只拦截无 tools、至多两条消息的旁路请求，且只看最新一条 user。
+- 预热拦截与健康缓存改为默认开启（设置 → 探测可关）。
+
+已部署机升级：覆盖控制面并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。live `routing.json` 里已显式写成关的开关保持关，需要在面板打开。
 
 ## 1.3.70 — 2026-09-28
 
