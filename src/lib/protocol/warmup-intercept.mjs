@@ -29,21 +29,26 @@ function systemTextOf(system) {
   return textsOf(system).join('\n')
 }
 
-/** @returns {null | 'haiku_ping' | 'suggestion' | 'warmup'} */
+/**
+ * Only side calls match: no tools and at most two messages. A real
+ * conversation can quote these prompts anywhere in its history (a session
+ * that discusses sub2api does), so the text checks look at the newest user
+ * turn only and never scan history.
+ * @returns {null | 'haiku_ping' | 'suggestion' | 'warmup'}
+ */
 export function detectWarmupIntercept(body = {}) {
   if (!body || typeof body !== 'object') return null
-  const model = String(body.model || '').toLowerCase()
-  if (Number(body.max_tokens) === 1 && model.includes('haiku')) return 'haiku_ping'
+  if (Array.isArray(body.tools) ? body.tools.length : body.tools) return null
   const messages = Array.isArray(body.messages) ? body.messages : []
-  const lastUser = [...messages].reverse().find((m) => String(m?.role || '').toLowerCase() === 'user')
-  const lastFirst = lastUser ? textsOf(lastUser.content)[0] : null
-  if (typeof lastFirst === 'string' && lastFirst.startsWith(SUGGESTION_PREFIX)) return 'suggestion'
-  for (const msg of messages) {
-    for (const text of textsOf(msg?.content)) {
-      if (text === 'Warmup' || text.includes(TITLE_PROMPT)) return 'warmup'
-    }
-  }
-  if (systemTextOf(body.system).includes(TOPIC_SYSTEM)) return 'warmup'
+  if (!messages.length || messages.length > 2) return null
+  const model = String(body.model || '').toLowerCase()
+  if (Number(body.max_tokens) === 1 && model.includes('haiku') && messages.length === 1) return 'haiku_ping'
+  const last = messages[messages.length - 1]
+  if (String(last?.role || '').toLowerCase() !== 'user') return null
+  const texts = textsOf(last.content)
+  if (typeof texts[0] === 'string' && texts[0].startsWith(SUGGESTION_PREFIX)) return 'suggestion'
+  if (texts.some((text) => text.trim() === 'Warmup' || text.includes(TITLE_PROMPT))) return 'warmup'
+  if (messages.length === 1 && systemTextOf(body.system).includes(TOPIC_SYSTEM)) return 'warmup'
   return null
 }
 

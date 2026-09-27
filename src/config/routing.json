@@ -118,13 +118,14 @@
     "timeout_ms": 60000
   },
   "health_probe": {
-    "enabled": false,
+    "enabled": true,
     "interval_sec": 600,
     "cache_ttl_sec": 900,
     "max_stale_sec": 900,
     "cache_models": [],
     "cache_model": "",
     "intercept_unofficial": true,
+    "intercept_warmup": true,
     "fail_closed": true,
     "run_on_start": true,
     "real": {
