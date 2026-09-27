@@ -557,9 +557,14 @@ export class FailoverRunner {
         },
         { countHit: false },
       )
-      if (familyKey) {
+      // An explicit VM pin outranks the family home. Without this, a pinned
+      // request reselects the same VM against a family locked elsewhere.
+      if (familyKey && !pinVmId) {
         const locked = this.stickyRouter.resolve?.(familyKey)
         if (locked?.vmId && locked.vmId !== selected.vmId) {
+          // The reservation is released only in the attempt's finally; this
+          // redirect never reaches it, so hand the seat back before reselecting.
+          selected.release?.()
           familyVmId = locked.vmId
           continue
         }
