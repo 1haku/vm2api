@@ -397,8 +397,18 @@ export function SettingsPage() {
                   healthProbe={
                     draft.health_probe as Record<string, unknown> | undefined
                   }
+                  compatibility={
+                    (draft.compatibility as
+                      Record<string, unknown> | undefined) || {}
+                  }
                   onFailoverChange={(next) =>
                     setDraft({ ...draft, failover: next })
+                  }
+                  onHealthProbeChange={(next) =>
+                    setDraft({ ...draft, health_probe: next })
+                  }
+                  onCompatibilityChange={(next) =>
+                    setDraft({ ...draft, compatibility: next })
                   }
                 />
               ) : null}
