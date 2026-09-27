@@ -217,6 +217,11 @@ export function prepareOutboundAttempt({
   accountId = '',
   boundSessionId = '',
   boundAccountId = '',
+  boundVmId = '',
+  vmId = '',
+  epoch,
+  mode,
+  routing,
   clientDiscriminator = undefined,
   clientIp = '',
   userAgent = '',
@@ -232,6 +237,11 @@ export function prepareOutboundAttempt({
     accountId,
     boundSessionId,
     boundAccountId,
+    boundVmId,
+    vmId,
+    epoch,
+    mode,
+    routing,
     clientDiscriminator,
     clientIp,
     userAgent: userAgent || reqHeaders?.['user-agent'] || '',
@@ -256,7 +266,8 @@ export function prepareOutboundAttempt({
   if (identity) {
     identified = refreshOfficialSystemEnvironment(identified, identity, identified.model)
   }
-  if (!keepCallerSession && String(sessionIdOverride || '').trim()) {
+  const stampOwnedBilling = String(sessionIdOverride || '').trim() && (mode !== 'passthrough' || !keepCallerSession)
+  if (stampOwnedBilling) {
     identified = stampBillingPromptId(identified, sessionId, firstUserText)
   }
   // Official Claude Code places its own breakpoints; adding ours would shift the
@@ -304,6 +315,11 @@ export function prepareOutboundEnvelope({
   accountId = '',
   boundSessionId = '',
   boundAccountId = '',
+  boundVmId = '',
+  vmId = '',
+  epoch,
+  mode,
+  routing,
   clientDiscriminator,
   clientIp = '',
   userAgent = '',
@@ -329,6 +345,11 @@ export function prepareOutboundEnvelope({
     accountId,
     boundSessionId,
     boundAccountId,
+    boundVmId,
+    vmId,
+    epoch,
+    mode,
+    routing,
     clientDiscriminator,
     clientIp,
     userAgent,

@@ -74,6 +74,7 @@ import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
   applyCrsIdentityReplace,
   extractCallerSession,
+  outboundSessionMode,
   resolveInboundIdentity,
   resolveOutboundSessionId,
   sessionContextDiscriminator,
@@ -608,10 +609,13 @@ export function createHandleProtocol(deps) {
       userAgent: req.headers['user-agent'] || '',
       apiKeyId: req.apiKeyRecord?.id ?? '',
     })
+    const sessionMode = outboundSessionMode(getRouting())
     const sessionContext = {
       officialClient: officialTraffic,
       clientDiscriminator,
       firstUserText,
+      mode: sessionMode,
+      routing: getRouting(),
     }
     // Pool identity comes from inbound metadata.user_id (or an explicit device_id),
     // read before outbound cleaning. API key never scopes it.
@@ -663,9 +667,12 @@ export function createHandleProtocol(deps) {
       accountId: stickyBound?.accountId || '',
       boundSessionId: stickyBound?.sessionId || '',
       boundAccountId: stickyBound?.accountId || '',
+      boundVmId: stickyBound?.vmId || '',
+      vmId: stickyBound?.vmId || '',
+      epoch: 'pending',
     })
     const requestedCacheTtl = pinConversationCacheTtl(
-      outboundSessionId,
+      stickyKey || callerSession || outboundSessionId,
       resolveCacheTtl({ headers: req.headers, body: inbound, routingFile: routingConfigPath }),
     )
     let cacheTtl = requestedCacheTtl
@@ -877,12 +884,17 @@ export function createHandleProtocol(deps) {
             touchTelemetrySession(cfg.paths.project, selected.vmId)
           } catch {}
           const identity = loadVmIdentity(selected.exec)
+          const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
           const attemptSessionId = resolveOutboundSessionId(callerSession, {
             ...sessionContext,
             accountId: selected.accountId,
             boundSessionId: stickyBound?.sessionId || '',
             boundAccountId: stickyBound?.accountId || '',
+            boundVmId: stickyBound?.vmId || '',
+            vmId: selected.vmId,
+            epoch: `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
           })
+          if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
           const routingNow = getRouting()
@@ -914,9 +926,13 @@ export function createHandleProtocol(deps) {
               hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
                 officialClient: officialTraffic,
                 sessionId: attemptSessionId,
+                mode: sessionMode,
                 accountId: selected.accountId,
                 boundSessionId: stickyBound?.sessionId || '',
                 boundAccountId: stickyBound?.accountId || '',
+                boundVmId: stickyBound?.vmId || '',
+                vmId: selected.vmId,
+                epoch: attemptStartedAt,
               })
             }
             if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
@@ -972,6 +988,10 @@ export function createHandleProtocol(deps) {
             accountId: selected.accountId,
             boundSessionId: stickyBound?.sessionId || '',
             boundAccountId: stickyBound?.accountId || '',
+            boundVmId: stickyBound?.vmId || '',
+            vmId: selected.vmId,
+            epoch: attemptStartedAt,
+            mode: sessionMode,
             clientDiscriminator,
             firstUserText,
             apiKeyId: req.apiKeyRecord?.id ?? '',

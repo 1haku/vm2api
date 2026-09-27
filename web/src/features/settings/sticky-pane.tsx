@@ -42,6 +42,23 @@ export function StickyPane({ value: sticky, onChange }: StickyPaneProps) {
             </SelectContent>
           </Select>
         </SettingRow>
+        <SettingRow
+          label='出站 session'
+          desc='重建：入站 session 只作调度身份，出站由网关赋值。透传会把客户端 session 原样发给上游。'
+        >
+          <Select
+            value={String(sticky.outbound_session || 'rebuild')}
+            onValueChange={(outboundSession) => onChange({ ...sticky, outbound_session: outboundSession })}
+          >
+            <SelectTrigger className='w-40'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='rebuild'>重建</SelectItem>
+              <SelectItem value='passthrough'>透传</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
         <SettingRow label='TTL' desc='粘性绑定的存活时长，到期重新选号'>
           <Select
             value={String(sticky.ttl_seconds ?? 86400)}
