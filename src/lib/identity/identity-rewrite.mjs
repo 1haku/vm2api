@@ -3,12 +3,14 @@
  *
  *   device_id     → slot (VM) device
  *   account_uuid  → real OAuth account of the slot
- *   session_id    → official Claude Code keeps the caller's session.
- *                   Unofficial hashes the caller token. With no caller
- *                   session, derive a UUID from account + client + first
- *                   user text (sub2api buildStableSessionSeed). Never
+ *   session_id    → rebuild (default): mint from inbound identity + epoch;
+ *                   reuse sticky session_id while the VM is unchanged.
+ *                   passthrough: official Claude Code keeps the caller
+ *                   session; unofficial hashes the caller token. With no
+ *                   caller session, derive a UUID from account + client +
+ *                   first user text (sub2api buildStableSessionSeed). Never
  *                   randomUUID while any of those anchors exist. A sticky
- *                   row for the same account reuses the id it already stored.
+ *                   row for the same VM reuses the id it already stored.
  *                   Outbound always has a session. Email never goes in
  *                   metadata.user_id (Anthropic 400 has_at).
  *
@@ -48,6 +50,9 @@ export const UNOFFICIAL_SESSION_SEED = 'kin-unofficial-session:'
 
 /** Prefix so a stable seed cannot collide with an unofficial caller hash. */
 export const STABLE_SESSION_SEED = 'kin-stable-session:'
+
+/** Prefix so rebuild values cannot collide with unofficial / stable hashes. */
+export const REBUILD_SESSION_SEED = 'kin-rebuild-session:'
 
 const SESSION_UA_PRODUCT = /([A-Za-z0-9._-]+)\/[A-Za-z0-9._-]+/g
 const SESSION_UA_VERSION = /\bv?\d+(?:\.\d+){1,3}\b/g
@@ -102,7 +107,7 @@ function stableSessionMaterial(accountId, clientDiscriminator, firstUserText) {
   )
 }
 
-/** Deterministic v4-shaped UUID. Used for unofficial outbound session_id. */
+/** Deterministic v4-shaped UUID. Used for unofficial / rebuild outbound session_id. */
 export function uuidFromSeed(seed) {
   const hex = crypto
     .createHash('sha256')
@@ -211,15 +216,19 @@ export function sessionIdFromOutboundBody(body = {}) {
   return parseUserId(body?.metadata?.user_id)?.session_id || ''
 }
 
-/**
- * Official Claude Code: keep the caller's session.
- * Unofficial: hash the caller token so the raw value never goes upstream.
- * No caller session: reuse the sticky row's outbound id for this account,
- * otherwise a deterministic UUID. randomUUID only when nothing identifies
- * the conversation.
- */
-export function resolveOutboundSessionId(callerSession, opts = {}) {
-  const caller = String(callerSession || '').trim()
+export function outboundSessionMode(routing) {
+  const raw = String(routing?.sticky?.outbound_session || '')
+    .trim()
+    .toLowerCase()
+  return raw === 'passthrough' ? 'passthrough' : 'rebuild'
+}
+
+/** Deterministic outbound session for one identity + bind-generation epoch. */
+export function rebuildOutboundSession({ identity, epoch } = {}) {
+  return uuidFromSeed(`${REBUILD_SESSION_SEED}${String(identity ?? '')}#${epoch}`)
+}
+
+function resolvePassthroughOutboundSessionId(caller, opts) {
   const officialClient = opts.officialClient === true
   if (officialClient && caller) return caller
   if (!officialClient && caller) return uuidFromSeed(UNOFFICIAL_SESSION_SEED + caller)
@@ -246,6 +255,39 @@ export function resolveOutboundSessionId(callerSession, opts = {}) {
 }
 
 /**
+ * rebuild (default): same VM reuses the sticky outbound id; otherwise mint
+ * from inbound A (or the stable seed) + epoch. passthrough keeps the old
+ * official-keeps-A / unofficial-hash behavior.
+ */
+export function resolveOutboundSessionId(callerSession, opts = {}) {
+  const caller = String(callerSession || '').trim()
+  const mode = opts.mode || outboundSessionMode(opts.routing)
+  if (mode === 'passthrough') return resolvePassthroughOutboundSessionId(caller, opts)
+
+  const boundSessionId = String(opts.boundSessionId || '').trim()
+  const boundVmId = String(opts.boundVmId || '').trim()
+  const vmId = String(opts.vmId || '').trim()
+  const sameVm = Boolean(boundVmId && vmId && boundVmId === vmId)
+  if (boundSessionId && sameVm) return boundSessionId
+
+  const accountId = String(opts.accountId || '').trim()
+  const discriminator =
+    opts.clientDiscriminator != null
+      ? String(opts.clientDiscriminator)
+      : sessionContextDiscriminator({
+          clientIp: opts.clientIp,
+          userAgent: opts.userAgent,
+          apiKeyId: opts.apiKeyId,
+        })
+  const firstUserText = String(opts.firstUserText || '')
+  const identity = caller || buildStableSessionSeed(accountId, discriminator, firstUserText)
+  if (caller || stableSessionMaterial(accountId, discriminator, firstUserText)) {
+    return rebuildOutboundSession({ identity, epoch: opts.epoch ?? 'pending' })
+  }
+  return crypto.randomUUID()
+}
+
+/**
  * Slot device + credential account + resolved outbound session.
  */
 export function applyCrsIdentityReplace(body, identity, inbound = {}, reqHeaders = {}, opts = {}) {
@@ -265,9 +307,14 @@ export function applyCrsIdentityReplace(body, identity, inbound = {}, reqHeaders
     String(opts.sessionId || '').trim() ||
     resolveOutboundSessionId(extractCallerSession({ inbound, body, headers: reqHeaders }), {
       officialClient,
+      mode: opts.mode,
+      routing: opts.routing,
       accountId: opts.accountId || identity?.accountId || identity?.vmId || '',
       boundSessionId: opts.boundSessionId,
       boundAccountId: opts.boundAccountId,
+      boundVmId: opts.boundVmId,
+      vmId: opts.vmId || identity?.vmId || '',
+      epoch: opts.epoch,
       clientDiscriminator: opts.clientDiscriminator,
       clientIp: opts.clientIp,
       userAgent: opts.userAgent || headerValue(reqHeaders, 'user-agent'),
