@@ -72,6 +72,16 @@ test('buildRouting returns tiers so the panel can re-render a save', () => {
   assert.equal(data.tiers.max.max_concurrency, 4)
 })
 
+test('buildRouting exposes effective Codex routing to the panel', () => {
+  const data = buildRouting({
+    routingConfig: { codex: { clients: { official_codex: 'allow' } } },
+    stickyRouter: { stats: () => ({ active_sessions: 0 }) },
+  }).data
+  assert.equal(data.codex.clients.official_codex, 'allow')
+  assert.equal(data.codex.clients.openai_compatible, 'allow')
+  assert.equal(data.codex.protocols['openai.responses'].enabled, true)
+})
+
 test('canAccept uses per-tier 5h and weekly lines', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
