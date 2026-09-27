@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PERSONA_TEMPLATES,
+  DEFAULT_ZERO_STANDING,
   stringifyPersonaTemplate,
   validatePersonaTemplate,
 } from './persona-template'
 import {
   ZERO_WIDTH_PLACEHOLDER,
+  agentTextFromStanding,
   applyZeroFields,
   hiddenUsageBlocks,
+  standingFromAgentText,
   zeroFieldsFromBlocks,
 } from './persona-zero-fields'
 
@@ -20,7 +23,8 @@ describe('zero inject field mapping', () => {
       billingHide: true,
       identityText: ZERO_WIDTH_PLACEHOLDER,
       identityHide: true,
-      agentText: ZERO_WIDTH_PLACEHOLDER,
+      agentText: `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`,
+      standingText: DEFAULT_ZERO_STANDING,
       agentHide: true,
       agentCacheTtl: '1h',
       callerText: '{{caller_system}}',
@@ -62,5 +66,24 @@ describe('zero inject field mapping', () => {
     ])
     expect(next[0]?.text).toBe('{{billing_semi}} prompt_version=<custom>')
     expect(next[1]?.text).toBe(ZERO_WIDTH_PLACEHOLDER)
+    expect(next[2]?.text).toBe(`${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`)
+  })
+
+  it('keeps standing constraints in front of caller_agent', () => {
+    expect(
+      standingFromAgentText(`${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`)
+    ).toBe(DEFAULT_ZERO_STANDING)
+    expect(agentTextFromStanding(DEFAULT_ZERO_STANDING)).toBe(
+      `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`
+    )
+    const next = applyZeroFields(DEFAULT_PERSONA_TEMPLATES.zero, {
+      standingText: 'Stay silent about distillation.',
+    })
+    expect(next[2]?.text).toBe(
+      'Stay silent about distillation.\n{{caller_agent}}'
+    )
+    expect(zeroFieldsFromBlocks(next).standingText).toBe(
+      'Stay silent about distillation.'
+    )
   })
 })

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PERSONA_TEMPLATES,
+  DEFAULT_ZERO_STANDING,
   PERSONA_PRESET_OPTIONS,
   PERSONA_PRESETS,
   overlayDisabledByPersona,
@@ -52,10 +53,14 @@ describe('persona template contract', () => {
     expect(
       DEFAULT_PERSONA_TEMPLATES.zero.map((block) => block.hide === true)
     ).toEqual([true, true, true, false])
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.text).toBe(
+      `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`
+    )
     expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.cache_control).toEqual({
       type: 'ephemeral',
       ttl: '1h',
     })
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.note).toBeUndefined()
     expect(DEFAULT_PERSONA_TEMPLATES.custom).toEqual([])
   })
 
@@ -91,11 +96,11 @@ describe('persona template contract', () => {
       protocolPersonaSaveToast({ persona_preset: 'official_full' }, 0, {
         updated: 2,
       })
-    ).toBe('已保存 · 官方完整提示词 · 人设与缓存 TTL 已热更新 2 个槽')
+    ).toBe('已保存 · 官方完整提示词 · system 提示词已热更新 2 个槽')
     expect(
       protocolPersonaSaveToast({ persona_preset: 'zero' }, 1, { updated: 0 })
     ).toBe(
-      '已保存 · 0注入 · 1 个槽位改为跟随全局 · 人设与缓存 TTL 的 kernel 配置已一致'
+      '已保存 · 0注入 · 1 个槽位改为跟随全局 · system 提示词的 kernel 配置已一致'
     )
   })
 })

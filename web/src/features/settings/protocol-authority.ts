@@ -12,7 +12,7 @@ export type ProtocolSlot = {
   codex_kernel?: boolean
 }
 
-/** 槽位显式 persona 会盖掉设置 → 协议。空 PATCH 表示跟随全局。
+/** 槽位显式 persona 会盖掉 system提示词。空 PATCH 表示跟随全局。
  * 不在每次协议保存时清 inference_engine：那会触发 rust 重建，wrap 未同步就 config_missing。
  */
 export function protocolInheritPatch(vm: ProtocolSlot): VmPatch | null {

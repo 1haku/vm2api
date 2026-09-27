@@ -21,6 +21,7 @@ test('user sees vm / proxies / keys / billing / logs', () => {
   assert.equal(canViewPage('super', 'vm'), true)
   assert.equal(canViewPage('admin', 'users'), false)
   assert.equal(canViewPage('admin', 'api'), true)
+  assert.equal(canViewPage('admin', 'system'), true)
   assert.equal(canViewPage('user', 'api'), false)
   assert.equal(canViewPage('admin', 'database'), true)
   assert.equal(canViewPage('super', 'database'), false)

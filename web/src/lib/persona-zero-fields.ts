@@ -1,5 +1,7 @@
 import {
   DEFAULT_PERSONA_TEMPLATES,
+  DEFAULT_ZERO_STANDING,
+  ZERO_CALLER_AGENT_VAR,
   type RawBlock,
 } from '@/lib/persona-template'
 
@@ -22,6 +24,22 @@ export const ZERO_SLOT_IDS: Record<ZeroSlot, string> = {
 /** 上游拒空 text 时的零宽占位，与默认 zero 模板一致。 */
 export const ZERO_WIDTH_PLACEHOLDER = '\u200b'
 
+export { DEFAULT_ZERO_STANDING, ZERO_CALLER_AGENT_VAR }
+
+export function standingFromAgentText(text: string): string {
+  const raw = String(text ?? '')
+  const idx = raw.lastIndexOf(ZERO_CALLER_AGENT_VAR)
+  const prefix = idx >= 0 ? raw.slice(0, idx) : raw
+  if (isZeroWidthPlaceholder(prefix.trim() || prefix)) return ''
+  return prefix.replace(/\n$/, '')
+}
+
+export function agentTextFromStanding(standing: string): string {
+  const body = String(standing ?? '').replace(/\s+$/g, '')
+  if (!body) return `${ZERO_WIDTH_PLACEHOLDER}${ZERO_CALLER_AGENT_VAR}`
+  return `${body}\n${ZERO_CALLER_AGENT_VAR}`
+}
+
 export type ZeroFields = {
   billingText: string
   billingHide: boolean
@@ -30,6 +48,7 @@ export type ZeroFields = {
   agentText: string
   agentHide: boolean
   agentCacheTtl: string
+  standingText: string
   callerText: string
   callerHide: boolean
   callerDropIfEmpty: boolean
@@ -68,14 +87,16 @@ export function zeroFieldsFromBlocks(blocks: RawBlock[]): ZeroFields {
   const identity = findSlot(blocks, 'identity')?.block ?? seedBlock('identity')
   const agent = findSlot(blocks, 'agent')?.block ?? seedBlock('agent')
   const caller = findSlot(blocks, 'caller')?.block ?? seedBlock('caller')
+  const agentText = typeof agent.text === 'string' ? agent.text : ''
   return {
     billingText: typeof billing.text === 'string' ? billing.text : '',
     billingHide: billing.hide === true,
     identityText: typeof identity.text === 'string' ? identity.text : '',
     identityHide: identity.hide === true,
-    agentText: typeof agent.text === 'string' ? agent.text : '',
+    agentText,
     agentHide: agent.hide === true,
     agentCacheTtl: cacheTtl(agent) || '1h',
+    standingText: standingFromAgentText(agentText),
     callerText: typeof caller.text === 'string' ? caller.text : '',
     callerHide: caller.hide === true,
     callerDropIfEmpty: caller.drop_if_empty === true,
@@ -118,6 +139,9 @@ export function applyZeroFields(
   patch: Partial<ZeroFields>
 ): RawBlock[] {
   const fields = { ...zeroFieldsFromBlocks(blocks), ...patch }
+  if (Object.prototype.hasOwnProperty.call(patch, 'standingText')) {
+    fields.agentText = agentTextFromStanding(fields.standingText)
+  }
   const next = (blocks.length ? blocks : DEFAULT_PERSONA_TEMPLATES.zero).map(
     (block) => ({ ...block })
   )
