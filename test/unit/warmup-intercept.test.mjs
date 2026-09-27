@@ -3,97 +3,126 @@ import assert from 'node:assert/strict'
 import { detectWarmupIntercept, formatWarmupSse, warmupMockMessage } from '../../src/lib/protocol/warmup-intercept.mjs'
 import { normalizeHealthProbeConfig } from '../../src/lib/admin/health-probe.mjs'
 
+// Expected values below were produced by running sub2api's detectInterceptType
+// (backend/internal/handler/gateway_handler.go) on the same bodies.
+const CC = { userAgent: 'claude-cli/2.1.281 (external, cli)' }
+const text = (t) => [{ type: 'text', text: t }]
 const user = (content) => ({ role: 'user', content })
 
-test('detects haiku max_tokens=1 ping', () => {
-  assert.equal(
-    detectWarmupIntercept({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [user('quota')] }),
-    'haiku_ping',
-  )
-  assert.equal(detectWarmupIntercept({ model: 'claude-sonnet-5', max_tokens: 1, messages: [user('quota')] }), null)
-  assert.equal(detectWarmupIntercept({ model: 'claude-haiku-4-5', max_tokens: 2, messages: [user('quota')] }), null)
+test('haiku max_tokens=1 needs a claude-cli UA, like sub2api isClaudeCodeClient', () => {
+  const body = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [user(text('quota'))] }
+  assert.equal(detectWarmupIntercept(body, CC), 'haiku_ping')
+  assert.equal(detectWarmupIntercept(body, { userAgent: 'Go-http-client/1.1' }), null)
+  assert.equal(detectWarmupIntercept({ ...body, model: 'claude-sonnet-5' }, CC), null)
 })
 
-test('detects suggestion mode on the last user turn only', () => {
+test('suggestion mode on the last message', () => {
   const body = {
-    model: 'claude-opus-5-5',
-    messages: [
-      user('hello'),
-      { role: 'assistant', content: 'x' },
-      user([{ type: 'text', text: '[SUGGESTION MODE: next]' }]),
-    ],
+    messages: [user(text('hi')), { role: 'assistant', content: text('x') }, user(text('[SUGGESTION MODE: go]'))],
   }
   assert.equal(detectWarmupIntercept(body), 'suggestion')
-  body.messages.push({ role: 'assistant', content: 'y' }, user('real turn'))
-  assert.equal(detectWarmupIntercept(body), null)
 })
 
-test('detects warmup and title generation', () => {
-  assert.equal(detectWarmupIntercept({ messages: [user([{ type: 'text', text: 'Warmup' }])] }), 'warmup')
+test('a turn with tools is never intercepted, even when sub2api would', () => {
+  const body = {
+    tools: [{ name: 'Bash' }],
+    messages: [user(text('why Warmup?')), { role: 'assistant', content: text('ok') }, user(text('Warmup'))],
+  }
+  assert.equal(detectWarmupIntercept(body), null)
+  assert.equal(detectWarmupIntercept({ ...body, tools: [] }), 'warmup')
+  // haiku ping check runs before the tools guard, same order as sub2api.
+  assert.equal(
+    detectWarmupIntercept(
+      { model: 'claude-haiku-4-5', max_tokens: 1, tools: [{ name: 'x' }], messages: [user(text('q'))] },
+      CC,
+    ),
+    'haiku_ping',
+  )
+})
+
+test('Warmup and title prompt match anywhere in all-array history (sub2api returns Warmup)', () => {
+  const body = {
+    messages: [
+      user(text('why does the gateway answer Warmup?')),
+      { role: 'assistant', content: text('ok') },
+      user(text('Warmup')),
+      { role: 'assistant', content: text('ok') },
+      user(text('now refactor handle-protocol.mjs')),
+    ],
+  }
+  assert.equal(detectWarmupIntercept(body), 'warmup')
   assert.equal(
     detectWarmupIntercept({
-      messages: [user('Please write a 5-10 word title for the following conversation: abc')],
+      messages: [user(text('Please write a 5-10 word title for the following conversation: x'))],
     }),
     'warmup',
   )
   assert.equal(
     detectWarmupIntercept({
       system: [
-        {
-          type: 'text',
-          text: 'Analyze if this message indicates a new conversation topic. If it does, extract a 2-3 word title',
-        },
+        { text: 'Analyze if this message indicates a new conversation topic. If it does, extract a 2-3 word title' },
       ],
-      messages: [user('fix the bug')],
+      messages: [user(text('fix it'))],
     }),
     'warmup',
   )
 })
 
-test('ordinary conversations are not intercepted', () => {
-  assert.equal(
-    detectWarmupIntercept({ model: 'claude-haiku-4-5', max_tokens: 1024, messages: [user('Warmup please')] }),
-    null,
-  )
-  assert.equal(
-    detectWarmupIntercept({ model: 'claude-opus-5-5', messages: [user('hi')], tools: [{ name: 'Bash' }] }),
-    null,
-  )
+test('string content anywhere fails sub2api typed decode, so real CC sessions pass through', () => {
+  const body = {
+    messages: [
+      user(text('Warmup')),
+      { role: 'system', content: 'SessionStart hook additional context' },
+      user(text('now refactor')),
+    ],
+  }
+  assert.equal(detectWarmupIntercept(body), null)
+  assert.equal(detectWarmupIntercept({ messages: [user('Warmup')] }), null)
+  assert.equal(detectWarmupIntercept({ system: 'Warmup', messages: [user(text('Warmup'))] }), null)
 })
 
-test('mock JSON matches sub2api shapes', () => {
+test('exact Warmup only; no keyword means no parse', () => {
+  assert.equal(detectWarmupIntercept({ messages: [user(text(' Warmup'))] }), null)
+  assert.equal(detectWarmupIntercept({ messages: [user(text('hello'))] }), null)
+})
+
+test('JSON mocks match sendMockInterceptResponse', () => {
   const ping = warmupMockMessage('haiku_ping', 'claude-haiku-4-5')
   assert.equal(ping.content[0].text, '#')
   assert.equal(ping.stop_reason, 'max_tokens')
-  assert.equal(ping.usage.input_tokens, 10)
-  assert.match(ping.id, /^msg_01/)
+  assert.equal(ping.stop_details, null)
+  assert.deepEqual(ping.usage.cache_creation, { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 })
+  assert.match(ping.id, /^msg_01[0-9A-Za-z]{22}$/)
   assert.equal(warmupMockMessage('warmup', 'm').content[0].text, 'New Conversation')
-  assert.equal(warmupMockMessage('suggestion', 'm').content[0].text, '')
+  assert.equal(warmupMockMessage('suggestion', 'm').usage.output_tokens, 1)
 })
 
-test('streaming haiku ping keeps "#" and max_tokens', () => {
-  const sse = formatWarmupSse('haiku_ping', 'claude-haiku-4-5')
-  const events = sse
-    .split('\n')
-    .filter((l) => l.startsWith('event: '))
-    .map((l) => l.slice(7))
-  assert.deepEqual(events, [
-    'message_start',
-    'content_block_start',
-    'content_block_delta',
-    'content_block_stop',
-    'message_delta',
-    'message_stop',
-  ])
-  const data = sse
-    .split('\n')
-    .filter((l) => l.startsWith('data: '))
-    .map((l) => JSON.parse(l.slice(6)))
-  assert.equal(data[2].delta.text, '#')
-  assert.equal(data[4].delta.stop_reason, 'max_tokens')
+test('SSE mock matches sendMockInterceptStream, including its haiku branch', () => {
+  const parse = (sse) =>
+    sse
+      .split('\n')
+      .filter((l) => l.startsWith('data: '))
+      .map((l) => JSON.parse(l.slice(6)))
+  const warm = parse(formatWarmupSse('warmup', 'm'))
+  assert.deepEqual(
+    warm.map((d) => d.type),
+    [
+      'message_start',
+      'content_block_start',
+      'content_block_delta',
+      'content_block_delta',
+      'content_block_stop',
+      'message_delta',
+      'message_stop',
+    ],
+  )
+  assert.equal(warm[2].delta.text + warm[3].delta.text, 'New Conversation')
+  const ping = parse(formatWarmupSse('haiku_ping', 'claude-haiku-4-5'))
+  assert.equal(ping[5].delta.stop_reason, 'end_turn')
+  assert.equal(parse(formatWarmupSse('suggestion', 'm'))[2].delta.text, '')
 })
 
-test('intercept_warmup defaults off and survives normalization', () => {
-  assert.equal(normalizeHealthProbeConfig({}).intercept_warmup, false)
-  assert.equal(normalizeHealthProbeConfig({ intercept_warmup: true }).intercept_warmup, true)
+test('intercept_warmup defaults on and can be turned off', () => {
+  assert.equal(normalizeHealthProbeConfig({}).intercept_warmup, true)
+  assert.equal(normalizeHealthProbeConfig({ intercept_warmup: false }).intercept_warmup, false)
 })
