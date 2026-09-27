@@ -9,6 +9,7 @@ import { extraToCodexSnapshot, normalizeCodexLimits, codexQuotaPark } from '../p
 import { isLeftoverQuotaScheduleOff, isQuotaWindowReason } from './availability.mjs'
 import { orderOpenAIAccounts } from './openai-account-selector.mjs'
 import { bumpOpenAICursor, openAIRuntimeSignals, readOpenAICursor } from './openai-account-runtime.mjs'
+import { modelMatchesAllowlist } from './slot-model-gate.mjs'
 
 export const CODEX_FAILOVER_MAX = 4
 
@@ -149,13 +150,29 @@ export function codexAccountStatus(vm, now = Date.now()) {
   return 'normal'
 }
 
+/** listVms() hands out summaries (`max_concurrency`); getVm() hands out raw records (`policy`). */
+function policyNumber(vm, summaryKey, policyKey) {
+  const n = Number(vm?.[summaryKey] ?? vm?.policy?.[policyKey])
+  return Number.isFinite(n) ? n : null
+}
+
+/** Panel allowlist on a GPT slot. No model or no list means allowed. */
+export function codexSlotAllowsModel(vm, model) {
+  if (!model) return true
+  return modelMatchesAllowlist(model, vm?.allowed_models ?? vm?.policy?.allowed_models)
+}
+
 export function codexAccountCandidate(vm, now = Date.now(), signals = null) {
   const runtime = signals || openAIRuntimeSignals(vm?.id, now)
-  const concurrency = Number(vm?.policy?.maxConcurrency)
+  const concurrency = policyNumber(vm, 'max_concurrency', 'maxConcurrency')
+  const maxRpm = policyNumber(vm, 'max_rpm', 'maxRpm')
   return {
     id: vm.id,
     weight: Number(vm?.policy?.weight ?? vm?.weight ?? 1) || 1,
-    concurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 2,
+    concurrency: concurrency > 0 ? concurrency : 2,
+    maxRpm: maxRpm > 0 ? maxRpm : 0,
+    rpmCount: runtime.rpmCount || 0,
+    rpmResetAt: runtime.rpmResetAt ?? null,
     status: codexAccountStatus(vm, now),
     inFlight: runtime.inFlight || 0,
     lastStartedAt: runtime.lastStartedAt ?? null,
@@ -183,12 +200,14 @@ export function orderCodexSessionSlots(
     strategy = 'smart',
     requestIntervalMs = 0,
     roundRobinCursor = null,
+    model = null,
   } = {},
 ) {
-  const picked = pickCodexSlots(vms, { pin, now })
-  if (picked.error || pin) return { ...picked, sticky: false }
   const list = Array.isArray(vms) ? vms : []
   const byId = new Map(list.map((vm) => [vm.id, vm]))
+  const found = pickCodexSlots(vms, { pin, now })
+  const picked = found.error ? found : withModelAllowed(found, byId, model)
+  if (picked.error || pin) return { ...picked, sticky: false }
   const accepts = (id) => {
     if (!sessionKey || typeof sessionLimit?.canAccept !== 'function') return true
     const cap = resolveSessionSlots(byId.get(id) || {})
@@ -198,22 +217,21 @@ export function orderCodexSessionSlots(
   const ids = picked.ids.filter(accepts)
   if (!ids.length) return { error: 'session_window_full', ids: [], ready: [], parked: [], sticky: false }
   const cursor = roundRobinCursor == null ? readOpenAICursor() : roundRobinCursor
-  const ordered = orderOpenAIAccounts(
-    ids.map((id) => codexAccountCandidate(byId.get(id), now)),
-    {
-      strategy,
-      now,
-      requestIntervalMs,
-      preferredAccountId: boundVmId && ids.includes(boundVmId) ? boundVmId : null,
-      preferredOverridesWeight: true,
-      roundRobinCursor: cursor,
-    },
-  )
+  const candidates = ids.map((id) => codexAccountCandidate(byId.get(id), now))
+  const ordered = orderOpenAIAccounts(candidates, {
+    strategy,
+    now,
+    requestIntervalMs,
+    preferredAccountId: boundVmId && ids.includes(boundVmId) ? boundVmId : null,
+    preferredOverridesWeight: true,
+    roundRobinCursor: cursor,
+  })
   if (!ordered.ids.length) {
     const statuses = ids.map((id) => codexAccountStatus(byId.get(id), now))
     const quotaExhausted = statuses.length > 0 && statuses.every((status) => status === 'quota_exhausted')
     return {
       error: quotaExhausted ? 'quota_exhausted' : 'capacity_unavailable',
+      retryAt: quotaExhausted ? null : rpmRetryAt(candidates, now),
       ids: [],
       ready: [],
       parked: picked.parked || [],
@@ -229,6 +247,28 @@ export function orderCodexSessionSlots(
     parked: (picked.parked || []).filter((id) => ordered.ids.includes(id)),
     sticky,
     strategy,
+  }
+}
+
+/** Earliest RPM window opening among normal slots capped only by RPM. */
+function rpmRetryAt(candidates, now) {
+  const times = candidates
+    .filter((c) => c.status === 'normal' && c.maxRpm > 0 && c.rpmCount >= c.maxRpm && c.inFlight < c.concurrency)
+    .map((c) => Number(c.rpmResetAt))
+    .filter((t) => Number.isFinite(t) && t > now)
+  return times.length ? Math.min(...times) : null
+}
+
+function withModelAllowed(picked, byId, model) {
+  if (!model) return picked
+  const keep = (id) => codexSlotAllowsModel(byId.get(id), model)
+  const ids = picked.ids.filter(keep)
+  if (!ids.length) return { error: 'model_not_allowed', ids: [], ready: [], parked: [] }
+  return {
+    ...picked,
+    ids,
+    ready: (picked.ready || []).filter(keep),
+    parked: (picked.parked || []).filter(keep),
   }
 }
 

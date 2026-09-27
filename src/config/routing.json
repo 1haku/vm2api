@@ -68,7 +68,7 @@
   "pool": {
     "strategy": "weighted-round-robin",
     "manual_schedule_wins": true,
-    "max_waiters_per_account": 32,
+    "max_waiters_per_account": 100,
     "fallback_wait_timeout_ms": 30000,
     "sticky_wait_timeout_ms": 45000,
     "worker_health_ttl_ms": 5000,
