@@ -1,6 +1,12 @@
 # Changelog
 
 
+## 1.3.69 — 2026-09-28
+
+- 修复调度座位泄漏：family 锁定在另一台 VM 时，已占用的并发/session seat/配额不释放，直到重启 Node。用 `x-kin-vm` 指定非 family 所在 VM 的请求每次泄漏 2 个座位，把该 VM 占满后主会话持续 `all_accounts_busy`（45s 后 503）。现在重选前先归还座位；显式指定 VM 优先于 family 绑定。
+
+已部署机升级：覆盖控制面并重启 Node 一次（同时清掉已泄漏的座位）。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
+
 ## 1.3.68 — 2026-09-28
 
 - GPT 槽按 VM `allowed_models` 过滤；OpenAI 号池增加 RPM 窗口与等待队列（满员排队，默认 100）。
