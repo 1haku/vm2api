@@ -871,6 +871,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 404, { error: { message: 'console not found; run pnpm -C web build' } })
     }
 
+    // CLIProxyAPI-style liveness: no auth, no inference.
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/healthz') {
+      if (req.method === 'HEAD') {
+        res.writeHead(200)
+        return res.end()
+      }
+      return json(res, 200, { status: 'ok' })
+    }
+
     if (req.method === 'GET' && (p === '/' || p === '/health')) {
       return json(res, 200, {
         status: 'ok',
