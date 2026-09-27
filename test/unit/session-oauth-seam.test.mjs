@@ -9,7 +9,13 @@ import {
   buildSetupTokenAuthorizeURL,
   extractOAuthCodeFromRedirect,
 } from '../../src/lib/oauth/cookie-auth.mjs'
-import { FULL_OAUTH_SCOPE, REDIRECT_URI, TOKEN_URL } from '../../src/lib/oauth/auth.js'
+import fs from 'node:fs'
+import { FULL_OAUTH_SCOPE, REDIRECT_URI, TOKEN_URL } from '../../src/lib/oauth/oauth-contract.mjs'
+
+// auth.js is the local source of the kin-oauth-auth binary and is not in the repo.
+const localAuthSkip = fs.existsSync(new URL('../../src/lib/oauth/auth.js', import.meta.url))
+  ? false
+  : 'src/lib/oauth/auth.js is local-only (shipped as bin/kin-oauth-auth)'
 
 test('KIN_FAKE_SESSION_OAUTH returns deterministic creds without network', async () => {
   process.env.KIN_FAKE_SESSION_OAUTH = '1'
@@ -43,7 +49,7 @@ test('sessionKeyToOAuth requires a non-empty VM SOCKS5 in production', async () 
   )
 })
 
-test('sessionKeyToOAuth on local egress hops without PROXY_URL', async () => {
+test('sessionKeyToOAuth on local egress hops without PROXY_URL', { skip: localAuthSkip }, async () => {
   const seen = []
   const cred = await sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', {
     proxyUrl: '',
@@ -53,7 +59,9 @@ test('sessionKeyToOAuth on local egress hops without PROXY_URL', async () => {
   assert.equal(seen.length, 5)
 })
 
-test('sessionKeyToOAuth performs strict org authorize token bootstrap grove flow', async () => {
+test('sessionKeyToOAuth performs strict org authorize token bootstrap grove flow', {
+  skip: localAuthSkip,
+}, async () => {
   const seen = []
   const cred = await sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', {
     proxyUrl: 'socks5://127.0.0.1:1080',
@@ -73,7 +81,7 @@ test('sessionKeyToOAuth performs strict org authorize token bootstrap grove flow
   )
 })
 
-test('sessionKeyToOAuth maps stale authorize response', async () => {
+test('sessionKeyToOAuth maps stale authorize response', { skip: localAuthSkip }, async () => {
   await assert.rejects(
     () =>
       sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', {
@@ -87,7 +95,7 @@ test('sessionKeyToOAuth maps stale authorize response', async () => {
   )
 })
 
-test('exchangeTokenViaCookieAuth posts token then requires bootstrap and Grove', async () => {
+test('exchangeTokenViaCookieAuth posts token then requires bootstrap and Grove', { skip: localAuthSkip }, async () => {
   const seen = []
   const tok = await exchangeTokenViaCookieAuth({
     code: 'abc#state-1',
@@ -102,7 +110,7 @@ test('exchangeTokenViaCookieAuth posts token then requires bootstrap and Grove',
   )
 })
 
-test('exchangeTokenViaCookieAuth reads streamed token responses', async () => {
+test('exchangeTokenViaCookieAuth reads streamed token responses', { skip: localAuthSkip }, async () => {
   const seen = []
   const tok = await exchangeTokenViaCookieAuth({
     code: 'abc#state-1',
@@ -113,7 +121,9 @@ test('exchangeTokenViaCookieAuth reads streamed token responses', async () => {
   assert.equal(tok.access_token, 'sk-ant-oat01-token')
 })
 
-test('exchangeTokenViaCookieAuth falls back when platform Grove path is unavailable', async () => {
+test('exchangeTokenViaCookieAuth falls back when platform Grove path is unavailable', {
+  skip: localAuthSkip,
+}, async () => {
   const seen = []
   await exchangeTokenViaCookieAuth({
     code: 'abc#state-1',
@@ -127,7 +137,7 @@ test('exchangeTokenViaCookieAuth falls back when platform Grove path is unavaila
   )
 })
 
-test('exchangeTokenViaCookieAuth redacts failed token bodies', async () => {
+test('exchangeTokenViaCookieAuth redacts failed token bodies', { skip: localAuthSkip }, async () => {
   await assert.rejects(
     () =>
       exchangeTokenViaCookieAuth({
