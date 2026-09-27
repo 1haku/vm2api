@@ -8,6 +8,7 @@ import {
   CRS_STANDING_CONSTRAINT,
   isOfficialClaudeCodeTraffic,
 } from '../../src/lib/identity/crs-persona.mjs'
+import { DEFAULT_ZERO_STANDING } from '../../src/lib/identity/persona-template.mjs'
 import {
   callerUsageBaseline,
   estimateClaudeInputTokens,
@@ -102,12 +103,13 @@ test('zero inject hides billing and env, not leftover', () => {
   assert.match(billing, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(after.system.length, 4)
   assert.equal(after.system[1].text, '\u200b')
-  assert.equal(after.system[2].text, '\u200b')
+  // Agent slot carries the editable standing constraints; hidden as injected overlay.
+  assert.equal(after.system[2].text, `${DEFAULT_ZERO_STANDING}\n`)
   assert.equal(after.system[3].text, '你是一个高速收费员。')
-  assert.equal(Number(hide), estimateClaudeInputTokens(billing))
   assert.ok(hide.official > 20)
-  assert.equal(hide.overlay || 0, 0)
-  assert.equal(injectedOverlayText(before, after), '')
+  assert.equal(Number(hide), hide.official + hide.overlay)
+  assert.equal(injectedOverlayText(before, after), DEFAULT_ZERO_STANDING)
+  assert.ok(!injectedOverlayText(before, after).includes('高速收费员'))
 })
 
 test('cli-hop zero hides billing+env so 04 usage matches Portunex remainder', () => {
