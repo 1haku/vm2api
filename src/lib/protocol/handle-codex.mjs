@@ -22,6 +22,9 @@ import { boundProxyUrl } from '../vm/egress.mjs'
 import { orderCodexSessionSlots, isCodexFailoverError, CODEX_FAILOVER_MAX } from '../pool/codex-slot-pool.mjs'
 import { acquireOpenAISlot, releaseOpenAISlot, reportOpenAIAttempt } from '../pool/openai-account-runtime.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
+import { extractCallerSession, outboundSessionMode, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
+import { extractFirstUserText } from '../identity/crs-persona.mjs'
+import { clientIp } from '../pool/sticky-router.mjs'
 
 function sessionFrom(req, body) {
   const headers = req.headers || {}
@@ -35,6 +38,32 @@ function sessionFrom(req, body) {
       null,
     previous_response_id: body?.previous_response_id || null,
   }
+}
+
+function firstUserTextFromCodex(body = {}) {
+  if (typeof body?.input === 'string') return body.input
+  if (Array.isArray(body?.input)) {
+    for (const item of body.input) {
+      if (typeof item === 'string' && item.trim()) return item.trim()
+      if (typeof item?.content === 'string' && item.content.trim()) return item.content.trim()
+      if (Array.isArray(item?.content)) {
+        for (const part of item.content) {
+          if (typeof part === 'string' && part.trim()) return part.trim()
+          if (typeof part?.text === 'string' && part.text.trim()) return part.text.trim()
+        }
+      }
+    }
+  }
+  return extractFirstUserText(body?.messages) || String(body?.prompt || '')
+}
+
+function applyCodexRebuildBody(body, sessionId, mode) {
+  const out = { ...body }
+  if (mode !== 'rebuild') return out
+  out.prompt_cache_key = sessionId
+  delete out.conversation_id
+  delete out.session_id
+  return out
 }
 
 function pinnedVmId(req) {
@@ -274,8 +303,14 @@ export async function handleCodexProtocol({
   stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
 
   const stream = inbound?.stream !== false && ctx.body?.stream !== false
-  const session = sessionFrom(req, converted.body)
-  const outboundBody = { ...converted.body, stream: true }
+  const inboundSession = sessionFrom(req, converted.body)
+  const sessionMode = outboundSessionMode(routing)
+  const callerSession = extractCallerSession({
+    inbound: converted.body,
+    body: converted.body,
+    headers: req.headers,
+  })
+  const firstUserText = firstUserTextFromCodex(converted.body)
   const hop = ops.streamCodexKernel || streamCodexKernel
   const writeCfg = ops.writeCodexKernelConfig || writeCodexKernelConfig
   const ensure = ops.ensureCodexKernel || ensureCodexKernel
@@ -285,10 +320,13 @@ export async function handleCodexProtocol({
       ? { id: 'codex', seq: 0, tools: new Map(), sawTool: false }
       : null
   const stickyKeys = picked.stickyKeys?.length ? picked.stickyKeys : picked.sessionKey ? [picked.sessionKey] : []
-  const bindSticky = (vm) => {
+  const stickyBound = picked.sessionKey ? stickyRouter?.resolve?.(picked.sessionKey) : null
+  const bindSticky = (vm, sessionId = null) => {
     if (!picked.sessionKey) return
     if (stickyRouter?.bind) {
-      for (const key of stickyKeys) stickyRouter.bind(key, { accountId: vm.id, vmId: vm.id })
+      const payload = { accountId: vm.id, vmId: vm.id }
+      if (sessionId) payload.sessionId = sessionId
+      for (const key of stickyKeys) stickyRouter.bind(key, payload)
     }
     try {
       sessions?.touch?.(vm.id, picked.sessionKey)
@@ -338,6 +376,26 @@ export async function handleCodexProtocol({
       const chunks = []
       let responseServiceTier = null
       let streamedUsage = null
+      const attemptStartedAt = Date.now()
+      const outboundSessionId =
+        sessionMode === 'passthrough'
+          ? inboundSession.session_id
+          : resolveOutboundSessionId(callerSession, {
+              mode: sessionMode,
+              boundSessionId: stickyBound?.sessionId || '',
+              boundVmId: stickyBound?.vmId || '',
+              vmId: vm.id,
+              accountId: vm.id,
+              firstUserText,
+              clientIp: clientIp(req),
+              userAgent: req.headers?.['user-agent'] || '',
+              epoch: `${attemptStartedAt}:${vm.id}:${i}`,
+            })
+      const session = {
+        session_id: outboundSessionId,
+        previous_response_id: inboundSession.previous_response_id,
+      }
+      const outboundBody = applyCodexRebuildBody({ ...converted.body, stream: true }, outboundSessionId, sessionMode)
       const result = await runCodexKernelHop({
         hop,
         args: {
@@ -383,7 +441,7 @@ export async function handleCodexProtocol({
       const delivered = result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0)
       if (delivered) {
         attemptKind = 'succeeded'
-        bindSticky(vm)
+        bindSticky(vm, outboundSessionId)
         const extracted = extractOpenaiUsage(usage)
         const serviceTier = responseServiceTier || converted.body?.service_tier || usage?.service_tier || null
         logBag.usage = usage && serviceTier ? { ...usage, service_tier: serviceTier } : usage

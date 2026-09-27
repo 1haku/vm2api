@@ -9,6 +9,7 @@ import {
   handleCodexProtocol,
 } from '../../src/lib/protocol/handle-codex.mjs'
 import { persistCodexUsage, getVm } from '../../src/lib/vm/vm-registry.mjs'
+import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 
 test('502 upstream_transport is retryable before commit', () => {
   assert.equal(
@@ -457,5 +458,184 @@ test('incomplete Responses stream still bills tokens from the completed event', 
   assert.equal(logBag.error_code, undefined)
   assert.equal(logBag.final_state, 'verified')
   assert.equal(stats.errors, 0)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+function emptyCodexRes() {
+  return { headersSent: false, write() {}, end() {} }
+}
+
+async function hopCodex({ root, stickyRouter, routing = {}, headers = {}, body, onHop }) {
+  const envelopes = []
+  const res = emptyCodexRes()
+  const out = await handleCodexProtocol({
+    req: { headers, apiKeyKind: 'user' },
+    res,
+    protocol: 'openai.responses',
+    ctx: { body },
+    inbound: { stream: false },
+    logBag: {},
+    stats: { errors: 0, requests: 0, by_route: {} },
+    json: (_res, status, payload) => {
+      res.statusCode = status
+      res.body = payload
+      return payload
+    },
+    writeSSEHeaders() {
+      res.headersSent = true
+    },
+    routing,
+    projectRoot: root,
+    stickyRouter,
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async (args) => {
+        envelopes.push(args.envelope)
+        if (onHop) return onHop(args)
+        return { ok: true, status: 200, terminalState: 'verified', body: { id: 'resp_ok' } }
+      },
+    },
+  })
+  return { out, envelopes, res }
+}
+
+
+test('codex rebuild outbound session is not the inbound session', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-sess-'))
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  writeGptVm(root, 'vm-gpt-a')
+  const inbound = '11111111-1111-4111-8111-111111111111'
+  const { envelopes } = await hopCodex({
+    root,
+    stickyRouter: sticky,
+    headers: { 'x-session-id': inbound },
+    body: {
+      model: 'gpt-5.4',
+      input: 'hi',
+      stream: false,
+      prompt_cache_key: inbound,
+      conversation_id: inbound,
+      session_id: inbound,
+      previous_response_id: 'resp_keep',
+    },
+  })
+  const session = envelopes[0].session
+  assert.notEqual(session.session_id, inbound)
+  assert.match(session.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  assert.equal(session.previous_response_id, 'resp_keep')
+  assert.equal(envelopes[0].body.prompt_cache_key, session.session_id)
+  assert.equal(envelopes[0].body.conversation_id, undefined)
+  assert.equal(envelopes[0].body.session_id, undefined)
+  sticky.db?.close?.()
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('codex rebuild outbound session is stable on the same slot', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-stable-'))
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  writeGptVm(root, 'vm-gpt-a')
+  const inbound = 'sess-stable'
+  const first = await hopCodex({
+    root,
+    stickyRouter: sticky,
+    headers: { 'x-session-id': inbound },
+    body: { model: 'gpt-5.4', input: 'hi', stream: false },
+  })
+  const second = await hopCodex({
+    root,
+    stickyRouter: sticky,
+    headers: { 'x-session-id': inbound },
+    body: { model: 'gpt-5.4', input: 'hi again', stream: false },
+  })
+  assert.equal(first.envelopes[0].session.session_id, second.envelopes[0].session.session_id)
+  sticky.db?.close?.()
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('codex rebuild remints session after failover to another slot', async () => {
+  const rt = await import('../../src/lib/pool/openai-account-runtime.mjs')
+  rt.resetOpenAIAccountRuntime()
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-fail-'))
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  writeGptVm(root, 'vm-gpt-a')
+  writeGptVm(root, 'vm-gpt-b')
+  const inbound = 'sess-fail'
+  const seen = []
+  const envelopes = []
+  const res = emptyCodexRes()
+  await handleCodexProtocol({
+    req: { headers: { 'x-session-id': inbound }, apiKeyKind: 'user' },
+    res,
+    protocol: 'openai.responses',
+    ctx: { body: { model: 'gpt-5.4', input: 'hi', stream: false } },
+    inbound: { stream: false },
+    logBag: {},
+    stats: { errors: 0, requests: 0, by_route: {} },
+    json: (_res, status, payload) => {
+      res.statusCode = status
+      return payload
+    },
+    writeSSEHeaders() {
+      res.headersSent = true
+    },
+    routing: {},
+    projectRoot: root,
+    stickyRouter: sticky,
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async ({ exec, envelope }) => {
+        seen.push(exec.vmId)
+        envelopes.push(envelope)
+        if (exec.vmId === 'vm-gpt-a') {
+          return {
+            ok: false,
+            status: 429,
+            committed: false,
+            headers: {
+              'x-codex-primary-used-percent': '100',
+              'x-codex-primary-window-minutes': '300',
+              'x-codex-primary-reset-after-seconds': '60',
+            },
+            body: { error: { type: 'api_error', code: 'usage_limit_reached', message: '5h' } },
+          }
+        }
+        return { ok: true, status: 200, terminalState: 'verified', body: { id: 'resp_ok' } }
+      },
+    },
+  })
+  assert.deepEqual(seen, ['vm-gpt-a', 'vm-gpt-b'])
+  assert.equal(envelopes.length, 2)
+  assert.notEqual(envelopes[0].session.session_id, inbound)
+  assert.notEqual(envelopes[1].session.session_id, inbound)
+  assert.notEqual(envelopes[0].session.session_id, envelopes[1].session.session_id)
+  rt.resetOpenAIAccountRuntime()
+  sticky.db?.close?.()
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('codex passthrough keeps the inbound session and cache key', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-pass-'))
+  const sticky = new StickyRouter({ dataDir: path.join(root, 'data'), config: { sticky: { enabled: true } } })
+  writeGptVm(root, 'vm-gpt-a')
+  const inbound = 'sess-pass'
+  const { envelopes } = await hopCodex({
+    root,
+    stickyRouter: sticky,
+    routing: { sticky: { outbound_session: 'passthrough' } },
+    headers: { 'x-session-id': inbound },
+    body: {
+      model: 'gpt-5.4',
+      input: 'hi',
+      stream: false,
+      prompt_cache_key: 'cache-pass',
+      conversation_id: inbound,
+    },
+  })
+  assert.equal(envelopes[0].session.session_id, inbound)
+  assert.equal(envelopes[0].body.prompt_cache_key, 'cache-pass')
+  assert.equal(envelopes[0].body.conversation_id, inbound)
+  sticky.db?.close?.()
   fs.rmSync(root, { recursive: true, force: true })
 })

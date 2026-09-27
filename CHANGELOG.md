@@ -1,5 +1,14 @@
 # Changelog
 
+
+## 1.3.66 — 2026-09-28
+
+- 出站 session 默认重建：入站 session 只作调度身份，不再透传到上游。同一 VM 保持重建值，切换 VM（含切回）换代。
+- `X-Claude-Code-Session-Id` 与 `metadata.user_id.session_id` 使用同一重建值。官方 Claude Code 2.1.281 出站头对齐。
+- 设置页「出站 session」可切回透传。Codex hop 的 `session-id` / `prompt_cache_key` 同样重建。
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。Claude wrap 槽的 `cli-node` 需单独同步到带 hop session 的版本。不要 `docker rm` 槽。
+
 ## 1.3.65 — 2026-09-27
 
 - 修复官方 Claude Code 客户端工具 `WebSearch` 被改写成服务端 `web_search`：ToolSearch 加载 `WebSearch` 后必定 502 `incomplete_response`（#134）。现在带 `input_schema` 的 `WebSearch` 原样转发，模型调用的是客户端 `WebSearch`；请求里已有它时不再额外注入服务端搜索。

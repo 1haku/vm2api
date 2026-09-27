@@ -41,17 +41,24 @@ export function scopeStickyKey(key, platform) {
   return raw.startsWith(prefix) ? raw : `${prefix}${raw}`
 }
 
-function mergeStickyConfig(config) {
+export function mergeStickyConfig(config) {
   const sticky = config?.sticky || {}
   const headerKeys = (
     Array.isArray(sticky.header_keys) && sticky.header_keys.length ? sticky.header_keys : DEFAULT_STICKY_HEADER_KEYS
   ).filter((k) => !EPHEMERAL_STICKY_KEYS.has(String(k).toLowerCase()))
+  const outboundSession =
+    String(sticky.outbound_session || '')
+      .trim()
+      .toLowerCase() === 'passthrough'
+      ? 'passthrough'
+      : 'rebuild'
   return {
     enabled: sticky.enabled !== false,
     mode: sticky.mode || 'conversation',
     ttl_seconds: sticky.ttl_seconds || 86400,
     header_keys: headerKeys,
     body_keys: Array.isArray(sticky.body_keys) && sticky.body_keys.length ? sticky.body_keys : DEFAULT_STICKY_BODY_KEYS,
+    outbound_session: outboundSession,
   }
 }
 
@@ -417,7 +424,9 @@ export class StickyRouter {
     const prev = this.repo.get(key) || {}
     const prevGeneration = Number(prev.generation) || 0
     if (ifGeneration != null && prevGeneration !== Number(ifGeneration)) return false
-    const locked = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
+    const vmChanged = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
+    const accountChanged = !!(prev.account_id && accountId && prev.account_id !== accountId)
+    const locked = vmChanged && accountChanged
     const nextAccount = locked ? prev.account_id : accountId
     const nextVm = locked ? prev.vm_id : vmId
     const nextSlot = locked
@@ -430,11 +439,17 @@ export class StickyRouter {
       (nextAccount !== prev.account_id || nextVm !== prev.vm_id || (slotIndex != null && nextSlot !== prev.slot_index))
     )
     const generation = prev.vm_id ? (changed ? prevGeneration + 1 : prevGeneration || 1) : 1
+    const sameVm = !!(prev.vm_id && nextVm && prev.vm_id === nextVm)
+    const nextSessionId = locked
+      ? prev.session_id || sessionId || null
+      : sameVm
+        ? prev.session_id || sessionId || null
+        : sessionId || prev.session_id || null
     const device = String(deviceId || '').trim()
     this.repo.upsert(key, {
       account_id: nextAccount,
       vm_id: nextVm,
-      session_id: prev.session_id || sessionId || null,
+      session_id: nextSessionId,
       device_id: device || null,
       bound_at: Date.now(),
       expires_at: Date.now() + ttl,
@@ -494,12 +509,13 @@ export class StickyRouter {
    * device_id (e.g. from resolveInboundIdentity/metadata.user_id) — this
    * never guesses an identity and never runs as a batch migration.
    *
-   * Session canonical key reuses bind()'s existing locked/generation
-   * semantics: if the canonical session key is already bound to a
-   * different VM, that binding is left untouched (no silent overwrite or
-   * merge across sessions). Device canonical key reuses
-   * bindDeviceAffinity()'s existing soft-preference semantics (A2), which
-   * is allowed to move — that is its documented behavior already.
+   * Session canonical key reuses bind()'s locked/generation semantics:
+   * a row is locked only when both VM and account differ, so a stale
+   * legacy hit cannot silently merge onto another session's home.
+   * Same-account VM moves still write the new outbound session. Device
+   * canonical key reuses bindDeviceAffinity()'s existing soft-preference
+   * semantics (A2), which is allowed to move — that is its documented
+   * behavior already.
    *
    * The legacy row itself, and any unrelated row, is never modified or
    * deleted here.

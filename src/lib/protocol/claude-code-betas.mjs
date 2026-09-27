@@ -28,7 +28,7 @@ export const BETA_CONTEXT_1M = 'context-1m-2025-08-07'
 export const HAIKU_BETA_HEADER = `${BETA_OAUTH},${BETA_INTERLEAVED}`
 
 /**
- * Claude Code 2.1.280 official main Messages order (linux-x64 sdk-cli, no context-1m).
+ * Claude Code 2.1.281 official main Messages order (linux-x64 sdk-cli, no context-1m).
  * advanced-tool-use is back, next to mid-conversation-system-clear-at.
  * thinking-binding-controls stays. extended-cache-ttl and cache-diagnosis are on the wire.
  * mid-conversation-tool-changes and fallback-credit are not in this capture.

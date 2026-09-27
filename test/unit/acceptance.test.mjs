@@ -105,7 +105,27 @@ test('identity replace keeps slot device_id; unofficial session is minted; tools
   assert.match(uid.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 })
 
-test('official Claude Code identity replace keeps caller session', () => {
+test('official Claude Code identity replace keeps caller session under passthrough', () => {
+  const pkt = loadPkt('synth-tools-metadata.anthropic.json')
+  const official = officialMessagesBody(pkt.inbound_body)
+  official.metadata = {
+    user_id: JSON.stringify({ device_id: 'caller-device', account_uuid: '', session_id: 'caller-sess' }),
+  }
+  const out = applyCrsIdentityReplace(
+    official,
+    VM_IDENTITY,
+    official,
+    {},
+    {
+      officialClient: true,
+      mode: 'passthrough',
+    },
+  )
+  const uid = JSON.parse(out.metadata.user_id)
+  assert.equal(uid.session_id, 'caller-sess')
+})
+
+test('official Claude Code identity replace rebuilds caller session by default', () => {
   const pkt = loadPkt('synth-tools-metadata.anthropic.json')
   const official = officialMessagesBody(pkt.inbound_body)
   official.metadata = {
@@ -113,7 +133,8 @@ test('official Claude Code identity replace keeps caller session', () => {
   }
   const out = applyCrsIdentityReplace(official, VM_IDENTITY, official, {}, { officialClient: true })
   const uid = JSON.parse(out.metadata.user_id)
-  assert.equal(uid.session_id, 'caller-sess')
+  assert.notEqual(uid.session_id, 'caller-sess')
+  assert.match(uid.session_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 })
 
 test('identity replace drops client settings and machine identity', () => {
