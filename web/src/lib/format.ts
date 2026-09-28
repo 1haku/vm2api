@@ -98,6 +98,18 @@ export function fmtCountdown(leftMs: number): string {
   return `${m}m`
 }
 
+/** ISO 时间 → `刚刚` / `5 分钟前` / `3 小时前` / `2 天前`；无法解析返回空串。 */
+export function fmtAgo(value: unknown, now: number = Date.now()): string {
+  const t = Date.parse(String(value ?? ''))
+  if (!Number.isFinite(t)) return ''
+  const min = Math.floor(Math.max(0, now - t) / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} 小时前`
+  return `${Math.floor(h / 24)} 天前`
+}
+
 export function fmtMs(ms: unknown): string {
   if (ms == null || !Number.isFinite(Number(ms))) return '—'
   const n = Number(ms)
