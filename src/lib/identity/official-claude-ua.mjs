@@ -9,8 +9,8 @@
  * Body passthrough still needs the other official-traffic gates
  * (user_id / tools / official system). oh-my-pi is rejected by system shape.
  *
- * Current first-party versions (2026-08-24): CLI / VS Code 2.1.241,
- * Agent SDK 0.3.241.
+ * Outbound pin is `OFFICIAL_CLI_VERSION` in `vm-identity.mjs` (`2.1.284`).
+ * This check accepts any `claude-cli` semver; it does not pin the version.
  */
 
 export const CLAUDE_CLI_UA_RE = /^claude-cli\/\d+\.\d+\.\d+/i
