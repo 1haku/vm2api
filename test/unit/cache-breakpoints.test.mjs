@@ -399,7 +399,8 @@ test('over the four-breakpoint budget, message anchors are kept over system extr
 /** The live regression: persona rebuilds system from a template, so a caller's own
     breakpoint used to vanish and every turn re-created the cache. */
 test('a caller breakpoint on system reaches the wire through the official persona preset', () => {
-  withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (routingFile) => {
+  const compat = { persona_preset: 'official', overlay_preset: 'off', agent_standing_presets: { official: false } }
+  withRoutingFile(compat, (routingFile) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-bp-home-'))
     const inbound = {
       model: 'claude-opus-4-6',

@@ -85,12 +85,7 @@ export function personaSchemeSummary(text: string, key: PersonaPreset): string {
   const { blocks, errors } = parsePersonaTemplateLines(text)
   if (errors.length) return `${errors.length} 处错误`
   const stored = templateOrFollowPreset(blocks, DEFAULT_PERSONA_TEMPLATES, key)
-  const effective = stored.length
-    ? stored
-    : presetSeed(DEFAULT_PERSONA_TEMPLATES, key)
   if (key === 'custom' && stored.length === 0) return '空 · 回落官方'
-  const n = effective.length
-  if (stored.length === 0)
-    return key === 'zero' ? '内置 · 常驻约束' : `内置 · ${n} 块`
-  return `已改 · ${n} 块`
+  if (stored.length === 0) return '内置'
+  return `已改 · ${stored.length} 块`
 }

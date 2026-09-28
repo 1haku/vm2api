@@ -14,11 +14,11 @@ import { isCodexVm } from '@/lib/vm-kind'
 import { PageHeader } from '@/components/page-header'
 import { QueryGate } from '@/components/query-gate'
 import { dashboardQueryOptions } from '@/features/overview/queries'
-import { PersonaPane } from '@/features/settings/persona-pane'
 import { inheritProtocolOnSlots } from '@/features/settings/protocol-authority'
 import { routingQueryOptions } from '@/features/settings/queries'
 import { SaveBar } from '@/features/settings/save-bar'
 import { SettingsSkeleton } from '@/features/settings/settings-skeleton'
+import { SystemPromptWorkspace } from '@/features/system/prompt-workspace'
 
 type RoutingSaveResult = {
   compatibility?: Record<string, unknown>
@@ -133,10 +133,13 @@ export function SystemPromptPage() {
           error={routing.error}
           skeleton={<SettingsSkeleton />}
         >
-          <PersonaPane
+          <SystemPromptWorkspace
             key={discardKey}
             compat={
               (draft.compatibility as Record<string, unknown> | undefined) || {}
+            }
+            server={
+              routing.data?.compatibility as Record<string, unknown> | undefined
             }
             onChange={(next) => setDraft({ ...draft, compatibility: next })}
             onProblemsChange={setPersonaProblems}
