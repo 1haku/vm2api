@@ -93,6 +93,7 @@ import {
   isOfficialClaudeCodeTraffic,
   isProxiedOfficialClaudeCode,
   personaHidesUsageFromRoutingFile,
+  standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
 } from '../identity/crs-persona.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
@@ -734,6 +735,7 @@ export function createHandleProtocol(deps) {
       officialClient: officialTraffic,
       mode: personaMode,
       hides: personaHidesUsageFromRoutingFile(routingConfigPath),
+      standing: standingUsageFromRoutingFile(routingConfigPath),
     })
 
     if (inferenceBackend === 'api') {
@@ -946,6 +948,13 @@ export function createHandleProtocol(deps) {
                 cliVersion: OFFICIAL_CLI_VERSION,
                 identity,
               })
+              // The slot preset may differ from the global one; its panel mask applies.
+              personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
+                officialClient: false,
+                mode: resolvedPersona,
+                hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
+                standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
+              })
             }
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
@@ -967,13 +976,17 @@ export function createHandleProtocol(deps) {
             }
             if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
 
-            // 0注入 hides CLI billing + env. 官方提示词 must show real usage.
+            // 0注入 hides CLI billing + env and the standing Node left in the leftover.
+            // 官方提示词 must show real usage.
             const cliHide =
               resolvedPersona === 'official'
                 ? 0
                 : personaHideForCliZero(personaIn, hopBody, {
                     officialClient: officialTraffic,
                     timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
+                    // A re-applied Node persona's hide (summed below) already counts its overlay.
+                    overlay: cliAppliesNodePersona ? 0 : personaHideTokens?.overlay,
+                    hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
                   })
             personaHideTokens = cliAppliesNodePersona ? (Number(personaHideTokens) || 0) + cliHide : cliHide
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
@@ -1001,7 +1014,8 @@ export function createHandleProtocol(deps) {
             personaHideTokens = personaHideForUnofficial(personaIn, rewritten, {
               officialClient: officialTraffic,
               mode: modeOverride,
-              hides: personaHidesUsageFromRoutingFile(routingConfigPath),
+              hides: personaHidesUsageFromRoutingFile(routingConfigPath, modeOverride),
+              standing: standingUsageFromRoutingFile(routingConfigPath, modeOverride),
             })
           }
           logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)

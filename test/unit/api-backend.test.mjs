@@ -7,6 +7,7 @@ import path from 'node:path'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/crs-persona.mjs'
+import { DEFAULT_AGENT_STANDING } from '../../src/lib/identity/persona-template.mjs'
 import { resolveInferenceBackend, messagesUrl } from '../../src/lib/pool/api-protocol.mjs'
 
 function fakeResponse() {
@@ -112,7 +113,7 @@ test('API backend applies the global official_full persona setting', async () =>
     assert.ok(received)
     const outbound = JSON.parse(received.body)
     assert.equal(outbound.system.length, 4)
-    assert.equal(outbound.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.equal(outbound.system[2].text, `${DEFAULT_AGENT_STANDING}\n${CRS_OFFICIAL_AGENT_PROMPT}`)
   } finally {
     await new Promise((resolve) => kernel.close(resolve))
     fs.rmSync(root, { recursive: true, force: true })

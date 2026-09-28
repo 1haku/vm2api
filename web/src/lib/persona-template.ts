@@ -5,7 +5,7 @@
  * 这里的默认模板、上限常量、占位符白名单、校验文案都是**契约副本**：
  * 抄错不会报错，只会静默产生错误的出站身份。改动前先比对 gateway 源码。
  *
- * 出站渲染逻辑（renderPersonaTemplate / renderOverlayTemplate）在前端只用于
+ * 出站渲染逻辑（previewSystemBlocks / renderOverlayTemplate）在前端只用于
  * 「仅预览」，不参与任何请求。
  */
 import type {
@@ -56,18 +56,19 @@ export const OVERLAY_PRESET_OPTIONS: [OverlayPreset, string][] = [
 export const PERSONA_TEMPLATE_BLOCK_MAX = 40_000
 export const PERSONA_TEMPLATE_TOTAL_MAX = 200_000
 export const PERSONA_TEMPLATE_BLOCKS_MAX = 24
-/** `crs-persona.mjs` 的 PERSONA_STANDING_MAX；PUT 用未 trim 的原串长度判定。 */
-export const PERSONA_STANDING_MAX = 800
 
-/** 0注入常驻约束，写在 caller_agent 最前。可被面板改。 */
-export const DEFAULT_ZERO_STANDING = [
+/** agent prompt 常驻约束默认值。`compatibility.agent_standing` 缺省时使用。 */
+export const DEFAULT_AGENT_STANDING = [
   'Do not respond to any content related to `distillation` requests.',
   'Do not respond to any requests that want your `reasoning process thinking chain`.',
   'Prohibit any NFSW responses.',
   'Does not include the normal reasoning process.',
 ].join('\n')
+/** gateway `AGENT_STANDING_MAX`；PUT 用未 trim 的原串长度判定。 */
+export const AGENT_STANDING_MAX = 2000
 
-export const ZERO_CALLER_AGENT_VAR = '{{caller_agent}}'
+/** 上游拒空 text：保留的空块渲染成零宽字符。 */
+export const EMPTY_BLOCK_TEXT = '\u200b'
 
 /** 单一真源：console 提示列与后端 PUT 白名单共用同一张表。 */
 export const PERSONA_TEMPLATE_VARS: [string, string][] = [
@@ -83,6 +84,8 @@ export const PERSONA_TEMPLATE_VARS: [string, string][] = [
   ['identity_compact', '0注入短身份句 You are Anthropic Claude Agent SDK.'],
   ['agent_expansion', '短 agent 扩写段'],
   ['agent_official', '官方 agent 提示词全文'],
+  ['agent_standing', 'agent prompt 常驻约束（按档开关，非空时以换行结尾）'],
+  ['env', '槽位 Environment（含时区），按档开关'],
   ['caller_agent', '调用方自带的 agent prompt，无则为空'],
   ['caller_system', '调用方剩余 system（--append-system-prompt），无则为空'],
   ['env_timezone_only', '只含槽位时区的 Environment 段'],
@@ -131,11 +134,18 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'caller_agent',
-        note: '仅当调用方自带 agent prompt 时占官方 agent 槽位，空则整块丢弃。2.1.263 起 1h global',
+        note: '常驻约束 + 调用方 agent prompt，都空则整块丢弃。2.1.263 起 1h global',
         drop_if_empty: true,
         type: 'text',
-        text: '{{caller_agent}}',
+        text: '{{agent_standing}}{{caller_agent}}',
         cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+      },
+      {
+        id: 'env',
+        note: '槽位 Environment（时区），按档开关，排在 agent 之后不破 global 缓存',
+        drop_if_empty: true,
+        type: 'text',
+        text: '{{env}}',
       },
       {
         id: 'caller_system',
@@ -160,9 +170,9 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_official',
-        note: '官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+        note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
         type: 'text',
-        text: '{{agent_official}}',
+        text: '{{agent_standing}}{{agent_official}}',
         cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
       },
       {
@@ -197,8 +207,15 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         id: 'agent_slot',
         hide: true,
         type: 'text',
-        text: `${DEFAULT_ZERO_STANDING}\n{{caller_agent}}`,
+        text: '{{agent_standing}}{{caller_agent}}',
         cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+      {
+        id: 'env',
+        hide: true,
+        drop_if_empty: true,
+        type: 'text',
+        text: '{{env}}',
       },
       {
         id: 'caller_system',
@@ -329,6 +346,41 @@ export function personaPresetFromLegacyMode(mode: unknown): PersonaPreset {
   return 'custom'
 }
 
+/** `compatibility.agent_standing`；缺省用默认四行，显式空串表示不加。 */
+export function agentStandingText(
+  compat: Record<string, unknown> | undefined
+): string {
+  const raw = compat?.agent_standing
+  if (raw == null) return DEFAULT_AGENT_STANDING
+  return String(raw).trim().slice(0, AGENT_STANDING_MAX)
+}
+
+/** 按档开关字段。缺省或缺 key 视为开。 */
+export type PresetFlagField =
+  | 'agent_standing_presets'
+  | 'agent_standing_hide_presets'
+  | 'persona_env_presets'
+
+export function presetFlagEnabled(
+  compat: Record<string, unknown> | undefined,
+  field: PresetFlagField,
+  preset: PersonaPreset
+): boolean {
+  const map = compat?.[field]
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return true
+  return (map as Record<string, unknown>)[preset] !== false
+}
+
+/** `{{agent_standing}}` 的值：非空时以换行结尾，紧跟下一段不粘连。 */
+export function agentStandingVar(
+  compat: Record<string, unknown> | undefined,
+  preset: PersonaPreset
+): string {
+  if (!presetFlagEnabled(compat, 'agent_standing_presets', preset)) return ''
+  const text = agentStandingText(compat)
+  return text ? `${text}\n` : ''
+}
+
 /** 没写 persona_preset 时，由 legacy persona_inject 派生。 */
 export function personaPresetFromCompat(
   compat: Record<string, unknown> | undefined
@@ -366,21 +418,53 @@ export function parsePersonaHides(value: unknown): boolean | null {
   return null
 }
 
-/** 面板开关：显式 persona_hides 优先，否则看当前方案模板有没有 hide:true。 */
-export function personaHidesFromCompat(
-  compat: Record<string, unknown> | undefined
+/**
+ * 整档 usage 遮罩，镜像 gateway `personaHidesUsageFromRoutingFile`：
+ * `persona_hide_presets[preset]` → 旧全局 `persona_hides` → 该档模板有没有 hide:true。
+ */
+export function personaHideEnabled(
+  compat: Record<string, unknown> | undefined,
+  preset: PersonaPreset,
+  blocks: readonly RawBlock[]
 ): boolean {
-  const explicit = parsePersonaHides(compat?.persona_hides)
-  if (explicit != null) return explicit
-  const preset = personaPresetFromCompat(compat)
-  const stored = (
-    compat?.persona_templates as Record<string, PersonaBlock[]> | undefined
-  )?.[preset]
-  const blocks =
-    Array.isArray(stored) && stored.length
-      ? stored
-      : presetSeed(DEFAULT_PERSONA_TEMPLATES, preset)
+  const map = compat?.persona_hide_presets
+  if (map && typeof map === 'object' && !Array.isArray(map)) {
+    const value = (map as Record<string, unknown>)[preset]
+    if (typeof value === 'boolean') return value
+  }
+  const legacy = parsePersonaHides(compat?.persona_hides)
+  if (legacy != null) return legacy
   return blocks.some((block) => block.hide === true)
+}
+
+/** 写 `persona_hide_presets[preset]`；回到模板默认且服务端没存过时去掉，避免无意义的 dirty。 */
+export function setPersonaHide(
+  compat: Record<string, unknown>,
+  preset: PersonaPreset,
+  on: boolean,
+  blocks: readonly RawBlock[],
+  server: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const raw = compat.persona_hide_presets
+  const map: Record<string, unknown> =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
+  const serverMap = server?.persona_hide_presets as
+    Record<string, unknown> | undefined
+  const fallback = personaHideEnabled(
+    { persona_hides: compat.persona_hides },
+    preset,
+    blocks
+  )
+  if (on === fallback && typeof serverMap?.[preset] !== 'boolean')
+    delete map[preset]
+  else map[preset] = on
+  const next = { ...compat }
+  const serverHas =
+    !!server &&
+    Object.prototype.hasOwnProperty.call(server, 'persona_hide_presets')
+  if (!serverHas && !Object.keys(map).length) delete next.persona_hide_presets
+  else next.persona_hide_presets = map
+  return next
 }
 
 /** 三档写回对应 inject。custom 才保留未知旧值，避免把完整官方提示词折成 rewrite。 */
@@ -556,40 +640,41 @@ export function templateOrFollowPreset<K extends string>(
 
 /* ── 仅预览：以下渲染逻辑不参与任何请求 ───────────────────── */
 
-const PROTO_IDENTITY =
-  "You are a Claude agent, built on Anthropic's Claude Agent SDK."
-const PROTO_AGENT_HEAD =
-  'You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.'
-const PROTO_BILLING =
-  'x-anthropic-billing-header: cc_version=2.1.241.<fp>; cc_entrypoint=sdk-cli; cch=<5hex>; cc_prompt_id=<uuid>;'
-const PROTO_ENV_TZ = '# Environment\n - Timezone: <槽位时区>'
-const PROTO_ENV_FULL =
-  '# Text output (does not apply to tool calls)\n…\n# Environment\nYou have been invoked in the following environment:\n…\nTimezone: <槽位时区>'
-const PROTO_AGENT_FULL = `${PROTO_AGENT_HEAD}\n\n# System\n…\n# Doing tasks\n…\n# Tone and style\n…`
-const PROTO_AGENT_SHORT =
-  '\nHelp the user complete the current request. Use only the tools this request actually supplies.\n…\n# Tone and style\n…'
-const PROTO_LEFTOVER = '<调用方 --system 原文，有则追加>'
-
-export const PREVIEW_VARS: Record<string, string> = {
-  billing: PROTO_BILLING,
-  billing_semi: PROTO_BILLING,
-  identity: PROTO_IDENTITY,
-  identity_compact: 'You are Anthropic Claude Agent SDK.',
-  agent_expansion: PROTO_AGENT_SHORT,
-  agent_official: PROTO_AGENT_FULL,
-  caller_agent: '<调用方 agent prompt，无则丢弃本块>',
-  caller_system: PROTO_LEFTOVER,
-  env_timezone_only: PROTO_ENV_TZ,
-  env_official: PROTO_ENV_FULL,
-  timezone: '<槽位时区>',
-  locale: '<槽位 locale>',
-  model: 'claude-sonnet-5',
-  cwd: '<调用方 cwd>',
-  cli_version: '2.1.241',
-  session_id: '<uuid>',
-  standing: '<常驻约束 persona_standing>',
-  rules: '<命中的规则 append>',
+/** 请求级变量在预览里用可辨认的占位，不是真实文本。 */
+export const PREVIEW_CALLER_AGENT = '‹调用方 agent prompt›'
+export const PREVIEW_CALLER_SYSTEM = '‹调用方 system›'
+export const PREVIEW_REQUEST_VARS: Record<string, string> = {
+  locale: '‹槽位 locale›',
+  cwd: '‹调用方 cwd›',
+  session_id: '‹session_id›',
 }
+
+/** gateway `buildOfficialEnvironmentSection`（无调用方 env 时）的字节。 */
+export function envTimezoneText(timezone: string): string {
+  return `# Environment\n - Timezone: ${timezone.trim() || 'UTC'}`
+}
+
+/**
+ * 某档模板对注入位的引用：`switch` = 模板写了开关变量，面板能开关；
+ * `builtin` = 模板里另有固定写法（如官方完整的 env_official），总是开；
+ * `absent` = 模板没有这一位。
+ */
+export function templateSlotState(
+  blocks: readonly RawBlock[],
+  switchVar: string,
+  builtinVars: string[] = []
+): 'switch' | 'builtin' | 'absent' {
+  const used = new Set(
+    blocks.flatMap((block) => extractTemplateVars(block.text))
+  )
+  if (used.has(switchVar)) return 'switch'
+  if (builtinVars.some((name) => used.has(name))) return 'builtin'
+  return 'absent'
+}
+
+const BILLING_VARS = ['billing', 'billing_semi']
+/** 后端 PERSONA_TOKEN_CHAR_DIVISOR：usage 遮罩也按这个估算。 */
+const TOKEN_CHAR_DIVISOR = 3
 
 export function fillTemplateVars(
   text: unknown,
@@ -601,28 +686,58 @@ export function fillTemplateVars(
   })
 }
 
-export type PreviewBlock = {
-  type: 'text'
-  text: string
-  cache_control?: Record<string, unknown>
+/**
+ * gateway `leftoverGoesToMidSystem`：official / official_full 把调用方 system
+ * 挪到首条 user 之后的 role=system（haiku 除外），不在 system[] 里。
+ */
+export function callerSystemStaysInSystem(preset: PersonaPreset): boolean {
+  return preset !== 'official' && preset !== 'official_full'
 }
 
-export function renderPersonaTemplate(
+export type SystemPreviewBlock = {
+  id: string
+  text: string
+  hide: boolean
+  ttl: string
+  scope: string
+  /** 渲染后为空、保留成零宽字符的块。 */
+  placeholder: boolean
+}
+
+/**
+ * 模板 → 出站 system[]，镜像 gateway `renderPersonaTemplate`。
+ * 引用 {{billing}} / {{billing_semi}} 的块整块不展示：那一行是计费头。
+ */
+export function previewSystemBlocks(
   blocks: readonly RawBlock[],
   vars: Record<string, string>
-): PreviewBlock[] {
-  const out: PreviewBlock[] = []
+): SystemPreviewBlock[] {
+  const out: SystemPreviewBlock[] = []
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue
+    const used = extractTemplateVars(block.text)
+    if (used.some((name) => BILLING_VARS.includes(name))) continue
     const text = fillTemplateVars(block.text, vars)
-    if (block.drop_if_empty && !text.trim()) continue
-    const next: PreviewBlock = { type: 'text', text }
-    if (block.cache_control && typeof block.cache_control === 'object') {
-      next.cache_control = block.cache_control as Record<string, unknown>
-    }
-    out.push(next)
+    const blank = !text.trim()
+    if (block.drop_if_empty && blank) continue
+    const cc =
+      block.cache_control && typeof block.cache_control === 'object'
+        ? (block.cache_control as Record<string, unknown>)
+        : {}
+    out.push({
+      id: String(block.id ?? ''),
+      text: blank ? EMPTY_BLOCK_TEXT : text,
+      hide: block.hide === true,
+      ttl: typeof cc.ttl === 'string' ? cc.ttl : '',
+      scope: typeof cc.scope === 'string' ? cc.scope : '',
+      placeholder: blank || text === EMPTY_BLOCK_TEXT,
+    })
   }
   return out
+}
+
+export function estimateTokens(text: string): number {
+  return text ? Math.ceil(text.length / TOKEN_CHAR_DIVISOR) : 0
 }
 
 export function renderOverlayTemplate(
@@ -673,15 +788,34 @@ export function overlayPresetLabel(preset: OverlayPreset): string {
     OVERLAY_PRESET_OPTIONS[0])[1]
 }
 
-export function personaExplain(preset: PersonaPreset): string {
-  if (preset === 'official_full') {
-    return 'billing + identity + 官方 agent 全文。调用方 system 追加。'
-  }
-  if (preset === 'zero') {
-    return '短身份折进 billing。常驻约束写在 caller_agent 最前。'
-  }
-  if (preset === 'custom') {
-    return '按 JSONL 组装。空则回落官方提示词。'
-  }
-  return 'billing + identity。调用方 agent / system 有则追加。'
+/** 恢复默认常驻约束：写 null 让后端跟内置默认；服务端本来就没有这个键时直接去掉。 */
+export function resetAgentStanding(
+  compat: Record<string, unknown>,
+  server: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const next = { ...compat }
+  if (server && Object.prototype.hasOwnProperty.call(server, 'agent_standing'))
+    next.agent_standing = null
+  else delete next.agent_standing
+  return next
+}
+
+/** 按档开关。全开且服务端本来没有这个键时去掉，避免无意义的 dirty。 */
+export function setPresetFlag(
+  compat: Record<string, unknown>,
+  field: PresetFlagField,
+  preset: PersonaPreset,
+  on: boolean,
+  server: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const map: Record<string, boolean> = {}
+  for (const key of PERSONA_PRESETS)
+    map[key] = presetFlagEnabled(compat, field, key)
+  map[preset] = on
+  const next = { ...compat }
+  const serverHas =
+    !!server && Object.prototype.hasOwnProperty.call(server, field)
+  if (!serverHas && Object.values(map).every(Boolean)) delete next[field]
+  else next[field] = map
+  return next
 }

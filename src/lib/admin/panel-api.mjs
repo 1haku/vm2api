@@ -64,6 +64,8 @@ import { publicNotifyConfig, summarizePoolAvailability } from './notify.mjs'
 import { cacheHitStats } from './cache-metrics.mjs'
 import { shanghaiDayStartIso } from './pricing.mjs'
 import {
+  AGENT_STANDING_MAX,
+  PRESET_FLAG_FIELDS,
   OVERLAY_PRESETS,
   PERSONA_PRESETS,
   parsePersonaHides,
@@ -305,6 +307,28 @@ export function validatePersonaRoutingPatch(body = {}) {
   }
   if (compat.persona_standing != null && String(compat.persona_standing).length > PERSONA_STANDING_MAX) {
     problems.push(`persona_standing 超过 ${PERSONA_STANDING_MAX} 字符`)
+  }
+  if (compat.agent_standing != null) {
+    if (typeof compat.agent_standing !== 'string') {
+      problems.push('agent_standing 必须是字符串')
+    } else if (compat.agent_standing.length > AGENT_STANDING_MAX) {
+      problems.push(`agent_standing 超过 ${AGENT_STANDING_MAX} 字符`)
+    }
+  }
+  for (const field of PRESET_FLAG_FIELDS) {
+    const map = compat[field]
+    if (map == null) continue
+    if (typeof map !== 'object' || Array.isArray(map)) {
+      problems.push(`${field} 必须是对象`)
+      continue
+    }
+    for (const [key, on] of Object.entries(map)) {
+      if (!PERSONA_PRESETS.includes(key)) {
+        problems.push(`${field}.${key} 不是已知方案（${PERSONA_PRESETS.join(' / ')}）`)
+      } else if (typeof on !== 'boolean') {
+        problems.push(`${field}.${key} 必须是布尔`)
+      }
+    }
   }
   if (compat.cache_ttl != null && !['5m', '1h'].includes(String(compat.cache_ttl).trim())) {
     problems.push(`cache_ttl 必须是 5m / 1h，收到 ${compat.cache_ttl}`)

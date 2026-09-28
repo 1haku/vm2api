@@ -1,6 +1,16 @@
 # Changelog
 
 
+## 1.3.74 — 2026-09-28
+
+- agent prompt 常驻约束改为全局一份（`compatibility.agent_standing`），作为 agent 块第一段：官方 / 0注入 在 `caller_agent` 之前，官方完整在官方 agent 全文之前。
+- 按档开关（默认全开）：`agent_standing_presets` 是否加约束，`agent_standing_hide_presets` 约束是否从客户端 usage 扣除（独立于整档遮罩），`persona_env_presets` 是否写槽位 `# Environment` 时区。
+- 新增整档 usage 遮罩 `persona_hide_presets`：按档控制注入块（billing / identity / agent / Environment）是否计入客户端 usage，缺省跟模板 `hide`（0注入 开，其余关）。槽位单独指定人设与 cli-hop 0注入 都按该档生效。
+- 官方提示词、0注入 新增 Environment 块（只含槽位时区，排在 agent 块之后，不挂 cache）；自定义档空模板回落官方，同样带上。
+- system提示词页重做：顶部四档卡片，左侧「注入」「usage 遮罩」两组开关 + 常驻约束 + 可折叠模板，右侧固定预览最终 system prompt（不含 billing，真实常量，按槽位时区渲染）。
+
+已部署机升级：覆盖控制面与前端并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。官方提示词档默认多出常驻约束与 Environment，约束默认从 usage 扣除；不要可在 system提示词页按档关掉。live 已自定义的 0注入 模板不会自动多出 Environment 块，需在该档「恢复预设」。
+
 ## 1.3.73 — 2026-09-28
 
 - 人设从设置 → 协议迁到独立页 `system提示词`
