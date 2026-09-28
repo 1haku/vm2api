@@ -1240,12 +1240,20 @@ export function quotaFromAccount(acc, quotaConfig) {
   const o7Limited = isOfficialWindowLimited(o7)
   const effectiveU5 = o5Limited
     ? 1.0
-    : (listed.utilization_5h != null ? listed.utilization_5h : (o5.utilization != null ? Number(o5.utilization) : null))
+    : listed.utilization_5h != null
+      ? listed.utilization_5h
+      : o5.utilization != null
+        ? Number(o5.utilization)
+        : null
   const effectiveU7 = o7Limited
     ? 1.0
-    : (listed.utilization_7d != null ? listed.utilization_7d : (o7.utilization != null ? Number(o7.utilization) : null))
-  const effectiveStatus5 = o5Limited ? 'rejected' : (listed.status_5h || o5.status || null)
-  const effectiveStatus7 = o7Limited ? 'rejected' : (listed.status_7d || o7.status || null)
+    : listed.utilization_7d != null
+      ? listed.utilization_7d
+      : o7.utilization != null
+        ? Number(o7.utilization)
+        : null
+  const effectiveStatus5 = o5Limited ? 'rejected' : listed.status_5h || o5.status || null
+  const effectiveStatus7 = o7Limited ? 'rejected' : listed.status_7d || o7.status || null
   const q = {
     utilization_5h: effectiveU5,
     utilization_7d: effectiveU7,
