@@ -2,7 +2,6 @@
 .github
 node_modules
 web/node_modules
-web/dist
 bin/*
 !bin/kin-kernel
 !bin/kin-egress
