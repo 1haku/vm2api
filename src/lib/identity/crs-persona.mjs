@@ -51,8 +51,9 @@ import {
 import {
   DEFAULT_OVERLAY_PRESET,
   DEFAULT_PERSONA_PRESET,
-  DEFAULT_PERSONA_TEMPLATES,
+  agentStandingVar,
   extractTemplateVars,
+  presetFlagEnabled,
   normalizeOverlayPreset,
   normalizePersonaPreset,
   parsePersonaHides,
@@ -649,11 +650,14 @@ export function personaTemplateVars({
   sessionId = '',
   env = {},
   sourceTexts = [],
+  agentStanding = '',
+  withEnv = false,
   callerAgent = '',
   leftover = '',
   model = '',
 } = {}) {
   const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
+  const envTimezoneOnly = () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false })
   return {
     billing,
     billing_semi: billing.endsWith(';') ? billing : `${billing};`,
@@ -661,9 +665,11 @@ export function personaTemplateVars({
     identity_compact: CRS_COMPACT_IDENTITY,
     agent_expansion: CRS_AGENT_EXPANSION,
     agent_official: CRS_OFFICIAL_AGENT_PROMPT,
+    agent_standing: String(agentStanding || ''),
+    env: () => (withEnv ? envTimezoneOnly() : ''),
     caller_agent: String(callerAgent || '').trim(),
     caller_system: String(leftover || '').trim(),
-    env_timezone_only: () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false }),
+    env_timezone_only: envTimezoneOnly,
     env_official: () => buildOfficialContinuationText(env, sourceTexts, { overwrite: true }),
     timezone: String(env?.timezone || '').trim(),
     locale: String(env?.locale || '').trim(),
@@ -674,27 +680,23 @@ export function personaTemplateVars({
   }
 }
 
-export function buildZeroInjectSystem(
-  firstUserText,
-  cliVersion = DEFAULT_CLI_VERSION,
-  sessionId = '',
-  leftover = '',
-  env = {},
-  sourceTexts = [],
-  blocks = DEFAULT_PERSONA_TEMPLATES.zero,
-) {
-  const resolved = { ...env, timezone: String(env?.timezone || '').trim() || 'UTC' }
-  return renderPersonaTemplate(
-    blocks,
-    personaTemplateVars({
-      firstUserText,
-      cliVersion,
-      sessionId,
-      env: resolved,
-      sourceTexts,
-      leftover,
-    }),
-  )
+/**
+ * Real template values for the console preview. Billing is left out (the
+ * preview drops billing blocks); request-scoped values stay as placeholders.
+ */
+export function personaPreviewVars({ timezone = 'UTC', model = 'claude-sonnet-5' } = {}) {
+  const vars = personaTemplateVars({ env: { timezone, modelId: model }, model })
+  return {
+    identity: vars.identity,
+    identity_compact: vars.identity_compact,
+    agent_expansion: vars.agent_expansion,
+    agent_official: vars.agent_official,
+    env_timezone_only: vars.env_timezone_only(),
+    env_official: vars.env_official(),
+    timezone: vars.timezone,
+    model: vars.model,
+    cli_version: vars.cli_version,
+  }
 }
 
 export function officialSystemEnvFromIdentity(identity = {}, modelId = '', facts = {}, { overwrite = false } = {}) {
@@ -1279,6 +1281,7 @@ function personaTemplateSettingsFallback() {
     overlayPreset: DEFAULT_PERSONA_PARK ? 'official' : DEFAULT_OVERLAY_PRESET,
     overlayTemplates: null,
     hides: null,
+    switches: {},
   }
 }
 
@@ -1295,6 +1298,13 @@ export function personaTemplateSettingsFromRouting(routing = {}) {
     overlayPreset: overlayPresetFromCompat(compat),
     overlayTemplates: compat.overlay_templates || null,
     hides: parsePersonaHides(compat.persona_hides),
+    switches: {
+      agent_standing: compat.agent_standing,
+      agent_standing_presets: compat.agent_standing_presets,
+      agent_standing_hide_presets: compat.agent_standing_hide_presets,
+      persona_env_presets: compat.persona_env_presets,
+      persona_hide_presets: compat.persona_hide_presets,
+    },
   }
 }
 
@@ -1349,15 +1359,34 @@ export function personaPresetFromHopMode(mode) {
 }
 
 /**
- * Whether the active persona template asks for any usage masking.
- * routing.compatibility.persona_hides boolean wins over template hide flags.
+ * Whether the persona for this call masks its injected blocks from client usage.
+ * Order: panel per-preset `persona_hide_presets[preset]`, then the legacy global
+ * `persona_hides`, then the template hide flags. `mode` is the slot hop override.
  * null means "not template-driven" — the caller should fall back to its mode rule.
  */
-export function personaHidesUsageFromRoutingFile(filePath) {
+export function personaHidesUsageFromRoutingFile(filePath, mode) {
   const settings = personaTemplateSettingsFromRoutingFile(filePath)
+  const hopPreset = mode != null ? personaPresetFromHopMode(mode) : null
+  const preset = hopPreset || settings.preset
+  const map = settings.switches.persona_hide_presets
+  if (map && typeof map === 'object' && typeof map[preset] === 'boolean') return map[preset]
   if (typeof settings.hides === 'boolean') return settings.hides
-  if (!personaUsesTemplate(settings)) return null
-  return templateHidesAnything(resolvePersonaTemplate(settings.preset, settings.templates))
+  if (!hopPreset && !personaUsesTemplate(settings)) return null
+  return templateHidesAnything(resolvePersonaTemplate(preset, settings.templates))
+}
+
+/**
+ * Standing text the template persona writes for this call, and whether the panel
+ * masks it from client usage (agent_standing_hide_presets, default on). `mode` is
+ * the slot hop override; without it the stored preset applies.
+ */
+export function standingUsageFromRoutingFile(filePath, mode) {
+  const settings = personaTemplateSettingsFromRoutingFile(filePath)
+  const preset = (mode != null && personaPresetFromHopMode(mode)) || settings.preset
+  return {
+    text: agentStandingVar(settings.switches, preset).trim(),
+    hide: presetFlagEnabled(settings.switches, 'agent_standing_hide_presets', preset),
+  }
 }
 
 const LEGACY_OFFICIAL_USER_ID_RE = /^user_([a-fA-F0-9]{64})_account_([a-fA-F0-9-]*)_session_([a-fA-F0-9-]{36})$/
@@ -1602,6 +1631,7 @@ function applyTemplatePersona(
   {
     preset,
     templates,
+    switches,
     overlayPreset,
     overlayTemplates,
     cliVersion,
@@ -1615,11 +1645,12 @@ function applyTemplatePersona(
   const messages = Array.isArray(body.messages) ? body.messages : []
   const zero = preset === 'zero'
   const blocks = resolvePersonaTemplate(preset, templates)
+  const usesEnv = blocks.some((block) => extractTemplateVars(block?.text).includes('env'))
   const { env, sourceTexts } = personaEnvForBody(body, {
     identity,
     model,
     overwrite: false,
-    forceTimezone: zero,
+    forceTimezone: zero || usesEnv,
   })
   if (zero) env.timezone = String(env.timezone || '').trim() || 'UTC'
   // Only pull the caller's agent prompt out of leftover when the template has a
@@ -1641,6 +1672,8 @@ function applyTemplatePersona(
       sessionId,
       env,
       sourceTexts,
+      agentStanding: agentStandingVar(switches, preset),
+      withEnv: presetFlagEnabled(switches, 'persona_env_presets', preset),
       callerAgent,
       leftover: midSystem ? '' : leftover,
       model: modelId,
@@ -1695,6 +1728,7 @@ export function applyCrsUnofficialPersona(
     return applyTemplatePersona(cleaned, {
       preset: templateSettings.preset,
       templates: templateSettings.templates,
+      switches: templateSettings.switches,
       overlayPreset: overlayPresetForCall(templateSettings.overlayPreset, park),
       overlayTemplates: templateSettings.overlayTemplates,
       cliVersion,
