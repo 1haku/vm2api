@@ -8,7 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist is the shipped console. Commit it; do not ignore it.
 dist-ssr
 *.local
 .tanstack/

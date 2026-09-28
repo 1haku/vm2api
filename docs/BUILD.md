@@ -1,6 +1,6 @@
 # 版本与构建
 
-linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/wrap-cli` 进 git。kernel / wrap 为预编译 ELF，clone 即可部署。GitHub Release 仍挂一份 ELF。当前发布线：**1.2.22**（tag `v1.2.22`）。
+linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,oauth-auth}`、`share/wrap-cli` 和 `web/dist` 进 git。kernel / wrap / 控制台都是预编译产物，clone 或拉镜像即可部署，镜像构建不再跑 `pnpm build`。GitHub Release 仍挂一份 ELF。改了 `web/` 要重新 `pnpm -C web build` 并提交 `web/dist`。
 
 ## 版本怎么记
 
