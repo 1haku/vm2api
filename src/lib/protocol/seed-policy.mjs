@@ -21,13 +21,19 @@ export function isTelemetryEnabled(pol = {}) {
  * Official CLI kill switches. When telemetry is ON these keys must be
  * absent — GitHub #84631: the value "0" still disables.
  * NONESSENTIAL is not in this map; it is always written by the contract.
+ * Bedrock and Vertex are not telemetry switches. A value of "1" makes the
+ * official CLI fetch AWS credentials from 169.254.169.254 instead of
+ * calling Anthropic. They are forced to "0" below.
  */
 export const NONESSENTIAL_TRAFFIC_ENV_KEY = 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'
 
 export const TELEMETRY_KILL_ENV = Object.freeze({
   DISABLE_TELEMETRY: '1',
-  CLAUDE_CODE_USE_BEDROCK: '1',
-  CLAUDE_CODE_USE_VERTEX: '1',
+})
+
+export const CLOUD_PROVIDER_OFF_ENV = Object.freeze({
+  CLAUDE_CODE_USE_BEDROCK: '0',
+  CLAUDE_CODE_USE_VERTEX: '0',
 })
 
 export const TELEMETRY_KILL_ENV_KEYS = Object.freeze([...Object.keys(TELEMETRY_KILL_ENV), 'DO_NOT_TRACK'])
@@ -36,9 +42,12 @@ export const TELEMETRY_KILL_ENV_KEYS = Object.freeze([...Object.keys(TELEMETRY_K
  * Leftover keys from older seed / init scripts. They must never survive
  * into settings.env — even as "0" (GitHub #84631) or a local Anthropic
  * hop URL that fights the Go worker + slot SOCKS5 path.
+ * Bedrock and Vertex are stripped here so a caller "1" cannot win, then
+ * rewritten as "0".
  */
 export const LEGACY_SCRIPT_ENV_KEYS = Object.freeze([
   ...TELEMETRY_KILL_ENV_KEYS,
+  ...Object.keys(CLOUD_PROVIDER_OFF_ENV),
   NONESSENTIAL_TRAFFIC_ENV_KEY,
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_API_KEY',
@@ -67,6 +76,8 @@ export function applyRequiredSeedEnv(env = {}, pol = {}) {
     Object.assign(next, TELEMETRY_KILL_ENV)
   }
   next[NONESSENTIAL_TRAFFIC_ENV_KEY] = nonessentialTrafficValue(pol)
+  for (const key of Object.keys(CLOUD_PROVIDER_OFF_ENV)) delete next[key]
+  Object.assign(next, CLOUD_PROVIDER_OFF_ENV)
   return next
 }
 
@@ -103,13 +114,15 @@ export function seedTelemetryContract(pol = {}) {
     telemetry_enabled: enabled,
     telemetry_disabled: !enabled,
     kill_keys: [...TELEMETRY_KILL_ENV_KEYS],
-    required_env: enabled
-      ? { [NONESSENTIAL_TRAFFIC_ENV_KEY]: '1' }
-      : { ...TELEMETRY_KILL_ENV, [NONESSENTIAL_TRAFFIC_ENV_KEY]: '0' },
+    required_env: {
+      ...(enabled ? {} : TELEMETRY_KILL_ENV),
+      [NONESSENTIAL_TRAFFIC_ENV_KEY]: enabled ? '1' : '0',
+      ...CLOUD_PROVIDER_OFF_ENV,
+    },
     grove_enabled: false,
     note: enabled
-      ? 'telemetry on: kill-switch keys deleted; NONESSENTIAL=1; grove_enabled false'
-      : 'telemetry off: kill-switch keys written as 1; NONESSENTIAL=0; grove_enabled false',
+      ? 'telemetry on: kill-switch keys deleted; NONESSENTIAL=1; Bedrock and Vertex forced off; grove_enabled false'
+      : 'telemetry off: DISABLE_TELEMETRY=1; NONESSENTIAL=0; Bedrock and Vertex forced off; grove_enabled false',
   }
 }
 
