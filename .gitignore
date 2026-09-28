@@ -33,6 +33,7 @@ web/dist/
 crates/
 patches/
 .local/
+/local-src/
 
 # keep example
 !src/config/gateway-v2.example.json
