@@ -22,6 +22,7 @@ crates
 patches
 .local
 local-src
+skills
 src/lib/oauth/auth.js
 worker/bin
 *.md
