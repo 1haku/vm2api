@@ -28,9 +28,21 @@
 | `persona_park` | `false` | 与 `overlay_preset=off` 对齐 |
 | `cache_ttl` | `1h` | 出站 cache_control 默认 1h；可改为 5m，或用 `x-kin-cache-ttl` 覆盖 |
 
-**official 模板**保留 billing + Agent SDK identity + 可选 caller_agent / caller_system；不会自动追加完整 agent prompt。
+**official 模板**保留 billing + Agent SDK identity + 可选 caller_agent / caller_system，并在 agent 块之后写槽位 `# Environment`（`{{env}}`，只含 `Timezone: <槽位时区>`，不挂 cache，不破 agent 块的 1h global 缓存）；不会自动追加完整 agent prompt。
 
 **official_full 模板**在相同前缀后固定追加完整 `agent_official`，带 ephemeral 5m cache；调用方 system 作为末块追加。
+
+**zero 模板**在 agent 槽之后写 `{{env}}` 块（`hide`、`drop_if_empty`、不挂 cache），只含槽位时区。自定义档空模板回落 official，同样带 `{{env}}`。live 已自定义的 zero 模板不会自动多出这一块，需在 system提示词页「恢复预设」。
+
+**agent prompt 常驻约束**：`compatibility.agent_standing`（缺省为 distillation / 思维链 / NSFW 四行，显式空串 = 不加，上限 2000 字符）经模板变量 `{{agent_standing}}` 写成 agent 块第一段：official / 0注入 在 `caller_agent` 之前，official_full 在 `agent_official` 之前（同一块）。关掉后 0注入 agent 槽回到零宽占位。
+
+**按档开关**（`{official,official_full,zero,custom}: boolean`，缺 map 或缺 key 视为开）：
+- `agent_standing_presets`：是否写常驻约束。
+- `agent_standing_hide_presets`：常驻约束是否从客户端 usage 中扣除，独立于整档遮罩（官方档模板不遮罩，约束仍可单独遮罩）。cli-hop 0注入 同样生效。
+- `persona_env_presets`：是否写 `{{env}}`。官方完整的 `env_official` 不受此开关影响。
+- `persona_hide_presets`：整档 usage 遮罩（billing / identity / agent / Environment 等 `hide:true` 块）。缺 key 时依次回落旧全局 `persona_hides`、该档模板的 `hide` 标记（默认 zero 开、其余关）。槽位单独指定人设时读该槽位档的开关；cli-hop 0注入 关掉后 CLI billing + Environment 计入 usage。
+
+cli-hop 路径下 wrap CLI 自己也会写 `# Environment\n - Timezone: <kernel.json timezone>`（两种 `system_layout` 都写）；Node 侧的 `# Environment` 块在 hop 前被剥离，不会重复。
 
 调用方 `messages[].role=system` 和 tools / `tool_choice` 保留；`overlay_preset=off` 不挂 prompt-leak / identity / no-tools reminder。
 

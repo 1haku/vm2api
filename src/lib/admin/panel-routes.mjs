@@ -165,6 +165,7 @@ import {
 } from '../vm/egress.mjs'
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
 import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../identity/official-fingerprint.mjs'
+import { personaPreviewVars } from '../identity/crs-persona.mjs'
 import {
   applyGeneratedFingerprint,
   generateWorkstationFingerprint,
@@ -3290,6 +3291,11 @@ export function createPanelHandler(ctx) {
       // GET /api/panel/routing
       if (req.method === 'GET' && p === '/api/panel/routing') {
         return json(res, 200, panel.buildRouting({ routingConfig: ctx.routingConfig, stickyRouter }))
+      }
+      // GET /api/panel/persona/preview-vars?timezone= — real template constants for the system prompt preview
+      if (req.method === 'GET' && p === '/api/panel/persona/preview-vars') {
+        const timezone = validTimezone(url.searchParams.get('timezone')) || 'UTC'
+        return json(res, 200, panel.ok({ vars: personaPreviewVars({ timezone }) }))
       }
       // PUT /api/panel/routing
       if (req.method === 'PUT' && p === '/api/panel/routing') {

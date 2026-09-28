@@ -109,6 +109,11 @@ export function officialPersonaText(system) {
       out.push(CRS_SYSTEM_EXPANSION)
       continue
     }
+    if (t.includes(CRS_OFFICIAL_AGENT_PROMPT)) {
+      // Standing constraints may lead the official agent block; only the prompt is official.
+      out.push(CRS_OFFICIAL_AGENT_PROMPT)
+      continue
+    }
     if (!t.includes(CRS_OFFICIAL_SYSTEM)) continue
     const billing = t.match(/x-anthropic-billing-header:[^\n]*/i)
     if (billing) out.push(billing[0])
@@ -316,6 +321,15 @@ export function callerUsageBaseline(body) {
   }
 }
 
+/** Standing constraints the persona put into system that the caller did not send. */
+function injectedStandingTokens(before, after, text) {
+  const standing = String(text || '').trim()
+  if (!standing) return 0
+  if (!extractSystemTexts(after?.system).some((t) => t.includes(standing))) return 0
+  if (extractSystemTexts(before?.system).some((t) => t.includes(standing))) return 0
+  return estimateClaudeInputTokens(standing)
+}
+
 /**
  * Hide rewrite for every unofficial /v1 body (messages / chat / completions / responses).
  * Official 4-block is hidden. Caller leftover / tools stay in client usage.
@@ -323,23 +337,30 @@ export function callerUsageBaseline(body) {
  * `hides` comes from the persona template (any block with hide:true). When it is
  * absent we fall back to the legacy per-mode rule so callers that predate
  * templates keep their behaviour.
+ *
+ * `standing` ({text, hide}) is the panel standing-constraint mask. It is its own
+ * switch: masked even when the template hides nothing, shown even when it does.
  */
-export function personaHideForUnofficial(inbound, outbound, { officialClient = false, mode, hides } = {}) {
+export function personaHideForUnofficial(inbound, outbound, { officialClient = false, mode, hides, standing } = {}) {
   if (officialClient || !outbound || inbound === outbound) return 0
   const baseline = callerUsageBaseline(inbound)
   const personaHidden = hides !== false && !(hides == null && normalizePersonaMode(mode) === 'official_prompt')
+  const standingTokens = injectedStandingTokens(baseline, outbound, standing?.text)
+  const standingHidden = standing?.hide !== false
   // `hides` only governs the persona blocks. Tools we injected were never
   // declared by the caller, so their upstream schema is hidden in every mode.
   if (!personaHidden) {
     return boxHideTokens({
       official: 0,
       uncached: 0,
-      overlay: 0,
+      overlay: standingHidden ? standingTokens : 0,
       tools: injectedToolsHideTokens(baseline, outbound),
       wipeCache: false,
     })
   }
-  return personaHideInputTokens(baseline, outbound)
+  const breakdown = personaHideBreakdown(baseline, outbound)
+  if (!standingHidden) breakdown.overlay = Math.max(0, breakdown.overlay - standingTokens)
+  return boxHideTokens(breakdown)
 }
 
 /** Wrap CLI `system_layout=zero` always appends billing + `# Environment`. */
@@ -357,14 +378,22 @@ export function zeroCliLayoutHideTokens({ timezone } = {}) {
   return ZERO_CLI_BILLING_INPUT_TOKENS + estimateClaudeInputTokens(zeroCliEnvText(timezone))
 }
 
-/** Unofficial wrap 0-inject: hide CLI billing + env, keep leftover, hide injected tools. */
-export function personaHideForCliZero(inbound, outbound, { officialClient = false, timezone } = {}) {
+/**
+ * Unofficial wrap 0-inject: hide CLI billing + env, keep leftover, hide injected tools.
+ * `overlay` is the gateway text Node already put in the leftover (agent standing).
+ * `hides: false` is the panel whole-preset mask off: billing + env count as usage.
+ */
+export function personaHideForCliZero(
+  inbound,
+  outbound,
+  { officialClient = false, timezone, overlay = 0, hides } = {},
+) {
   if (officialClient) return 0
-  const official = zeroCliLayoutHideTokens({ timezone })
+  const official = hides === false ? 0 : zeroCliLayoutHideTokens({ timezone })
   return boxHideTokens({
     official,
     uncached: official,
-    overlay: 0,
+    overlay: Math.max(0, Math.floor(Number(overlay) || 0)),
     tools: injectedToolsHideTokens(callerUsageBaseline(inbound), outbound),
     wipeCache: false,
   })

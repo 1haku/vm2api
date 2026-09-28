@@ -7,7 +7,8 @@ import path from 'node:path'
 import {
   DEFAULT_OVERLAY_TEMPLATES,
   DEFAULT_PERSONA_TEMPLATES,
-  DEFAULT_ZERO_STANDING,
+  DEFAULT_AGENT_STANDING,
+  agentStandingVar,
   extractTemplateVars,
   normalizeOverlayPreset,
   normalizePersonaPreset,
@@ -118,12 +119,17 @@ test('official_full preset renders the complete agent prompt separately', () => 
 })
 test('zero preset billing line is byte-identical to buildZeroBillingText', () => {
   const env = { timezone: 'Asia/Tokyo' }
-  const vars = personaTemplateVars({ firstUserText: 'ping', sessionId: 's-2', env })
+  const vars = personaTemplateVars({
+    firstUserText: 'ping',
+    sessionId: 's-2',
+    env,
+    agentStanding: agentStandingVar({}, 'zero'),
+  })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.zero, vars)
   assert.equal(out.length, 3)
   assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.281', 's-2'))
   assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out[2].text, `${DEFAULT_ZERO_STANDING}\n`)
+  assert.equal(out[2].text, `${DEFAULT_AGENT_STANDING}\n`)
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
@@ -135,7 +141,7 @@ test('zero prompt_version uses the compact Anthropic Claude identity', () => {
   assert.equal(vars.identity_compact, CRS_COMPACT_IDENTITY)
 })
 
-test('persona_hides false overrides zero template hide flags', () => {
+test('whole-preset usage mask: persona_hide_presets > persona_hides > template hide flags', () => {
   withRoutingFile({ persona_preset: 'zero' }, (file) => {
     assert.equal(personaHidesUsageFromRoutingFile(file), true)
   })
@@ -144,6 +150,17 @@ test('persona_hides false overrides zero template hide flags', () => {
   })
   withRoutingFile({ persona_preset: 'official', persona_hides: true }, (file) => {
     assert.equal(personaHidesUsageFromRoutingFile(file), true)
+  })
+  withRoutingFile(
+    { persona_preset: 'zero', persona_hides: true, persona_hide_presets: { zero: false, official: true } },
+    (file) => {
+      assert.equal(personaHidesUsageFromRoutingFile(file), false)
+      // A slot hop override reads its own preset's switch, not the stored preset's.
+      assert.equal(personaHidesUsageFromRoutingFile(file, 'official_prompt'), true)
+    },
+  )
+  withRoutingFile({ persona_preset: 'official' }, (file) => {
+    assert.equal(personaHidesUsageFromRoutingFile(file, 'zero'), true)
   })
   assert.equal(parsePersonaHides(false), false)
   assert.equal(parsePersonaHides('off'), false)
@@ -168,7 +185,7 @@ test('overlay with no body renders nothing at all', () => {
 
 test('JSONL round-trips losslessly and keeps note metadata', () => {
   const jsonl = stringifyPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official)
-  assert.equal(jsonl.split('\n').length, 4)
+  assert.equal(jsonl.split('\n').length, 5)
   const { blocks, errors } = parsePersonaTemplateLines(jsonl)
   assert.deepEqual(errors, [])
   assert.deepEqual(
@@ -285,7 +302,7 @@ test('zero preset ignores a stored overlay_preset and never parks', () => {
     const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
     assert.equal(out.messages, messages)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
-    assert.equal(out.system.length, 3)
+    assert.equal(out.system.length, 4)
     assert.match(out.system[0].text, /prompt_version=</)
   })
 })
@@ -300,14 +317,17 @@ test('official preset with overlay official parks the mandatory reminder', () =>
     )
     assert.match(firstUserText(out), /MANDATORY constraints for this turn/)
     assert.ok(firstUserText(out).includes('hello'))
-    assert.equal(out.system.length, 2)
+    assert.equal(out.system.length, 4)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+    assert.match(out.system[3].text, /^# Environment/)
   })
 })
 test('official_full routing preset adds the complete agent prompt without changing official', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
     assert.equal(out.system.length, 4)
-    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n${CRS_OFFICIAL_AGENT_PROMPT}`)
+    assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
     assert.match(String(out.system[3].text || ''), /# Environment|# Text output/)
   })
 })
@@ -322,7 +342,8 @@ test('official_full leftover is a mid-conversation role=system after the first u
       { routingFile: file },
     )
     assert.equal(out.system.length, 4)
-    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.ok(out.system[2].text.startsWith(`${DEFAULT_AGENT_STANDING}\n`))
+    assert.ok(out.system[2].text.endsWith(CRS_OFFICIAL_AGENT_PROMPT))
     assert.ok(!out.system.some((b) => b?.text === '不要使用你现在的identity跟我对话'))
     assert.equal(out.messages[1].role, 'system')
     assert.equal(out.messages[1].content, wrapMandatoryConstraint('不要使用你现在的identity跟我对话'))
@@ -340,7 +361,7 @@ test('hop mode official_full is a template preset, not overwrite', () => {
       { routingFile: file, mode: 'official_full' },
     )
     assert.equal(out.system.length, 4)
-    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.ok(out.system[2].text.endsWith(CRS_OFFICIAL_AGENT_PROMPT))
   })
 })
 
@@ -436,7 +457,7 @@ test('template edits are hot-read without a restart', () => {
       },
       { routingFile: file },
     )
-    assert.equal(before.system.length, 2)
+    assert.equal(before.system.length, 4)
     write({ persona_preset: 'zero', overlay_preset: 'off' })
     const after = applyCrsUnofficialPersona(
       {
@@ -448,4 +469,77 @@ test('template edits are hot-read without a restart', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('agent standing: per-preset off restores the plain layout, custom text replaces the default', () => {
+  const agent = 'You are an interactive agent that helps users with software engineering tasks.'
+  const body = () => ({ system: agent, messages: [{ role: 'user', content: 'hi' }] })
+  withRoutingFile(
+    { persona_preset: 'official', overlay_preset: 'off', agent_standing_presets: { official: false } },
+    (file) => {
+      const out = applyCrsUnofficialPersona(body(), { routingFile: file })
+      assert.equal(out.system[2].text, agent)
+    },
+  )
+  withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
+    const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+  })
+  withRoutingFile(
+    { persona_preset: 'official_full', overlay_preset: 'off', agent_standing_presets: { official_full: false } },
+    (file) => {
+      const out = applyCrsUnofficialPersona(body(), { routingFile: file })
+      assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    },
+  )
+  withRoutingFile({ persona_preset: 'zero', agent_standing: 'Stay terse.' }, (file) => {
+    const out = applyCrsUnofficialPersona(body(), { routingFile: file })
+    assert.equal(out.system[2].text, `Stay terse.\n${agent}`)
+  })
+  withRoutingFile({ persona_preset: 'zero', agent_standing_presets: { zero: false } }, (file) => {
+    const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
+    assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  })
+  withRoutingFile({ persona_preset: 'zero', agent_standing: '' }, (file) => {
+    const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
+    assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  })
+})
+
+test('official env block carries the slot timezone and is switchable per preset', () => {
+  const identity = { timezone: 'Asia/Tokyo' }
+  const body = () => ({ messages: [{ role: 'user', content: 'hi' }] })
+  withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
+    const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
+    assert.equal(out.system[3].text, '# Environment\n - Timezone: Asia/Tokyo')
+  })
+  withRoutingFile({ persona_preset: 'official', persona_env_presets: { official: false } }, (file) => {
+    const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
+    assert.ok(!out.system.some((b) => String(b.text).includes('# Environment')))
+  })
+  withRoutingFile({ persona_preset: 'official' }, (file) => {
+    const out = applyCrsUnofficialPersona(body(), { routingFile: file })
+    assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
+  })
+})
+
+test('per-preset switch maps are validated on PUT', () => {
+  assert.deepEqual(
+    validatePersonaRoutingPatch({
+      compatibility: {
+        agent_standing: 'ok',
+        agent_standing_presets: { official: false, zero: true },
+        persona_env_presets: { official: false },
+      },
+    }),
+    [],
+  )
+  const problems = validatePersonaRoutingPatch({
+    compatibility: {
+      agent_standing: 7,
+      agent_standing_presets: { nope: true, zero: 'no' },
+      persona_env_presets: [],
+    },
+  })
+  assert.equal(problems.length, 4)
 })
