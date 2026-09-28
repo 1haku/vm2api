@@ -59,3 +59,7 @@ patches/
 /worker/bin/
 /issues/
 /plan/
+
+# local-only; not part of the published tree
+/web/pnpm-workspace.yaml
+/src/lib/oauth/auth.js
