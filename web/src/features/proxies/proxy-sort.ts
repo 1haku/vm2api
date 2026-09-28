@@ -1,6 +1,41 @@
 import type { VmProxySnap } from '@/types/panel-vm'
 
-export type ProxySortKey = 'host' | 'status' | 'vm' | 'geo'
+export type ProxySortKey = 'status' | 'latency' | 'seats' | 'geo' | 'host'
+
+/** 代理自身的健康档。顺序即「可用性降序」，状态排序直接用它的下标。 */
+export const PROXY_HEALTH_KEYS = [
+  'ok',
+  'unknown',
+  'fail',
+  'dead',
+  'off',
+] as const
+export type ProxyHealthKey = (typeof PROXY_HEALTH_KEYS)[number]
+
+export function proxyHealthKey(prx: VmProxySnap): ProxyHealthKey {
+  if (prx.enabled === false) return 'off'
+  if (prx.status === 'dead') return 'dead'
+  if (prx.status === 'fail') return 'fail'
+  if (prx.status === 'ok') return 'ok'
+  return 'unknown'
+}
+
+export function proxyIsLocal(prx: VmProxySnap): boolean {
+  return prx.kind === 'local' || prx.scheme === 'local' || prx.id === 'px-local'
+}
+
+export function proxyHostText(prx: VmProxySnap): string {
+  if (proxyIsLocal(prx)) return '本地出口'
+  return `${prx.host || '?'}:${prx.port ?? '?'}`
+}
+
+/**
+ * 网关 `bind()` 只拒绝「已禁用或 dead」；`fail` 仍可绑（连续失败未到阈值），
+ * 所以这里不能直接用 `proxyIsInvalid()`。
+ */
+export function proxyBindable(prx: VmProxySnap): boolean {
+  return prx.enabled !== false && prx.status !== 'dead'
+}
 
 export function proxyBoundIds(prx: VmProxySnap | undefined): string[] {
   if (!prx) return []
@@ -106,6 +141,15 @@ function cmp(
   return 0
 }
 
+/** 各列的「自然方向」：换列时落到最有用的那一端，而不是统一 asc/desc。 */
+export const PROXY_SORT_DEFAULT_DIR: Record<ProxySortKey, 'asc' | 'desc'> = {
+  status: 'asc',
+  latency: 'asc',
+  seats: 'desc',
+  geo: 'asc',
+  host: 'asc',
+}
+
 export function sortedProxies(
   list: VmProxySnap[],
   key: ProxySortKey,
@@ -116,23 +160,83 @@ export function sortedProxies(
     const ia = proxyIsInvalid(a) ? 1 : 0
     const ib = proxyIsInvalid(b) ? 1 : 0
     if (ia !== ib) return ia - ib
-    if (key === 'host') {
-      return cmp(
-        `${a.host || ''}:${a.port || ''}`,
-        `${b.host || ''}:${b.port || ''}`,
-        dir
-      )
+    const byHost = cmp(proxyHostText(a), proxyHostText(b), 'asc')
+    // 没测过延迟的无论方向都沉底：它们是「待测」，不是「最快」或「最慢」。
+    const byLatency = (d: 'asc' | 'desc') => {
+      const la = a.latency_ms
+      const lb = b.latency_ms
+      if (la == null || lb == null) {
+        return (la == null ? 1 : 0) - (lb == null ? 1 : 0)
+      }
+      return cmp(la, lb, d)
     }
-    if (key === 'status') return cmp(a.status || '', b.status || '', dir)
-    if (key === 'geo') {
-      // 未检测的排在最后：它们是「待办」，不是某个国家。
-      const ga = a.geo?.country_code || a.geo?.country || '\uffff'
-      const gb = b.geo?.country_code || b.geo?.country || '\uffff'
-      return cmp(ga, gb, dir)
+    if (key === 'host') return cmp(proxyHostText(a), proxyHostText(b), dir)
+    if (key === 'status') {
+      const ra = PROXY_HEALTH_KEYS.indexOf(proxyHealthKey(a))
+      const rb = PROXY_HEALTH_KEYS.indexOf(proxyHealthKey(b))
+      // 同档内快的在前：「状态」排序要回答的是「哪条最能用」。
+      return cmp(ra, rb, dir) || byLatency('asc') || byHost
     }
-    return cmp(proxyBoundIds(a)[0] || '', proxyBoundIds(b)[0] || '', dir)
+    if (key === 'latency') return byLatency(dir) || byHost
+    if (key === 'seats') {
+      const sa = proxyBoundIds(a).length
+      const sb = proxyBoundIds(b).length
+      return cmp(sa, sb, dir) || byHost
+    }
+    // 未检测的排在最后：它们是「待办」，不是某个国家。
+    const ga = a.geo?.country_code || a.geo?.country || '\uffff'
+    const gb = b.geo?.country_code || b.geo?.country || '\uffff'
+    return cmp(ga, gb, dir) || byHost
   })
   return rows
+}
+
+export const PROXY_HEALTH_LABEL: Record<ProxyHealthKey, string> = {
+  ok: '正常',
+  unknown: '未测',
+  fail: '失败',
+  dead: '失效',
+  off: '已禁用',
+}
+
+/** 列表筛选：健康档 + 两个席位档。左侧席位图图例与右侧工具条共用这一套。 */
+export type ProxyFilter = 'all' | ProxyHealthKey | 'open' | 'full'
+
+export function proxyInFilter(
+  prx: VmProxySnap,
+  filter: ProxyFilter,
+  poolBindLimit: number
+): boolean {
+  if (filter === 'all') return true
+  const used = proxyBoundIds(prx).length
+  const limit = proxyBindLimit(prx, poolBindLimit)
+  if (filter === 'open') return proxyBindable(prx) && used < limit
+  if (filter === 'full') return used >= limit
+  return proxyHealthKey(prx) === filter
+}
+
+/**
+ * 搜索命中：地址、绑定槽位名、出口地理。账密不在列表响应里，天然搜不到。
+ * `query` 需已 trim + 小写。
+ */
+export function proxyMatchesQuery(
+  prx: VmProxySnap,
+  query: string,
+  vmName: (id: string) => string
+): boolean {
+  if (!query) return true
+  const hay = [
+    proxyHostText(prx),
+    ...proxyBoundIds(prx).flatMap((id) => [id, vmName(id)]),
+    prx.geo?.country,
+    prx.geo?.country_code,
+    prx.geo?.city,
+    prx.geo?.region,
+    prx.geo?.timezone,
+    prx.geo?.ip,
+    prx.geo?.isp,
+  ]
+  return hay.some((s) => !!s && s.toLowerCase().includes(query))
 }
 
 export function readPositive(

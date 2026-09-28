@@ -220,10 +220,26 @@
   animation: save-bar-in var(--motion-slow) var(--ease-out-expo) both;
 }
 
+/* 代理席位图：已绑席位自底向上「落座」。这是代理页唯一的入场动效，列间
+   错峰由组件按列序写 animation-delay；只动 transform，不触发布局。 */
+@keyframes seat-rise {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.animate-seat-rise {
+  transform-origin: bottom;
+  animation: seat-rise var(--motion-slow) var(--ease-out-expo) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* 保留「出现」这个状态事实，去掉位移。opacity 直达终值。 */
   .animate-settings-pane-in,
-  .animate-save-bar-in {
+  .animate-save-bar-in,
+  .animate-seat-rise {
     animation: none;
   }
 }
