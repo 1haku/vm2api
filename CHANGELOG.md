@@ -1,7 +1,12 @@
 # Changelog
 
 
-## 1.3.74 — 2026-09-28
+## 1.3.75 — 2026-09-28
+
+- 代理池页重做：左侧「席位」总览（每条代理一列、每格一个绑定位，按健康着色，悬停联动右侧列表、点击定位）+ 待接代理槽位拖拽绑定；「添加代理」粘贴导入带结果回执（重复 / 无法解析分列，账密不回显）与本地出口；「管理」收纳全部测通 / 测地理、每条绑定上限、探测间隔、出口 DNS、跟随代理时区。
+- 右侧代理列表改为行卡片：大号 `已绑/上限` 计数 + 席位格、延迟信号格、出口地理、可搜索的绑定选择器（无代理槽位优先，已绑槽位标注来源并换绑），搜索、席位筛选与排序。
+
+已部署机升级：只覆盖前端（`web/dist`）。控制面、kernel 与 cli-node 未变，不必重启 Node，不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
 
 - agent prompt 常驻约束改为全局一份（`compatibility.agent_standing`），作为 agent 块第一段：官方 / 0注入 在 `caller_agent` 之前，官方完整在官方 agent 全文之前。
 - 按档开关（默认全开）：`agent_standing_presets` 是否加约束，`agent_standing_hide_presets` 约束是否从客户端 usage 扣除（独立于整档遮罩），`persona_env_presets` 是否写槽位 `# Environment` 时区。

@@ -1,5 +1,11 @@
 import type { Vm, VmProxySnap } from '@/types/panel-vm'
-import { proxyIsInvalid } from '@/features/proxies/proxy-sort'
+import type { StatusTone } from '@/types/status'
+import {
+  PROXY_HEALTH_LABEL,
+  type ProxyHealthKey,
+  proxyHealthKey,
+  proxyIsInvalid,
+} from '@/features/proxies/proxy-sort'
 
 /** 高延迟阈值。超过就用警告黄，即使探测状态仍是 ok。 */
 export const PROXY_LATENCY_WARN_MS = 300
@@ -49,4 +55,38 @@ export function proxySurfaceClass(tone: ProxyFieldTone): string {
     default:
       return 'text-muted-foreground'
   }
+}
+
+/**
+ * 健康档 → 图形色（席位格、分段条）。用 solid 变体：非文本图形 3:1 即可。
+ * 未测走中性灰，禁用也走灰 —— 它们不是故障，不该占红色。
+ */
+export const PROXY_HEALTH_SOLID: Record<ProxyHealthKey, string> = {
+  ok: 'var(--status-ok-solid)',
+  unknown: 'color-mix(in oklch, var(--status-none) 70%, transparent)',
+  fail: 'var(--status-warn-solid)',
+  dead: 'var(--status-bad-solid)',
+  off: 'var(--status-none)',
+}
+
+const HEALTH_MARK: Record<ProxyHealthKey, string> = {
+  ok: 'ok',
+  unknown: 'none',
+  fail: 'warn',
+  dead: 'bad',
+  off: 'off',
+}
+
+/** StatusMark 的形状编码：未测是虚线环，禁用是方块，不和故障混成一档。 */
+export function proxyStatusTone(proxy: VmProxySnap): StatusTone {
+  const key = proxyHealthKey(proxy)
+  return { key, text: PROXY_HEALTH_LABEL[key], cls: HEALTH_MARK[key] }
+}
+
+/** 延迟信号格数：≤150ms 三格，≤告警阈值两格，更慢一格，失效或未测零格。 */
+export function proxySignalBars(proxy: VmProxySnap): number {
+  if (proxyIsInvalid(proxy) || proxy.latency_ms == null) return 0
+  if (proxy.latency_ms <= 150) return 3
+  if (proxy.latency_ms <= PROXY_LATENCY_WARN_MS) return 2
+  return 1
 }
