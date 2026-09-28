@@ -29,7 +29,6 @@ share/wrap-cli/bun
 !share/crag/**
 .workflow/
 __pycache__/
-web/dist/
 crates/
 patches/
 .local/
