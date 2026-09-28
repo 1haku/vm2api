@@ -19,6 +19,10 @@ data
 docs/images
 test
 crates
+patches
+.local
+local-src
+src/lib/oauth/auth.js
 worker/bin
 *.md
 !README.md
