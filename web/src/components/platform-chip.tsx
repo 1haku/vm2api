@@ -78,22 +78,6 @@ export function SlotIdentity({
   )
 }
 
-export function BrandPlatforms({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn('flex flex-wrap gap-1', className)}
-      aria-label='Anthropic 与 GPT'
-    >
-      <span className='inline-flex items-center rounded-[5px] border border-[color:var(--tier-pro-border)] px-1.5 py-0.5 text-[10px] leading-none font-semibold tracking-[0.03em] text-[color:var(--tier-pro-fg)]'>
-        Anthropic
-      </span>
-      <span className='inline-flex items-center rounded-[5px] border border-[color:var(--tier-codex-border)] px-1.5 py-0.5 text-[10px] leading-none font-semibold tracking-[0.03em] text-[color:var(--tier-codex-fg)]'>
-        GPT
-      </span>
-    </span>
-  )
-}
-
 /** Console = Anthropic 陶土橙实心；OAuth = 蓝；API = 白。色值见 theme.css 的 --lane-*。 */
 const LANE_CLASS: Record<CredEndpoint, string> = {
   console:
