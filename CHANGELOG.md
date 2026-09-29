@@ -8,6 +8,8 @@
 - 成本列的累计改取 `/usage` 账号行。`/api/panel/vms` 本来就不带费用字段，此前读 `vm.total_cost` 恒为 0。
 - 统计弹窗改成可视化：指标卡、今日 / 最高日信息卡、费用与请求双轴趋势、模型分布环形图、入站端点分布。后端 `GET /api/panel/vms/:id` 的 `billing.usage_stats` 带出近 30 个上海自然日的按日用量、模型排名和入站路径排名，日界与 `billing.today` 一致；老前端忽略这个字段。
 - 详情卡和四个弹窗改用原生滚动：Radix `ScrollArea` 在弹窗里不出滚动条，长内容下半部分看不到。
+- Sonnet 5.5 在 Node 出站清洗中沿用 Opus 5.5 的兼容策略：强制 `tool_choice` 转为 `auto`，指定客户端工具加 `strict: true`。不注入提示词，不保证一定调用该工具；Sonnet 5 保持原强制调用语义。
+- Messages / Chat / Responses 保留 strict 工具标记与结构化输出；`output_config.effort` 不再挡住 `response_format` / `text.format` 的 schema 转换，cli-hop 补齐嵌套对象的 `additionalProperties`。Responses 补传工具选择。
 
 已部署机升级：只覆盖控制面并重启 Node 一次；`web/dist` 是静态文件，单独更新不必重启，但 `billing.usage_stats` 需要新的 Node 才有。不改 kernel / cli-node，不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
 
