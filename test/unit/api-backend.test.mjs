@@ -44,7 +44,13 @@ test('API backend applies the global official_full persona setting', async () =>
   fs.mkdirSync(path.dirname(socketPath), { recursive: true })
   fs.writeFileSync(
     routingFile,
-    JSON.stringify({ compatibility: { persona_preset: 'official_full', overlay_preset: 'off' } }),
+    JSON.stringify({
+      compatibility: {
+        persona_preset: 'official_full',
+        overlay_preset: 'off',
+        agent_standing_presets: { official_full: true },
+      },
+    }),
   )
   let received = null
   const kernel = http.createServer((req, res) => {
@@ -94,7 +100,11 @@ test('API backend applies the global official_full persona setting', async () =>
     stats,
     routingConfigPath: routingFile,
     routingConfig: {
-      compatibility: { persona_preset: 'official_full', overlay_preset: 'off' },
+      compatibility: {
+        persona_preset: 'official_full',
+        overlay_preset: 'off',
+        agent_standing_presets: { official_full: true },
+      },
       failover: {},
     },
     groupsRepo: { rateMultiplier: () => 1 },
