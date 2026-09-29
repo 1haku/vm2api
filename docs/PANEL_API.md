@@ -134,6 +134,8 @@
 
 `compatibility.agent_standing`（字符串，≤2000）与四个按档布尔 map `agent_standing_presets` / `agent_standing_hide_presets` / `persona_env_presets` / `persona_hide_presets` 控制常驻约束、约束遮罩、Environment 和整档 usage 遮罩，不投影到 `kernel.json`，Node 每次请求热读。`GET /api/panel/persona/preview-vars?timezone=<IANA>` 返回 system提示词页预览用的真实模板常量（身份句、官方 agent 全文、按该时区渲染的 Environment），不含 billing；时区非法或缺省按 UTC。
 
+`agent_standing_presets` 缺 map/key 默认关闭，只有显式 `true` 启用；`agent_standing` 内置文本保持不变。约束遮罩与 Environment 开关缺省仍为开启，整档遮罩仍回落既有模板/旧设置。保存显式开启的档位不改变其他缺省关闭的档位。
+
 ## 蒸馏拦截
 
 | 方法 | 路径 | 说明 |
