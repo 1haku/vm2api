@@ -132,10 +132,7 @@ test('agent standing preset flags default off and isolate per preset', () => {
   )
   assert.equal(agentStandingVar({ agent_standing_presets: { official: true } }, 'zero'), '')
   assert.equal(agentStandingVar({ agent_standing_presets: { zero: false } }, 'zero'), '')
-  assert.equal(
-    agentStandingVar({ agent_standing: '', agent_standing_presets: { official: true } }, 'official'),
-    '',
-  )
+  assert.equal(agentStandingVar({ agent_standing: '', agent_standing_presets: { official: true } }, 'official'), '')
 })
 
 test('zero prompt_version uses the compact Anthropic Claude identity', () => {
@@ -498,10 +495,13 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
     assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
   })
-  withRoutingFile({ persona_preset: 'zero', agent_standing: 'Stay terse.', agent_standing_presets: { zero: true } }, (file) => {
-    const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-    assert.equal(out.system[2].text, `Stay terse.\n${agent}`)
-  })
+  withRoutingFile(
+    { persona_preset: 'zero', agent_standing: 'Stay terse.', agent_standing_presets: { zero: true } },
+    (file) => {
+      const out = applyCrsUnofficialPersona(body(), { routingFile: file })
+      assert.equal(out.system[2].text, `Stay terse.\n${agent}`)
+    },
+  )
   withRoutingFile({ persona_preset: 'zero' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
     assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
