@@ -30,7 +30,7 @@
 |------|------|------|
 | GET | `/dashboard` | 总览：健康、KPI、`proxy_pool`、`ops`（默认近 1h SLA/TTFT）、`billing` |
 | GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨） |
-| GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/by_model` + `account.runtime_window` |
+| GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/by_model/usage_stats`（`usage_stats` = 近 30 个上海自然日的按日用量 + 模型 / 入站路径排名，日界同 `billing.today`） + `account.runtime_window` |
 | PATCH | `/vms/:id` | 热改并发、模型白名单、槽策略、`schedule_level` 或 `timezone`（不重启槽）。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
 | POST | `/vms/:id/probe` | 槽 SOCKS5 探官方 `/usage` + Fable（Pro 跳过 Fable） |
 | POST | `/vms/:id/schedulable` | `{ schedulable }` 是否入池；不改容器 |
