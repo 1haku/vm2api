@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { PlatformChip } from '@/components/platform-chip'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import {
   KERNELS,
@@ -108,6 +109,7 @@ export function CreateVmFields({
   const [locale, setLocale] = useState<string>(DEFAULT_TEMPLATE.locale)
   const [conc, setConc] = useState<number>(DEFAULT_TEMPLATE.conc)
   const [weight, setWeight] = useState<number>(DEFAULT_TEMPLATE.weight)
+  const [platform, setPlatform] = useState<'anthropic' | 'openai'>('anthropic')
   const [advOpen, setAdvOpen] = useState(false)
 
   // 名称留空时按已占用序号推下一个可用值，仅作为 placeholder 提示与提交兜底。
@@ -146,8 +148,8 @@ export function CreateVmFields({
           max_concurrency: conc,
           weight,
           ...deriveAfter(after),
-          platform: 'anthropic',
-          family: 'claude',
+          platform,
+          family: platform === 'openai' ? 'codex' : 'claude',
         }),
       })
       return {
@@ -192,6 +194,36 @@ export function CreateVmFields({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className='space-y-1'>
+        <Label>平台</Label>
+        <Select
+          value={platform}
+          onValueChange={(next) => {
+            if (next === 'anthropic' || next === 'openai') setPlatform(next)
+          }}
+        >
+          <SelectTrigger aria-label='槽位平台'>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value='anthropic'>
+              <span className='inline-flex items-center gap-1.5'>
+                <PlatformChip kind='claude' />
+                默认
+              </span>
+            </SelectItem>
+            <SelectItem value='openai'>
+              <PlatformChip kind='codex' />
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        {platform === 'openai' ? (
+          <p className='text-xs text-muted-foreground'>
+            可先创建空槽，账号用 OAuth 或 auth.json 稍后导入。
+          </p>
+        ) : null}
       </div>
 
       <div className='space-y-1'>
