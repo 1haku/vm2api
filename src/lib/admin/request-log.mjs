@@ -493,6 +493,10 @@ export class RequestLogStore {
     return this.repo.costByModel(opts)
   }
 
+  vmUsageStats(opts = {}) {
+    return this.repo.vmUsageStats(opts)
+  }
+
   /** Windowed SLA / QPS / TTFT snapshot for overview + log analysis. */
   windowStats(opts = {}) {
     return this.repo.windowStats(opts)
