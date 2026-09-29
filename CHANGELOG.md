@@ -1,8 +1,10 @@
 # Changelog
 
-## 未发布
+## 1.3.85 — 2026-09-30
 
 - Claude Code 子 agent 不再排在主会话后面：带 `x-claude-code-agent-id` 的请求（Claude Code 2.1.139+，主线程不带）按子会话调度。会话 ID 由主会话 `session_id` + agent ID 派生（稳定 UUID），各 agent 各自一个 CLI 会话、各自串行，可用主会话所在 VM 的任意空闲执行位；会话窗口计在主会话头上，不新占 `max_sessions`。嵌套 agent（带 `x-claude-code-parent-agent-id`）同样挂在主会话下。主会话自己的多轮仍按 v1.3.7 规则串行。
+
+已部署机升级：只更新 Node 控制面（`src/`）并重启一次 Node。不改 kernel / cli-node，不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
 
 ## 1.3.84 — 2026-09-29
 
