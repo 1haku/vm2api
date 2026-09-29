@@ -681,6 +681,22 @@ test('sanitizeRequestBodySnapshot redacts secrets and summarizes tools', async (
   assert.ok(String(snap.messages[0].content).includes('…'))
 })
 
+test('sanitizeRequestBodySnapshot omits image bytes', async () => {
+  const { sanitizeRequestBodySnapshot } = await import('../../src/lib/admin/request-log.mjs')
+  const payload = 'iVBORw0KGgo'.repeat(20)
+  const snap = sanitizeRequestBodySnapshot({
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: payload } }],
+      },
+    ],
+  })
+  assert.equal(snap.messages[0].content[0].source.data, undefined)
+  assert.equal(snap.messages[0].content[0].source.bytes, payload.length)
+  assert.equal(JSON.stringify(snap).includes(payload), false)
+})
+
 test('setConfig hot-updates mode', () => {
   const s = tmpStore('normal')
   s.setConfig({ mode: 'debug', retainDays: 3 })
