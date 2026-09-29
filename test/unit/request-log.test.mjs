@@ -204,6 +204,49 @@ test('costByModel splits rows by billing band', () => {
   assert.equal(std.long_context, 0)
 })
 
+test('vmUsageStats buckets by Shanghai day, isolates the slot and ranks models and paths', () => {
+  const store = tmpStore('normal')
+  const insert = store.db.prepare(`
+    INSERT INTO usage_logs (id, request_id, created_at, path, model, upstream_model, status,
+      vm_id, input_tokens, output_tokens, total_cost, duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 50, ?, ?)
+  `)
+  const shanghaiDay = (offsetDays) =>
+    new Date(Date.now() + 8 * 3600_000 - offsetDays * 86400_000).toISOString().slice(0, 10)
+  // 16:30Z is 00:30 the next Shanghai day: a UTC bucket would file it under the wrong date.
+  const at = (offsetDays) => `${shanghaiDay(offsetDays + 1)}T16:30:00.000Z`
+  insert.run('u1', 'r1', at(0), '/v1/messages', 'm-a', 'm-a', 200, 'vm-x', 1, 1000)
+  insert.run('u2', 'r2', at(0), '/v1/messages', 'm-a', 'm-a', 200, 'vm-x', 1, 3000)
+  insert.run('u3', 'r3', at(2), '/v1/chat/completions', 'm-b', 'm-b', 200, 'vm-x', 4, null)
+  insert.run('u4', 'r4', at(0), '/v1/messages', 'm-a', 'm-a', 200, 'vm-other', 99, 1)
+  insert.run('u5', 'r5', at(40), '/v1/messages', 'm-a', 'm-a', 200, 'vm-x', 99, 1)
+  const out = store.repo.vmUsageStats({ vmId: 'vm-x', days: 30 })
+  assert.deepEqual(
+    out.history.map((h) => [h.day, h.requests, h.total_cost]),
+    [
+      [shanghaiDay(2), 1, 4],
+      [shanghaiDay(0), 2, 2],
+    ],
+  )
+  const today = out.history.at(-1)
+  // rows without a duration must not drag the average toward zero
+  assert.equal(today.duration_ms_sum / today.duration_n, 2000)
+  assert.equal(out.history[0].duration_n, 0)
+  assert.deepEqual(
+    out.models.map((m) => [m.name, m.requests]),
+    [
+      ['m-a', 2],
+      ['m-b', 1],
+    ],
+  )
+  assert.deepEqual(
+    out.endpoints.map((e) => e.name),
+    ['/v1/messages', '/v1/chat/completions'],
+  )
+  assert.equal(out.endpoints[0].tokens, 300)
+  assert.deepEqual(store.repo.vmUsageStats({ vmId: null }).history, [])
+})
+
 test('zero group multiplier keeps usage and key counters but charges no USD', () => {
   const store = tmpStore('normal')
   const groups = new GroupsRepo(store.db)
