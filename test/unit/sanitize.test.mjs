@@ -33,14 +33,7 @@ test('copyOfficialAnthropicFields keeps official keys and drops client junk', ()
     machine_id: 'm',
     account_uuid: 'a',
   })
-  assert.deepEqual(Object.keys(out).sort(), [
-    'max_tokens',
-    'messages',
-    'model',
-    'system',
-    'temperature',
-    'tools',
-  ])
+  assert.deepEqual(Object.keys(out).sort(), ['max_tokens', 'messages', 'model', 'system', 'temperature', 'tools'])
 })
 
 test('copyOfficialAnthropicFields drops undefined values', () => {
@@ -123,10 +116,10 @@ test('promoteContentToBlocks converts string to text block array', () => {
   assert.deepEqual(promoteContentToBlocks(''), [])
   assert.equal(promoteContentToBlocks(null), null)
   assert.deepEqual(promoteContentToBlocks([{ type: 'text', text: 'a' }]), [{ type: 'text', text: 'a' }])
-  assert.deepEqual(
-    promoteContentToBlocks(['str', { type: 'text', text: 'b' }]),
-    [{ type: 'text', text: 'str' }, { type: 'text', text: 'b' }],
-  )
+  assert.deepEqual(promoteContentToBlocks(['str', { type: 'text', text: 'b' }]), [
+    { type: 'text', text: 'str' },
+    { type: 'text', text: 'b' },
+  ])
 })
 
 test('promoteSystemToBlocks converts string to text block array', () => {

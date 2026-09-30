@@ -75,22 +75,13 @@ test('apiKeyBetaHeader strips oauth and falls back to API_KEY_BETAS when empty',
   assert.equal(apiKeyBetaHeader(), API_KEY_BETAS.join(','))
   assert.equal(apiKeyBetaHeader(BETA_OAUTH), API_KEY_BETAS.join(','))
   assert.equal(apiKeyBetaHeader(`${BETA_CLAUDE_CODE},${BETA_OAUTH}`), BETA_CLAUDE_CODE)
-  assert.equal(
-    apiKeyBetaHeader(`${BETA_CLAUDE_CODE},${BETA_INTERLEAVED}`),
-    `${BETA_CLAUDE_CODE},${BETA_INTERLEAVED}`,
-  )
+  assert.equal(apiKeyBetaHeader(`${BETA_CLAUDE_CODE},${BETA_INTERLEAVED}`), `${BETA_CLAUDE_CODE},${BETA_INTERLEAVED}`)
 })
 
 test('setupTokenBetaHeader uses haiku set for haiku models, otherwise oauth+interleaved+context-management', () => {
   assert.equal(setupTokenBetaHeader('claude-haiku-4-5'), HAIKU_BETA_HEADER)
-  assert.equal(
-    setupTokenBetaHeader('claude-sonnet-5'),
-    `${BETA_OAUTH},${BETA_INTERLEAVED},${BETA_CONTEXT_MANAGEMENT}`,
-  )
-  assert.equal(
-    setupTokenBetaHeader(''),
-    `${BETA_OAUTH},${BETA_INTERLEAVED},${BETA_CONTEXT_MANAGEMENT}`,
-  )
+  assert.equal(setupTokenBetaHeader('claude-sonnet-5'), `${BETA_OAUTH},${BETA_INTERLEAVED},${BETA_CONTEXT_MANAGEMENT}`)
+  assert.equal(setupTokenBetaHeader(''), `${BETA_OAUTH},${BETA_INTERLEAVED},${BETA_CONTEXT_MANAGEMENT}`)
 })
 
 test('ensureMimicryBetas appends missing required tokens without duplicating', () => {

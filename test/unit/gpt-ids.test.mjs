@@ -51,11 +51,11 @@ test('isSyncableGptCatalogId rejects luna-wm variants', () => {
   assert.equal(isSyncableGptCatalogId('gpt-6-luna-wm'), false)
 })
 
-test('isSyncableGptCatalogId rejects wm standalone variants', () => {
-  // wm as a standalone segment (with - or _ boundaries)
+test('isSyncableGptCatalogId rejects wm as its own segment only', () => {
   assert.equal(isSyncableGptCatalogId('gpt-4-wm'), false)
   assert.equal(isSyncableGptCatalogId('gpt-4_wm'), false)
-  assert.equal(isSyncableGptCatalogId('wm-gpt-4'), false)
+  assert.equal(isSyncableGptCatalogId('gpt-wm-4'), false)
+  assert.equal(isSyncableGptCatalogId('gpt-4wm'), true)
 })
 
 test('isSyncableGptCatalogId allows gpt-6-luna (official model)', () => {
