@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.3.86 — 2026-09-30
 
 - 控制台侧栏左上角品牌区重做：vm2api 标识 + 放大的版本徽标（链到对应 GitHub Release）+ GitHub 仓库链接；移除 `Anthropic` / `GPT` 平台标签。侧栏折叠为图标时只留标识。
 - 登录后每天首次打开控制台，右下角弹出一次 GitHub Star 提示，10 秒后自动隐藏（悬停/聚焦时暂停，可手动关闭）。按本地日期记在 `localStorage` 的 `vm2api_star_hint_day`，当天不再出现。
 - `web/dist` 随本版重编。
 - 管理员（`role=admin`）不再受用户级并发上限（`users.concurrency`）约束；普通用户上限不变。
+- GPT-6.1 Sol 按官方价计费。标准档每百万 token：输入 $2、缓存读 $0.10、缓存写 $2.50、输出 $10。输入超过 272K 时整单按 2 倍输入和缓存、1.5 倍输出；Flex 为该档一半，Fast 为两倍。
+- Codex 额度查询的 `chatgpt-account-id` 优先用 access token 里的账号 ID。导入记录没有账号 ID 时也会带上。
+
+已部署机升级：更新 Node 控制面（`src/`）和 `web/dist`，重启一次 Node。不改 kernel / cli-node，不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 live `routing.json`。
 
 ## 1.3.85 — 2026-09-30
 
