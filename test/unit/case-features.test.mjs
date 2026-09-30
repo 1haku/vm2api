@@ -41,7 +41,10 @@ test('extractCaseFeatures detects top-level string system', () => {
 
 test('extractCaseFeatures detects top-level array system with text blocks', () => {
   const features = extractCaseFeatures({
-    system: [{ type: 'text', text: 'billing' }, { type: 'text', text: 'identity' }],
+    system: [
+      { type: 'text', text: 'billing' },
+      { type: 'text', text: 'identity' },
+    ],
   })
   assert.equal(features.has_top_level_system, true)
 })
@@ -117,7 +120,7 @@ test('officialSystemKinds classifies billing block', () => {
 test('officialSystemKinds classifies identity block (SDK signature)', () => {
   const kinds = officialSystemKinds([
     { text: 'x-anthropic-billing-header: acct' },
-    { text: 'You are a Claude agent, built on Anthropic\'s Claude Agent SDK' },
+    { text: "You are a Claude agent, built on Anthropic's Claude Agent SDK" },
   ])
   assert.deepEqual(kinds, ['billing', 'identity'])
 })
