@@ -4,8 +4,12 @@
 
 - 恢复面板用户管理（撤回 `3420f8a`）。admin 在侧栏「用户」页（`#/users`）新建、编辑角色/启用/自建配额、删除用户；每行「改密码」弹窗带确认密码与 8–128 位校验。改他人密码立即踢掉该用户全部会话；改自己密码保留当前会话、踢掉其它设备。`GET/POST/PATCH/DELETE /api/panel/users` 仅 admin / master key。
 - 改密后 SQLite `users` 为准，`VM2API_ADMIN_PASSWORD` 不再能登录同名账号。
+- 集群页接入 VPS 改为 SSH：控制面主动拨出（本机在 NAT 后可用，远端在 NAT 后可经已接入节点跳转），首连核对并固定主机指纹。常驻连接带 keepalive 和指数退避重连；指纹不符或认证失败停住等人工重连。凭证按 `VM2API_DB_SECRET` 加密落库。
+- 集群节点弹出式管理面板：xterm 终端（一次性票据 WebSocket）、远端 Docker（经 SSH 转发 docker.sock：信息、一键安装、建容器、启停重启、日志、删除）、连接详情。本机另开 unix socket 桥，`docker -H unix://<data>/cluster/<id>/docker.sock` 可直接用本机 docker CLI 管远端。去掉集群页示意行。
+- 集群页本机面板新增「链路」：控制面运行形态（进程 / 容器 host|bridge）、监听地址、公网出口与是否在 NAT 后（由已连接节点观测，不依赖第三方 IP 服务）、面板端口是否公网可达、本机 Docker 与槽容器数、集群出站就绪数。`GET /api/panel/cluster/local`。
+- 新依赖 `ssh2`、`ws`（Node）和 `@xterm/xterm`（web）；新迁移 `026_cluster_nodes`。
 
-已部署机升级：更新 Node 控制面（`src/`）和 `web/dist`，重启一次 Node。
+已部署机升级：更新 Node 控制面（`src/`、`package*.json`）和 `web/dist`，本机 Node 部署先 `npm ci --omit=dev`（新增 `ssh2`、`ws`；镜像构建已包含），重启一次 Node。
 
 ## 1.3.86 — 2026-09-30
 
