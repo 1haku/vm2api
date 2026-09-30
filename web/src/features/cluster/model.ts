@@ -1,3 +1,4 @@
+import type { ClusterApiNode } from '@/types/panel-cluster'
 import type { Dashboard } from '@/types/panel-overview'
 import type { UsagePayload } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
@@ -20,8 +21,8 @@ export type ClusterNode = {
   credCount: number | null
   onlineCredCount: number | null
   spendUsd: number | null
-  /** 控制面未接入前的示意行，刷新即丢。 */
-  synthetic?: boolean
+  /** 远端节点的原始控制面记录；本机为空。 */
+  remote?: ClusterApiNode
 }
 
 export type ClusterTotals = {
@@ -119,23 +120,43 @@ export function buildLocalNode(input: {
   }
 }
 
-/**
- * 只要主机名或 IP，可带端口。拒绝协议、路径、user:pass@host。
- * 集群接入还不存在鉴权通道，输入栏不能变成凭证口。
- */
-export function parseNodeHost(raw: string): string | null {
-  const host = raw.trim()
-  if (!host || host.length > 253) return null
-  if (/[\s/@\\]/.test(host)) return null
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) return null
-  const HOST_RE =
-    /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?$/i
-  if (!HOST_RE.test(host)) return null
-  const port = host.includes(':')
-    ? Number(host.slice(host.lastIndexOf(':') + 1))
-    : null
-  if (port != null && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-    return null
+export const LINK_STATE_TEXT: Record<ClusterApiNode['link']['state'], string> =
+  {
+    idle: '未启动',
+    connecting: '连接中',
+    ready: '已连接',
+    backoff: '重连等待',
+    error: '已停止',
   }
-  return host
+
+/**
+ * 链路轴：ready 按延迟分 ok / caution；backoff 与 error 是不可达；
+ * connecting / idle 还没有结论，记 none。
+ */
+export function remoteLink(node: ClusterApiNode): ClusterLink {
+  const state = node.link.state
+  if (state === 'ready') {
+    const lat = node.health?.latency_ms
+    return lat != null && lat > LINK_LATENCY_WARN_MS ? 'caution' : 'ok'
+  }
+  if (state === 'backoff' || state === 'error') return 'bad'
+  return 'none'
+}
+
+/** 远端槽位 / 凭证 / 花费还没并进调度池，保持 null 显示为 —。 */
+export function remoteNodeFromApi(node: ClusterApiNode): ClusterNode {
+  return {
+    id: node.id,
+    role: 'remote',
+    label: node.label,
+    host: node.port === 22 ? node.host : `${node.host}:${node.port}`,
+    link: remoteLink(node),
+    latencyMs:
+      node.link.state === 'ready' ? (node.health?.latency_ms ?? null) : null,
+    vmCount: null,
+    credCount: null,
+    onlineCredCount: null,
+    spendUsd: null,
+    remote: node,
+  }
 }

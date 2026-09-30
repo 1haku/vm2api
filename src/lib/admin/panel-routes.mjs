@@ -755,6 +755,7 @@ export function createPanelHandler(ctx) {
       ) {
         return true
       }
+      if (p.startsWith('/api/panel/cluster/')) return ctx.clusterRoutes.handle(req, res, url)
       if (req.method === 'GET' && p === '/api/panel/database/metrics') {
         const snapshot = snapshotDatabaseMetrics({
           db: getDb(),

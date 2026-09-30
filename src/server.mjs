@@ -69,6 +69,9 @@ import { openDatabase, closeDatabase } from './lib/db/database.mjs'
 import { runLegacyImport } from './lib/db/legacy-import.mjs'
 import { initVmDbSync, stopVmWatch } from './lib/vm/vm-db-sync.mjs'
 import { BackupService } from './lib/admin/backup-service.mjs'
+import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
+import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
+import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -779,6 +782,14 @@ const { handleProtocol } = createHandleProtocol({
   },
 })
 
+const clusterManager = new ClusterManager({
+  repo: new ClusterNodesRepo(),
+  dataDir,
+  listen: { host: cfg.host, port: cfg.port },
+})
+clusterManager.start()
+const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
+
 const handlePanel = createPanelHandler({
   json,
   readBody,
@@ -837,6 +848,7 @@ const handlePanel = createPanelHandler({
   officialCcStatsHandler,
   refreshWorkerCredentialForVm,
   fetchWorkerModels,
+  clusterRoutes,
 })
 
 const server = http.createServer(async (req, res) => {
@@ -994,6 +1006,10 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+server.on('upgrade', (req, socket, head) => {
+  if (!clusterRoutes.handleUpgrade(req, socket, head)) socket.destroy()
+})
+
 server.on('clientError', (err, socket) => {
   try {
     console.error(
@@ -1073,6 +1089,9 @@ function shutdown(signal) {
   } catch {}
   try {
     stopAllRustKernels()
+  } catch {}
+  try {
+    clusterManager.stop()
   } catch {}
   try {
     server.close(() => {})
