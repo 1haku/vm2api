@@ -80,8 +80,12 @@ function fakeNode(files = new Map()) {
 function localSlot(cred) {
   const slotDir = path.join(tmpDir('kin-remote-slot-'), 'vm-07')
   fs.mkdirSync(path.join(slotDir, 'cli-home', '.claude'), { recursive: true })
-  if (cred != null)
-    fs.writeFileSync(path.join(slotDir, 'cli-home', '.claude', 'credentials.json'), cred, { mode: 0o444 })
+  if (cred != null) {
+    const file = path.join(slotDir, 'cli-home', '.claude', 'credentials.json')
+    fs.writeFileSync(file, cred)
+    // Explicit chmod: the create mode is umask-masked (077 shells would turn 0444 into 0400).
+    fs.chmodSync(file, 0o444)
+  }
   return slotDir
 }
 

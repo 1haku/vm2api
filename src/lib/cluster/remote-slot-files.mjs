@@ -112,6 +112,8 @@ export async function pullSlotCredentials(vm, slotDir, session = null) {
   fs.mkdirSync(path.dirname(local), { recursive: true, mode: 0o700 })
   const tmp = `${local}.${process.pid}.${Date.now()}.tmp`
   fs.writeFileSync(tmp, remote, { mode })
+  // The create mode is umask-masked; the local seal (e.g. 0444) must survive whatever umask Node runs with.
+  fs.chmodSync(tmp, mode)
   fs.renameSync(tmp, local)
   return { pulled: true }
 }
