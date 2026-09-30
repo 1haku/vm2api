@@ -35,7 +35,10 @@ export function localDocker(socketPath = DOCKER_SOCKET_PATH) {
  * @param {DockerConnector} connect
  * @returns {Promise<{ status: number, headers: Record<string, string|string[]|undefined>, body: Buffer }>}
  */
-export async function dockerRequest(connect, { method = 'GET', path, body, timeoutMs = 30_000, onChunk } = {}) {
+export async function dockerRequest(
+  connect,
+  { method = 'GET', path, body, stream: bodyStream, contentType, timeoutMs = 30_000, onChunk } = {},
+) {
   const stream = await connect()
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body))
   // One-shot agent: `agent: false` makes Node ignore `createConnection` and dial TCP.
@@ -49,6 +52,7 @@ export async function dockerRequest(connect, { method = 'GET', path, body, timeo
       agent,
       headers: {
         ...(payload ? { 'content-type': 'application/json', 'content-length': payload.length } : {}),
+        ...(bodyStream ? { 'content-type': contentType || 'application/octet-stream' } : {}),
       },
     })
     const timer = setTimeout(() => {
@@ -81,7 +85,14 @@ export async function dockerRequest(connect, { method = 'GET', path, body, timeo
         reject(new ClusterError(502, 'docker_io_failed', `Docker API 读取失败：${err.message}`))
       })
     })
-    req.end(payload || undefined)
+    if (bodyStream) {
+      bodyStream.on('error', (err) =>
+        req.destroy(new ClusterError(502, 'docker_io_failed', `上传失败：${err.message}`)),
+      )
+      bodyStream.pipe(req)
+    } else {
+      req.end(payload || undefined)
+    }
   })
 }
 
@@ -233,6 +244,7 @@ export async function dockerInfo(connect) {
     arch: info?.Architecture || null,
     cpus: info?.NCPU ?? null,
     mem_bytes: info?.MemTotal ?? null,
+    root_dir: info?.DockerRootDir ?? null,
     containers: info?.Containers ?? null,
     running: info?.ContainersRunning ?? null,
     images: info?.Images ?? null,
@@ -308,4 +320,101 @@ export async function containerLogs(connect, id, { tail = 200 } = {}) {
     ? [{ stream: 'stdout', text: res.body.toString('utf8') }]
     : demuxDockerLog(res.body)
   return { tty: !!inspect?.Config?.Tty, lines }
+}
+
+/** Container JSON or null when it does not exist. */
+export async function inspectContainerOrNull(connect, id) {
+  const res = await dockerRequest(connect, { path: `${containerPath(id)}/json`, timeoutMs: 15_000 })
+  if (res.status === 404) return null
+  if (res.status !== 200) throw new ClusterError(502, 'docker_api_error', dockerMessage(res))
+  return JSON.parse(res.body.toString('utf8'))
+}
+
+/** Create from a full Engine API body (callers own validation). Returns the container id. */
+export async function createContainerRaw(connect, name, body) {
+  const res = await dockerRequest(connect, {
+    method: 'POST',
+    path: `/containers/create?name=${encodeURIComponent(name)}`,
+    body,
+    timeoutMs: 60_000,
+  })
+  if (res.status !== 201) {
+    throw new ClusterError(res.status === 409 ? 409 : 502, 'docker_create_failed', dockerMessage(res))
+  }
+  return JSON.parse(res.body.toString('utf8')).Id
+}
+
+/** `docker exec -d`: fire and forget, the exit code is not observed. */
+export async function execDetached(connect, id, cmd, { user } = {}) {
+  const created = await dockerJson(
+    connect,
+    {
+      method: 'POST',
+      path: `${containerPath(id)}/exec`,
+      body: { Cmd: cmd, AttachStdout: false, AttachStderr: false, ...(user ? { User: user } : {}) },
+    },
+    [201],
+  )
+  await dockerJson(connect, { method: 'POST', path: `/exec/${created.Id}/start`, body: { Detach: true } }, [200])
+}
+
+export async function imagePresent(connect, ref) {
+  const res = await dockerRequest(connect, { path: `/images/${encodeURIComponent(ref)}/json`, timeoutMs: 15_000 })
+  if (res.status === 404) return false
+  if (res.status !== 200) throw new ClusterError(502, 'docker_api_error', dockerMessage(res))
+  return true
+}
+
+export async function inspectNetworkOrNull(connect, name) {
+  const res = await dockerRequest(connect, { path: `/networks/${encodeURIComponent(name)}`, timeoutMs: 15_000 })
+  if (res.status === 404) return null
+  if (res.status !== 200) throw new ClusterError(502, 'docker_api_error', dockerMessage(res))
+  return JSON.parse(res.body.toString('utf8'))
+}
+
+export async function createNetwork(connect, body) {
+  const res = await dockerRequest(connect, { method: 'POST', path: '/networks/create', body, timeoutMs: 30_000 })
+  // 409: a concurrent create won; the caller re-inspects.
+  if (res.status !== 201 && res.status !== 409) {
+    throw new ClusterError(502, 'docker_network_failed', dockerMessage(res))
+  }
+}
+
+export async function removeNetwork(connect, name) {
+  const res = await dockerRequest(connect, { method: 'DELETE', path: `/networks/${encodeURIComponent(name)}` })
+  // 404: already gone. 403/409: a container joined meanwhile; it keeps the network.
+  if (res.status === 204 || res.status === 404 || res.status === 403 || res.status === 409) return
+  throw new ClusterError(502, 'docker_network_failed', dockerMessage(res))
+}
+
+/**
+ * POST /build with a (gzip) tar context stream. Progress is NDJSON; a failure
+ * after the 200 header only shows up as an `error` line.
+ */
+export async function buildImage(connect, { tag, context, onLog, timeoutMs = 30 * 60_000 }) {
+  let streamError = null
+  let tail = ''
+  const res = await dockerRequest(connect, {
+    method: 'POST',
+    path: `/build?t=${encodeURIComponent(tag)}&rm=1&forcerm=1`,
+    stream: context,
+    contentType: 'application/x-tar',
+    timeoutMs,
+    onChunk: (chunk) => {
+      tail = (tail + chunk.toString('utf8')).slice(-65536)
+      const lines = tail.split('\n')
+      tail = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const evt = JSON.parse(line)
+          if (evt.error) streamError = evt.error
+          const text = evt.stream || evt.status || evt.error
+          if (text && onLog) onLog(String(text))
+        } catch {}
+      }
+    },
+  })
+  if (res.status !== 200) throw new ClusterError(502, 'docker_build_failed', dockerMessage(res))
+  if (streamError) throw new ClusterError(502, 'docker_build_failed', `构建失败：${streamError}`)
 }

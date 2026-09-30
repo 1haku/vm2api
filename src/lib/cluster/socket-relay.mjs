@@ -1,23 +1,31 @@
 /**
- * Local unix socket that relays to the node's remote docker.sock over the
- * node's SSH link, so the host's own docker CLI can drive the remote daemon:
- *   DOCKER_HOST=unix://<data>/cluster/<id>/docker.sock docker ps
- * Unix socket + 0600 only; never a TCP port (that would hand root on the VPS
- * to anything that can reach it).
+ * Local unix socket that relays every connection to a unix socket on a
+ * cluster node over the node's SSH link (`direct-streamlocal`).
+ *
+ * Two users:
+ *   - docker bridge: <socketDir>/<node>/docker.sock → /var/run/docker.sock, so
+ *     the host docker CLI can drive the remote daemon (DOCKER_HOST=unix://…).
+ *   - slot relay: <socketDir>/<node>/slots/<vm>/kernel.sock → the remote slot's
+ *     run/kernel.sock, so the unchanged unix-socket transport reaches a remote kernel.
+ *
+ * Unix socket + 0600 only; never a TCP port (a docker relay on TCP would hand
+ * root on the VPS to anything that can reach it).
  */
 
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { DOCKER_SOCKET_PATH } from './docker-remote.mjs'
 import { forwardOutStreamLocal } from './ssh-link.mjs'
 
-export class DockerBridge {
+export class SocketRelay {
   /**
-   * @param {{ socketPath: string, getClient: () => import('ssh2').Client|null, logger?: Pick<Console, 'warn'> }} opts
+   * `remotePath` may be an async function: slot relays resolve the node's HOME
+   * on first use, so they can listen at boot before the SSH link is up.
+   * @param {{ socketPath: string, remotePath: string|(() => Promise<string>), getClient: () => import('ssh2').Client|null, logger?: Pick<Console, 'warn'> }} opts
    */
-  constructor({ socketPath, getClient, logger = console }) {
+  constructor({ socketPath, remotePath, getClient, logger = console }) {
     this.socketPath = socketPath
+    this.remotePath = remotePath
     this.getClient = getClient
     this.logger = logger
     this.server = null
@@ -47,7 +55,9 @@ export class DockerBridge {
     if (this.server) return
     fs.mkdirSync(path.dirname(this.socketPath), { recursive: true, mode: 0o700 })
     fs.rmSync(this.socketPath, { force: true })
-    const server = net.createServer((local) => this._relay(local))
+    // Half-open: `docker exec`/attach hijack the connection and half-close their write side
+    // after stdin EOF, then read output. Auto-ending here drops every byte of that output.
+    const server = net.createServer({ allowHalfOpen: true }, (local) => this._relay(local))
     this.server = server
     await new Promise((resolve, reject) => {
       server.once('error', reject)
@@ -57,7 +67,7 @@ export class DockerBridge {
       })
     })
     fs.chmodSync(this.socketPath, 0o600)
-    server.on('error', (err) => this.logger.warn(`[cluster] docker bridge ${this.socketPath}: ${err.message}`))
+    server.on('error', (err) => this.logger.warn(`[cluster] relay ${this.socketPath}: ${err.message}`))
     this.listening = true
   }
 
@@ -72,9 +82,11 @@ export class DockerBridge {
     }
     let remote
     try {
-      remote = await forwardOutStreamLocal(client, DOCKER_SOCKET_PATH)
-    } catch (err) {
-      this.logger.warn(`[cluster] docker bridge relay: ${err.message}`)
+      const target = typeof this.remotePath === 'function' ? await this.remotePath() : this.remotePath
+      remote = await forwardOutStreamLocal(client, target)
+    } catch {
+      // A missing remote socket (kernel restarting) is the normal "not ready" answer;
+      // the caller's health poll sees a reset, same as a local ECONNREFUSED.
       local.destroy()
       return
     }
@@ -83,7 +95,8 @@ export class DockerBridge {
       return
     }
     remote.on('error', () => local.destroy())
-    remote.on('close', () => local.destroy())
+    // end(), not destroy(): destroy would drop output still queued behind the pipe.
+    remote.on('close', () => local.end())
     local.on('close', () => remote.close())
     local.pipe(remote)
     remote.pipe(local)

@@ -13,7 +13,14 @@ import {
   listContainers,
   removeContainer,
 } from './docker-remote.mjs'
+import { preflightNode, slotImageJob, startSlotImageBuild } from './placement.mjs'
 import { ClusterError } from './ssh-link.mjs'
+
+function kernelOf(value) {
+  const kernel = String(value || '').trim()
+  if (!/^[a-z0-9.-]{1,32}$/.test(kernel)) throw new ClusterError(400, 'invalid_kernel', '缺少或非法的 kernel')
+  return kernel
+}
 
 const PREFIX = '/api/panel/cluster'
 const NODE_RE = /^\/api\/panel\/cluster\/nodes\/([a-z0-9-]{1,64})(\/.*)?$/
@@ -64,6 +71,19 @@ export function createClusterRoutes({ manager, json, readBody, ok }) {
     if (sub === '/shell-ticket' && m === 'POST') return json(res, 200, ok(manager.issueShellTicket(id)))
 
     if (sub === '/docker/info' && m === 'GET') return json(res, 200, ok(await dockerInfo(manager.docker(id))))
+    if (sub === '/preflight' && m === 'POST') {
+      const body = await readBody(req, MAX_BODY)
+      return json(res, 200, ok(await preflightNode(id, { kernel: kernelOf(body.kernel) })))
+    }
+    if (sub === '/slot-image' && m === 'POST') {
+      const body = await readBody(req, MAX_BODY)
+      manager.get(id)
+      return json(res, 202, ok(startSlotImageBuild(id, kernelOf(body.kernel))))
+    }
+    if (sub === '/slot-image' && m === 'GET') {
+      manager.get(id)
+      return json(res, 200, ok(slotImageJob(id, kernelOf(url.searchParams.get('kernel')))))
+    }
     if (sub === '/docker/install' && m === 'POST') return json(res, 202, ok(manager.startDockerInstall(id)))
     if (sub === '/docker/install' && m === 'GET') return json(res, 200, ok(manager.get(id).install))
     if (sub === '/docker/containers' && m === 'GET') {

@@ -67,6 +67,7 @@ export function summarizeVm(vm, projectRoot = null) {
     persona_preset: vm.persona_preset || null,
     seed_policy: vm.seed_policy || null,
     region: vm.region || vm.zone || null,
+    node_id: vm.node_id || null,
     note: vm.note || null,
     platform: kind.platform,
     family: kind.family,

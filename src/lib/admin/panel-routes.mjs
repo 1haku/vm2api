@@ -154,6 +154,8 @@ import {
   slotExec,
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
+import { preflightNode } from '../cluster/placement.mjs'
+import { slotHost } from '../vm/slot-host.mjs'
 import { writeSlotSeedFiles } from '../vm/slot-seed.mjs'
 import {
   egressEnabled,
@@ -235,7 +237,8 @@ async function commitImportedCodexVm({ cfg, vmPath, existing, account, catalogCl
 async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   const all = listVms(project)
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
-  const vms = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
+  // Cluster-node slots run image-baked binaries; they upgrade by rebuilding the slot image.
+  const vms = (wanted ? all.filter((vm) => wanted.has(vm.id)) : all).filter((vm) => !slotHost(vm).bakedKernel)
   const report = syncWrapSample(project, vms, { routing: routingConfig })
   if (body.restart !== false) {
     for (const item of report.items || []) {
@@ -268,6 +271,14 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
 
 export function createPanelHandler(ctx) {
   const json = (...args) => ctx.json(...args)
+  const hostUnsupported = (res, vm, cap) => {
+    if (slotHost(vm).supports(cap)) return false
+    json(res, 409, {
+      ok: false,
+      error: { code: 'remote_unsupported', message: '集群节点上的虚拟机暂不支持此操作' },
+    })
+    return true
+  }
   const readBody = (...args) => ctx.readBody(...args)
   const readRawBody = (...args) => (ctx.readRawBody || defaultReadRawBody)(...args)
   const requireAuth = (...args) => ctx.requireAuth(...args)
@@ -1743,12 +1754,16 @@ export function createPanelHandler(ctx) {
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         if (hasAuthScheme) {
+          if (hostUnsupported(res, getVm(cfg.paths.project, id), 'auth_scheme')) return
           const vm = persistSlotAuthScheme(cfg.paths.project, id, body.auth_scheme || body.authScheme)
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         let slotPolicyResult = null
         if (hasSlotPolicy) {
           const currentVm = getVm(cfg.paths.project, id)
+          if (Object.prototype.hasOwnProperty.call(body, 'inference_engine')) {
+            if (hostUnsupported(res, currentVm, 'engine_switch')) return
+          }
           if (currentVm && isCodexVm(currentVm) && Object.prototype.hasOwnProperty.call(body, 'inference_engine')) {
             return json(res, 400, {
               ok: false,
@@ -2123,7 +2138,16 @@ export function createPanelHandler(ctx) {
         const vm = getVm(cfg.paths.project, id)
         if (denyIfUserCannotDeleteVm(req, res, vm, json)) return true
         try {
-          if (vm) destroySlot(vm)
+          if (vm) {
+            const gone = await destroySlot(vm)
+            // A node slot that could not be removed keeps running there with the account's credential.
+            if (!gone.ok && slotHost(vm).kind === 'node') {
+              return json(res, 409, {
+                ok: false,
+                error: { code: gone.code || 'remote_destroy_failed', message: gone.error || 'remote destroy failed' },
+              })
+            }
+          }
         } catch {}
         // detach this VM only — do not unbind other slots sharing the SOCKS5
         try {
@@ -2154,7 +2178,7 @@ export function createPanelHandler(ctx) {
         return await withVmLock(vmPath, async () => {
           if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
           const prev = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-          const gone = destroySlot(prev)
+          const gone = await destroySlot(prev)
           if (!gone.ok) {
             return json(res, 500, { ok: false, error: { message: gone.error || 'destroy failed', code: gone.code } })
           }
@@ -2350,6 +2374,7 @@ export function createPanelHandler(ctx) {
         const id = p.split('/')[4]
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        if (hostUnsupported(res, vm, 'wrap_cli')) return
         const captured = captureWrapSample(cfg.paths.project, vm)
         if (!captured.ok) return json(res, 400, { ok: false, error: { code: captured.code, message: captured.error } })
         return json(res, 200, panel.ok(captured))
@@ -2358,6 +2383,7 @@ export function createPanelHandler(ctx) {
         const id = p.split('/')[4]
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        if (hostUnsupported(res, vm, 'wrap_cli')) return
         const wrap = materializeWrapCli(cfg.paths.project, vm)
         if (!wrap.ok) return json(res, 400, { ok: false, error: { code: wrap.code, message: wrap.error } })
         writeKernelConfig(cfg.paths.project, vm, { routing: ctx.routingConfig })
@@ -2387,6 +2413,7 @@ export function createPanelHandler(ctx) {
         const id = p.split('/')[4]
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        if (hostUnsupported(res, vm, 'official_cc')) return
         if (!canOfficialCc(vm.claude?.mode)) {
           return json(res, 400, {
             ok: false,
@@ -2445,6 +2472,42 @@ export function createPanelHandler(ctx) {
         }
         const startNow = body.start !== false && body.status !== 'stopped'
         const wantKernel = body.kernel && OS_CATALOG[body.kernel] ? body.kernel : kernelForIndex(idx)
+        const nodeId = body.node_id ? String(body.node_id) : null
+        if (nodeId) {
+          if (ident.role !== 'admin') {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'placement_forbidden', message: '只有管理员可以把虚拟机放到集群节点' },
+            })
+          }
+          const kindProbe = { node_id: nodeId }
+          stampVmKind(kindProbe, body)
+          if (isCodexVm(kindProbe) && !slotHost(kindProbe).supports('codex')) {
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'remote_unsupported', message: '集群节点上的虚拟机暂不支持此操作' },
+            })
+          }
+          let preflight
+          try {
+            preflight = await preflightNode(nodeId, { kernel: wantKernel })
+          } catch (e) {
+            return json(res, e?.status || 500, {
+              ok: false,
+              error: { code: e?.code || 'placement_failed', message: String(e?.message || e) },
+            })
+          }
+          if (!preflight.ok) {
+            return json(res, 409, {
+              ok: false,
+              error: {
+                code: 'placement_preflight_failed',
+                message: '目标节点预检未通过',
+                checks: preflight.checks,
+              },
+            })
+          }
+        }
         const generated = generateWorkstationFingerprint(
           { id, kernel: wantKernel, timezone: body.timezone, locale: STANDARD_LOCALE },
           { taken: takenFingerprintKeys(existing) },
@@ -2495,6 +2558,7 @@ export function createPanelHandler(ctx) {
           vm.owner_user_id = null
           vm.origin = VM_ORIGIN.platform
         }
+        if (nodeId) vm.node_id = nodeId
         stampVmKind(vm, body)
         atomicWriteJson(vmPath, vm, { mode: 0o600 })
         writeGuestMachineIdFile(cfg.paths.project, id, generated.guest_machine_id)
@@ -2600,7 +2664,7 @@ export function createPanelHandler(ctx) {
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
         if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        const halt = stopSlot(vm)
+        const halt = await stopSlot(vm)
         if (!halt.ok) return json(res, 500, { ok: false, error: { message: halt.error || 'runtime stop failed' } })
         vm.status = 'stopped'
         vm.schedulable = false

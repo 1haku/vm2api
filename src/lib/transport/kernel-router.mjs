@@ -6,6 +6,7 @@
 import { clientCancelledResult, isClientCancelledResult } from '../core/errors.mjs'
 import { ensureWorkerCredential } from './go-worker-client.mjs'
 import { ensureOfficialCredentialLink, slotUidGidFromHomeDir } from '../oauth/oauth-credentials.mjs'
+import { slotHost } from '../vm/slot-host.mjs'
 import {
   streamRustKernel,
   callRustKernel,
@@ -106,9 +107,10 @@ export function peekRustHealth(exec, ttlMs, now = Date.now()) {
   return hit
 }
 
-export function resolveHopEngine(_vm, _routing = {}, { rustReady = null, binPath = null } = {}) {
+export function resolveHopEngine(vm, _routing = {}, { rustReady = null, binPath = null } = {}) {
   const wanted = 'rust'
-  const bin = binPath != null ? String(binPath).trim() : kernelBinPath()
+  // A baked slot image carries its own kernel; the host binary only matters for local mounts.
+  const bin = slotHost(vm).bakedKernel ? 'image' : binPath != null ? String(binPath).trim() : kernelBinPath()
   if (rustReady === true) {
     return { engine: 'rust', wanted, reason: 'configured_rust', fallback: false }
   }
