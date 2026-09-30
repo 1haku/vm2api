@@ -221,6 +221,36 @@ test('GPT-6 Sol and Luna use the published Flex and Fast bands', () => {
   assert.equal(lunaFast.total_cost, 1.2)
 })
 
+test('GPT-6.1 Sol uses the published standard, Flex, and Fast rates', () => {
+  const standard = calculateCost(
+    {
+      input_tokens: 3_000_000,
+      output_tokens: 1_000_000,
+      input_tokens_details: { cached_tokens: 1_000_000, cache_write_tokens: 1_000_000 },
+    },
+    'gpt-6.1-sol',
+  )
+  assert.equal(standard.known, true)
+  assert.equal(standard.pricing_key, 'gpt-6.1-sol')
+  assert.equal(standard.input_cost, 2)
+  assert.equal(standard.output_cost, 10)
+  assert.equal(standard.cache_read_cost, 0.1)
+  assert.equal(standard.cache_creation_cost, 2.5)
+  assert.equal(standard.total_cost, 14.6)
+
+  const flex = calculateCost({ input_tokens: 1_000_000, output_tokens: 1_000_000, service_tier: 'flex' }, 'gpt-6.1-sol')
+  assert.equal(flex.known, true)
+  assert.equal(flex.total_cost, 6)
+
+  const fast = calculateCost(
+    { input_tokens: 1_000_000, output_tokens: 1_000_000, service_tier: 'priority' },
+    'gpt-6.1-sol',
+  )
+  assert.equal(fast.known, true)
+  assert.equal(fast.service_tier, 'fast')
+  assert.equal(fast.total_cost, 24)
+})
+
 test('gpt-reserve has no published price and stays unbilled', () => {
   const c = calculateCost({ input_tokens: 100, output_tokens: 10 }, 'gpt-reserve')
   assert.equal(c.known, false)
