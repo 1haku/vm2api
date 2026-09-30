@@ -77,6 +77,10 @@ const OPENAI_TIER_RATES = {
   'gpt-6.1-sol': {
     flex: [1, 5, 0.05],
     fast: [4, 20, 0.2],
+    // >272K: 2× input and cache, 1.5× output. Flex is half of that band; Fast is double.
+    long_standard: [4, 15, 0.2],
+    long_flex: [2, 7.5, 0.1],
+    long_fast: [8, 30, 0.4],
   },
   'gpt-6-sol': {
     flex: [1, 5, 0.1],
