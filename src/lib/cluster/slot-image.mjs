@@ -13,7 +13,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { Readable } from 'node:stream'
 import zlib from 'node:zlib'
 import { OS_CATALOG, imageForKernel } from '../vm/os-catalog.mjs'
 import { EGRESS_BIN } from '../vm/egress.mjs'
@@ -26,6 +25,7 @@ import {
 } from '../vm/wrap-cli-runtime.mjs'
 import { codexKernelBinPath } from '../transport/codex-kernel-supervisor.mjs'
 import { ClusterError } from './ssh-link.mjs'
+import { tarStream } from './tar.mjs'
 
 export const REMOTE_WORKER_BIN = '/usr/local/bin/kin-worker'
 
@@ -134,46 +134,6 @@ export function slotImageSpec(projectRoot, kernel) {
   }
   const digest = hash.digest('hex').slice(0, 12)
   return { ref: `vm2api/kin-slot-${kernel}:${readVersion(projectRoot)}-${digest}`, base, hash: digest, files }
-}
-
-function tarHeader(name, size, mode) {
-  const h = Buffer.alloc(512)
-  if (Buffer.byteLength(name) > 100) throw new Error(`tar name too long: ${name}`)
-  h.write(name, 0, 100, 'utf8')
-  h.write(`${mode.toString(8).padStart(7, '0')}\0`, 100)
-  h.write('0000000\0', 108) // uid root
-  h.write('0000000\0', 116) // gid root
-  h.write(`${size.toString(8).padStart(11, '0')}\0`, 124)
-  h.write(
-    `${Math.floor(Date.now() / 1000)
-      .toString(8)
-      .padStart(11, '0')}\0`,
-    136,
-  )
-  h.write('        ', 148) // checksum placeholder
-  h.write('0', 156) // regular file
-  h.write('ustar\0', 257)
-  h.write('00', 263)
-  let sum = 0
-  for (const b of h) sum += b
-  h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148)
-  return h
-}
-
-/** Streaming ustar writer: headers + file bytes + 512 padding, then two zero blocks. */
-export function tarStream(entries) {
-  async function* gen() {
-    for (const e of entries) {
-      const size = e.body ? e.body.length : fs.statSync(e.src).size
-      yield tarHeader(e.name, size, e.mode ?? 0o644)
-      if (e.body) yield e.body
-      else for await (const chunk of fs.createReadStream(e.src)) yield chunk
-      const pad = (512 - (size % 512)) % 512
-      if (pad) yield Buffer.alloc(pad)
-    }
-    yield Buffer.alloc(1024)
-  }
-  return Readable.from(gen())
 }
 
 export function slotBuildContext(spec) {

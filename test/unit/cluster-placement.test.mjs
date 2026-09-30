@@ -14,8 +14,10 @@ import {
   pullSlotCredentials,
   pushSlotCredentials,
   reconcileSlotCredentials,
+  remoteSlotPath,
 } from '../../src/lib/cluster/remote-slot-files.mjs'
-import { slotImageSpec, tarStream } from '../../src/lib/cluster/slot-image.mjs'
+import { slotImageSpec } from '../../src/lib/cluster/slot-image.mjs'
+import { tarStream } from '../../src/lib/cluster/tar.mjs'
 import { SocketRelay } from '../../src/lib/cluster/socket-relay.mjs'
 import { connectSsh } from '../../src/lib/cluster/ssh-link.mjs'
 import { iptablesPlan } from '../../src/lib/vm/egress.mjs'
@@ -26,44 +28,79 @@ function tmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
 }
 
-/** In-memory SFTP + exec double: enough of ssh2's client surface for remote-slot-files. */
+/**
+ * In-memory SFTP + exec double: enough of ssh2's client surface for remote-slot-files.
+ * `links` holds symlinks a guest planted; opening or reading through one fails like
+ * O_EXCL / O_NOFOLLOW would, so a follow-the-link regression shows up as a leak.
+ */
 function fakeNode(files = new Map()) {
   const sftp = new EventEmitter()
   const ok = (cb, v) => setImmediate(() => cb(null, v))
+  const fail = (cb, msg) => setImmediate(() => cb(Object.assign(new Error(msg), { code: 4 })))
   const modes = new Map()
-  sftp.writeFile = (p, data, opts, cb) => {
-    files.set(p, Buffer.from(data))
-    modes.set(p, opts.mode)
+  const links = new Map()
+  const handles = new Map()
+  sftp.open = (p, flags, attrs, cb) => {
+    if (flags !== 'wx') return fail(cb, `unexpected flags ${flags}`)
+    if (files.has(p) || links.has(p)) return fail(cb, 'EEXIST')
+    const h = Buffer.from(String(handles.size))
+    handles.set(h.toString(), { p, chunks: [] })
+    files.set(p, Buffer.alloc(0))
+    modes.set(p, attrs.mode)
+    ok(cb, h)
+  }
+  sftp.write = (h, buf, off, len, _pos, cb) => {
+    handles.get(h.toString()).chunks.push(Buffer.from(buf.subarray(off, off + len)))
     ok(cb)
   }
-  sftp.readFile = (p, cb) => {
-    if (!files.has(p)) return setImmediate(() => cb(Object.assign(new Error('No such file'), { code: 2 })))
-    ok(cb, files.get(p))
+  sftp.fchmod = (h, mode, cb) => {
+    modes.set(handles.get(h.toString()).p, mode)
+    ok(cb)
   }
-  sftp.chmod = (_p, _m, cb) => ok(cb)
-  sftp.chown = (_p, _u, _g, cb) => ok(cb)
+  sftp.fchown = (_h, _u, _g, cb) => ok(cb)
+  sftp.close = (h, cb) => {
+    const e = handles.get(h.toString())
+    files.set(e.p, Buffer.concat(e.chunks))
+    ok(cb)
+  }
   sftp.unlink = (p, cb) => {
     files.delete(p)
+    links.delete(p)
     ok(cb)
   }
   sftp.ext_openssh_rename = (from, to, cb) => {
+    links.delete(to)
     files.set(to, files.get(from))
     modes.set(to, modes.get(from))
+    files.delete(from)
     ok(cb)
   }
   sftp.symlink = (target, link, cb) => {
-    files.set(link, `->${target}`)
+    links.set(link, target)
     ok(cb)
   }
   const client = {
     sftp: (cb) => ok(cb, sftp),
-    exec: (_cmd, cb) => {
+    exec: (cmd, cb) => {
       const stream = new EventEmitter()
       stream.stderr = new EventEmitter()
       stream.close = () => {}
       ok(cb, stream)
+      // readRemoteFileNoFollow: dd … | base64. Missing → exit 3; symlink → refused.
+      // The path sits inside `bash -c '…'`, so its own quotes arrive as '\''…'\''.
+      const m = /f='\\''(.+?)'\\''.*iflag=nofollow/.exec(cmd)
+      let code = 0
+      let out = ''
+      if (m) {
+        const p = m[1]
+        if (links.has(p)) code = 1
+        else if (!files.has(p)) code = 3
+        else out = files.get(p).toString('base64')
+      }
       setImmediate(() => {
-        stream.emit('exit', 0)
+        if (out) stream.emit('data', Buffer.from(out))
+        if (code === 1) stream.stderr.emit('data', Buffer.from('Too many levels of symbolic links'))
+        stream.emit('exit', code)
         stream.emit('close')
       })
     },
@@ -72,8 +109,9 @@ function fakeNode(files = new Map()) {
   return {
     files,
     modes,
+    links,
     session: { nodeId: 'node-t', client, host },
-    remoteCred: `${host.root}/vms/vm-07/cli-home/.claude/credentials.json`,
+    remoteCred: `${host.root}/vms/vm-07/claude/credentials.json`,
   }
 }
 
@@ -109,10 +147,7 @@ test('start reconcile seeds an empty node dir from the local credential', async 
   const r = await reconcileSlotCredentials(vm, slotDir, node.session)
   assert.equal(r.pushed, true)
   assert.equal(node.files.get(node.remoteCred).toString(), '{"rt":"first"}')
-  assert.equal(
-    node.files.get(`${node.session.host.root}/vms/vm-07/cli-home/.claude/.credentials.json`),
-    '->credentials.json',
-  )
+  assert.equal(node.links.get(`${node.session.host.root}/vms/vm-07/claude/.credentials.json`), 'credentials.json')
 })
 
 test('explicit import replaces the node credential at 0600; identical pull is a no-op', async () => {
@@ -124,6 +159,29 @@ test('explicit import replaces the node credential at 0600; identical pull is a 
   assert.equal(node.files.get(node.remoteCred).toString(), '{"rt":"imported"}')
   assert.equal(node.modes.get(node.remoteCred), 0o600, 'a 0777 local checkout must not leak its mode to the node')
   assert.deepEqual(await pullSlotCredentials(vm, slotDir, node.session), { pulled: false, reason: 'same' })
+})
+
+test('a guest-planted symlink at the credential path is refused, not followed', async () => {
+  const node = fakeNode()
+  const sibling = `${node.session.host.root}/vms/vm-08/claude/credentials.json`
+  node.files.set(sibling, Buffer.from('{"rt":"sibling-secret"}'))
+  node.links.set(node.remoteCred, sibling)
+  const slotDir = localSlot('{"rt":"mine"}')
+  await assert.rejects(pullSlotCredentials(vm, slotDir, node.session), { code: 'remote_read_refused' })
+  const local = path.join(slotDir, 'cli-home', '.claude', 'credentials.json')
+  assert.equal(fs.readFileSync(local, 'utf8'), '{"rt":"mine"}', 'sibling credential must not reach the control plane')
+
+  // An import replaces the link itself; the sibling file keeps its bytes.
+  await pushSlotCredentials(vm, slotDir, node.session)
+  assert.equal(node.files.get(sibling).toString(), '{"rt":"sibling-secret"}')
+  assert.equal(node.links.has(node.remoteCred), false)
+  assert.equal(node.files.get(node.remoteCred).toString(), '{"rt":"mine"}')
+})
+
+test('node paths keep ~/.claude in the host-owned mount, everything else in place', () => {
+  assert.equal(remoteSlotPath('cli-home/.claude/settings.json'), 'claude/settings.json')
+  assert.equal(remoteSlotPath('run/kernel.json'), 'run/kernel.json')
+  assert.equal(remoteSlotPath('machine-id'), 'machine-id')
 })
 
 test('remote slot runs as the SSH user unless that user is root', () => {
