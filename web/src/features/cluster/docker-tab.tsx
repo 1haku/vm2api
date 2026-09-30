@@ -106,7 +106,16 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
     )
   }
 
-  const items = containers.data || []
+  // 同一 VM 的槽位与出口挨着：kin-02 → kin-02-egress；其余容器按名字排在后面。
+  const items = [...(containers.data || [])].sort((a, b) => {
+    const ka = a.vm_id
+      ? `0${a.vm_id}${a.role === 'egress' ? '1' : '0'}`
+      : `1${a.name}`
+    const kb = b.vm_id
+      ? `0${b.vm_id}${b.role === 'egress' ? '1' : '0'}`
+      : `1${b.name}`
+    return ka.localeCompare(kb)
+  })
 
   return (
     <div className='space-y-4'>
@@ -160,7 +169,16 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
                 return (
                   <tr key={c.id} className='border-t border-border/40'>
                     <td className='px-3 py-1.5'>
-                      <div className='font-medium'>{c.name}</div>
+                      <div className='flex items-center gap-1.5 font-medium'>
+                        <span className={c.role === 'egress' ? 'pl-3' : ''}>
+                          {c.name}
+                        </span>
+                        {c.vm_id ? (
+                          <span className='rounded-[4px] border border-border/70 px-1 text-[10px] leading-4 font-normal text-muted-foreground'>
+                            {c.role === 'egress' ? `${c.vm_id} 出口` : c.vm_id}
+                          </span>
+                        ) : null}
+                      </div>
                       <div className='font-mono text-[10px] text-muted-foreground'>
                         {c.id.slice(0, 12)}
                       </div>

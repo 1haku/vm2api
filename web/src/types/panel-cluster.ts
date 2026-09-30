@@ -26,6 +26,8 @@ export type ClusterApiNode = {
   health: {
     latency_ms: number | null
     docker: { ok: boolean; error: string | null }
+    /** Docker `/info` 计数；Docker 不可用时为 null。 */
+    containers: { total: number | null; running: number | null } | null
     checked_at: string
   } | null
   bridge: {
@@ -62,6 +64,7 @@ export type PreflightCheckId =
   | 'memory'
   | 'disk'
   | 'sudo'
+  | 'swap'
   | 'image'
   | 'hostd'
   | 'relay'
@@ -124,6 +127,9 @@ export type DockerContainer = {
   created_at: string | null
   ports: string[]
   managed: boolean
+  /** 槽位与其出口共用：`kin-02`（slot）/ `kin-02-egress`（egress）。 */
+  vm_id: string | null
+  role: 'slot' | 'egress' | null
 }
 
 export type DockerContainerInput = {

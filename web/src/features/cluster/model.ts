@@ -21,6 +21,8 @@ export type ClusterNode = {
   credCount: number | null
   onlineCredCount: number | null
   spendUsd: number | null
+  /** 远端 Docker 容器数（含 egress）；本机不统计为 null。 */
+  docker: { running: number; total: number } | null
   /** 远端节点的原始控制面记录；本机为空。 */
   remote?: ClusterApiNode
 }
@@ -85,6 +87,16 @@ export function localSpendUsd(
   )
 }
 
+/** 一组槽位（本机或某节点）的计数与累计花费；归属按 `node_id`。 */
+export function slotStats(vms: Vm[]) {
+  return {
+    vmCount: vms.length,
+    credCount: vms.filter((vm) => vm.has_token).length,
+    onlineCredCount: vms.filter((vm) => accountUsable(vm)).length,
+    spendUsd: vms.reduce((sum, vm) => sum + (Number(vm.total_cost) || 0), 0),
+  }
+}
+
 export function buildLocalNode(input: {
   host: string
   vms: Vm[] | undefined
@@ -103,9 +115,12 @@ export function buildLocalNode(input: {
       credCount: null,
       onlineCredCount: null,
       spendUsd: null,
+      docker: null,
     }
   }
-  const vms = input.vms || []
+  const all = input.vms || []
+  // 账单总额含节点槽位；节点行各自计入，本机只留差额，合计不重复。
+  const remoteSpend = slotStats(all.filter((vm) => !!vm.node_id)).spendUsd
   return {
     id: 'local',
     role: 'local',
@@ -113,10 +128,9 @@ export function buildLocalNode(input: {
     host: input.host,
     link: 'ok',
     latencyMs: 0,
-    vmCount: vms.length,
-    credCount: vms.filter((vm) => vm.has_token).length,
-    onlineCredCount: vms.filter((vm) => accountUsable(vm)).length,
-    spendUsd: input.spendUsd,
+    ...slotStats(all.filter((vm) => !vm.node_id)),
+    spendUsd: Math.max(0, input.spendUsd - remoteSpend),
+    docker: null,
   }
 }
 
@@ -143,8 +157,12 @@ export function remoteLink(node: ClusterApiNode): ClusterLink {
   return 'none'
 }
 
-/** 远端槽位 / 凭证 / 花费还没并进调度池，保持 null 显示为 —。 */
-export function remoteNodeFromApi(node: ClusterApiNode): ClusterNode {
+/** 节点行：链路来自控制面，槽位 / 凭证 / 花费来自 `node_id` 归属的 VM。 */
+export function remoteNodeFromApi(
+  node: ClusterApiNode,
+  vms: Vm[] | undefined = []
+): ClusterNode {
+  const counts = node.health?.containers
   return {
     id: node.id,
     role: 'remote',
@@ -153,10 +171,11 @@ export function remoteNodeFromApi(node: ClusterApiNode): ClusterNode {
     link: remoteLink(node),
     latencyMs:
       node.link.state === 'ready' ? (node.health?.latency_ms ?? null) : null,
-    vmCount: null,
-    credCount: null,
-    onlineCredCount: null,
-    spendUsd: null,
+    ...slotStats((vms || []).filter((vm) => vm.node_id === node.id)),
+    docker:
+      counts && counts.total != null
+        ? { running: Number(counts.running) || 0, total: counts.total }
+        : null,
     remote: node,
   }
 }

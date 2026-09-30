@@ -85,17 +85,16 @@ export function remoteIptablesScript(plan, { sudo = false } = {}) {
   return out.join('\n')
 }
 
-async function ensureRemoteNetwork(docker, proxyId, { masquerade }) {
-  const name = networkName(proxyId)
-  if (!name) throw Object.assign(new Error('proxy id required'), { code: 'proxy_id_required' })
+async function ensureRemoteNetwork(docker, { name, bridge, masquerade, labels = {} }) {
   let info = await inspectNetworkOrNull(docker, name)
   if (!info) {
     await createNetwork(docker, {
       Name: name,
       Driver: 'bridge',
       EnableIPv6: false,
+      Labels: labels,
       Options: {
-        'com.docker.network.bridge.name': bridgeName(proxyId),
+        'com.docker.network.bridge.name': bridge,
         'com.docker.network.bridge.enable_ip_masquerade': masquerade ? 'true' : 'false',
         'com.docker.network.bridge.enable_icc': 'false',
       },
@@ -105,18 +104,43 @@ async function ensureRemoteNetwork(docker, proxyId, { masquerade }) {
   const subnet = info?.IPAM?.Config?.[0]?.Subnet || ''
   if (!subnet) throw Object.assign(new Error(`egress network ${name} has no subnet`), { code: 'egress_network_failed' })
   const gateway = info.IPAM.Config[0].Gateway || gatewayFromSubnet(subnet)
-  return { name, subnet, gateway, bridge: bridgeName(proxyId) }
+  return { name, subnet, gateway, bridge }
 }
 
 /**
- * Build the VM's exit on the node. px-local = masquerading bridge (node's own IP).
- * SOCKS = non-masquerading bridge + kin-egress (host-network container from the
- * slot image) + iptables REDIRECT, exactly like egress.mjs does on the control plane.
+ * A node SOCKS exit belongs to one slot and is named after its container, so the
+ * node's Docker list reads as pairs: kin-02 / kin-02-egress on kin-02-net. Bridge
+ * and chain carry a hash (iface names cap at 15 chars; long VM ids must not collide).
  */
-export async function ensureRemoteEgress(session, proxy, { imageRef }) {
+export function slotEgressNames(vmId) {
+  const slot = containerName(vmId)
+  const tag = crypto.createHash('sha1').update(String(vmId)).digest('hex').slice(0, 10)
+  return {
+    slot,
+    network: `${slot}-net`,
+    egress: `${slot}-egress`,
+    bridge: `keg${tag}`,
+    chain: `KEG${tag}`,
+    ports: portsForProxy(vmId),
+  }
+}
+
+/**
+ * Build the VM's exit on the node. px-local = shared masquerading bridge (node's
+ * own IP, no process). SOCKS = the slot's own non-masquerading bridge + its
+ * kin-egress (host-network container from the slot image) + iptables REDIRECT,
+ * exactly like egress.mjs does on the control plane.
+ */
+export async function ensureRemoteEgress(session, vm, { imageRef }) {
+  const proxy = vm.proxy
   if (isLocalEgressProxy(proxy)) {
-    const net = await ensureRemoteNetwork(session.docker, proxy?.id || LOCAL_EGRESS_ID, { masquerade: true })
-    return { ok: true, mode: 'local', network: net.name }
+    const id = proxy?.id || LOCAL_EGRESS_ID
+    const net = await ensureRemoteNetwork(session.docker, {
+      name: networkName(id),
+      bridge: bridgeName(id),
+      masquerade: true,
+    })
+    return { ok: true, mode: 'local', network: net.name, egress: null }
   }
   const proxyId = proxy?.id
   const proxyUrl = boundProxyUrl(proxy)
@@ -126,32 +150,42 @@ export async function ensureRemoteEgress(session, proxy, { imageRef }) {
   if (session.host.uid !== 0 && !session.host.sudo) {
     return { ok: false, code: 'egress_sudo_required', error: '节点需要 root 或免密 sudo 才能为 SOCKS5 出口写 iptables' }
   }
-  const net = await ensureRemoteNetwork(session.docker, proxyId, { masquerade: false })
-  const ports = portsForProxy(proxyId)
+  const names = slotEgressNames(vm.id)
+  const net = await ensureRemoteNetwork(session.docker, {
+    name: names.network,
+    bridge: names.bridge,
+    masquerade: false,
+    labels: { 'kin.egress.vm': vm.id },
+  })
   const cfg = {
     proxy_id: proxyId,
     proxy_url: proxyUrl,
-    listen_tcp: `${net.gateway}:${ports.tcp}`,
-    listen_dns: `${net.gateway}:${ports.dns}`,
+    listen_tcp: `${net.gateway}:${names.ports.tcp}`,
+    listen_dns: `${net.gateway}:${names.ports.dns}`,
   }
   const dnsUpstream = configuredDnsUpstream()
   if (dnsUpstream) cfg.dns_upstream = dnsUpstream
   const body = `${JSON.stringify(cfg, null, 2)}\n`
   const digest = crypto.createHash('sha256').update(body).update(imageRef).digest('hex').slice(0, 16)
-  const key = proxyKey(proxyId)
-  const dir = `${session.host.root}/egress/${key}`
+  // Beside the slot tree, outside every guest bind: the guest never sees the proxy password.
+  const dir = `${remoteSlotDir(session.host, vm.id)}/egress`
   const owner = session.host.uid === 0 ? null : { uid: session.host.uid, gid: session.host.gid }
-  const name = `kin-egress-${key}`
-  const existing = await inspectContainerOrNull(session.docker, name)
+  const existing = await inspectContainerOrNull(session.docker, names.egress)
   if (!(existing?.State?.Running && existing.Config?.Labels?.['kin.egress.cfg'] === digest)) {
     await runRemote(session.client, `umask 077 && mkdir -p ${shellQuote(dir)} && chmod 700 ${shellQuote(dir)}`)
     await writeRemoteFile(await openSftp(session.client), `${dir}/egress.json`, body, { mode: 0o600 })
-    if (existing) await removeContainer(session.docker, name)
-    await createContainerRaw(session.docker, name, {
+    if (existing) await removeContainer(session.docker, names.egress)
+    await createContainerRaw(session.docker, names.egress, {
       Image: imageRef,
       ...(owner ? { User: `${owner.uid}:${owner.gid}` } : {}),
       Cmd: ['/usr/local/bin/kin-egress', '-config', '/etc/kin-egress/egress.json'],
-      Labels: { 'kin.egress': '1', 'kin.egress.proxy': proxyId, 'kin.egress.cfg': digest },
+      Labels: {
+        'kin.egress': '1',
+        'kin.egress.vm': vm.id,
+        'kin.egress.proxy': proxyId,
+        'kin.egress.cfg': digest,
+        'vm2api.cluster': '1',
+      },
       HostConfig: {
         NetworkMode: 'host',
         Binds: [`${dir}:/etc/kin-egress:ro`],
@@ -161,48 +195,74 @@ export async function ensureRemoteEgress(session, proxy, { imageRef }) {
         SecurityOpt: ['no-new-privileges'],
       },
     })
-    await containerAction(session.docker, name, 'start')
+    await containerAction(session.docker, names.egress, 'start')
   }
   // Passive: a TCP connect would enter kin-egress's transparent path (it refuses self-destined conns).
-  const listen = `${net.gateway}:${ports.tcp}`
-  const probe = `for i in $(seq 1 40); do ss -H -ltn 'sport = :${ports.tcp}' | awk '{print $4}' | grep -qxF -e '${listen}' -e '0.0.0.0:${ports.tcp}' -e '*:${ports.tcp}' && exit 0; sleep 0.2; done; exit 1`
+  const tcp = names.ports.tcp
+  const probe = `for i in $(seq 1 40); do ss -H -ltn 'sport = :${tcp}' | awk '{print $4}' | grep -qxF -e '${net.gateway}:${tcp}' -e '0.0.0.0:${tcp}' -e '*:${tcp}' && exit 0; sleep 0.2; done; exit 1`
   await runRemote(session.client, `bash -c ${shellQuote(probe)}`, { timeoutMs: 20_000, code: 'egress_not_listening' })
   const plan = iptablesPlan({
-    chain: chainName(proxyId),
+    chain: names.chain,
     bridge: net.bridge,
     subnet: net.subnet,
-    tcpPort: ports.tcp,
-    dnsPort: ports.dns,
+    tcpPort: tcp,
+    dnsPort: names.ports.dns,
   })
   await runRemote(session.client, remoteIptablesScript(plan, { sudo: session.host.uid !== 0 }), {
     code: 'egress_iptables_failed',
   })
-  return { ok: true, mode: 'socks', network: net.name }
+  return { ok: true, mode: 'socks', network: net.name, egress: names.egress }
+}
+
+/** Where a network's exit lives: per-slot (labelled), pre-1.3.88 per-proxy, or the shared px-local bridge. */
+function exitOf(name, info, host) {
+  const vmId = info.Labels?.['kin.egress.vm']
+  if (vmId) {
+    const n = slotEgressNames(vmId)
+    return {
+      egress: n.egress,
+      chain: n.chain,
+      bridge: n.bridge,
+      ports: n.ports,
+      dir: `${remoteSlotDir(host, vmId)}/egress`,
+    }
+  }
+  const proxyId = name.slice('kin-eg-'.length)
+  if (isLocalEgressProxy({ id: proxyId })) return { egress: null }
+  const key = proxyKey(proxyId)
+  return {
+    egress: `kin-egress-${key}`,
+    chain: chainName(proxyId),
+    bridge: bridgeName(proxyId),
+    ports: portsForProxy(proxyId),
+    dir: `${host.root}/egress/${key}`,
+  }
 }
 
 /**
  * Remote twin of stopProxyEgress, run when a slot leaves an exit network. The
- * node keeps an exit only while some container still sits on it; the network's
- * own container list is the node-local truth (the proxy may still bind VMs elsewhere).
+ * network's own container list is the node-local truth: only an empty network
+ * loses its kin-egress, iptables rows, bridge and config.
  */
 export async function releaseRemoteEgress(session, networkMode) {
   const name = String(networkMode || '')
-  if (!name.startsWith('kin-eg-')) return { released: false }
-  const proxyId = name.slice('kin-eg-'.length)
-  const info = await inspectNetworkOrNull(session.docker, name)
+  const info = name ? await inspectNetworkOrNull(session.docker, name) : null
   if (!info) return { released: false }
+  const owned = !!info.Labels?.['kin.egress.vm'] || name.startsWith('kin-eg-')
+  if (!owned) return { released: false }
   if (Object.keys(info.Containers || {}).length) return { released: false, reason: 'in_use' }
-  const key = proxyKey(proxyId)
-  const egress = `kin-egress-${key}`
-  if (await inspectContainerOrNull(session.docker, egress)) await removeContainer(session.docker, egress)
+  const exit = exitOf(name, info, session.host)
+  if (exit.egress && (await inspectContainerOrNull(session.docker, exit.egress))) {
+    await removeContainer(session.docker, exit.egress)
+  }
   const subnet = info.IPAM?.Config?.[0]?.Subnet
-  if (subnet && !isLocalEgressProxy({ id: proxyId })) {
+  if (exit.egress && subnet) {
     const plan = iptablesPlan({
-      chain: chainName(proxyId),
-      bridge: bridgeName(proxyId),
+      chain: exit.chain,
+      bridge: exit.bridge,
       subnet,
-      tcpPort: portsForProxy(proxyId).tcp,
-      dnsPort: portsForProxy(proxyId).dns,
+      tcpPort: exit.ports.tcp,
+      dnsPort: exit.ports.dns,
     })
     const ipt = `${session.host.uid !== 0 ? 'sudo -n ' : ''}iptables`
     // Each row may already be gone; deletion keeps going like the local removeIptables.
@@ -210,7 +270,7 @@ export async function releaseRemoteEgress(session, networkMode) {
     await runRemote(session.client, script, { code: 'egress_iptables_failed' })
   }
   await removeNetwork(session.docker, name)
-  await runRemote(session.client, `rm -rf ${shellQuote(`${session.host.root}/egress/${key}`)}`)
+  if (exit.dir) await runRemote(session.client, `rm -rf ${shellQuote(exit.dir)}`)
   return { released: true, network: name }
 }
 
@@ -249,7 +309,9 @@ function slotContainerBody(vm, { image, network, remoteDir, user }) {
       NetworkMode: network,
       RestartPolicy: { Name: 'unless-stopped' },
       Memory: mem,
-      MemorySwap: mem,
+      // RAM cap stays SLOT_MEMORY; an equal swap allowance lets idle CLI pages leave
+      // RAM on small nodes (MemorySwap == Memory would forbid swap entirely).
+      MemorySwap: mem * 2,
       PidsLimit: 256,
       ReadonlyRootfs: true,
       Tmpfs: { '/tmp': 'rw,noexec,nosuid,size=32m' },
@@ -261,7 +323,7 @@ function slotContainerBody(vm, { image, network, remoteDir, user }) {
   }
 }
 
-function applyRuntime(vm, { nodeId, name, info, image, network, user, relays, slotDir, egress }) {
+function applyRuntime(vm, { nodeId, name, info, image, network, user, relays, slotDir, egress, egressContainer }) {
   vm.runtime = {
     ...(vm.runtime || {}),
     type: 'docker',
@@ -284,6 +346,7 @@ function applyRuntime(vm, { nodeId, name, info, image, network, user, relays, sl
     worker_run_dir: path.join(slotDir, 'run'),
     worker_token_file: path.join(slotDir, 'run', 'internal.token'),
     egress,
+    egress_container: egressContainer || null,
     stopped: false,
   }
 }
@@ -327,14 +390,24 @@ export async function startRemoteSlot(vm, projectRoot, { recreate = false, routi
     const p = await prepare(vm, projectRoot, routing)
     if (p.fail) return p.fail
     const { nodeId, session, image, user, remoteDir, slotDir } = p
-    const eg = await ensureRemoteEgress(session, vm.proxy, { imageRef: image })
+    const eg = await ensureRemoteEgress(session, vm, { imageRef: image })
     if (!eg.ok) return eg
     const name = containerName(vm.id)
     const relays = await clusterManager().ensureSlotRelays(nodeId, vm.id)
     let existing = await inspectContainerOrNull(session.docker, name)
     const matches =
       existing && existing.Config?.Image === image && existing.HostConfig?.NetworkMode === eg.network && !recreate
-    const common = { nodeId, name, image, network: eg.network, user, relays, slotDir, egress: eg.mode }
+    const common = {
+      nodeId,
+      name,
+      image,
+      network: eg.network,
+      user,
+      relays,
+      slotDir,
+      egress: eg.mode,
+      egressContainer: eg.egress,
+    }
     if (matches && existing.State?.Running) {
       applyRuntime(vm, { ...common, info: existing })
       return { ok: true, action: 'already-running', runtime: vm.runtime }
@@ -378,7 +451,7 @@ export async function reloadRemoteSlot(vm, projectRoot, { routing } = {}) {
     const p = await prepare(vm, projectRoot, routing)
     if (p.fail) return p.fail
     const { nodeId, session, image, user, remoteDir, slotDir } = p
-    const eg = await ensureRemoteEgress(session, vm.proxy, { imageRef: image })
+    const eg = await ensureRemoteEgress(session, vm, { imageRef: image })
     if (!eg.ok) return eg
     const name = containerName(vm.id)
     const existing = await inspectContainerOrNull(session.docker, name)
@@ -406,6 +479,7 @@ export async function reloadRemoteSlot(vm, projectRoot, { routing } = {}) {
       relays,
       slotDir,
       egress: eg.mode,
+      egressContainer: eg.egress,
       info: await inspectContainerOrNull(session.docker, name),
     })
     return { ok: true, action: running ? 'reloaded' : 'started', runtime: vm.runtime }

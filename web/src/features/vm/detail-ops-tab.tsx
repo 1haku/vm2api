@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/tooltip'
 import { Field } from '@/features/vm/detail-section-primitives'
 import { VmEnvironmentCard } from '@/features/vm/environment-card'
+import { NodeChip } from '@/features/vm/node-chip'
 import { isRemoteVm, REMOTE_UNSUPPORTED_TEXT } from '@/features/vm/placement'
 
 type VmOpsTabProps = {
@@ -54,6 +55,9 @@ export function VmOpsTab(props: VmOpsTabProps) {
           <CardTitle className='text-sm'>容器</CardTitle>
         </CardHeader>
         <CardContent className='divide-y pt-0'>
+          <Field label='服务器'>
+            <NodeChip nodeId={vm.node_id} className='text-[11px]' />
+          </Field>
           <Field label='容器'>
             <span className='font-mono text-xs'>
               {String(
@@ -64,6 +68,16 @@ export function VmOpsTab(props: VmOpsTabProps) {
               )}
             </span>
           </Field>
+          {(vm.runtime as Record<string, unknown> | undefined)
+            ?.egress_container ? (
+            <Field label='出口容器'>
+              <span className='font-mono text-xs'>
+                {String(
+                  (vm.runtime as Record<string, unknown>).egress_container
+                )}
+              </span>
+            </Field>
+          ) : null}
           <Field label='guest'>
             <span className='font-mono text-xs'>
               {String(

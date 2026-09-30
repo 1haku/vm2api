@@ -8,7 +8,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { DOCKER_SOCKET_PATH, dockerPing, sshDocker } from './docker-remote.mjs'
+import { DOCKER_SOCKET_PATH, dockerInfo, dockerPing, sshDocker } from './docker-remote.mjs'
 import { collectLocalStatus } from './local-status.mjs'
 import { shellQuote } from './remote-fs.mjs'
 import { SocketRelay } from './socket-relay.mjs'
@@ -201,9 +201,11 @@ export class ClusterManager {
       if (err.code === 'streamlocal_failed') latencyMs = performance.now() - t0
     }
     let docker
+    let containers = null
     try {
-      await dockerPing(sshDocker(client))
+      const info = await dockerInfo(sshDocker(client))
       docker = { ok: true, error: null }
+      containers = { total: info.containers, running: info.running }
     } catch (err) {
       docker = { ok: false, error: err.message }
     }
@@ -211,6 +213,7 @@ export class ClusterManager {
     this.health.set(id, {
       latency_ms: latencyMs == null ? null : Math.round(latencyMs),
       docker,
+      containers,
       checked_at: new Date().toISOString(),
     })
   }
