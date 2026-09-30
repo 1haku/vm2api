@@ -1533,6 +1533,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     resolved_dataplane: resolveKernelDataplane(v, extras.routingConfig || {}),
     note: v.note || null,
     region: v.region || null,
+    node_id: v.node_id || null,
     timezone: v.timezone || null,
     timezone_source: v.timezone_source || 'auto',
     locale: v.locale || null,

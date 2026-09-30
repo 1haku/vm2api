@@ -244,6 +244,17 @@ export function persistAllowedModels(projectRoot, vmId, models) {
   return vm
 }
 
+/** Reload can recreate the container (new id, new exit network); the record must follow. Re-reads so other fields are not clobbered. */
+export function persistVmRuntime(projectRoot, vmId, runtime) {
+  const file = path.join(projectRoot, 'vms', `${vmId}.json`)
+  if (!runtime || !fs.existsSync(file)) return null
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.runtime = runtime
+  vm.updated_at = new Date().toISOString()
+  atomicWriteJson(file, vm, { mode: 0o600 })
+  return vm
+}
+
 export function persistVmSessionSlots(projectRoot, vmId, value, { override = true } = {}) {
   const file = path.join(projectRoot, 'vms', `${vmId}.json`)
   if (!fs.existsSync(file)) return null
