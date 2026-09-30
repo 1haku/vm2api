@@ -44,6 +44,7 @@ import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
 import { restrictionTitle } from '@/features/vm/clear-restriction'
 import { Field } from '@/features/vm/detail-section-primitives'
+import { NodeChip } from '@/features/vm/node-chip'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
 import {
   SchedulableSwitch,
@@ -265,8 +266,9 @@ export function VmDetailCard({
         }}
       >
         <DialogHeader>
-          <DialogTitle className='text-base'>
+          <DialogTitle className='flex min-w-0 items-center gap-1.5 text-base'>
             {vm ? <SlotIdentity vm={vm} compact /> : '槽位详情'}
+            {vm ? <NodeChip nodeId={vm.node_id} /> : null}
           </DialogTitle>
           <DialogDescription className='sr-only'>槽位详情</DialogDescription>
         </DialogHeader>

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/tooltip'
 import { Field } from '@/features/vm/detail-section-primitives'
 import { VmEnvironmentCard } from '@/features/vm/environment-card'
+import { isRemoteVm, REMOTE_UNSUPPORTED_TEXT } from '@/features/vm/placement'
 
 type VmOpsTabProps = {
   vm: Vm
@@ -45,6 +46,7 @@ export function VmOpsTab(props: VmOpsTabProps) {
   } = props
 
   const gpt = isCodexVm(vm)
+  const remote = isRemoteVm(vm)
   return (
     <TabsContent value='ops' className='space-y-3 pt-4'>
       <Card>
@@ -105,7 +107,7 @@ export function VmOpsTab(props: VmOpsTabProps) {
                   <Button
                     size='sm'
                     variant='outline'
-                    disabled={!officialCc}
+                    disabled={!officialCc || remote}
                     onClick={() =>
                       onAction('/official-cc-bootstrap', {
                         force: true,
@@ -117,7 +119,9 @@ export function VmOpsTab(props: VmOpsTabProps) {
                   </Button>
                 </span>
               </TooltipTrigger>
-              {!officialCc ? (
+              {remote ? (
+                <TooltipContent>{REMOTE_UNSUPPORTED_TEXT}</TooltipContent>
+              ) : !officialCc ? (
                 <TooltipContent>
                   官方初装只支持完整 OAuth 凭证，当前槽为{' '}
                   {credTypeLabel(credType)}
@@ -154,10 +158,11 @@ export function VmOpsTab(props: VmOpsTabProps) {
       {gpt ? null : (
         <>
           <Separator />
-          <div className='flex flex-wrap gap-2'>
+          <div className='flex flex-wrap items-center gap-2'>
             <Button
               size='sm'
               variant='outline'
+              disabled={remote}
               onClick={() => onAction('/wrap-cli/promote')}
             >
               晋升母本
@@ -165,10 +170,16 @@ export function VmOpsTab(props: VmOpsTabProps) {
             <Button
               size='sm'
               variant='outline'
+              disabled={remote}
               onClick={() => onAction('/wrap-cli/repair')}
             >
               重装 kernel
             </Button>
+            {remote ? (
+              <span className='text-xs text-muted-foreground'>
+                {REMOTE_UNSUPPORTED_TEXT}
+              </span>
+            ) : null}
           </div>
         </>
       )}

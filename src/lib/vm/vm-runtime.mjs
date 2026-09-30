@@ -329,7 +329,7 @@ function readProjectRouting(projectRoot) {
   return readRoutingConfigFile(projectRoot)
 }
 
-function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
+export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
   const paths = workerPaths(projectRoot, vm.id)
   const uid = runtimeUidNum(vm)
   const gid = Number(GID)

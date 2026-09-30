@@ -45,6 +45,43 @@ export type DockerInstallJob = {
   finished_at: string | null
 }
 
+/** `POST|GET /api/panel/cluster/nodes/:id/slot-image`：远端节点上构建槽位镜像。 */
+export type SlotImageJob = {
+  status: 'running' | 'done' | 'failed'
+  ref: string
+  kernel: string
+  log: string
+  started_at: string
+  finished_at: string | null
+}
+
+export type PreflightCheckId =
+  | 'ssh'
+  | 'docker'
+  | 'arch'
+  | 'memory'
+  | 'disk'
+  | 'sudo'
+  | 'image'
+  | 'hostd'
+  | 'relay'
+
+/** `ok:false` + `level:'error'` 阻断创建；`warn` 只提示。 */
+export type PreflightCheck = {
+  id: PreflightCheckId
+  ok: boolean
+  level: 'error' | 'warn'
+  message: string
+}
+
+/** `POST /api/panel/cluster/nodes/:id/preflight`：`ok` = 没有失败的 error 级检查。 */
+export type NodePreflight = {
+  node_id: string
+  ok: boolean
+  image: { ref: string; present: boolean; job: SlotImageJob | null }
+  checks: PreflightCheck[]
+}
+
 export type ClusterNodeInput = {
   label?: string
   host: string

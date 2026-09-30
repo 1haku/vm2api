@@ -5,11 +5,13 @@
  */
 
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { DockerBridge } from './docker-bridge.mjs'
 import { DOCKER_SOCKET_PATH, dockerPing, sshDocker } from './docker-remote.mjs'
 import { collectLocalStatus } from './local-status.mjs'
+import { shellQuote } from './remote-fs.mjs'
+import { SocketRelay } from './socket-relay.mjs'
 import {
   ClusterError,
   connectSsh,
@@ -84,7 +86,7 @@ export function parseNodeInput(input = {}, { requireHostKey = false } = {}) {
 
 export class ClusterManager {
   /**
-   * @param {{ repo: import('../db/repos/cluster-nodes-repo.mjs').ClusterNodesRepo, dataDir: string, socketDir?: string, logger?: Console }} opts
+   * @param {{ repo: import('../db/repos/cluster-nodes-repo.mjs').ClusterNodesRepo, dataDir: string, socketDir?: string, vmsOnNode?: (nodeId: string) => { id: string }[], logger?: Console }} opts
    */
   constructor({
     repo,
@@ -92,6 +94,7 @@ export class ClusterManager {
     listen = { host: null, port: null },
     containerName = process.env.VM2API_CONTAINER_NAME,
     socketDir = process.env.VM2API_CLUSTER_SOCKET_DIR,
+    vmsOnNode = () => [],
     logger = console,
   }) {
     this.listen = listen
@@ -102,9 +105,12 @@ export class ClusterManager {
     this.repo = repo
     // Unix sockets need a native filesystem; WSL drvfs (/mnt/<drive>) refuses them.
     this.socketDir = socketDir || path.join(dataDir, 'cluster')
+    this.vmsOnNode = vmsOnNode
     this.logger = logger
     this.links = new Map()
     this.bridges = new Map()
+    this.slotRelays = new Map()
+    this.hosts = new WeakMap()
     this.health = new Map()
     this.installs = new Map()
     this.tickets = new Map()
@@ -123,9 +129,11 @@ export class ClusterManager {
     clearInterval(this._healthTimer)
     this._healthTimer = null
     for (const link of this.links.values()) link.stop()
-    await Promise.all([...this.bridges.values()].map((b) => b.stop().catch(() => {})))
+    const relays = [...this.bridges.values(), ...[...this.slotRelays.values()].flatMap((r) => [r.kernel, r.worker])]
+    await Promise.all(relays.map((r) => r.stop().catch(() => {})))
     this.links.clear()
     this.bridges.clear()
+    this.slotRelays.clear()
   }
 
   bridgeSocketPath(id) {
@@ -140,8 +148,9 @@ export class ClusterManager {
       else this.health.delete(node.id)
     })
     this.links.set(node.id, link)
-    const bridge = new DockerBridge({
+    const bridge = new SocketRelay({
       socketPath: this.bridgeSocketPath(node.id),
+      remotePath: DOCKER_SOCKET_PATH,
       getClient: () => (link.state === 'ready' ? link.client : null),
       logger: this.logger,
     })
@@ -284,6 +293,10 @@ export class ClusterManager {
     if (dependents.length) {
       throw new ClusterError(409, 'node_in_use', `仍有节点经由它跳转：${dependents.join(', ')}`)
     }
+    const placed = this.vmsOnNode(id).map((vm) => vm.id)
+    if (placed.length) {
+      throw new ClusterError(409, 'node_has_vms', `节点上仍有虚拟机：${placed.join(', ')}，先删除它们`)
+    }
     this.links.get(id)?.stop()
     this.links.delete(id)
     await this.bridges.get(id)?.stop()
@@ -312,6 +325,92 @@ export class ClusterManager {
 
   docker(id) {
     return sshDocker(this.client(id))
+  }
+
+  /**
+   * SSH user facts for slot placement, cached per live SSH client (a
+   * reconnect after `usermod -aG docker` or a key change re-reads them).
+   * `root` is where remote slot trees live: $HOME/.vm2api.
+   */
+  remoteHost(id) {
+    const client = this.client(id)
+    const cached = this.hosts.get(client)
+    if (cached) return cached
+    const script =
+      'id -u; id -g; printf "%s\\n" "$HOME"; if sudo -n true 2>/dev/null; then echo sudo; else echo nosudo; fi'
+    const pending = execCollect(client, `sh -c ${shellQuote(script)}`, { timeoutMs: 15_000 }).then((r) => {
+      const [uid, gid, home, sudo] = r.stdout.split('\n').map((s) => s.trim())
+      if (r.code !== 0 || !/^\d+$/.test(uid) || !/^\d+$/.test(gid) || !home.startsWith('/')) {
+        throw new ClusterError(502, 'remote_host_unknown', `读取节点用户信息失败：${(r.stderr || r.stdout).trim()}`)
+      }
+      return {
+        uid: Number(uid),
+        gid: Number(gid),
+        home,
+        root: `${home.replace(/\/+$/, '')}/.vm2api`,
+        sudo: sudo === 'sudo',
+      }
+    })
+    pending.catch(() => this.hosts.delete(client))
+    this.hosts.set(client, pending)
+    return pending
+  }
+
+  slotRelayPaths(nodeId, vmId) {
+    const dir = path.join(this.socketDir, nodeId, 'slots', vmId)
+    return { kernel: path.join(dir, 'kernel.sock'), worker: path.join(dir, 'worker.sock') }
+  }
+
+  /**
+   * Local unix sockets for a remote slot's kernel.sock / worker.sock. The unchanged
+   * transport dials these; each connection opens one streamlocal channel on the link.
+   */
+  async ensureSlotRelays(nodeId, vmId) {
+    const current = this.slotRelays.get(vmId)
+    if (current?.nodeId === nodeId) {
+      await current.ready
+      return current.paths
+    }
+    if (current) await this.dropSlotRelays(vmId)
+    const link = this.links.get(nodeId)
+    if (!link) throw new ClusterError(404, 'node_not_found', '节点不存在')
+    const paths = this.slotRelayPaths(nodeId, vmId)
+    const getClient = () => (link.state === 'ready' ? link.client : null)
+    const remote = (name) => async () => `${(await this.remoteHost(nodeId)).root}/vms/${vmId}/run/${name}`
+    const entry = {
+      nodeId,
+      paths,
+      kernel: new SocketRelay({ socketPath: paths.kernel, remotePath: remote('kernel.sock'), getClient }),
+      worker: new SocketRelay({ socketPath: paths.worker, remotePath: remote('worker.sock'), getClient }),
+    }
+    entry.ready = Promise.all([entry.kernel.start(), entry.worker.start()])
+    this.slotRelays.set(vmId, entry)
+    try {
+      await entry.ready
+    } catch (err) {
+      if (this.slotRelays.get(vmId) === entry) this.slotRelays.delete(vmId)
+      throw err
+    }
+    return paths
+  }
+
+  async dropSlotRelays(vmId) {
+    const entry = this.slotRelays.get(vmId)
+    if (!entry) return
+    this.slotRelays.delete(vmId)
+    await Promise.all([entry.kernel.stop(), entry.worker.stop()])
+    fs.rmSync(path.dirname(entry.paths.kernel), { recursive: true, force: true })
+  }
+
+  /** Boot: relays exist before any link is ready so the scheduler's first health dial finds a socket. */
+  async restoreSlotRelays() {
+    for (const node of this.repo.list()) {
+      for (const vm of this.vmsOnNode(node.id)) {
+        await this.ensureSlotRelays(node.id, vm.id).catch((err) =>
+          this.logger.warn(`[cluster] slot relay ${vm.id} on ${node.id}: ${err.message}`),
+        )
+      }
+    }
   }
 
   /**
@@ -410,8 +509,4 @@ export class ClusterManager {
     })
     return job
   }
-}
-
-function shellQuote(s) {
-  return `'${String(s).replace(/'/g, `'\\''`)}'`
 }

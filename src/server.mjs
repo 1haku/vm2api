@@ -72,6 +72,7 @@ import { BackupService } from './lib/admin/backup-service.mjs'
 import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
+import { bindPlacement } from './lib/cluster/placement.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -786,8 +787,11 @@ const clusterManager = new ClusterManager({
   repo: new ClusterNodesRepo(),
   dataDir,
   listen: { host: cfg.host, port: cfg.port },
+  vmsOnNode: (nodeId) => listVms(cfg.paths.project).filter((vm) => vm.node_id === nodeId),
 })
+bindPlacement({ manager: clusterManager, projectRoot: cfg.paths.project })
 clusterManager.start()
+clusterManager.restoreSlotRelays()
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
 
 const handlePanel = createPanelHandler({

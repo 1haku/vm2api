@@ -22,6 +22,7 @@ import {
   materializeOfficialClaudeCredentials,
 } from './official-cc-bootstrap.mjs'
 import { normalizeTiers } from '../pool/quota-tiers.mjs'
+import { slotHost } from '../vm/slot-host.mjs'
 
 export function createImportCommit(ctx) {
   function routing() {
@@ -208,12 +209,19 @@ export function createImportCommit(ctx) {
       materializeOfficialClaudeCredentials(workerExec.homeDir, ids)
     } catch {}
     const mode = importedCredential.mode || credentialModeFromOauth(oauth)
-    const skipCc = skipOfficialCc || isCodexVm(existing) || !canOfficialCc(mode)
+    const ccUnsupported = !slotHost(existing).supports('official_cc')
+    const skipCc = skipOfficialCc || ccUnsupported || isCodexVm(existing) || !canOfficialCc(mode)
     const routingConfig = routing()
     const officialCc = skipCc
       ? {
           scheduled: false,
-          reason: isCodexVm(existing) ? 'gpt_slot' : skipOfficialCc ? 'credential_edit' : 'credential_mode_unsupported',
+          reason: ccUnsupported
+            ? 'remote_unsupported'
+            : isCodexVm(existing)
+              ? 'gpt_slot'
+              : skipOfficialCc
+                ? 'credential_edit'
+                : 'credential_mode_unsupported',
         }
       : scheduleOfficialCcBootstrap({
           vmId,

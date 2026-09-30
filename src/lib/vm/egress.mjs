@@ -265,7 +265,7 @@ export function dnsUpstreamChain(primary) {
   return [primary, ...DNS_UPSTREAMS.filter((u) => u !== primary)].join(',')
 }
 
-function configuredDnsUpstream() {
+export function configuredDnsUpstream() {
   if (!isDbOpen()) return ''
   try {
     return dnsUpstreamChain(new SettingsRepo(getDb()).get('proxy_pool_config')?.dns_primary)

@@ -18,6 +18,7 @@ import {
 } from '../oauth/oauth-credentials.mjs'
 import { isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { runSlotOauth } from './slot-oauth.mjs'
+import { slotHost } from '../vm/slot-host.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
 import {
   clientCancelledResult,
@@ -927,6 +928,8 @@ function credentialSummary(credential, now = Date.now()) {
 export async function importWorkerCredential(exec, credential, { timeoutMs = 60000, signal } = {}) {
   try {
     writeWorkerCredentialFile(exec.homeDir, credential)
+    // Import is the one case where the control plane's credential replaces the slot's copy.
+    await slotHost(exec.vm).onImport(exec.vm, path.dirname(exec.homeDir))
   } catch (error) {
     return {
       ok: false,

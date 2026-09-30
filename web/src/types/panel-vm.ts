@@ -105,6 +105,8 @@ export type Vm = {
   id: string
   name?: string
   owner_user_id?: string | null
+  /** 所在集群节点；null / 缺省 = 本机。远端槽位不支持官方初装、wrap-cli、换内核等。 */
+  node_id?: string | null
   origin?: string | null
   email?: string
   status?: string
