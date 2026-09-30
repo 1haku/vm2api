@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.3.89 — 2026-10-01
 
 - 集群 VM 放置：存在集群节点时，管理员可把 Claude / Rust VM 创建到 SSH 加入的 VPS。节点槽位使用自包含镜像 `vm2api/kin-slot-<kernel>:<VERSION>-<sha12>`（面板显式准备），经 SSH streamlocal 管理容器并中继 kernel / worker socket；凭据以节点副本为准，导入推送、刷新拉回。SOCKS5 出口在节点上按槽位成对部署（`kin-02` / `kin-02-egress`，网络 `kin-02-net`），槽位删除或换出口时回收；节点槽位允许使用与内存上限等量的 swap。本机/节点差异收敛到 `slotHost(vm)` 契约；Codex、官方 CC 初始化、wrap 修复/提升、引擎与 auth_scheme 切换在节点上返回 `remote_unsupported`。面板：VM 标出所在服务器（本机 `local`），集群页显示各节点 Docker 运行/总数，节点 Docker 列表按槽位把出口排在一起。新增 `POST /api/panel/cluster/nodes/:id/{preflight,slot-image}`。
+- 集群页终端：nginx 必须对 `/api/panel/cluster/nodes/<id>/shell` 透传 `Upgrade`（见 `docs/DEPLOY.md`「反代」）；`Connection ""` 会让终端一直连不上。
+
+已部署机升级：更新 Node 控制面（`src/`、`package*.json`）和 `web/dist`，`npm ci --omit=dev`（需要 `ssh2`、`ws`），重启一次 Node；按上条补 nginx 终端路径。二进制与 1.3.88 相同。节点槽位镜像 tag 随 `/opt/kin` 内二进制内容变化，升级后在创建弹窗重新准备镜像。
+
+## 1.3.88 — 2026-10-01
+
+- 修复 #191 / #94：cli-hop 的 `stop_reason=max_tokens` 是正常截断，不再被槽内 CLI 转为 API 错误；保留内容、真实 usage 和 `message_delta` / `message_stop`，不触发自动重试。交互式 CLI 的输出上限恢复提示不变。移除 Node 的旧 `max_tokens<=64 → 1024` 规避分支；可配置的 `compatibility.min_max_tokens` 下限仍生效。
+- 修复 #190：kin-egress 拒绝原目标等于当前连接本地监听地址的直连流量，避免本机 / 同内网 SOCKS 对私网 direct 时形成自转发环路。控制面的启动等待和健康探测改用 `ss` 检查 LISTEN 状态，不再连接透明转发端口。
+- 更新预编译 `kin-egress` 和 `cli-node`；Rust kernel、web 控制台及其他二进制源码不变。本次仅包含上述两项修复及回归测试，不包含另一个任务的集群 / 槽位放置改动。
+
+已部署机升级：更新 Node 控制面、宿主机 / 远端出口的 `kin-egress` 和槽内 `share/wrap-cli/cli-node`，重启相关进程。仅改 Node 或版本号不能修复旧二进制；Rust kernel 无需重编。
 
 ## 1.3.87 — 2026-09-30
 
