@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.87 — 2026-09-30
 
 - 恢复面板用户管理（撤回 `3420f8a`）。admin 在侧栏「用户」页（`#/users`）新建、编辑角色/启用/自建配额、删除用户；每行「改密码」弹窗带确认密码与 8–128 位校验。改他人密码立即踢掉该用户全部会话；改自己密码保留当前会话、踢掉其它设备。`GET/POST/PATCH/DELETE /api/panel/users` 仅 admin / master key。
 - 改密后 SQLite `users` 为准，`VM2API_ADMIN_PASSWORD` 不再能登录同名账号。
