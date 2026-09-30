@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, isApiError } from '@/lib/api'
 import { importErrorMessage } from '@/lib/import-errors'
 import { validTimezone } from '@/lib/timezone'
-import { nextVmSeq, vmIdOf, vmNameOf } from '@/lib/vm-name'
+import { vmIdOf } from '@/lib/vm-name'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -98,10 +98,6 @@ export function CreateVmFields({
   submitLabel = '创建',
 }: CreateVmFieldsProps) {
   const qc = useQueryClient()
-  const dash = useQuery(dashboardQueryOptions())
-  const listed = useQuery(vmsListQueryOptions())
-  const vms = dash.data?.vms ?? listed.data?.items ?? []
-
   const [template, setTemplate] = useState<string>(DEFAULT_TEMPLATE.id)
   const [name, setName] = useState('')
   const [kernel, setKernel] = useState<string>(DEFAULT_TEMPLATE.kernel)
@@ -118,9 +114,8 @@ export function CreateVmFields({
   const [platform, setPlatform] = useState<'anthropic' | 'openai'>('anthropic')
   const [advOpen, setAdvOpen] = useState(false)
 
-  // 名称留空时按已占用序号推下一个可用值，仅作为 placeholder 提示与提交兜底。
-  const suggested = vmNameOf(nextVmSeq(vms))
-  const effectiveName = name.trim() || suggested
+  // 名称留空时由后端编号：它还会跳过已删除槽位留下历史用量的序号，前端推不出来。
+  const typedName = name.trim()
   const placement = usePlacement(kernel)
   const remoteGpt = !!placement.nodeId && platform === 'openai'
 
@@ -140,15 +135,14 @@ export function CreateVmFields({
 
   const create = useMutation({
     mutationFn: async () => {
-      // legacy 的名称是数字下拉，`vmIdOf` 必定有值；这里是自由文本，纯非 ASCII
-      // 名称（如「测试槽」）会被清洗成空串 —— 那就干脆不发 id，让后端自动编号。
-      const id = vmIdOf(effectiveName) || undefined
+      // 自由文本名称：纯非 ASCII（如「测试槽」）会被清洗成空串 —— 那就不发 id，让后端自动编号。
+      const id = typedName ? vmIdOf(typedName) || undefined : undefined
       const nodeId = placement.nodeId
       const data = await api<CreateVmResponse>('/api/panel/vms/create', {
         method: 'POST',
         body: JSON.stringify({
           id,
-          name: effectiveName,
+          ...(typedName ? { name: typedName } : {}),
           kernel,
           timezone: tz.trim(),
           locale,
@@ -248,7 +242,7 @@ export function CreateVmFields({
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={suggested}
+          placeholder='留空自动编号'
         />
       </div>
 
