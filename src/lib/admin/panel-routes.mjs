@@ -75,6 +75,7 @@ import {
 import { startProbeTest, getProbeTest, listProbeTests, cancelProbeTest, getProbeCatalog } from './probe-test.mjs'
 import { publicKeyView } from './api-keys.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
+import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import {
   denyIfUserCannotDeleteVm,
@@ -787,11 +788,61 @@ export function createPanelHandler(ctx) {
         }
         return json(res, result.status, panel.ok(result.data))
       }
-      if (p === '/api/panel/users' || /^\/api\/panel\/users\/[^/]+$/.test(p)) {
-        return json(res, 404, {
-          ok: false,
-          error: { message: 'user management is not available in this build', code: 'not_found' },
-        })
+      if (req.method === 'GET' && p === '/api/panel/users') {
+        return json(res, 200, panel.ok({ items: panelUsers.list() }))
+      }
+      if (req.method === 'POST' && p === '/api/panel/users') {
+        const body = await readBody(req, 8192).catch(() => ({}))
+        try {
+          const rec = panelUsers.create({
+            username: body.username || body.user,
+            password: body.password || body.pass,
+            role: body.role || 'user',
+            enabled: body.enabled !== false,
+            vm_create_quota: body.vm_create_quota,
+          })
+          return json(res, 201, panel.ok({ item: publicUserView(rec) }))
+        } catch (e) {
+          const status = e.code === 'username_exists' ? 409 : 400
+          return json(res, status, {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'create_failed' },
+          })
+        }
+      }
+      if (req.method === 'PATCH' && /^\/api\/panel\/users\/[^/]+$/.test(p)) {
+        const id = p.split('/').pop()
+        const body = await readBody(req, 8192).catch(() => ({}))
+        try {
+          const rec = panelUsers.update(id, body || {}, { actorId: req.panelUserId })
+          if (!rec) return json(res, 404, { ok: false, error: { message: 'user not found' } })
+          if (body?.password) {
+            revokePanelSessionsForUser(rec.username, { exceptToken: extractPanelToken(req) })
+          }
+          return json(res, 200, panel.ok({ item: publicUserView(rec) }))
+        } catch (e) {
+          const status = e.code === 'last_admin' || e.code === 'self_disable' ? 409 : 400
+          return json(res, status, {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'update_failed' },
+          })
+        }
+      }
+      if (req.method === 'DELETE' && /^\/api\/panel\/users\/[^/]+$/.test(p)) {
+        const id = p.split('/').pop()
+        const existing = panelUsers.getById(id)
+        try {
+          const ok = panelUsers.remove(id, { actorId: req.panelUserId })
+          if (!ok) return json(res, 404, { ok: false, error: { message: 'user not found' } })
+          if (existing?.username) revokePanelSessionsForUser(existing.username)
+          return json(res, 200, { ok: true, deleted: id })
+        } catch (e) {
+          const status = e.code === 'last_admin' || e.code === 'self_delete' ? 409 : 400
+          return json(res, status, {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'delete_failed' },
+          })
+        }
       }
       if (req.method === 'GET' && p === '/api/panel/api-keys') {
         const snap = apiKeyStore.snapshot()
