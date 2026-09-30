@@ -147,6 +147,17 @@ docker exec kin-<槽> curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 ht
 Node 听 `:8787`。HTTPS 放在 nginx。
 
 ```nginx
+# 集群页终端是 WebSocket：必须透传 Upgrade，并直连 Node（前面若有会丢 Upgrade 的网关，也要绕过）。
+location ~ ^/api/panel/cluster/nodes/[^/]+/shell$ {
+  proxy_pass http://127.0.0.1:8787;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_buffering off;
+  proxy_read_timeout 3600s;
+}
+
 location / {
   proxy_pass http://127.0.0.1:8787;
   proxy_http_version 1.1;
@@ -157,6 +168,8 @@ location / {
   proxy_read_timeout 600s;
 }
 ```
+
+`Connection ""` 会剥掉 Upgrade，终端握手拿不到 101，面板里一直连不上；所以 shell 路径单独放在前面。
 
 ## 本机 Node（备选）
 
