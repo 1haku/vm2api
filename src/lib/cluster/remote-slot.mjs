@@ -56,12 +56,36 @@ import {
   remoteSlotOwner,
   vmNodeId,
 } from './placement.mjs'
-import { openSftp, runRemote, shellQuote, writeRemoteFile } from './remote-fs.mjs'
-import { pushSlotFiles, reconcileSlotCredentials, removeRemoteSlotDir } from './remote-slot-files.mjs'
+import { openSftp, readRemoteFileNoFollow, runRemote, shellQuote, writeRemoteFile } from './remote-fs.mjs'
+import { pushSlotFiles, reconcileSlotCredentials, remoteSlotPath, removeRemoteSlotDir } from './remote-slot-files.mjs'
 import { REMOTE_WORKER_BIN, slotImageSpec } from './slot-image.mjs'
+
+/** Bump when the slot's mount layout changes; a running container with an older label is recreated. */
+const SLOT_LAYOUT = '2'
 
 function failure(err, fallbackCode = 'remote_slot_failed') {
   return { ok: false, code: err?.code || fallbackCode, error: String(err?.message || err) }
+}
+
+/**
+ * Layout 1 kept `.claude` inside the guest-writable home. Carry its credential into
+ * the host-owned `claude/` mount once, unless the new location already has one.
+ * Runs only after the container is removed, so the guest cannot race the checks;
+ * a symlinked legacy `.claude` (pointing at a sibling slot) is skipped.
+ */
+async function migrateClaudeDir(session, vm, remoteDir) {
+  const cred = 'cli-home/.claude/credentials.json'
+  const dest = `${remoteDir}/${remoteSlotPath(cred)}`
+  if (await readRemoteFileNoFollow(session.client, dest)) return
+  const legacy = `${remoteDir}/cli-home/.claude`
+  const isRealDir = await runRemote(session.client, `[ -d ${shellQuote(legacy)} ] && [ ! -L ${shellQuote(legacy)} ]`)
+    .then(() => true)
+    .catch(() => false)
+  if (!isRealDir) return
+  const old = await readRemoteFileNoFollow(session.client, `${remoteDir}/${cred}`).catch(() => null)
+  if (!old?.length) return
+  const owner = session.host.uid === 0 ? remoteSlotOwner(session.host, vm) : null
+  await writeRemoteFile(await openSftp(session.client), dest, old, { mode: 0o600, owner })
 }
 
 /** iptables plan → one shell script; mirrors egress.mjs applyIptables (-N tolerant, -C guards the next row). */
@@ -297,11 +321,14 @@ function slotContainerBody(vm, { image, network, remoteDir, user }) {
       'kin.vm.id': vm.id,
       'kin.vm.name': slotName,
       'kin.vm.os': vm.kernel,
+      'kin.vm.layout': SLOT_LAYOUT,
       'vm2api.cluster': '1',
     },
     HostConfig: {
       Binds: [
         `${remoteDir}/cli-home:/home/kincli`,
+        // Nested mount: the guest cannot replace ~/.claude with a symlink the host would follow.
+        `${remoteDir}/claude:/home/kincli/.claude`,
         `${remoteDir}/run:/run/kin`,
         `${remoteDir}/machine-id:/etc/machine-id:ro`,
         `${remoteDir}/machine-id:/var/lib/dbus/machine-id:ro`,
@@ -396,7 +423,11 @@ export async function startRemoteSlot(vm, projectRoot, { recreate = false, routi
     const relays = await clusterManager().ensureSlotRelays(nodeId, vm.id)
     let existing = await inspectContainerOrNull(session.docker, name)
     const matches =
-      existing && existing.Config?.Image === image && existing.HostConfig?.NetworkMode === eg.network && !recreate
+      existing &&
+      existing.Config?.Image === image &&
+      existing.HostConfig?.NetworkMode === eg.network &&
+      existing.Config?.Labels?.['kin.vm.layout'] === SLOT_LAYOUT &&
+      !recreate
     const common = {
       nodeId,
       name,
@@ -412,16 +443,19 @@ export async function startRemoteSlot(vm, projectRoot, { recreate = false, routi
       applyRuntime(vm, { ...common, info: existing })
       return { ok: true, action: 'already-running', runtime: vm.runtime }
     }
+    let previousNetwork = null
+    if (existing && !matches) {
+      // Remove first: from here on no guest process can touch the slot tree mid-migration.
+      previousNetwork = existing.HostConfig?.NetworkMode
+      await removeContainer(session.docker, name)
+      existing = null
+    }
     writeWorkerFiles(vm, projectRoot, { transparent: true, routing })
     ensureGuestMachineIdFile(projectRoot, vm)
     await pushSlotFiles(vm, slotDir, ['run', 'seed'], session)
+    if (!existing) await migrateClaudeDir(session, vm, remoteDir)
     await reconcileSlotCredentials(vm, slotDir, session)
-    if (existing && !matches) {
-      const previousNetwork = existing.HostConfig?.NetworkMode
-      await removeContainer(session.docker, name)
-      existing = null
-      if (previousNetwork && previousNetwork !== eg.network) await releaseRemoteEgress(session, previousNetwork)
-    }
+    if (previousNetwork && previousNetwork !== eg.network) await releaseRemoteEgress(session, previousNetwork)
     let action = 'started'
     if (!existing) {
       await createContainerRaw(
@@ -455,7 +489,12 @@ export async function reloadRemoteSlot(vm, projectRoot, { routing } = {}) {
     if (!eg.ok) return eg
     const name = containerName(vm.id)
     const existing = await inspectContainerOrNull(session.docker, name)
-    if (!existing || existing.Config?.Image !== image || existing.HostConfig?.NetworkMode !== eg.network) {
+    if (
+      !existing ||
+      existing.Config?.Image !== image ||
+      existing.HostConfig?.NetworkMode !== eg.network ||
+      existing.Config?.Labels?.['kin.vm.layout'] !== SLOT_LAYOUT
+    ) {
       return startRemoteSlot(vm, projectRoot, { recreate: !!existing, routing })
     }
     const relays = await clusterManager().ensureSlotRelays(nodeId, vm.id)
