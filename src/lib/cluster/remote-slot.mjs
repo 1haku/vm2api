@@ -49,11 +49,13 @@ import {
   removeNetwork,
 } from './docker-remote.mjs'
 import {
+  awaitSlotImageBuild,
   clusterManager,
   nodeSession,
   parseMemoryBytes,
   remoteSlotDir,
   remoteSlotOwner,
+  startSlotImageBuild,
   vmNodeId,
 } from './placement.mjs'
 import { openSftp, readRemoteFileNoFollow, runRemote, shellQuote, writeRemoteFile } from './remote-fs.mjs'
@@ -392,12 +394,20 @@ async function prepare(vm, projectRoot, routing) {
   const session = await nodeSession(nodeId)
   const spec = slotImageSpec(projectRoot, vm.kernel)
   if (!(await imagePresent(session.docker, spec.ref))) {
-    return {
-      fail: {
-        ok: false,
-        code: 'slot_image_missing',
-        error: `节点 ${nodeId} 缺少槽位镜像 ${spec.ref}，先在创建弹窗准备镜像`,
-      },
+    // The slot binaries changed since this node last built (an upgrade). An existing
+    // slot must come back by itself, so build here (single-flight per node+kernel).
+    const job = await awaitSlotImageBuild(startSlotImageBuild(nodeId, vm.kernel))
+    if (job.status !== 'done' || !(await imagePresent(session.docker, spec.ref))) {
+      return {
+        fail: {
+          ok: false,
+          code: 'slot_image_build_failed',
+          error: `节点 ${nodeId} 构建槽位镜像 ${spec.ref} 失败：${String(job.log || '')
+            .trim()
+            .split('\n')
+            .pop()}`,
+        },
+      }
     }
   }
   const owner = remoteSlotOwner(session.host, vm)

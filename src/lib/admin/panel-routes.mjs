@@ -2448,7 +2448,13 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/vms/create') {
         const body = await readBody(req, 32 * 1024)
         const existing = listVms(cfg.paths.project)
-        const idx = nextNumericIndex(existing)
+        // Usage, billing and account rows stay keyed by a deleted VM's id; handing that
+        // id to a new slot makes it show the old account and spend. Auto-numbering skips them.
+        const historic = (accountQuota?.snapshot?.().accounts || []).flatMap((a) => [
+          { id: a.vm_id },
+          { id: a.account_id },
+        ])
+        const idx = nextNumericIndex([...existing, ...historic])
         const rawId = body.id || 'vm-' + padVm(idx)
         const id = String(rawId).replace(/[^a-zA-Z0-9_-]/g, '')
         if (!isValidVmId(id)) return json(res, 400, { ok: false, error: { message: 'invalid id' } })
