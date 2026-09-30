@@ -1,7 +1,7 @@
 /**
  * Panel RBAC.
  *
- *   admin  — full console（开源仓不含用户管理）
+ *   admin  — full console + user management
  *   super  — overview / cluster / usage / logs + VM page (schedule only)
  *   user   — tenant: vm / proxies / keys / billing / logs (owner-scoped)
  */
@@ -22,6 +22,7 @@ export const PANEL_VIEWS = [
   'logs',
   'database',
   'settings',
+  'users',
   'wrap',
   'billing',
 ]
