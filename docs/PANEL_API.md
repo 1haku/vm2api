@@ -12,17 +12,25 @@
 |------|------|------|
 | `user` | 虚拟机 / 代理池 / 密钥 / 计费 / 日志 | 只管自己的 VM、代理、key；自建配额 `vm_create_quota` 0–100；不能调度平台池 |
 | `super` | 总览 / 集群 / 用量 / 日志 + 虚拟机 | 读 VM + 拨调度 / 清冷却 |
-| `admin` | 全部（不含用户管理页） | `*`。admin/master **未 pin** 的 `/v1` 只打未分配平台池 |
+| `admin` | 全部 | `*`。可管理用户 VM，但 admin/master **未 pin** 的 `/v1` 只打未分配平台池 |
 
-开源仓 **没有用户管理**。登录只用环境变量 `VM2API_ADMIN_USER` / `VM2API_ADMIN_PASSWORD` 灌进去的第一个 admin。`GET/POST/PATCH/DELETE /users` 返回 `404 not_found`。
+环境变量 `VM2API_ADMIN_USER` / `VM2API_ADMIN_PASSWORD` 只在库里还没有同名用户时灌进第一个 admin；之后以 SQLite `users` 为准，面板「用户」页可增删改、改密码。密码 scrypt。不能删/停用最后一个 admin。
 
 `vms/*.json` 的 `owner_user_id` / `origin`（`platform` \| `admin_assigned` \| `user_created`）是属主 SSOT。`PATCH /vms/:id/owner` 仅 admin。自建 VM 不能收回进平台池。
 
-## 计费
+## 用户
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/billing` | 计费汇总。`from`/`until`/`group_by=vm|key` |
+| GET | `/users` | 列表（含 `vm_create_quota`） |
+| POST | `/users` | `{ username, password, role, enabled, vm_create_quota? }` |
+| PATCH | `/users/:id` | 改角色/密码/启用/配额；改密会撤销该用户其它会话 |
+| DELETE | `/users/:id` | |
+| PATCH | `/vms/:id/owner` | admin：`{ user_id }` 分配，`{ user_id: null }` 收回（仅 `admin_assigned`） |
+| GET | `/billing` | 用户计费汇总。`from`/`until`/`group_by=vm|key`。user 隐式只看自己；admin 可 `user_id=` |
+
+
+用户名 `^[a-zA-Z][a-zA-Z0-9._-]{1,31}$`，密码 8–128。`vm_create_quota` 整数 0–100，默认 0。
 
 ## 总览 / 槽位
 
