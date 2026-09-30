@@ -17,6 +17,7 @@ export const PREFLIGHT_CHECK_LABEL: Record<PreflightCheckId, string> = {
   memory: '内存',
   disk: '磁盘',
   sudo: 'sudo',
+  swap: 'Swap',
   image: '镜像',
   hostd: 'hostd',
   relay: '中继',

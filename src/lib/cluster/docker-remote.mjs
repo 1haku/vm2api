@@ -218,6 +218,9 @@ function containerView(c) {
       )
       .filter((v, i, all) => all.indexOf(v) === i),
     managed: c.Labels?.['vm2api.cluster'] === '1',
+    // A slot and its exit share this id: kin-02 (slot) / kin-02-egress (egress).
+    vm_id: c.Labels?.['kin.vm.id'] || c.Labels?.['kin.egress.vm'] || null,
+    role: c.Labels?.['kin.vm.id'] ? 'slot' : c.Labels?.['kin.egress'] === '1' ? 'egress' : null,
   }
 }
 

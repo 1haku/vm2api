@@ -43,7 +43,11 @@ export function ClusterPage() {
   const localLink = useQuery(clusterLocalQueryOptions())
   const canManage = me.data?.role === 'admin'
   const apiNodes = useMemo(() => cluster.data || [], [cluster.data])
-  const remotes = useMemo(() => apiNodes.map(remoteNodeFromApi), [apiNodes])
+  const dashVms = useMemo(() => (dash.data?.vms || []) as Vm[], [dash.data])
+  const remotes = useMemo(
+    () => apiNodes.map((n) => remoteNodeFromApi(n, dashVms)),
+    [apiNodes, dashVms]
+  )
   const [joinOpen, setJoinOpen] = useState(false)
   const [panelId, setPanelId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<ClusterNode | null>(null)
@@ -67,11 +71,11 @@ export function ClusterPage() {
     () =>
       buildLocalNode({
         host: hostName,
-        vms: (dash.data?.vms || []) as Vm[],
+        vms: dashVms,
         spendUsd: localSpendUsd(dash.data, usage.data),
         available: dashReady,
       }),
-    [dash.data, dashReady, hostName, usage.data]
+    [dash.data, dashVms, dashReady, hostName, usage.data]
   )
   const nodes = useMemo(() => [local, ...remotes], [local, remotes])
   const totals = clusterTotals(nodes)

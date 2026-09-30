@@ -9,7 +9,7 @@ import path from 'node:path'
 import ssh2 from 'ssh2'
 import { ClusterManager } from '../../src/lib/cluster/cluster-manager.mjs'
 import { remoteSlotOwner } from '../../src/lib/cluster/placement.mjs'
-import { remoteIptablesScript } from '../../src/lib/cluster/remote-slot.mjs'
+import { remoteIptablesScript, slotEgressNames } from '../../src/lib/cluster/remote-slot.mjs'
 import {
   pullSlotCredentials,
   pushSlotCredentials,
@@ -146,6 +146,20 @@ test('remote iptables script mirrors applyIptables semantics', () => {
   assert.ok(script.includes("'!'"), 'negation is passed as its own quoted arg')
   assert.equal(lines.length, 1 + plan.add.length - 2, 'two -C rows fold into their guarded row')
   assert.doesNotMatch(remoteIptablesScript(plan, { sudo: false }), /sudo/)
+})
+
+test('a node SOCKS exit is named after its slot; kernel names stay collision-free', () => {
+  const a = slotEgressNames('vm-02')
+  assert.equal(a.slot, 'kin-02')
+  assert.equal(a.egress, 'kin-02-egress')
+  assert.equal(a.network, 'kin-02-net')
+  // Linux caps iface names at 15; long ids sharing a prefix must still get distinct bridges/chains.
+  const long1 = slotEgressNames('loutish-arches-3gicloudcom')
+  const long2 = slotEgressNames('loutish-arches-3hicloudcom')
+  for (const n of [a, long1, long2]) assert.ok(n.bridge.length <= 15, n.bridge)
+  assert.notEqual(long1.bridge, long2.bridge)
+  assert.notEqual(long1.chain, long2.chain)
+  assert.notDeepEqual(long1.ports, long2.ports)
 })
 
 function fakeElf(file, fill) {

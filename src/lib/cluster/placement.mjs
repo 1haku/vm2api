@@ -232,6 +232,13 @@ export async function preflightNode(nodeId, { kernel }) {
         ? 'iptables 可用（root / 免密 sudo）'
         : 'SOCKS5 出口需要 root 或免密 sudo 写 iptables',
     )
+    try {
+      const kb = Number(await runRemote(client, `awk '/^SwapTotal:/{print $2}' /proc/meminfo`, { timeoutMs: 10_000 }))
+      // Slots may swap up to their RAM cap; without host swap a small node fits few slots.
+      add('swap', kb * 1024 >= parseMemoryBytes(SLOT_MEMORY), 'warn', kb ? `Swap ${gib(kb * 1024)}` : '未开启 Swap')
+    } catch (err) {
+      add('swap', false, 'warn', `无法读取 Swap：${err.message}`)
+    }
   }
   if (specError) {
     add('image', false, 'error', specError.message)
