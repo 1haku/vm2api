@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:web/dist/assets/use-vm-index-BG8FcVNR.js
-import{L as e,P as t}from"./button-BcBxrDW4.js";import{r as n}from"./skeleton-DLlQoEpm.js";import{r}from"./vm-kind-BsatQoBI.js";import{t as i}from"./queries-BhDBWtpX.js";var a=e(t(),1);function o(){let e=n(i());return{vms:(0,a.useMemo)(()=>r(e.data?.vms),[e.data?.vms]),list:e.data?.vms||[],isLoading:e.isLoading}}export{o as t};
-========
-import{L as e,P as t}from"./button-BcBxrDW4.js";import{r as n}from"./skeleton-CHfe_t_M.js";import{r}from"./vm-kind-BsatQoBI.js";import{t as i}from"./queries-C6IsQF94.js";var a=e(t(),1);function o(){let e=n(i());return{vms:(0,a.useMemo)(()=>r(e.data?.vms),[e.data?.vms]),list:e.data?.vms||[],isLoading:e.isLoading}}export{o as t};
->>>>>>>> origin/feat/cluster-vm-placement:web/dist/assets/use-vm-index-DSLKXF4X.js

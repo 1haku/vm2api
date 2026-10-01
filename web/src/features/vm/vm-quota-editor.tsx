@@ -107,28 +107,38 @@ export function VmQuotaField({ vm }: { vm: Vm }) {
   const custom = FIELDS.filter(({ key }) => override[key] != null).length
 
   return (
-    <div className='py-1.5'>
-      <div className='flex items-center gap-2 text-sm'>
-        <span className='text-muted-foreground'>配额</span>
-        <span
-          className={cn(
-            'text-[11px]',
-            custom ? 'font-medium text-primary' : 'text-muted-foreground'
-          )}
-        >
-          {custom ? `自定义 ${custom} 项` : '跟随全局'}
-        </span>
+    <div className='rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2'>
+      <div className='flex items-center justify-between gap-2'>
+        <div className='min-w-0'>
+          <div className='text-xs font-medium'>配额</div>
+          <div
+            className={cn(
+              'text-[11px]',
+              custom ? 'text-primary' : 'text-muted-foreground'
+            )}
+          >
+            {custom ? `本槽覆盖 ${custom} 项` : '跟随全局，点右侧修改'}
+          </div>
+        </div>
         <VmQuotaEditor vm={vm} />
       </div>
-      <div className='mt-1 space-y-0.5 text-xs'>
+      <div className='mt-2 grid grid-cols-2 gap-1.5'>
         {FIELDS.map(({ key, label, kind }) => {
           const own = override[key] != null
           return (
             <div
               key={key}
-              className='flex items-baseline justify-between gap-3'
+              className={cn(
+                'flex min-w-0 items-baseline justify-between gap-2 rounded border px-2 py-1 text-xs',
+                own
+                  ? 'border-primary/40 bg-background'
+                  : 'border-border/70 bg-background/60'
+              )}
+              title={
+                own ? `全局 ${fmtValue(kind, inherited[key])}` : '跟随全局'
+              }
             >
-              <span className='text-muted-foreground'>{label}</span>
+              <span className='truncate text-muted-foreground'>{label}</span>
               <span
                 className={cn(
                   'shrink-0 whitespace-nowrap tabular-nums',
@@ -136,14 +146,6 @@ export function VmQuotaField({ vm }: { vm: Vm }) {
                 )}
               >
                 {fmtValue(kind, policy[key])}
-                {own ? (
-                  <span className='ml-2 font-normal text-muted-foreground'>
-                    全局{' '}
-                    <span className='line-through'>
-                      {fmtValue(kind, inherited[key])}
-                    </span>
-                  </span>
-                ) : null}
               </span>
             </div>
           )
@@ -168,6 +170,7 @@ export function VmQuotaEditor({ vm }: { vm: Vm }) {
     onSuccess: async (_data, body) => {
       toast.success(body ? '槽位配额已热更新' : '槽位配额已恢复全局')
       await Promise.all([
+        qc.invalidateQueries({ queryKey: ['panel', 'vms'] }),
         qc.invalidateQueries({ queryKey: vmQueryOptions(vm.id).queryKey }),
         qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
       ])
@@ -191,14 +194,13 @@ export function VmQuotaEditor({ vm }: { vm: Vm }) {
     <>
       <Button
         size='sm'
-        variant='ghost'
-        className='h-6 px-2 text-xs'
+        className='h-7 shrink-0 px-2.5 text-xs shadow-sm'
         onClick={() => {
           setDraft(draftsOf(vm.quota_override))
           setOpen(true)
         }}
       >
-        编辑
+        编辑配额
       </Button>
       <Dialog
         open={open}
@@ -233,7 +235,13 @@ export function VmQuotaEditor({ vm }: { vm: Vm }) {
                   onValueChange={(v) => setDraft({ ...draft, [key]: v })}
                   disabled={save.isPending}
                 >
-                  <SelectTrigger id={`vm-quota-${key}`} className='w-full'>
+                  <SelectTrigger
+                    id={`vm-quota-${key}`}
+                    className={cn(
+                      'w-full',
+                      draft[key] !== INHERIT && 'border-primary/60 bg-primary/5'
+                    )}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

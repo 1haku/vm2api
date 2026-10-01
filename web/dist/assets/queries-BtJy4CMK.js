@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:web/dist/assets/queries-CeR9bTpx.js
-import{g as e}from"./button-BcBxrDW4.js";import{n as t}from"./skeleton-DLlQoEpm.js";import{P as n}from"./index-BFyfTHMM.js";import{t as r}from"./queries-BhDBWtpX.js";function i(){return t({queryKey:[`panel`,`proxies`],queryFn:()=>e(`/api/panel/proxies`)})}function a(){let e=n();return()=>Promise.all([e.invalidateQueries({queryKey:i().queryKey}),e.invalidateQueries({queryKey:r().queryKey}),e.invalidateQueries({queryKey:[`panel`,`vm`]}),e.invalidateQueries({queryKey:[`panel`,`vms`]})])}export{a as n,i as t};
-========
-import{g as e}from"./button-BcBxrDW4.js";import{n as t}from"./skeleton-CHfe_t_M.js";import{P as n}from"./index-CtMk_qUW.js";import{t as r}from"./queries-C6IsQF94.js";function i(){return t({queryKey:[`panel`,`proxies`],queryFn:()=>e(`/api/panel/proxies`)})}function a(){let e=n();return()=>Promise.all([e.invalidateQueries({queryKey:i().queryKey}),e.invalidateQueries({queryKey:r().queryKey})])}export{a as n,i as t};
->>>>>>>> origin/feat/cluster-vm-placement:web/dist/assets/queries-BtJy4CMK.js
