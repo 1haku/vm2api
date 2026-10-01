@@ -16,6 +16,7 @@ import {
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
 import { isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
 import { manualScheduleLevelOf, parseScheduleLevelInput } from '../pool/credential-weight.mjs'
+import { vmQuotaOverrideOf } from '../pool/vm-quota-override.mjs'
 import { normalizeOwnerId, vmOriginOf } from '../admin/resource-owner.mjs'
 import { normalizeVmKind } from './vm-kind.mjs'
 import { validTimezone } from '../core/timezone.mjs'
@@ -91,6 +92,7 @@ export function summarizeVm(vm, projectRoot = null) {
     max_rpm: vm.policy?.maxRpm ?? 0,
     session_slots: kind.kind === 'codex' ? null : (vm.policy?.sessionSlots ?? null),
     session_slots_override: kind.kind === 'codex' ? false : vm.policy?.sessionSlotsOverride === true,
+    quota_override: kind.kind === 'codex' ? null : vmQuotaOverrideOf(vm),
     allowed_models:
       Array.isArray(vm.policy?.allowed_models) && vm.policy.allowed_models.length
         ? vm.policy.allowed_models.map((id) => String(id || '').trim()).filter(Boolean)
@@ -264,6 +266,19 @@ export function persistVmSessionSlots(projectRoot, vmId, value, { override = tru
     sessionSlots: value,
     sessionSlotsOverride: override,
   }
+  vm.updated_at = new Date().toISOString()
+  atomicWriteJson(file, vm, { mode: 0o600 })
+  return vm
+}
+
+/** `override` is a parsed `quota_override` (null clears it, the slot follows global quota again). */
+export function persistVmQuotaOverride(projectRoot, vmId, override) {
+  const file = path.join(projectRoot, 'vms', `${vmId}.json`)
+  if (!fs.existsSync(file)) return null
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.policy = { ...(vm.policy || {}) }
+  if (override) vm.policy.quota = override
+  else delete vm.policy.quota
   vm.updated_at = new Date().toISOString()
   atomicWriteJson(file, vm, { mode: 0o600 })
   return vm

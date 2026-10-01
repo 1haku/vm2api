@@ -111,6 +111,7 @@ import { validTimezone } from '../core/timezone.mjs'
 import { stampVmKind, isCodexVm } from '../vm/vm-kind.mjs'
 import { parseAllowedModelsPatch } from '../pool/slot-model-gate.mjs'
 import { parseScheduleLevelInput } from '../pool/credential-weight.mjs'
+import { parseVmQuotaOverride } from '../pool/vm-quota-override.mjs'
 import {
   normalizeInferenceConfig,
   normalizeSessionSlots,
@@ -299,6 +300,7 @@ export function createPanelHandler(ctx) {
   const applyVmConcurrency = (...args) => ctx.applyVmConcurrency(...args)
   const applyVmRpm = (...args) => ctx.applyVmRpm(...args)
   const applyVmSessionSlots = (...args) => ctx.applyVmSessionSlots(...args)
+  const applyVmQuotaOverride = (...args) => ctx.applyVmQuotaOverride(...args)
   const initPoolRuntime = (...args) => ctx.initPoolRuntime(...args)
   const poolSchedulerConfig = (...args) => ctx.poolSchedulerConfig(...args)
   const commitImportedOauth = (...args) => ctx.commitImportedOauth(...args)
@@ -1642,6 +1644,7 @@ export function createPanelHandler(ctx) {
         const next = body?.max_concurrency ?? body?.maxConcurrency
         const nextRpm = body?.max_rpm ?? body?.maxRpm
         const hasSessionSlots = body && Object.prototype.hasOwnProperty.call(body, 'session_slots')
+        const hasQuotaOverride = body && Object.prototype.hasOwnProperty.call(body, 'quota_override')
         const hasModels = body && Object.prototype.hasOwnProperty.call(body, 'allowed_models')
         const hasAuthScheme = body && (body.auth_scheme != null || body.authScheme != null)
         const hasScheduleLevel = body && Object.prototype.hasOwnProperty.call(body, 'schedule_level')
@@ -1657,6 +1660,7 @@ export function createPanelHandler(ctx) {
           next == null &&
           nextRpm == null &&
           !hasSessionSlots &&
+          !hasQuotaOverride &&
           !hasModels &&
           !hasAuthScheme &&
           !hasSlotPolicy &&
@@ -1668,13 +1672,27 @@ export function createPanelHandler(ctx) {
             ok: false,
             error: {
               message:
-                'max_concurrency, max_rpm, session_slots, allowed_models, auth_scheme, inference_engine, persona_preset, schedule_level, timezone or timezone_follow_proxy required',
+                'max_concurrency, max_rpm, session_slots, quota_override, allowed_models, auth_scheme, inference_engine, persona_preset, schedule_level, timezone or timezone_follow_proxy required',
             },
           })
         }
         const parsedScheduleLevel = hasScheduleLevel ? parseScheduleLevelInput(body.schedule_level) : null
         if (parsedScheduleLevel && !parsedScheduleLevel.ok) {
           return json(res, 400, { ok: false, error: { message: parsedScheduleLevel.error } })
+        }
+        const parsedQuotaOverride = hasQuotaOverride ? parseVmQuotaOverride(body.quota_override) : null
+        if (parsedQuotaOverride && !parsedQuotaOverride.ok) {
+          return json(res, 400, { ok: false, error: { message: parsedQuotaOverride.error } })
+        }
+        if (parsedQuotaOverride) {
+          const currentVm = getVm(cfg.paths.project, id)
+          if (!currentVm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+          if (isCodexVm(currentVm)) {
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'gpt_quota_override_forbidden', message: 'GPT slots do not use Claude quota tiers' },
+            })
+          }
         }
         let timezoneSync = null
         if (hasTimezone) {
@@ -1745,6 +1763,10 @@ export function createPanelHandler(ctx) {
             })
           }
           const vm = applyVmSessionSlots(id, normalizeSessionSlots(raw), { override: true })
+          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        }
+        if (parsedQuotaOverride) {
+          const vm = applyVmQuotaOverride(id, parsedQuotaOverride.value)
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         if (hasModels) {
