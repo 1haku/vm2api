@@ -6,11 +6,16 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy, localEgressProxyUrl } from '../vm/egress.mjs'
 import { assertProxyAllowed } from '../vm/proxy-policy.mjs'
 import { codexKernelHealth, codexKernelPaths } from './codex-kernel-client.mjs'
 
 const starts = new Map()
+
+// The kernel exits only through config.proxy_url; inherited proxy variables would give it a second, unseen exit.
+function kernelEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^(https?|all|no)_proxy$/i.test(key)))
+}
 
 function existingBin(candidate) {
   const bin = String(candidate || '').trim()
@@ -53,8 +58,9 @@ export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxy
   if (!secret) secret = crypto.randomBytes(24).toString('hex')
   fs.writeFileSync(tokenPath, secret + '\n', { mode: 0o600 })
   const local = isLocalEgressProxy(vm?.proxy)
-  const proxy = local ? '' : String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
-  const required = local ? false : proxyRequired == null ? !!proxy : !!proxyRequired
+  const proxy = local ? localEgressProxyUrl() : String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
+  // A configured deployment proxy is this slot's exit: fail closed instead of going direct.
+  const required = local ? !!proxy : proxyRequired == null ? !!proxy : !!proxyRequired
   const deviceId = String(vm.device_id || vm.fingerprint?.device_id || vm.id).trim() || vm.id
   const config = {
     vm_id: vm.id,
@@ -87,6 +93,7 @@ export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
     if (paths.socketPath) fs.unlinkSync(paths.socketPath)
   } catch {}
   const child = spawn(bin, [paths.configPath], {
+    env: kernelEnv(),
     stdio: 'ignore',
     detached: true,
   })
