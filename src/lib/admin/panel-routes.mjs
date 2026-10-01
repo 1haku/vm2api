@@ -163,7 +163,7 @@ import {
   egressEnabled,
   ensureProxyEgress,
   stopProxyEgress,
-  boundProxyUrl,
+  hostProxyUrlForVm,
   hasBoundExit,
   isLocalEgressProxy,
   dnsUpstreamChain,
@@ -3216,7 +3216,7 @@ export function createPanelHandler(ctx) {
           }
           const tok = await refreshCodexAccessToken({
             refreshToken,
-            proxyUrl: boundProxyUrl(vm.proxy),
+            proxyUrl: hostProxyUrlForVm(vm),
           })
           if (!tok.ok) {
             return json(res, 502, {

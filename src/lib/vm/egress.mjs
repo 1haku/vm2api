@@ -12,6 +12,7 @@ import { getDb, isDbOpen } from '../db/database.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { socksProxyUrl } from './socks-address.mjs'
 import { assertProxyAllowed, proxyBlockedReason } from './proxy-policy.mjs'
+import { isCodexVm } from './vm-kind.mjs'
 
 export const EGRESS_BIN = process.env.KIN_EGRESS_BIN || '/opt/kin-gateway/bin/kin-egress'
 export const LOCAL_EGRESS_ID = 'px-local'
@@ -387,6 +388,29 @@ export function boundProxyUrl(proxy) {
   if (isLocalEgressProxy(proxy)) return ''
   assertProxyAllowed(proxy)
   return socksProxyUrl(proxy)
+}
+
+// reqwest's order for an https destination; HTTP_PROXY only covers http:// destinations.
+const LOCAL_PROXY_ENV_KEYS = Object.freeze(['HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'])
+
+/**
+ * Deployment proxy behind a local Codex slot. A host-launched Codex kernel would
+ * read these variables on its own while node-fetch ignores them, splitting one
+ * account across two exits; Node resolves the URL once and hands the kernel the
+ * same value. NO_PROXY does not apply: the exit is chosen per slot, not per host.
+ */
+export function localEgressProxyUrl(env = process.env) {
+  for (const key of LOCAL_PROXY_ENV_KEYS) {
+    const value = String(env?.[key] || '').trim()
+    if (value) return value.replace(/^socks5:\/\//i, 'socks5h://')
+  }
+  return ''
+}
+
+/** Exit for a host-side request made for this VM. Local Claude slots run in a container without proxy env, so theirs stay direct. */
+export function hostProxyUrlForVm(vm) {
+  if (!isLocalEgressProxy(vm?.proxy)) return boundProxyUrl(vm?.proxy)
+  return isCodexVm(vm) ? localEgressProxyUrl() : ''
 }
 
 function waitListen(host, port, timeoutMs = 8000) {

@@ -4,10 +4,12 @@
  * from the redacted public snapshot.
  *
  * Local egress (`px-local`) is a bound exit with no SOCKS URL. Import and
- * host hops may then use the control-plane default route (`proxyUrl` empty,
- * `direct: true`). That is not "unbound".
+ * host hops may then use the control-plane default route (`direct: true`);
+ * a local Codex slot carries the deployment proxy its kernel also uses.
+ * That is not "unbound".
  */
-import { boundProxyUrl, isLocalEgressProxy } from './egress.mjs'
+import { boundProxyUrl, isLocalEgressProxy, localEgressProxyUrl } from './egress.mjs'
+import { isCodexVm } from './vm-kind.mjs'
 import { configuredIpv6Enabled, proxyBlockedReason } from './proxy-policy.mjs'
 
 function poolHitForVm(proxyPool, vm) {
@@ -54,7 +56,13 @@ export function resolveImportProxy({ vm, proxyPool, overrideUrl = null } = {}) {
   }
   const allocated = vm?.id && typeof proxyPool?.getProxyForVm === 'function' ? proxyPool.getProxyForVm(vm.id) : null
   if (isLocalEgressProxy(hit) || isLocalEgressProxy(allocated) || isLocalEgressProxy(vm?.proxy)) {
-    return { ok: true, proxyUrl: '', blocked: false, reason: null, direct: true }
+    return {
+      ok: true,
+      proxyUrl: isCodexVm(vm) ? localEgressProxyUrl() : '',
+      blocked: false,
+      reason: null,
+      direct: true,
+    }
   }
   if (allocated?.url) {
     return {
