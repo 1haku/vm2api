@@ -232,7 +232,7 @@ function fakeElf(file, fill) {
   fs.writeFileSync(file, buf)
 }
 
-test('slot image tag follows payload bytes, not just VERSION', (t) => {
+test('slot image tag follows payload bytes only; a VERSION bump keeps the image', (t) => {
   const root = tmpDir('kin-slot-image-')
   fs.writeFileSync(path.join(root, 'VERSION'), '9.9.9\n')
   for (const f of [
@@ -258,12 +258,17 @@ test('slot image tag follows payload bytes, not just VERSION', (t) => {
   fs.chmodSync(process.env.KIN_CODEX_KERNEL_BIN, 0o755)
 
   const a = slotImageSpec(root, 'ubuntu-24.04')
-  assert.match(a.ref, /^vm2api\/kin-slot-ubuntu-24\.04:9\.9\.9-[0-9a-f]{12}$/)
-  assert.equal(slotImageSpec(root, 'ubuntu-24.04').ref, a.ref)
+  assert.match(a.ref, /^vm2api\/kin-slot-ubuntu-24\.04:[0-9a-f]{12}$/)
+  fs.writeFileSync(path.join(root, 'VERSION'), '9.9.10\n')
+  assert.equal(
+    slotImageSpec(root, 'ubuntu-24.04').ref,
+    a.ref,
+    'release with unchanged binaries must not orphan node images',
+  )
   const cli = path.join(root, 'share/wrap-cli/cli-node')
   fakeElf(cli, 2)
   fs.utimesSync(cli, new Date(), new Date(Date.now() + 5000))
-  assert.notEqual(slotImageSpec(root, 'ubuntu-24.04').ref, a.ref, 'rebuilt cli-node with same VERSION = new image')
+  assert.notEqual(slotImageSpec(root, 'ubuntu-24.04').ref, a.ref, 'rebuilt cli-node = new image')
 
   fs.writeFileSync(path.join(root, 'bin/kin-worker'), '#!/bin/sh\n')
   assert.throws(() => slotImageSpec(root, 'ubuntu-24.04'), { code: 'slot_payload_invalid' })

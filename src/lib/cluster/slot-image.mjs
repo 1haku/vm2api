@@ -29,14 +29,6 @@ import { tarStream } from './tar.mjs'
 
 export const REMOTE_WORKER_BIN = '/usr/local/bin/kin-worker'
 
-function readVersion(projectRoot) {
-  try {
-    return fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim() || '0'
-  } catch {
-    return '0'
-  }
-}
-
 function binOr(envKey, fallback) {
   const env = String(process.env[envKey] || '').trim()
   return env && fs.existsSync(env) ? env : fallback
@@ -120,7 +112,8 @@ export function slotDockerfile(baseImage) {
 
 /**
  * `{ ref, base, hash, files }`. The tag is local to each node (never pushed):
- * vm2api/kin-slot-<kernel>:<VERSION>-<hash12>.
+ * vm2api/kin-slot-<kernel>:<hash12>. Content only — a release that leaves the
+ * slot binaries alone must not orphan every node's image and stop its slots.
  */
 export function slotImageSpec(projectRoot, kernel) {
   if (!OS_CATALOG[kernel]) throw new ClusterError(400, 'invalid_kernel', `未知系统：${kernel}`)
@@ -133,7 +126,7 @@ export function slotImageSpec(projectRoot, kernel) {
     hash.update(f.body ? crypto.createHash('sha256').update(f.body).digest('hex') : fileDigest(f.src))
   }
   const digest = hash.digest('hex').slice(0, 12)
-  return { ref: `vm2api/kin-slot-${kernel}:${readVersion(projectRoot)}-${digest}`, base, hash: digest, files }
+  return { ref: `vm2api/kin-slot-${kernel}:${digest}`, base, hash: digest, files }
 }
 
 export function slotBuildContext(spec) {
