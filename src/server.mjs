@@ -32,7 +32,7 @@ import { createUsageProbeMonitor, normalizeUsageProbeConfig } from './lib/oauth/
 import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs'
 import { invalidateLiveCredentialCache } from './lib/admin/panel-live-credentials.mjs'
 import { normalizeHealthProbeConfig, createHealthProbeMonitor, HEALTH_REAL_HEADER } from './lib/admin/health-probe.mjs'
-import { normalizeNotifyConfig, createNotifyMonitor } from './lib/admin/notify.mjs'
+import { normalizeNotifyConfig, createNotifyMonitor, dispatchNotify } from './lib/admin/notify.mjs'
 import { runVmTestChat } from './lib/admin/vm-test-chat.mjs'
 import { StickyRouter } from './lib/pool/sticky-router.mjs'
 import { setManualScheduleWins } from './lib/pool/schedule-policy.mjs'
@@ -441,6 +441,14 @@ kernelWatchdog = createKernelWatchdog({
   config: routingConfig.kernel_watchdog,
   listTargets: () => listVms(cfg.paths.project),
   homeDirFor: (vm) => path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'),
+  onFault: (vm, reason) => {
+    const title = `槽内核故障 ${vm.id}`
+    dispatchNotify(routingConfig.notify, {
+      title,
+      text: `【KIN】${title}\n\n${reason}\n已停止调度该槽；内核恢复健康后自动恢复调度。`,
+      subject: `KIN · ${title}`,
+    }).catch((error) => console.warn('[kernel-watchdog] notify failed', error?.message || error))
+  },
 })
 
 usageProbeMonitor = createUsageProbeMonitor({
