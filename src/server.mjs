@@ -63,6 +63,7 @@ import { makeError, ErrorType, ErrorCode } from './lib/core/errors.mjs'
 import * as panel from './lib/admin/panel-api.mjs'
 import { ProxyPool } from './lib/vm/proxy-pool.mjs'
 import { ensureProxyEgress, proxyEgressReady } from './lib/vm/egress.mjs'
+import { syncIpv6ProxyEgress } from './lib/vm/proxy-policy-runtime.mjs'
 import { GATEWAY_CAPABILITIES } from './lib/vm/execution-context.mjs'
 import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/telemetry-rewrite.mjs'
 import { openDatabase, closeDatabase } from './lib/db/database.mjs'
@@ -505,7 +506,7 @@ backupService.onRestored((db) => {
 
   stickyRouter.reloadConfig(routingConfig)
   accountQuota.reloadConfig(routingConfig)
-  requestLog.setConfig({
+    requestLog.setConfig({
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging?.mode,
     retainDays: routingConfig.logging?.retain_days,
     debugRetainDays: routingConfig.logging?.debug_retain_days,
@@ -792,6 +793,12 @@ const clusterManager = new ClusterManager({
 bindPlacement({ manager: clusterManager, projectRoot: cfg.paths.project })
 clusterManager.start()
 clusterManager.restoreSlotRelays()
+if (proxyPool.snapshot().config.ipv6_enabled !== true) {
+  const exits = await syncIpv6ProxyEgress(cfg.paths.project, proxyPool)
+  for (const exit of exits.filter((item) => !item.ok)) {
+    console.warn('[ipv6-policy] exit not blocked', exit.vm_id || exit.proxy_id, exit.error)
+  }
+}
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
 
 const handlePanel = createPanelHandler({
