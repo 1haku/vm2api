@@ -252,6 +252,7 @@ const {
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmQuotaOverride,
 } = routingRt
 
 routingConfig = loadRoutingConfig()
@@ -277,6 +278,7 @@ accountQuota = new AccountQuota({
     max_rpm: v.policy?.maxRpm ?? routingConfig?.concurrency?.default_max_rpm ?? 0,
   })),
 })
+accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
 
 const apiKeyStore = new ApiKeyStore({ dataDir: cfg.paths.data })
 groupsRepo = new GroupsRepo()
@@ -506,7 +508,8 @@ backupService.onRestored((db) => {
 
   stickyRouter.reloadConfig(routingConfig)
   accountQuota.reloadConfig(routingConfig)
-    requestLog.setConfig({
+  accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
+  requestLog.setConfig({
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging?.mode,
     retainDays: routingConfig.logging?.retain_days,
     debugRetainDays: routingConfig.logging?.debug_retain_days,
@@ -852,6 +855,7 @@ const handlePanel = createPanelHandler({
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmQuotaOverride,
   initPoolRuntime,
   poolSchedulerConfig,
   commitImportedOauth,

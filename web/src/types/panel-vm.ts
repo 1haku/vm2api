@@ -209,6 +209,12 @@ export type Vm = {
   /** Claude CLI native 执行位热准入上限；内核固定预开 20。 */
   session_slots?: number | null
   session_slots_override?: boolean
+  /** 单槽位配额覆盖；缺字段 = 跟随全局 `settings/quota`。GPT 槽位恒为 null。 */
+  quota_override?: VmQuotaOverride | null
+  /** 覆盖后实际生效的配额。 */
+  quota_policy?: VmQuotaView | null
+  /** 不含覆盖、按全局分档算出的配额，供「跟随全局」展示。 */
+  quota_inherited?: VmQuotaView | null
   /** 当前有效调度等级；自动模式范围 1～7，手动模式范围 1～10。 */
   schedule_level?: number
   /** 调度等级来源；缺失时按自动模式展示。 */
@@ -412,6 +418,18 @@ export type OfficialCcStatus = {
   telemetry_official?: boolean
   [key: string]: unknown
 }
+
+export type VmQuotaView = {
+  limit_5h: number
+  limit_7d: number
+  max_sessions: number
+  session_idle_min: number
+  block_on_5h: boolean
+  block_on_7d: boolean
+  weekly_split: boolean
+}
+
+export type VmQuotaOverride = Partial<VmQuotaView>
 
 export type QuotaTierKey = 'default' | 'pro' | 'max'
 

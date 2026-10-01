@@ -36,6 +36,7 @@ import { computeWeeklySplit, publicWeeklySplit, weeklySplitConfig } from '../poo
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { socksProxyFamily, normalizeSocksHost } from '../vm/socks-address.mjs'
 import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from '../pool/quota-tiers.mjs'
+import { applyVmQuotaConfig, applyVmQuotaPolicy, vmQuotaOverrideOf, vmQuotaView } from '../pool/vm-quota-override.mjs'
 import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders, isOfficialWindowLimited } from '../pool/quota-window.mjs'
 import { hardBlockOf } from '../pool/rate-limit-service.mjs'
@@ -935,13 +936,16 @@ export async function buildProbeOne({
     lastProbe: qAfter.last_probe,
     probeSource: qAfter.probe_source,
     quota: qAfter,
-    policy: resolveTierPolicy(
-      {
-        tiers: accountQuota?.tiers,
-        quota: accountQuota?.config,
-        concurrency: accountQuota?.concurrency,
-      },
-      tier,
+    policy: applyVmQuotaPolicy(
+      resolveTierPolicy(
+        {
+          tiers: accountQuota?.tiers,
+          quota: accountQuota?.config,
+          concurrency: accountQuota?.concurrency,
+        },
+        tier,
+      ),
+      vmQuotaOverrideOf(vm),
     ),
   })
   const data = {
@@ -1420,12 +1424,15 @@ function enrichVm(v, accountQuota, active, extras = {}) {
   const runtime = findRuntime(accountQuota, v)
   const liveCred = extras.liveById instanceof Map ? extras.liveById.get(v.id) : extras.liveById?.[v.id]
   const workerCred = liveCred || runtime?.worker_status?.credential || null
+  const quotaOverride = isCodexVm(v) ? null : v.quota_override || null
+  const globalQuotaConfig = extras.routingConfig?.quota || accountQuota?.config || {}
+  const vmQuotaConfig = applyVmQuotaConfig(globalQuotaConfig, quotaOverride)
   const q = quotaFromAccount(
     {
       ...acc,
       last_used_at: acc?.last_used_at || runtime?.last_used_at || null,
     },
-    accountQuota?.config,
+    vmQuotaConfig,
   )
   const fablePool = fablePoolFields(acc, runtime, extras.pool || {}, extras.routingConfig || {}, v)
   const scheduleLevel = resolveCredentialScheduleLevel({
@@ -1453,14 +1460,15 @@ function enrichVm(v, accountQuota, active, extras = {}) {
         },
         q,
       ).key
-  const policy = resolveTierPolicy(
+  const inheritedPolicy = resolveTierPolicy(
     {
       tiers: extras.routingConfig?.tiers || accountQuota?.tiers,
-      quota: extras.routingConfig?.quota || accountQuota?.config,
+      quota: globalQuotaConfig,
       concurrency: extras.routingConfig?.concurrency || accountQuota?.concurrency,
     },
     tierKey,
   )
+  const policy = applyVmQuotaPolicy(inheritedPolicy, quotaOverride)
   const safety = Number(policy.limit_5h ?? policy.safety_ratio ?? 0.85)
   const weeklySafety = Number(policy.limit_7d ?? policy.weekly_safety_ratio ?? 0.8)
   const sessionLimit = extras.sessionLimit || accountQuota?.sessions || null
@@ -1565,6 +1573,9 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     max_rpm: acc?.max_rpm ?? v.max_rpm ?? 0,
     session_slots: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
     session_slots_override: isCodex ? false : v.session_slots_override === true,
+    quota_override: quotaOverride,
+    quota_policy: isCodex ? null : vmQuotaView(policy, vmQuotaConfig),
+    quota_inherited: isCodex ? null : vmQuotaView(inheritedPolicy, globalQuotaConfig),
     rpm: acc?.rpm ?? 0,
     allowed_models: Array.isArray(v.allowed_models) ? v.allowed_models : null,
     weight: v.weight ?? 1,

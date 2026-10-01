@@ -79,6 +79,7 @@ export function buildRecreatedVmRecord(prev, generated) {
       ...(priority == null ? {} : { priority }),
       inflight: 0,
       ...(allowed.length ? { allowed_models: allowed } : {}),
+      ...(policy.quota && typeof policy.quota === 'object' ? { quota: policy.quota } : {}),
     },
     claude: {},
     fingerprint: applyGeneratedFingerprint({}, { ...pack, timezone, locale, reset_at: now }),
