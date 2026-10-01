@@ -89,9 +89,16 @@ function gib(bytes) {
 }
 
 const imageJobs = new Map()
+// Completion per running job; kept off the job object because the job is the API payload.
+const imageJobDone = new WeakMap()
 
 export function slotImageJob(nodeId, kernel) {
   return imageJobs.get(`${nodeId}:${kernel}`) || null
+}
+
+/** Resolves when the node's running build for `kernel` ends; `{status}` is 'done' or 'failed'. */
+export function awaitSlotImageBuild(job) {
+  return imageJobDone.get(job) || Promise.resolve(job)
 }
 
 /**
@@ -132,7 +139,11 @@ export function startSlotImageBuild(nodeId, kernel) {
     },
   })
   append(`构建 ${spec.ref}（基础镜像 ${spec.base}）`)
-  buildImage(sshDocker(client), { tag: spec.ref, context: slotBuildContext(spec).pipe(counter), onLog: append })
+  const done = buildImage(sshDocker(client), {
+    tag: spec.ref,
+    context: slotBuildContext(spec).pipe(counter),
+    onLog: append,
+  })
     .then(() => {
       job.status = 'done'
       append('完成')
@@ -144,6 +155,8 @@ export function startSlotImageBuild(nodeId, kernel) {
     .finally(() => {
       job.finished_at = new Date().toISOString()
     })
+    .then(() => job)
+  imageJobDone.set(job, done)
   return job
 }
 
