@@ -55,11 +55,14 @@ export function RemoteList({
         />
       ) : (
         <div className='overflow-x-auto'>
-          <div className='min-w-[760px]'>
+          <div className='min-w-[840px]'>
             <div className='flex h-8 items-center border-b bg-muted/30 text-[11px] font-medium tracking-wide text-muted-foreground/80'>
               <div className={COL.name}>节点</div>
               <div className={COL.host}>IP</div>
               <div className={COL.link}>链路</div>
+              <div className={COL.metric} title='运行中 / 全部容器（含出口）'>
+                Docker
+              </div>
               <div className={COL.metric}>槽位</div>
               <div className={COL.metric}>凭证</div>
               <div className={COL.metric}>在线</div>
@@ -109,6 +112,18 @@ export function RemoteList({
                         {lat}
                       </span>
                     ) : null}
+                  </div>
+                  <div
+                    className={cn(COL.metric, 'field-metric')}
+                    title={
+                      node.docker
+                        ? `运行 ${node.docker.running} / 共 ${node.docker.total} 个容器`
+                        : undefined
+                    }
+                  >
+                    {isLiveLink(node.link) && node.docker
+                      ? `${fmtNum(node.docker.running)}/${fmtNum(node.docker.total)}`
+                      : '—'}
                   </div>
                   <div className={cn(COL.metric, 'field-metric')}>
                     {formatNodeMetric(node, node.vmCount, fmtNum)}

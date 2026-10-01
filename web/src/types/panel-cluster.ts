@@ -26,6 +26,8 @@ export type ClusterApiNode = {
   health: {
     latency_ms: number | null
     docker: { ok: boolean; error: string | null }
+    /** Docker `/info` 计数；Docker 不可用时为 null。 */
+    containers: { total: number | null; running: number | null } | null
     checked_at: string
   } | null
   bridge: {
@@ -43,6 +45,44 @@ export type DockerInstallJob = {
   exit_code: number | null
   started_at: string
   finished_at: string | null
+}
+
+/** `POST|GET /api/panel/cluster/nodes/:id/slot-image`：远端节点上构建槽位镜像。 */
+export type SlotImageJob = {
+  status: 'running' | 'done' | 'failed'
+  ref: string
+  kernel: string
+  log: string
+  started_at: string
+  finished_at: string | null
+}
+
+export type PreflightCheckId =
+  | 'ssh'
+  | 'docker'
+  | 'arch'
+  | 'memory'
+  | 'disk'
+  | 'sudo'
+  | 'swap'
+  | 'image'
+  | 'hostd'
+  | 'relay'
+
+/** `ok:false` + `level:'error'` 阻断创建；`warn` 只提示。 */
+export type PreflightCheck = {
+  id: PreflightCheckId
+  ok: boolean
+  level: 'error' | 'warn'
+  message: string
+}
+
+/** `POST /api/panel/cluster/nodes/:id/preflight`：`ok` = 没有失败的 error 级检查。 */
+export type NodePreflight = {
+  node_id: string
+  ok: boolean
+  image: { ref: string; present: boolean; job: SlotImageJob | null }
+  checks: PreflightCheck[]
 }
 
 export type ClusterNodeInput = {
@@ -87,6 +127,9 @@ export type DockerContainer = {
   created_at: string | null
   ports: string[]
   managed: boolean
+  /** 槽位与其出口共用：`kin-02`（slot）/ `kin-02-egress`（egress）。 */
+  vm_id: string | null
+  role: 'slot' | 'egress' | null
 }
 
 export type DockerContainerInput = {

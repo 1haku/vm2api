@@ -63,6 +63,7 @@ import { makeError, ErrorType, ErrorCode } from './lib/core/errors.mjs'
 import * as panel from './lib/admin/panel-api.mjs'
 import { ProxyPool } from './lib/vm/proxy-pool.mjs'
 import { ensureProxyEgress, proxyEgressReady } from './lib/vm/egress.mjs'
+import { syncIpv6ProxyEgress } from './lib/vm/proxy-policy-runtime.mjs'
 import { GATEWAY_CAPABILITIES } from './lib/vm/execution-context.mjs'
 import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/telemetry-rewrite.mjs'
 import { openDatabase, closeDatabase } from './lib/db/database.mjs'
@@ -72,6 +73,7 @@ import { BackupService } from './lib/admin/backup-service.mjs'
 import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
+import { bindPlacement } from './lib/cluster/placement.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -250,6 +252,7 @@ const {
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmQuotaOverride,
 } = routingRt
 
 routingConfig = loadRoutingConfig()
@@ -275,6 +278,7 @@ accountQuota = new AccountQuota({
     max_rpm: v.policy?.maxRpm ?? routingConfig?.concurrency?.default_max_rpm ?? 0,
   })),
 })
+accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
 
 const apiKeyStore = new ApiKeyStore({ dataDir: cfg.paths.data })
 groupsRepo = new GroupsRepo()
@@ -504,6 +508,7 @@ backupService.onRestored((db) => {
 
   stickyRouter.reloadConfig(routingConfig)
   accountQuota.reloadConfig(routingConfig)
+  accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
   requestLog.setConfig({
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging?.mode,
     retainDays: routingConfig.logging?.retain_days,
@@ -786,8 +791,17 @@ const clusterManager = new ClusterManager({
   repo: new ClusterNodesRepo(),
   dataDir,
   listen: { host: cfg.host, port: cfg.port },
+  vmsOnNode: (nodeId) => listVms(cfg.paths.project).filter((vm) => vm.node_id === nodeId),
 })
+bindPlacement({ manager: clusterManager, projectRoot: cfg.paths.project })
 clusterManager.start()
+clusterManager.restoreSlotRelays()
+if (proxyPool.snapshot().config.ipv6_enabled !== true) {
+  const exits = await syncIpv6ProxyEgress(cfg.paths.project, proxyPool)
+  for (const exit of exits.filter((item) => !item.ok)) {
+    console.warn('[ipv6-policy] exit not blocked', exit.vm_id || exit.proxy_id, exit.error)
+  }
+}
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
 
 const handlePanel = createPanelHandler({
@@ -841,6 +855,7 @@ const handlePanel = createPanelHandler({
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmQuotaOverride,
   initPoolRuntime,
   poolSchedulerConfig,
   commitImportedOauth,
