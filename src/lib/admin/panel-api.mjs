@@ -1864,7 +1864,8 @@ export function lookupBilling(index, accOrVm) {
 function attachBillingMeta(billing, accounts = []) {
   if (!billing) return null
   const labeled = (billing.accounts || []).map((row) => {
-    const acc = (accounts || []).find((a) => a.account_id === row.account_id || a.vm_id === row.vm_id)
+    // Slot ids get reused: a vm_id match would stamp the slot's current email on an older account's row.
+    const acc = (accounts || []).find((a) => (row.account_id ? a.account_id === row.account_id : a.vm_id === row.vm_id))
     return {
       ...row,
       email: acc?.email || row.email || null,
