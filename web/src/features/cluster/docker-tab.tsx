@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   ClusterApiNode,
+  DockerContainer,
   DockerContainerInput,
   DockerInstallJob,
   DockerLogs,
 } from '@/types/panel-cluster'
+import type { Vm } from '@/types/panel-vm'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -28,6 +30,7 @@ import {
   dockerInfoQueryOptions,
   jsonBody,
 } from '@/features/cluster/queries'
+import { vmsListQueryOptions } from '@/features/vm/queries'
 
 const STATE_TONE: Record<string, { key: string; cls: string; text: string }> = {
   running: { key: 'ok', cls: 'ok', text: '运行中' },
@@ -38,12 +41,37 @@ const STATE_TONE: Record<string, { key: string; cls: string; text: string }> = {
   dead: { key: 'bad', cls: 'bad', text: '异常' },
 }
 
+/** 与节点槽位容器名一致：`vm-14` → `kin-14`。 */
+function slotContainerName(vmId: string) {
+  return `kin-${vmId.replace(/^vm-/, '')}`
+}
+
+/** 槽位已登记但节点上还没有容器时，Docker 表仍要能看到它。 */
+function absentSlotRow(vm: Vm): DockerContainer & { absent: true } {
+  return {
+    id: `slot:${vm.id}`,
+    name: slotContainerName(vm.id),
+    image: vm.kernel || '—',
+    state: 'created',
+    status:
+      vm.status === 'running'
+        ? '记录为运行，节点上没有容器'
+        : '槽位已登记，容器未创建',
+    created_at: typeof vm.created_at === 'string' ? vm.created_at : null,
+    ports: [],
+    managed: true,
+    vm_id: vm.id,
+    role: 'slot',
+    absent: true,
+  }
+}
 export function DockerTab({ node }: { node: ClusterApiNode }) {
   const qc = useQueryClient()
   const ready = node.link.state === 'ready'
   const dockerOk = ready && node.health?.docker.ok === true
   const info = useQuery(dockerInfoQueryOptions(node.id, dockerOk))
   const containers = useQuery(dockerContainersQueryOptions(node.id, dockerOk))
+  const slots = useQuery(vmsListQueryOptions())
   const [logsFor, setLogsFor] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<string | null>(null)
   const base = `/api/panel/cluster/nodes/${node.id}/docker`
@@ -107,7 +135,16 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
   }
 
   // 同一 VM 的槽位与出口挨着：kin-02 → kin-02-egress；其余容器按名字排在后面。
-  const items = [...(containers.data || [])].sort((a, b) => {
+  // 节点上还没容器的槽位也要出现，否则管理页看起来像这台 VPS 没有这个 VM。
+  const live = containers.data || []
+  const seen = new Set(
+    live.flatMap((c) => [c.vm_id, c.name].filter((v): v is string => !!v))
+  )
+  const missing = (slots.data?.items || [])
+    .filter((vm) => vm.node_id === node.id)
+    .filter((vm) => !seen.has(vm.id) && !seen.has(slotContainerName(vm.id)))
+    .map(absentSlotRow)
+  const items = [...missing, ...live].sort((a, b) => {
     const ka = a.vm_id
       ? `0${a.vm_id}${a.role === 'egress' ? '1' : '0'}`
       : `1${a.name}`
@@ -162,6 +199,7 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
               </tr>
             ) : (
               items.map((c) => {
+                const absent = 'absent' in c && c.absent
                 // A crash-looping container reports `restarting`; it still needs 停止, not 启动.
                 const running =
                   c.state === 'running' || c.state === 'restarting'
@@ -180,7 +218,7 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
                         ) : null}
                       </div>
                       <div className='font-mono text-[10px] text-muted-foreground'>
-                        {c.id.slice(0, 12)}
+                        {absent ? '—' : c.id.slice(0, 12)}
                       </div>
                     </td>
                     <td className='px-3 py-1.5 text-xs'>{c.image}</td>
@@ -204,44 +242,52 @@ export function DockerTab({ node }: { node: ClusterApiNode }) {
                       {c.ports.join(' ') || '—'}
                     </td>
                     <td className='px-3 py-1.5 text-right whitespace-nowrap'>
-                      {(running
-                        ? (['stop', 'restart'] as const)
-                        : (['start'] as const)
-                      ).map((act) => (
-                        <Button
-                          key={act}
-                          size='sm'
-                          variant='ghost'
-                          className='h-7 px-2 text-xs'
-                          disabled={busy}
-                          onClick={() => action.mutate({ id: c.id, act })}
-                        >
-                          {act === 'stop'
-                            ? '停止'
-                            : act === 'restart'
-                              ? '重启'
-                              : '启动'}
-                        </Button>
-                      ))}
-                      <Button
-                        size='sm'
-                        variant='ghost'
-                        className='h-7 px-2 text-xs'
-                        onClick={() =>
-                          setLogsFor(logsFor === c.id ? null : c.id)
-                        }
-                      >
-                        日志
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='ghost'
-                        className='h-7 px-2 text-xs text-red-3'
-                        disabled={busy}
-                        onClick={() => setRemoveTarget(c.id)}
-                      >
-                        删除
-                      </Button>
+                      {absent ? (
+                        <span className='text-[11px] text-muted-foreground'>
+                          无容器
+                        </span>
+                      ) : (
+                        <>
+                          {(running
+                            ? (['stop', 'restart'] as const)
+                            : (['start'] as const)
+                          ).map((act) => (
+                            <Button
+                              key={act}
+                              size='sm'
+                              variant='ghost'
+                              className='h-7 px-2 text-xs'
+                              disabled={busy}
+                              onClick={() => action.mutate({ id: c.id, act })}
+                            >
+                              {act === 'stop'
+                                ? '停止'
+                                : act === 'restart'
+                                  ? '重启'
+                                  : '启动'}
+                            </Button>
+                          ))}
+                          <Button
+                            size='sm'
+                            variant='ghost'
+                            className='h-7 px-2 text-xs'
+                            onClick={() =>
+                              setLogsFor(logsFor === c.id ? null : c.id)
+                            }
+                          >
+                            日志
+                          </Button>
+                          <Button
+                            size='sm'
+                            variant='ghost'
+                            className='h-7 px-2 text-xs text-red-3'
+                            disabled={busy}
+                            onClick={() => setRemoveTarget(c.id)}
+                          >
+                            删除
+                          </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 )
