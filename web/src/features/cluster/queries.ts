@@ -4,6 +4,8 @@ import type {
   ClusterLocalStatus,
   DockerContainer,
   DockerInfo,
+  NodePreflight,
+  SlotImageJob,
 } from '@/types/panel-cluster'
 import { api } from '@/lib/api'
 
@@ -56,6 +58,53 @@ export function dockerContainersQueryOptions(nodeId: string, enabled: boolean) {
     refetchOnWindowFocus: false,
     retry: false,
   })
+}
+
+function nodePath(nodeId: string) {
+  return `/api/panel/cluster/nodes/${encodeURIComponent(nodeId)}`
+}
+
+/**
+ * 放置预检。服务端是 POST（要实际 SSH 过去跑检查），但语义是只读观测，
+ * 按 节点 + 内核 缓存成 query；不自动轮询，由调用方手动 refetch。
+ */
+export function nodePreflightQueryOptions(nodeId: string, kernel: string) {
+  return queryOptions({
+    queryKey: ['panel', 'cluster', nodeId, 'preflight', kernel] as const,
+    queryFn: () =>
+      api<NodePreflight>(`${nodePath(nodeId)}/preflight`, jsonBody({ kernel })),
+    enabled: !!nodeId && !!kernel,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
+/** 构建中每 3s 轮询一次；done / failed / 无任务时停。 */
+export function slotImageJobQueryOptions(
+  nodeId: string,
+  kernel: string,
+  enabled: boolean
+) {
+  return queryOptions({
+    queryKey: ['panel', 'cluster', nodeId, 'slot-image', kernel] as const,
+    queryFn: () =>
+      api<SlotImageJob | null>(
+        `${nodePath(nodeId)}/slot-image?kernel=${encodeURIComponent(kernel)}`
+      ),
+    enabled: enabled && !!nodeId && !!kernel,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'running' ? 3000 : false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
+export function startSlotImageBuild(nodeId: string, kernel: string) {
+  return api<SlotImageJob>(
+    `${nodePath(nodeId)}/slot-image`,
+    jsonBody({ kernel })
+  )
 }
 
 export function jsonBody(body: unknown): RequestInit {
