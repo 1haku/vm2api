@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const cli = fileURLToPath(new URL('../../share/wrap-cli/cli-node', import.meta.url))
 
-async function runTurn(t, stopReason, apiError = false) {
+async function runTurn(t, stopReason, apiError = false, httpError = null) {
   const home = mkdtempSync(path.join(os.tmpdir(), 'cli-hop-limit-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const events = [
@@ -49,7 +49,18 @@ async function runTurn(t, stopReason, apiError = false) {
       return
     }
     requests.push(JSON.parse(raw))
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_limit_fixture' })
+    if (httpError) {
+      res.writeHead(httpError.status, { 'content-type': 'application/json', 'retry-after': '13' })
+      res.end(
+        JSON.stringify({ type: 'error', error: { type: httpError.type, message: 'upstream HTTP fixture failure' } }),
+      )
+      return
+    }
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'request-id': 'req_limit_fixture',
+      ...(apiError ? { 'retry-after': '13' } : {}),
+    })
     for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
     res.end()
   })
@@ -166,9 +177,31 @@ for (const stopReason of ['max_tokens', 'end_turn']) {
 test('native CLI still fails on a real upstream SSE error', { timeout: 20000 }, async (t) => {
   const result = await runTurn(t, 'max_tokens', true)
   assert.equal(result.terminal.type, 'kin_job_error')
+  assert.equal(result.terminal.code, 'upstream_error')
+  assert.equal(result.terminal.status, 502)
+  assert.equal(result.terminal.error_type, 'api_error')
+  assert.equal(result.terminal.retry_after, '13')
   assert.match(result.terminal.error, /upstream fixture failure/)
   assert.equal(
     result.events.some((event) => event.type === 'message_stop'),
     false,
   )
 })
+
+for (const [status, type, code] of [
+  [400, 'invalid_request_error', 'upstream_invalid_request'],
+  [404, 'invalid_request_error', 'upstream_invalid_request'],
+  [429, 'rate_limit_error', 'upstream_rate_limit'],
+  [500, 'api_error', 'upstream_error'],
+]) {
+  test(`native CLI reports real HTTP ${status} without a hidden retry or fallback`, { timeout: 20000 }, async (t) => {
+    const result = await runTurn(t, null, false, { status, type })
+    assert.equal(result.requests.length, 1)
+    assert.equal(result.terminal.type, 'kin_job_error')
+    assert.equal(result.terminal.code, code)
+    assert.equal(result.terminal.status, status)
+    assert.equal(result.terminal.error_type, type)
+    assert.equal(result.terminal.retry_after, '13')
+    assert.equal(result.terminal.error, 'upstream HTTP fixture failure')
+  })
+}

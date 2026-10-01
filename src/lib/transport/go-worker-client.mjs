@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { prepareOutboundHeaders } from '../protocol/outbound-attempt.mjs'
@@ -123,6 +124,30 @@ function workerRequest(
     if (payload) req.write(payload)
     req.end()
   })
+}
+
+/**
+ * Client went away: name the hop to the kernel so it cancels that job on the
+ * CLI right now. The dropped socket alone left the kernel guessing whether
+ * the CLI still owned the job. Best effort: the kernel also sees the drop,
+ * and an old worker without the route just answers 404.
+ */
+function cancelOnAbort(exec, signal, requestId) {
+  if (!signal || signal.aborted) return () => {}
+  const onAbort = () => {
+    workerRequest(exec, {
+      method: 'POST',
+      requestPath: '/internal/v1/cancel',
+      body: { request_id: requestId },
+      timeoutMs: 3000,
+    })
+      .then((res) => res.resume())
+      .catch((error) => {
+        console.warn(`[kernel-cancel] ${exec?.vmId || 'slot'} ${requestId}: ${error?.code || error?.message || error}`)
+      })
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  return () => signal.removeEventListener('abort', onAbort)
 }
 
 async function readAll(stream, limit = MAX_BODY) {
@@ -261,7 +286,11 @@ const PERMISSION_ERROR_TEXT = /organization does not have access to claude/i
 export function semanticStatusForStreamError(errorBody) {
   const type = String(errorBody?.error?.type || errorBody?.type || '')
   const message = String(errorBody?.error?.message || errorBody?.message || '')
-  if (type === 'rate_limit_error' || isPlanLimitMessage(message)) return 429
+  if (isPlanLimitMessage(message)) return 429
+  // The kernel names the status the job failed with; older kernels did not.
+  const explicit = Number(errorBody?.error?.status)
+  if (explicit >= 400 && explicit < 600) return explicit
+  if (type === 'rate_limit_error') return 429
   if (type === 'overloaded_error') return 529
   if (type === 'authentication_error' || AUTH_ERROR_TEXT.test(message)) return 401
   if (type === 'permission_error' || PERMISSION_ERROR_TEXT.test(message)) return 403
@@ -316,7 +345,9 @@ export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
     const message = String(body?.error?.message || body?.message || '')
     const code = String(body?.error?.code || '')
     if (code && code !== 'empty_response') {
-      const headers = status === 429 ? extraHeadersFromLimitError(message, result.headers || {}, now) : result.headers
+      const retryAfter = body?.error?.retry_after
+      const coded = retryAfter ? { ...(result.headers || {}), 'retry-after': String(retryAfter) } : result.headers
+      const headers = status === 429 ? extraHeadersFromLimitError(message, coded || {}, now) : coded
       return {
         ...result,
         status,
@@ -439,23 +470,27 @@ export async function callGoWorker({
       stopReason: mock.body?.stop_reason || null,
     }
   }
+  const requestId = randomUUID()
+  const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
     const response = await workerRequest(exec, {
       method: 'POST',
       requestPath,
-      body:
-        envelope ||
-        workerEnvelope({
-          body,
-          reqHeaders,
-          exec,
-          identity,
-          stream: false,
-          want1m,
-          cacheTtl,
-          preserveCacheBreakpoints,
-          cliHop,
-        }),
+      body: {
+        ...(envelope ||
+          workerEnvelope({
+            body,
+            reqHeaders,
+            exec,
+            identity,
+            stream: false,
+            want1m,
+            cacheTtl,
+            preserveCacheBreakpoints,
+            cliHop,
+          })),
+        request_id: requestId,
+      },
       signal,
       timeoutMs,
     })
@@ -491,6 +526,8 @@ export async function callGoWorker({
       terminalState: 'transport_error',
       transportError: true,
     }
+  } finally {
+    stopCancel()
   }
 }
 
@@ -582,24 +619,28 @@ export async function streamGoWorker({
   let committed = false
   const startedAt = Date.now()
   let ttftMs = null
+  const requestId = randomUUID()
+  const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
     const response = await workerRequest(exec, {
       method: 'POST',
       requestPath,
-      body:
-        envelope ||
-        workerEnvelope({
-          body,
-          reqHeaders,
-          exec,
-          identity,
-          stream: true,
-          deliveryMode,
-          want1m,
-          cacheTtl,
-          preserveCacheBreakpoints,
-          cliHop,
-        }),
+      body: {
+        ...(envelope ||
+          workerEnvelope({
+            body,
+            reqHeaders,
+            exec,
+            identity,
+            stream: true,
+            deliveryMode,
+            want1m,
+            cacheTtl,
+            preserveCacheBreakpoints,
+            cliHop,
+          })),
+        request_id: requestId,
+      },
       signal,
       timeoutMs,
       timeoutMode: 'first-byte',
@@ -784,6 +825,8 @@ export async function streamGoWorker({
       terminalState: committed ? 'incomplete' : 'transport_error',
       transportError: true,
     }
+  } finally {
+    stopCancel()
   }
 }
 
