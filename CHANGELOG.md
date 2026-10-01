@@ -1,19 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.3.89 — 2026-10-01
 
+- 集群 VM 放置：存在集群节点时，管理员可把 Claude / Rust VM 创建到 SSH 加入的 VPS。节点槽位使用自包含镜像 `vm2api/kin-slot-<kernel>:<sha12>`，经 SSH streamlocal 管理容器并中继 kernel / worker socket；凭据以节点副本为准，导入推送、刷新拉回。SOCKS5 出口在节点上按槽位成对部署（`kin-02` / `kin-02-egress`，网络 `kin-02-net`），槽位删除或换出口时回收；节点槽位允许使用与内存上限等量的 swap。本机/节点差异收敛到 `slotHost(vm)` 契约；Codex、官方 CC 初始化、wrap 修复/提升、引擎与 auth_scheme 切换在节点上返回 `remote_unsupported`。面板：VM 标出所在服务器（本机 `local`），集群页显示各节点 Docker 运行/总数，节点 Docker 列表按槽位把出口排在一起。新增 `POST /api/panel/cluster/nodes/:id/{preflight,slot-image}`。
+- 集群页终端：nginx 必须对 `/api/panel/cluster/nodes/<id>/shell` 透传 `Upgrade`（见 `docs/DEPLOY.md`「反代」）；`Connection ""` 会让终端一直连不上。
+- 节点槽位隔离：`~/.claude` 改为独立挂载（宿主侧 `claude/`），控制面对槽位文件的读写不再跟随符号链接（写用 `O_EXCL` 临时文件 + 句柄授权 + rename，读用 `O_NOFOLLOW`），槽内进程无法借符号链接让控制面读取其他槽位凭据或写出槽位目录。已有节点槽位在下次启动 / 重载时自动重建并迁移凭据。
+- 节点槽位镜像 tag 只取内容哈希，不再带版本号：只改版本号的发布不会让节点上已有镜像失效。镜像缺失时启动 / 重载会自动在节点上构建（同节点同内核单飞），不再直接报错要求手动准备。
+- 导入凭据换票前，把 VM 记录上的出口同步为代理池当前绑定：换票已经用池里的 SOCKS5，记录没跟上时节点槽位会因为没有出口拒绝启动，表现为换票 502。
+- 新建 VM 自动编号跳过已删除 VM 留下用量 / 账号历史的序号，新槽位不再显示旧账号和旧花费；创建弹窗名称留空时交给后端编号，不再在前端推算。
 - 修复 #194：SOCKS5 IPv6 地址在导入、持久化加载、探测、URL 生成和 endpoint 比较中统一规范化；socket 使用裸 IPv6，URL / 地址展示使用 `[host]:port`，保留 IPv4、hostname 和凭证编码行为。
 - 设置 → SOCKS5 新增「IPv6 代理出口」，默认关闭。开启后才能探测、绑定和使用 IPv6 literal 代理；关闭会停止对应运行出口，保留槽位、绑定和探测历史，不计作代理故障。代理池和槽位网络状态显示「IPv6 已关闭」，远端出口同步失败单独提示；槽位网桥仍为 IPv4，DNS / 路由策略不变。
 - 单个槽位可覆盖全局配额（5h/7d 硬闸、最大会话、会话空闲、打满阻断、周仓拆分）。未改的项继续跟随设置 → 配额；槽位详情「运行」里查看和编辑，热更新，不进容器。GPT 槽位不使用这套配额。
-
-## 1.3.89 — 2026-10-01
-
-- 集群 VM 放置：存在集群节点时，管理员可把 Claude / Rust VM 创建到 SSH 加入的 VPS。节点槽位使用自包含镜像 `vm2api/kin-slot-<kernel>:<VERSION>-<sha12>`（面板显式准备），经 SSH streamlocal 管理容器并中继 kernel / worker socket；凭据以节点副本为准，导入推送、刷新拉回。SOCKS5 出口在节点上按槽位成对部署（`kin-02` / `kin-02-egress`，网络 `kin-02-net`），槽位删除或换出口时回收；节点槽位允许使用与内存上限等量的 swap。本机/节点差异收敛到 `slotHost(vm)` 契约；Codex、官方 CC 初始化、wrap 修复/提升、引擎与 auth_scheme 切换在节点上返回 `remote_unsupported`。面板：VM 标出所在服务器（本机 `local`），集群页显示各节点 Docker 运行/总数，节点 Docker 列表按槽位把出口排在一起。新增 `POST /api/panel/cluster/nodes/:id/{preflight,slot-image}`。
-- 集群页终端：nginx 必须对 `/api/panel/cluster/nodes/<id>/shell` 透传 `Upgrade`（见 `docs/DEPLOY.md`「反代」）；`Connection ""` 会让终端一直连不上。
-- 节点槽位隔离：`~/.claude` 改为独立挂载（宿主侧 `claude/`），控制面对槽位文件的读写不再跟随符号链接（写用 `O_EXCL` 临时文件 + 句柄授权 + rename，读用 `O_NOFOLLOW`），槽内进程无法借符号链接让控制面读取其他槽位凭据或写出槽位目录。已有节点槽位在下次启动 / 重载时自动重建并迁移凭据。
-- 节点槽位镜像 tag 改为只取内容哈希（`vm2api/kin-slot-<kernel>:<sha12>`），不再带版本号：只改版本号的发布不会让节点上已有镜像失效。镜像缺失时启动 / 重载会自动在节点上构建（同节点同内核单飞），不再直接报错要求手动准备。
-- 导入凭据换票前，把 VM 记录上的出口同步为代理池当前绑定：换票已经用池里的 SOCKS5，记录没跟上时节点槽位会因为没有出口拒绝启动，表现为换票 502。
-- 新建 VM 自动编号跳过已删除 VM 留下用量 / 账号历史的序号，新槽位不再显示旧账号和旧花费；创建弹窗名称留空时交给后端编号，不再在前端推算。
+- 节点 Docker 页会列出已登记但还没有容器的槽位（没有出口时不会创建容器），避免这台 VPS 看起来是空的。
 
 已部署机升级：更新 Node 控制面（`src/`、`package*.json`）和 `web/dist`，`npm ci --omit=dev`（需要 `ssh2`、`ws`），重启一次 Node；按上条补 nginx 终端路径。二进制与 1.3.88 相同。节点槽位镜像 tag 只随 `/opt/kin` 内二进制内容变化；变了之后节点槽位下次启动会自动重建镜像。
 
