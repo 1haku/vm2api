@@ -4,8 +4,9 @@
 
 - 修复 #198：SOCKS5 地址是 IPv6 literal（如 `socks5h://[::1]:1080`）时，Codex OAuth 换票 / 刷新 / 目录、Claude 身份引导、OpenAI 额度、出口地理查询和 `kin-oauth-auth` 换票都在连代理之前报 `getaddrinfo ENOTFOUND [::1]`。根因是 socks-proxy-agent 10.1.0 把 URL 里带方括号的主机名原样拿去连接；Node 侧统一经 `src/lib/vm/proxy-agent.mjs` 建 agent，`kin-oauth-auth` 重新打包同一修复。IPv4 / hostname 代理行为不变。
 - 修复 #196：本地出口（`px-local`）的 GPT 槽位，推理由宿主 Codex kernel 自己读 `HTTPS_PROXY` / `ALL_PROXY` 走部署代理，而目录同步、额度、token 刷新、OAuth 换票由 Node 直连，同一账号出现两个出口，直连不通时这些请求失败。现在由 Node 按 kernel 原有顺序（`HTTPS_PROXY` > `https_proxy` > `ALL_PROXY` > `all_proxy`，`HTTP_PROXY` 不用于 https）解析一次，写进 kernel 配置并要求必须走该代理；kernel 启动时去掉继承的代理变量，主机侧请求用同一个地址。HTTP(S) 代理新增 `https-proxy-agent` 支持；代理地址协议不认识时直接报错，不再静默直连。本地 Claude 槽位仍直连。`NO_PROXY` 不再影响本地 GPT 槽位的出口。
+- 修复 #197：同一槽位 id 下有旧账号的计费行时（1.3.89 之前的 id 复用，或同一槽位重新登录别的账号），总览计费条不再把旧账号的费用显示成当前账号、也不再出现重复 chip；旧账号显示自己的邮箱，没有邮箱时显示「vm-xx 旧账号」，只有当前账号的 chip 链接到槽位。后端计费行的邮箱改为按账号匹配。
 
-已部署机升级：更新 Node 控制面（`src/`、`package*.json`）和 `bin/kin-oauth-auth`，`npm ci --omit=dev`（新增 `https-proxy-agent`），重启一次 Node。已在运行的本地出口 GPT 槽位 Codex kernel 需重启该槽位才会改用显式代理配置。
+已部署机升级：更新 Node 控制面（`src/`、`package*.json`）、`web/dist` 和 `bin/kin-oauth-auth`，`npm ci --omit=dev`（新增 `https-proxy-agent`），重启一次 Node。已在运行的本地出口 GPT 槽位 Codex kernel 需重启该槽位才会改用显式代理配置。
 
 ## 1.3.89 — 2026-10-01
 
