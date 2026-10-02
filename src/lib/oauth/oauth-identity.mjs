@@ -6,7 +6,6 @@
 import { makeProxyFetch } from '../protocol/codex-models.mjs'
 import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
 import { BETA_OAUTH, BOOTSTRAP_UA } from './oauth-contract.mjs'
-import { tierFromOauthProfile } from './official-cc-stats.mjs'
 
 export const CLAUDE_CLI_BOOTSTRAP_URL =
   'https://api.anthropic.com/api/claude_cli/bootstrap?entrypoint=claude-vscode&model=claude-opus-5'
@@ -42,6 +41,19 @@ function subscriptionTypeFromText(text) {
   return null
 }
 
+function planFromProfile(profile) {
+  const account = profile?.account || {}
+  const org = profile?.organization || {}
+  if (account.has_claude_max === true) return 'max'
+  const orgType = String(org.organization_type || profile.organization_type || '').toLowerCase()
+  const rateTier = String(org.rate_limit_tier || '').toLowerCase()
+  if (orgType === 'claude_max' || rateTier.includes('max')) return 'max'
+  if (account.has_claude_pro === true || orgType === 'claude_pro' || rateTier.includes('pro')) return 'pro'
+  if (orgType === 'claude_enterprise') return 'enterprise'
+  if (orgType === 'claude_team') return 'team'
+  return null
+}
+
 /** Plan from the exchange/bootstrap body. Explicit field, profile, then text. */
 export function subscriptionTypeFromOauthRaw(raw) {
   if (raw == null) return null
@@ -53,11 +65,8 @@ export function subscriptionTypeFromOauthRaw(raw) {
   if (explicit) return explicit
   const profiles = [raw, raw.profile, raw.oauth_profile].filter((item) => item && typeof item === 'object')
   for (const profile of profiles) {
-    const tier = tierFromOauthProfile(profile)
+    const tier = planFromProfile(profile)
     if (tier) return tier
-    const orgType = String(profile.organization?.organization_type || profile.organization_type || '').toLowerCase()
-    if (orgType === 'claude_enterprise') return 'enterprise'
-    if (orgType === 'claude_team') return 'team'
   }
   return subscriptionTypeFromText(JSON.stringify(raw))
 }
