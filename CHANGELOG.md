@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 槽运维终端里的 `claude` 启动该槽的 cli-node（本机 `/home/kincli/.kin/cli-node`，集群节点 `/opt/kin/cli-node`），不走 PATH 上的官方 `claude`。只对这次面板会话生效，不改槽里的 `~/.bashrc`。
+
 ## 1.3.92 — 2026-10-02
 
 - SOCKS5 透明出口的 `dns_primary` 支持自定义 HTTPS DoH URL（域名、IPv4 / IPv6 literal、路径 / 查询参数及端口），仍使用同一字符串设置；设置页可选择 Cloudflare 域名或编辑自定义 URL。自定义上游优先，其后保留原有 fallback 顺序，`auto` 和已有选项行为不变。拒绝 userinfo、fragment、无效主机 / 端口及原始逗号，避免逗号分隔的上游配置被拆成多项。域名经 SOCKS5 代理解析，不新增 DNS bootstrap 或改写传输实现。
