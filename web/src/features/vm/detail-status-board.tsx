@@ -1,6 +1,7 @@
 import type { Dashboard } from '@/types/panel-overview'
 import type { Vm, VmKernelSnapshot, VmProxySnap } from '@/types/panel-vm'
 import type { StatusTone } from '@/types/status'
+import { credTypeOf } from '@/lib/cred-type'
 import {
   fableCap,
   fableCardInfo,
@@ -29,6 +30,7 @@ import {
 } from '@/lib/wrap-health'
 import { SlotIdentity } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
+import { ClaudeResetActions } from '@/features/vm/claude-reset-actions'
 import { CodexKernelHealthFields } from '@/features/vm/codex-kernel-health-card'
 import { ConcRpmEditor } from '@/features/vm/conc-rpm-editor'
 import { dataplaneLabel } from '@/features/vm/dataplane-contract'
@@ -313,6 +315,9 @@ export function VmStatusBoard(props: Props) {
                     value={sess.max > 0 ? (sess.active / sess.max) * 100 : 0}
                     hint={`${sess.active}/${sess.max}`}
                   />
+                ) : null}
+                {credTypeOf(vm) === 'oauth' ? (
+                  <ClaudeResetActions vm={vm} now={now} />
                 ) : null}
               </>
             )}
