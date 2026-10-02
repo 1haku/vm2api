@@ -3654,6 +3654,7 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/proxies') {
         const ident = panelIdentity(req)
         const snap = ident.role === 'user' ? proxyPool.snapshot({ ownerUserId: req.panelUserId }) : proxyPool.snapshot()
+        if (ident.role !== 'admin') delete snap.config.dns_primary
         return json(res, 200, panel.ok(snap))
       }
       if (req.method === 'POST' && p === '/api/panel/proxies/local') {
@@ -3711,7 +3712,9 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok(result))
       }
       if (req.method === 'GET' && p === '/api/panel/proxies/config') {
-        return json(res, 200, panel.ok(proxyPool.snapshot().config))
+        const config = proxyPool.snapshot().config
+        if (panelIdentity(req).role !== 'admin') delete config.dns_primary
+        return json(res, 200, panel.ok(config))
       }
       if (req.method === 'PUT' && p === '/api/panel/proxies/config') {
         const body = await readBody(req, 64 * 1024)

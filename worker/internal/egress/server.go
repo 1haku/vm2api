@@ -111,6 +111,15 @@ func New(cfg Config) (*Server, error) {
 		upstreams: upstreams,
 		http: &http.Client{
 			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" {
+					return fmt.Errorf("refusing DoH redirect to non-HTTPS URL")
+				}
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
 			Transport: &http.Transport{
 				DialContext: dialer.DialContext,
 			},

@@ -155,16 +155,73 @@ test('local egress readiness is direct and does not require kin-egress', () => {
   assert.equal(listen.mode, 'direct')
 })
 
-test('dns primary puts the chosen upstream first and keeps the rest as fallback', () => {
+test('dns primary preserves auto and built-in fallback order', () => {
+  const defaults = [
+    'https://1.1.1.1/dns-query',
+    'https://8.8.8.8/dns-query',
+    '8.8.8.8:53',
+    '1.1.1.1:53',
+  ]
   assert.equal(dnsUpstreamChain('auto'), '')
-  assert.equal(dnsUpstreamChain('bogus'), '')
-  assert.equal(
-    dnsUpstreamChain('8.8.8.8:53'),
-    '8.8.8.8:53,https://1.1.1.1/dns-query,https://8.8.8.8/dns-query,1.1.1.1:53',
-  )
   assert.equal(validDnsPrimary('auto'), true)
-  assert.equal(validDnsPrimary('https://1.1.1.1/dns-query'), true)
-  assert.equal(validDnsPrimary('9.9.9.9:53'), false)
+  for (const primary of defaults) {
+    assert.equal(validDnsPrimary(primary), true)
+    assert.equal(dnsUpstreamChain(primary), [primary, ...defaults.filter((upstream) => upstream !== primary)].join(','))
+  }
+})
+
+test('custom HTTPS DNS upstreams precede the unchanged default fallbacks', () => {
+  for (const primary of [
+    'https://cloudflare-dns.com/dns-query',
+    'https://dns.example.com:8443/custom/path?key=a%2Cb',
+    'https://9.9.9.9/dns-query',
+    'https://[2606:4700:4700::1111]/dns-query',
+    'https://[::1]:8443/dns-query',
+    'https://DNS.Example.COM./dns-query',
+  ]) {
+    assert.equal(validDnsPrimary(primary), true, primary)
+    assert.equal(
+      dnsUpstreamChain(primary),
+      `${primary},https://1.1.1.1/dns-query,https://8.8.8.8/dns-query,8.8.8.8:53,1.1.1.1:53`,
+    )
+  }
+})
+
+test('DNS upstream validation rejects unsafe or malformed URL boundaries', () => {
+  for (const primary of [
+    undefined, null, 123, {}, '', 'bogus', '9.9.9.9:53',
+    'http://dns.example.com/dns-query',
+    'HTTPS://dns.example.com/dns-query',
+    'hTtPs://dns.example.com/dns-query',
+    'https://dns.example.com/dns-%query',
+    'https:////dns.example.com/dns-query',
+    'https://user:pass@dns.example.com/dns-query',
+    'https://@dns.example.com/dns-query',
+    'https://dns.example.com/dns-query#fragment',
+    'https://dns.example.com/dns-query#',
+    'https://dns.example.com/dns-query?key=a,b',
+    'https://dns.example.com/dns-query,https://other.example/dns-query',
+    ' https://dns.example.com/dns-query',
+    'https://dns.example.com/dns-\nquery',
+    'https://dns.example.com\\evil/dns-query',
+    'https:///dns-query',
+    'https://bad_host.example/dns-query',
+    'https://-bad.example/dns-query',
+    'https://bad-.example/dns-query',
+    'https://dns..example/dns-query',
+    `https://${'a'.repeat(64)}.example/dns-query`,
+    `https://${Array(5).fill('a'.repeat(63)).join('.')}/dns-query`,
+    'https://999.999.999.999/dns-query',
+    'https://[not-ipv6]/dns-query',
+    'https://2001:db8::1/dns-query',
+    'https://dns.example.com:/dns-query',
+    'https://dns.example.com:0/dns-query',
+    'https://dns.example.com:65536/dns-query',
+    'https://dns.example.com:bad/dns-query',
+  ]) {
+    assert.equal(validDnsPrimary(primary), false, String(primary))
+    assert.equal(dnsUpstreamChain(primary), '', String(primary))
+  }
 })
 
 test('egress config carries dns_upstream only when configured', () => {
