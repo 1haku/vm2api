@@ -156,7 +156,7 @@ export function KeyLimitsDialog({
           <DialogTitle>
             {mode === 'create'
               ? '生成密钥'
-              : `并发控制 · ${initial?.name || initial?.id || ''}`}
+              : `密钥设置 · ${initial?.name || initial?.id || ''}`}
           </DialogTitle>
         </DialogHeader>
         {mode === 'edit' && initial ? (

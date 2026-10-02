@@ -1,30 +1,47 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { VIEW_TITLES } from '@/config/nav'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import type { ApiKeyItem } from '@/types/panel-keys'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import { fmtNum } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
 import { PageHeader } from '@/components/page-header'
 import { TableSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
+import { StatCard } from '@/components/stat-card'
 import { StatusMark } from '@/components/status-mark'
 import { apiKeysQueryOptions } from '@/features/keys/queries'
+import { DateRange } from '@/features/usage-records/date-range'
 import {
-  keyExpiryText,
+  usageDates,
+  usageMoney,
+  usageTokens,
+  type KeyUsage,
+  type UsageSearch,
+} from '@/features/usage-records/filters'
+import {
   keyIsDead,
   keyQuotaLabel,
   keyQuotaPct,
@@ -38,6 +55,36 @@ import { KeyRevealDialog, type RevealedKey } from './key-reveal-dialog'
 
 export function KeysPage() {
   const qc = useQueryClient()
+  const me = useAuthStore((s) => s.me)
+  const navigate = useNavigate()
+  const search = useSearch({ strict: false }) as UsageSearch
+  const { from, until, valid } = usageDates(search)
+  const setRange = (patch: UsageSearch) =>
+    void navigate({
+      to: '/keys',
+      search: { ...search, ...patch },
+      replace: true,
+    })
+  const [filter, setFilter] = useState('')
+  const [resetId, setResetId] = useState('')
+  const [details, setDetails] = useState<ApiKeyItem | null>(null)
+  const stats = useQuery({
+    queryKey: ['key-usage', me?.user, from, until],
+    enabled: valid,
+    queryFn: () =>
+      api<{ keys: KeyUsage[] }>(
+        `/api/panel/usage-records?${new URLSearchParams({ from: new Date(from + 'T00:00:00').toISOString(), until: new Date(until + 'T23:59:59.999').toISOString() })}`
+      ),
+  })
+  const plans = useQuery({
+    queryKey: ['subscription-plans', me?.user],
+    queryFn: () =>
+      api<{ items: { id: number; name: string }[] }>(
+        '/api/panel/subscription-plans'
+      ),
+  })
+  const metrics = new Map(stats.data?.keys.map((k) => [k.api_key_id, k]))
+  const metricsReady = valid && stats.isSuccess && !stats.isError
   const q = useQuery(apiKeysQueryOptions())
   const [createOpen, setCreateOpen] = useState(false)
   const [editId, setEditId] = useState('')
@@ -45,6 +92,25 @@ export function KeysPage() {
   const [rotateId, setRotateId] = useState('')
   const [revealed, setRevealed] = useState<RevealedKey | null>(null)
   const keys = q.data?.keys || []
+  const visible = keys.filter((k) =>
+    (k.name || '').toLowerCase().includes(filter.toLowerCase())
+  )
+  const total = visible.reduce(
+    (a, k) => {
+      const u = metrics.get(k.id)
+      return {
+        requests: a.requests + (u?.requests || 0),
+        tokens: a.tokens + usageTokens(u),
+        cost: a.cost + (u?.actual_cost || 0),
+      }
+    },
+    { requests: 0, tokens: 0, cost: 0 }
+  )
+  const rangeSearch = {
+    range: search.range,
+    from: search.from,
+    until: search.until,
+  }
   const editing = keys.find((k) => k.id === editId) || null
   const rotating = keys.find((k) => k.id === rotateId) || null
   const refresh = () =>
@@ -78,7 +144,7 @@ export function KeysPage() {
         body: JSON.stringify(keyLimitsPayload(draft, 'edit')),
       }),
     onSuccess: async () => {
-      toast.success('并发已更新')
+      toast.success('密钥设置已更新')
       setEditId('')
       await refresh()
     },
@@ -104,7 +170,8 @@ export function KeysPage() {
         method: 'POST',
       }),
     onSuccess: async () => {
-      toast.success('额度已清零')
+      toast.success('已重置密钥自身的限额计数，订阅额度和历史用量不变')
+      setResetId('')
       await refresh()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -169,7 +236,7 @@ export function KeysPage() {
         return
       }
       try {
-        await navigator.clipboard.writeText(key)
+        await copyText(key)
         toast.success('已复制明文密钥，请妥善保存')
       } catch {
         toast.error('复制失败')
@@ -181,63 +248,206 @@ export function KeysPage() {
 
   return (
     <PageHeader
-      title={VIEW_TITLES.keys}
-      extra={<Button onClick={() => setCreateOpen(true)}>生成</Button>}
+      title={me?.role === 'user' ? '我的密钥' : '密钥管理'}
+      extra={
+        <div className='flex gap-2'>
+          <Button
+            variant='outline'
+            disabled={!valid || stats.isFetching}
+            onClick={() => {
+              void refresh()
+              void stats.refetch()
+            }}
+          >
+            刷新
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>创建密钥</Button>
+        </div>
+      }
     >
+      <p className='mb-5 text-sm text-muted-foreground'>
+        按所选时间查看每个 Key 的用量。同一订阅下的密钥共享你的订阅额度。
+      </p>
+      <div className='mb-5 rounded-xl border bg-card p-4'>
+        <DateRange search={search} onChange={setRange} />
+        <p className='mt-3 text-xs text-muted-foreground'>
+          日期按浏览器本地时区计算；统计来自保留的调用记录，不代表上游账号剩余额度。
+        </p>
+      </div>
+      <div className='mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4'>
+        <StatCard
+          compact
+          label='当前列表密钥'
+          value={String(visible.length)}
+          hint='包含已停用密钥'
+        />
+        <StatCard
+          compact
+          label='请求数'
+          value={metricsReady ? fmtNum(total.requests) : '—'}
+          hint='所选时间范围'
+        />
+        <StatCard
+          compact
+          label='Token'
+          value={metricsReady ? fmtNum(total.tokens) : '—'}
+          hint='输入、输出及缓存合计'
+        />
+        <StatCard
+          compact
+          label='额度消耗'
+          value={metricsReady ? usageMoney(total.cost) : '—'}
+          hint='所选时间范围'
+        />
+      </div>
+      <div className='mb-4 flex flex-wrap items-center justify-between gap-3'>
+        <Input
+          className='max-w-sm'
+          aria-label='搜索密钥'
+          placeholder='搜索密钥名称'
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <Button variant='outline' asChild>
+          <Link to='/usage-records' search={rangeSearch}>
+            对比密钥用量
+          </Link>
+        </Button>
+      </div>
+      {stats.error && (
+        <p role='alert' className='mb-3 text-sm text-destructive'>
+          用量加载失败：{stats.error.message}。请点击刷新重试。
+        </p>
+      )}
+      {plans.error && (
+        <p role='alert' className='mb-3 text-sm text-destructive'>
+          订阅名称加载失败，暂时显示订阅编号。
+        </p>
+      )}
       <QueryGate
         loading={q.isLoading}
         error={q.error}
-        skeleton={<TableSkeleton rows={8} columns={8} />}
+        skeleton={<TableSkeleton rows={5} columns={7} />}
       >
-        {keys.length === 0 ? (
+        {!keys.length ? (
           <EmptyState
-            reason='尚无密钥。协议密钥只能调 /v1。'
-            actionLabel='生成'
+            reason='还没有密钥。选择已分配的订阅，创建一个 Key 后即可接入客户端。'
+            actionLabel='创建密钥'
             onAction={() => setCreateOpen(true)}
           />
+        ) : !visible.length ? (
+          <p className='rounded-xl border p-8 text-center text-muted-foreground'>
+            没有匹配的密钥
+          </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>名称</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>分类</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>额度</TableHead>
-                <TableHead>限制</TableHead>
-                <TableHead>过期</TableHead>
-                <TableHead className='text-right'></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {keys.map((k) => (
-                <KeyRow
-                  key={k.id}
-                  item={k}
-                  busy={
-                    toggle.isPending ||
-                    resetQuota.isPending ||
-                    reveal.isPending ||
-                    rotate.isPending
-                  }
-                  onView={() => void viewPlain(k)}
-                  onCopy={() => void copyPlain(k)}
-                  onRotate={() => setRotateId(k.id)}
-                  onEdit={() => setEditId(k.id)}
-                  onToggle={() =>
-                    toggle.mutate({
-                      id: k.id,
-                      enable: k.status === 'disabled',
-                    })
-                  }
-                  onReset={() => resetQuota.mutate(k.id)}
-                  onDelete={() => setDelId(k.id)}
-                />
-              ))}
-            </TableBody>
-          </Table>
+          <div className='space-y-3 xl:space-y-0 xl:overflow-hidden xl:rounded-xl xl:border xl:bg-card'>
+            <div className='hidden grid-cols-[minmax(170px,2fr)_80px_80px_90px_110px_minmax(130px,1fr)_190px] gap-3 border-b bg-muted/40 px-4 py-3 text-xs text-muted-foreground xl:grid'>
+              <span>名称 / 所属订阅</span>
+              <span>状态</span>
+              <span>请求数</span>
+              <span>Token</span>
+              <span>额度消耗</span>
+              <span>范围内最近调用</span>
+              <span className='text-right'>操作</span>
+            </div>
+            {visible.map((k) => (
+              <KeyRow
+                key={k.id}
+                item={k}
+                usage={metrics.get(k.id)}
+                ready={metricsReady}
+                range={rangeSearch}
+                planName={
+                  plans.data?.items.find((p) => p.id === k.group_id)?.name ||
+                  (k.group_id ? `订阅 #${k.group_id}` : '独立密钥')
+                }
+                busy={
+                  toggle.isPending ||
+                  resetQuota.isPending ||
+                  reveal.isPending ||
+                  rotate.isPending ||
+                  remove.isPending
+                }
+                onView={() => void viewPlain(k)}
+                onCopy={() => void copyPlain(k)}
+                onRotate={() => setRotateId(k.id)}
+                onEdit={() => setEditId(k.id)}
+                onDetails={() => setDetails(k)}
+                onToggle={() =>
+                  toggle.mutate({ id: k.id, enable: k.status === 'disabled' })
+                }
+                onReset={() => setResetId(k.id)}
+                onDelete={() => setDelId(k.id)}
+              />
+            ))}
+          </div>
         )}
       </QueryGate>
+      <Sheet
+        open={!!details}
+        onOpenChange={(open) => {
+          if (!open) setDetails(null)
+        }}
+      >
+        <SheetContent className='overflow-y-auto'>
+          <SheetHeader>
+            <SheetTitle>{details?.name || '密钥详情'}</SheetTitle>
+            <SheetDescription>
+              密钥自身的限制叠加在订阅限制之上，不能扩大订阅额度。
+            </SheetDescription>
+          </SheetHeader>
+          {details && (
+            <div className='space-y-5 px-4 text-sm'>
+              <code>{maskApiKeyItem(details)}</code>
+              <div>
+                <p>请求限额：{keyQuotaLabel(details)}</p>
+                {keyQuotaPct(details) != null && (
+                  <Progress
+                    className='mt-2 h-1.5'
+                    value={keyQuotaPct(details) || 0}
+                  />
+                )}
+              </div>
+              <p>
+                金额限额：
+                {details.quota_usd
+                  ? usageMoney(details.quota_usd)
+                  : '未单独限制'}{' '}
+                · 已计 {usageMoney(details.quota_usd_used || 0)}
+              </p>
+              <p>
+                并发：{details.max_concurrency || '未单独限制'} · RPM：
+                {details.rpm || '未单独限制'}
+              </p>
+              <p>
+                有效期：
+                {details.expires_at
+                  ? new Date(details.expires_at).toLocaleString('zh-CN')
+                  : '长期有效'}
+              </p>
+              <Button
+                onClick={() => {
+                  setEditId(details.id)
+                  setDetails(null)
+                }}
+              >
+                编辑限制
+              </Button>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      <ConfirmDialog
+        open={!!resetId}
+        onOpenChange={(open) => {
+          if (!open) setResetId('')
+        }}
+        title='重置密钥限额计数'
+        desc='只重置此密钥自身的请求和金额限额计数；不会恢复订阅额度，也不会删除历史用量。'
+        confirmText='确认重置'
+        isLoading={resetQuota.isPending}
+        handleConfirm={() => resetQuota.mutate(resetId)}
+      />
       <KeyLimitsDialog
         mode='create'
         open={createOpen}
@@ -263,7 +473,7 @@ export function KeysPage() {
         open={!!rotateId}
         onOpenChange={() => setRotateId('')}
         title='换新密钥'
-        desc={`${rotating?.name || rotateId} · 这条密钥建库时只留了哈希，明文取不回来。换新会立刻让旧值失效（客户端会收到 401），名称 / 分类 / 并发 / 额度 / 统计都保留。`}
+        desc={`${rotating?.name || rotateId} · 换新后旧密钥立即失效，请同步更新客户端配置；名称、限制和历史统计保留。`}
         confirmText='换新'
         cancelBtnText='取消'
         isLoading={rotate.isPending}
@@ -302,108 +512,122 @@ function draftName(payload: unknown): string | undefined {
 
 function KeyRow({
   item,
+  usage,
+  ready,
+  range,
+  planName,
   busy,
   onView,
   onCopy,
   onRotate,
   onEdit,
+  onDetails,
   onToggle,
   onReset,
   onDelete,
 }: {
   item: ApiKeyItem
+  usage?: KeyUsage
+  ready: boolean
+  range: UsageSearch
+  planName: string
   busy: boolean
   onView: () => void
   onCopy: () => void
   onRotate: () => void
   onEdit: () => void
+  onDetails: () => void
   onToggle: () => void
   onReset: () => void
   onDelete: () => void
 }) {
-  const active = item.status !== 'disabled'
-  const expiry = keyExpiryText(item)
-  const pct = keyQuotaPct(item)
-  const conc = Number(item.max_concurrency || 0)
-  const rpm = Number(item.rpm || 0)
+  const metric = (value: string) => (ready ? value : '—')
   return (
-    <TableRow className={cn(keyIsDead(item) && 'bg-destructive/10')}>
-      <TableCell>
-        <div className='font-medium'>{item.name || 'default'}</div>
-        <div className='text-xs text-muted-foreground'>
-          {fmtNum(item.requests || 0)} 请求
-          {item.inflight ? ` · ${item.inflight} 进行中` : ''}
-        </div>
-      </TableCell>
-      <TableCell>
-        <div className='flex flex-wrap items-center gap-1'>
-          <code className='font-mono text-xs'>{maskApiKeyItem(item)}</code>
-          {item.revealable ? (
-            <>
-              <Button
-                size='sm'
-                variant='ghost'
-                disabled={busy}
-                onClick={onView}
-              >
-                查看
-              </Button>
-              <Button
-                size='sm'
-                variant='ghost'
-                disabled={busy}
-                onClick={onCopy}
-              >
-                复制
-              </Button>
-            </>
-          ) : (
+    <article
+      aria-label={item.name || item.id}
+      className={cn(
+        'grid grid-cols-2 items-center gap-3 rounded-xl border bg-card p-4 xl:grid-cols-[minmax(170px,2fr)_80px_80px_90px_110px_minmax(130px,1fr)_190px] xl:rounded-none xl:border-0 xl:border-b xl:last:border-b-0',
+        keyIsDead(item) && 'bg-muted/20'
+      )}
+    >
+      <div className='min-w-0'>
+        <p className='truncate font-semibold' title={item.name}>
+          {item.name || '未命名密钥'}
+        </p>
+        <p className='truncate text-xs text-muted-foreground'>{planName}</p>
+        <code className='text-xs text-muted-foreground'>
+          {maskApiKeyItem(item)}
+        </code>
+      </div>
+      <div className='justify-self-end xl:justify-self-start'>
+        <StatusMark tone={keyStatusTone(item)} />
+      </div>
+      <div className='text-sm tabular-nums'>
+        <span className='block text-xs text-muted-foreground xl:hidden'>
+          请求数
+        </span>
+        {metric(fmtNum(usage?.requests || 0))}
+      </div>
+      <div className='text-sm tabular-nums'>
+        <span className='block text-xs text-muted-foreground xl:hidden'>
+          Token
+        </span>
+        {metric(fmtNum(usageTokens(usage)))}
+      </div>
+      <div className='text-sm font-medium tabular-nums'>
+        <span className='block text-xs font-normal text-muted-foreground xl:hidden'>
+          额度消耗
+        </span>
+        {metric(usageMoney(usage?.actual_cost || 0))}
+      </div>
+      <div className='text-xs text-muted-foreground'>
+        <span className='block xl:hidden'>范围内最近调用</span>
+        {metric(
+          usage?.last_used_at
+            ? new Date(usage.last_used_at).toLocaleString('zh-CN')
+            : '暂无调用'
+        )}
+      </div>
+      <div className='col-span-2 flex flex-wrap justify-end gap-1 border-t pt-3 xl:col-span-1 xl:border-0 xl:pt-0'>
+        {item.revealable && (
+          <Button size='sm' variant='ghost' disabled={busy} onClick={onCopy}>
+            复制
+          </Button>
+        )}
+        <Button size='sm' variant='outline' asChild>
+          <Link to='/usage-records' search={{ ...range, api_key_id: item.id }}>
+            查看用量
+          </Link>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <Button
               size='sm'
               variant='ghost'
               disabled={busy}
-              onClick={onRotate}
+              aria-label='更多操作'
             >
-              换新
+              ···
             </Button>
-          )}
-        </div>
-      </TableCell>
-      <TableCell>{item.category === 'api' ? 'API' : 'OAuth'}</TableCell>
-      <TableCell>
-        <StatusMark tone={keyStatusTone(item)} />
-      </TableCell>
-      <TableCell className='min-w-[120px]'>
-        <div className='text-xs'>{keyQuotaLabel(item)}</div>
-        {pct != null ? <Progress value={pct} className='mt-1 h-1.5' /> : null}
-      </TableCell>
-      <TableCell className='text-xs'>
-        {conc ? `${conc} 并发` : '并发不限'} · {rpm ? `RPM ${rpm}` : 'RPM 不限'}
-      </TableCell>
-      <TableCell
-        className={cn('text-xs', expiry.expired && 'text-destructive')}
-      >
-        {expiry.text}
-      </TableCell>
-      <TableCell className='space-x-1 text-right'>
-        <Button size='sm' variant='ghost' disabled={busy} onClick={onEdit}>
-          并发
-        </Button>
-        <Button size='sm' variant='ghost' disabled={busy} onClick={onToggle}>
-          {active ? '停用' : '启用'}
-        </Button>
-        <Button size='sm' variant='ghost' disabled={busy} onClick={onReset}>
-          清零
-        </Button>
-        <Button
-          size='sm'
-          variant='destructive'
-          disabled={busy}
-          onClick={onDelete}
-        >
-          删除
-        </Button>
-      </TableCell>
-    </TableRow>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end'>
+            <DropdownMenuItem onSelect={onDetails}>详情与限制</DropdownMenuItem>
+            <DropdownMenuItem onSelect={onEdit}>编辑限制</DropdownMenuItem>
+            {item.revealable && (
+              <DropdownMenuItem onSelect={onView}>查看密钥</DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={onToggle}>
+              {item.status === 'disabled' ? '启用' : '停用'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onRotate}>换新密钥</DropdownMenuItem>
+            <DropdownMenuItem onSelect={onReset}>重置限额计数</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className='text-destructive' onSelect={onDelete}>
+              删除密钥
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </article>
   )
 }

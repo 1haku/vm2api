@@ -14,21 +14,36 @@ export function StatCard({
   value,
   hint,
   tone = 'neutral',
+  compact = false,
 }: {
   label: string
   value: string
   hint?: string
   tone?: StatCardTone
+  compact?: boolean
 }) {
   return (
-    <Card className={cn('shadow-none', tone !== 'neutral' && TONE_BAR[tone])}>
-      <CardHeader className='pb-2'>
+    <Card
+      className={cn(
+        'shadow-none',
+        compact && 'gap-2 py-4',
+        tone !== 'neutral' && TONE_BAR[tone]
+      )}
+    >
+      <CardHeader className={cn('pb-2', compact && 'px-4 pb-0')}>
         <CardTitle className='text-sm font-medium text-muted-foreground'>
           {label}
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className='text-2xl font-semibold tabular-nums'>{value}</div>
+      <CardContent className={cn(compact && 'px-4')}>
+        <div
+          className={cn(
+            'text-2xl font-semibold tabular-nums',
+            compact && 'text-xl'
+          )}
+        >
+          {value}
+        </div>
         {hint ? <p className='text-xs text-muted-foreground'>{hint}</p> : null}
       </CardContent>
     </Card>

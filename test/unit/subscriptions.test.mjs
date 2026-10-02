@@ -41,6 +41,75 @@ function setup(t, config = {}) {
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
 
+test('key aggregates cover the whole selected range, retain deleted key history, and never cross user ownership', (t) => {
+  const { db, plan } = setup(t)
+  db.prepare('INSERT INTO api_keys(id,key,user_id,name) VALUES(?,?,?,?)').run(
+    'first-key',
+    'never-used-test-key',
+    'b',
+    'Other user private name',
+  )
+  const logs = new UsageLogsRepo(db)
+  for (const [id, user, key, day, status, cost] of [
+    ['a1', 'a', 'first-key', '01', 200, 1],
+    ['a2', 'a', 'first-key', '02', 200, 3],
+    ['a3', 'a', 'deleted-key', '02', 503, 2],
+    ['a-old', 'a', 'first-key', '15', 200, 20],
+    ['b1', 'b', 'first-key', '02', 200, 900],
+    ['b2', 'b', 'foreign-key', '02', 200, 500],
+  ])
+    logs.insertSummary({
+      id,
+      request_id: id,
+      user_id: user,
+      api_key_id: key,
+      group_id: plan.id,
+      created_at: `2026-09-${day}T12:00:00.000Z`,
+      status,
+      actual_cost: cost,
+      total_cost: cost,
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_read_tokens: 30,
+      cache_creation_tokens: 10,
+    })
+  const params = new URLSearchParams({
+    from: '2026-09-01T00:00:00Z',
+    until: '2026-09-03T00:00:00Z',
+    page_size: '1',
+    user_id: 'b',
+  })
+  const own = usageRecords(db, params, 'a', false)
+  assert.equal(own.items.length, 1)
+  assert.equal(own.keys.length, 2)
+  assert.equal(
+    own.keys.reduce((sum, k) => sum + k.requests, 0),
+    own.total,
+  )
+  assert.equal(
+    own.keys.reduce((sum, k) => sum + k.actual_cost, 0),
+    6,
+  )
+  const first = own.keys.find((k) => k.api_key_id === 'first-key')
+  assert.equal(first.requests, 2)
+  assert.equal(first.input_tokens, 200)
+  assert.equal(first.cache_read_tokens, 60)
+  assert.equal(first.last_used_at, '2026-09-02T12:00:00.000Z')
+  assert.equal(own.keys.find((k) => k.api_key_id === 'deleted-key').success, 0)
+  assert.equal(first.user_id, undefined)
+  assert.equal(first.key_name, null)
+  params.set('api_key_id', 'foreign-key')
+  assert.deepEqual(usageRecords(db, params, 'a', false).keys, [])
+  params.set('api_key_id', 'first-key')
+  assert.equal(usageRecords(db, params, 'a', false).totals.actual_cost, 4)
+  assert.equal(usageRecords(db, params, 'a', false).items[0].key_name, null)
+  params.delete('api_key_id')
+  params.delete('user_id')
+  assert.equal(usageRecords(db, params, null, true).totals.actual_cost, 1406)
+  params.set('status', 'error')
+  assert.equal(usageRecords(db, params, 'a', false).keys[0].api_key_id, 'deleted-key')
+})
+
 test('shared slot grants separate entitlements and rejects unassigned, paused, expired users', (t) => {
   const { db, repo, plan, a, b } = setup(t)
   assert.deepEqual(repo.entitlement(a).vmIds, ['vm-1'])

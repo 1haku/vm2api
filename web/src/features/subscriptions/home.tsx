@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Copy, KeyRound, ArrowRight, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
@@ -7,14 +7,18 @@ import { apiBase } from '@/lib/session'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { usageMoney } from '@/features/usage-records/filters'
 import type { Subscription } from './index'
 
-const usd = (n: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 6,
-  }).format(n)
+const usd = usageMoney
+function resetCountdown(value: string, now: number) {
+  const minutes = Math.max(0, Math.ceil((Date.parse(value) - now) / 60000))
+  if (!Number.isFinite(minutes)) return ''
+  if (minutes === 0) return '等待刷新重置'
+  const days = Math.floor(minutes / 1440),
+    hours = Math.floor((minutes % 1440) / 60)
+  return `${days ? days + ' 天 ' : ''}${hours ? hours + ' 小时 ' : ''}${minutes % 60} 分钟后重置`
+}
 async function copy(value: string) {
   try {
     await copyText(value)
@@ -37,6 +41,12 @@ export function SubscriptionHome({
   pending: boolean
 }) {
   const [selected, setSelected] = useState('')
+  const [guideOpen, setGuideOpen] = useState(false)
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(timer)
+  }, [])
   const active = items.filter(
     (s) => s.status === 'active' && s.plan_status === 'active'
   )
@@ -49,41 +59,22 @@ export function SubscriptionHome({
     : `curl '${base}/v1/messages' \\\n  -H 'x-api-key: YOUR_API_KEY' \\\n  -H 'anthropic-version: 2023-06-01' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"YOUR_MODEL","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'`
   return (
     <div className='space-y-6'>
-      <section className='rounded-xl border border-primary/25 bg-primary/5 p-5 sm:p-6'>
-        <div className='flex flex-wrap items-start justify-between gap-4'>
-          <div>
-            <p className='text-sm font-medium text-primary'>个人工作台</p>
-            <h2 className='mt-2 text-2xl font-semibold'>
-              {active.length
-                ? `你有 ${active.length} 个生效中的订阅`
-                : '从你的第一个订阅开始'}
-            </h2>
-            <p className='mt-2 text-sm text-muted-foreground'>
-              查看额度，创建个人密钥，再将接入地址填入客户端。
-            </p>
-          </div>
-          <Button asChild variant='outline'>
-            <Link to='/usage-records'>
-              查看我的使用明细
-              <ArrowRight className='size-4' />
-            </Link>
-          </Button>
+      <div className='flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4'>
+        <div>
+          <p className='font-semibold'>
+            {loading ? '正在读取订阅' : `${active.length} 个生效订阅`}
+          </p>
+          <p className='mt-1 text-sm text-muted-foreground'>
+            查看剩余额度与到期时间，按需创建密钥接入客户端。
+          </p>
         </div>
-        <ol className='mt-6 grid gap-3 sm:grid-cols-3'>
-          {[
-            '1. 确认订阅与账号状态',
-            '2. 创建并保存个人密钥',
-            '3. 复制地址，配置客户端',
-          ].map((s) => (
-            <li
-              key={s}
-              className='rounded-lg border bg-background/70 p-3 text-sm'
-            >
-              {s}
-            </li>
-          ))}
-        </ol>
-      </section>
+        <Button asChild variant='outline'>
+          <Link to='/usage-records'>
+            我的使用明细
+            <ArrowRight className='size-4' />
+          </Link>
+        </Button>
+      </div>
       {error && (
         <p role='alert' className='text-destructive'>
           {error.message}
@@ -161,7 +152,10 @@ export function SubscriptionHome({
                       }
                     />
                     <p className='mt-1 text-xs text-muted-foreground'>
-                      {new Date(String(reset)).toLocaleString('zh-CN')} 重置
+                      {resetCountdown(String(reset), now)}
+                      <span className='ml-2 opacity-75'>
+                        {new Date(String(reset)).toLocaleString('zh-CN')}
+                      </span>
                     </p>
                   </div>
                 ))}
@@ -175,7 +169,12 @@ export function SubscriptionHome({
                 <p className='text-xs text-muted-foreground'>
                   到期：{new Date(s.expires_at).toLocaleString('zh-CN')}
                   <span className='block'>
-                    剩余 {leftDays} 天 · 个人额度与上游账号额度分别计算
+                    {leftDays === 0
+                      ? '已到期'
+                      : leftDays <= 7
+                        ? `即将到期 · 剩余 ${leftDays} 天`
+                        : `剩余 ${leftDays} 天`}{' '}
+                    · 个人额度与上游账号额度分别计算
                   </span>
                 </p>
                 <div className='flex gap-2'>
@@ -184,6 +183,7 @@ export function SubscriptionHome({
                     size='sm'
                     onClick={() => {
                       setSelected(s.id)
+                      setGuideOpen(true)
                       document
                         .getElementById('connection-guide')
                         ?.scrollIntoView({ behavior: 'smooth' })
@@ -209,14 +209,16 @@ export function SubscriptionHome({
         })}
       </div>
       {!!items.length && (
-        <section
+        <details
+          open={guideOpen}
+          onToggle={(e) => setGuideOpen(e.currentTarget.open)}
           id='connection-guide'
           className='scroll-mt-24 rounded-xl border bg-card p-5 sm:p-6'
         >
-          <h2 className='flex items-center gap-2 text-lg font-semibold'>
+          <summary className='flex cursor-pointer items-center gap-2 text-base font-semibold'>
             <BookOpen className='size-5' />
-            客户端接入指引
-          </h2>
+            客户端接入指引 · 点击展开 / 收起
+          </summary>
           <p className='mt-2 text-sm text-muted-foreground'>
             每个方案使用对应的个人密钥；登录面板的密码不能作为 API Key 使用。
           </p>
@@ -294,7 +296,7 @@ export function SubscriptionHome({
               </pre>
             </div>
           </div>
-        </section>
+        </details>
       )}
     </div>
   )

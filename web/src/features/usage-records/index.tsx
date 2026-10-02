@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Download, RefreshCw } from 'lucide-react'
 import {
   AreaChart,
@@ -12,13 +13,21 @@ import {
 } from 'recharts'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
-import { fmtNum, fmtUsd } from '@/lib/format'
+import { fmtNum } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
 import type { Plan } from '@/features/subscriptions'
+import { DateRange } from './date-range'
+import {
+  usageDates,
+  usageMoney,
+  usageTokens,
+  type KeyUsage,
+  type UsageSearch,
+} from './filters'
 
 type Totals = {
   requests: number
@@ -45,6 +54,7 @@ type Row = Totals & {
   first_token_ms: number
 }
 type Payload = {
+  keys: KeyUsage[]
   items: Row[]
   total: number
   page_size: number
@@ -53,24 +63,34 @@ type Payload = {
   models: (Totals & { model: string })[]
 }
 const selectClass = 'h-9 rounded-md border bg-background px-3 text-sm'
-function localDate(daysAgo = 0) {
-  const d = new Date(Date.now() - daysAgo * 86400000)
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  return d.toISOString().slice(0, 10)
-}
-
 export function UsageRecordsPage() {
   const me = useAuthStore((s) => s.me)
   const admin = me?.role === 'admin'
-  const [from, setFrom] = useState(localDate(6))
-  const [until, setUntil] = useState(localDate())
-  const [user, setUser] = useState('')
-  const [group, setGroup] = useState('')
-  const [key, setKey] = useState('')
-  const [vm, setVm] = useState('')
-  const [model, setModel] = useState('')
-  const [status, setStatus] = useState('')
-  const [page, setPage] = useState(1)
+  const navigate = useNavigate()
+  const search = useSearch({ strict: false }) as UsageSearch
+  const { from, until, valid } = usageDates(search)
+  const user = search.user_id || '',
+    group = search.group_id || '',
+    key = search.api_key_id || '',
+    vm = search.vm_id || '',
+    model = search.model || '',
+    status = search.status || ''
+  const page = Number(search.page) || 1
+  const patch = (value: UsageSearch) =>
+    void navigate({
+      to: '/usage-records',
+      search: { ...search, ...value },
+      replace: true,
+    })
+  const setUser = (v: string) => patch({ user_id: v, page: '1' })
+  const setGroup = (v: string) => patch({ group_id: v, page: '1' })
+  const setKey = (v: string) => patch({ api_key_id: v, page: '1' })
+  const setVm = (v: string) => patch({ vm_id: v, page: '1' })
+  const setModel = (v: string) => patch({ model: v, page: '1' })
+  const setStatus = (v: string) => patch({ status: v, page: '1' })
+  const setPage = (v: number) => patch({ page: String(v) })
+  const [showAllKeys, setShowAllKeys] = useState(false)
+  const [keySort, setKeySort] = useState('cost')
   const [detail, setDetail] = useState<Row | null>(null)
   const params = new URLSearchParams({
     page: String(page),
@@ -85,6 +105,7 @@ export function UsageRecordsPage() {
   if (until)
     params.set('until', new Date(`${until}T23:59:59.999`).toISOString())
   const q = useQuery({
+    enabled: valid,
     queryKey: ['usage-records', me?.user, params.toString()],
     queryFn: () => api<Payload>(`/api/panel/usage-records?${params}`),
   })
@@ -109,12 +130,22 @@ export function UsageRecordsPage() {
       api<{ items: { id: string; name: string }[] }>('/api/panel/vms'),
     enabled: admin,
   })
-  const t = q.data?.totals
+  const data = valid && !q.isError ? q.data : undefined
+  const t = data?.totals
+  const keyRows = [...(data?.keys || [])].sort((a, b) =>
+    keySort === 'requests'
+      ? b.requests - a.requests
+      : keySort === 'tokens'
+        ? usageTokens(b) - usageTokens(a)
+        : b.actual_cost - a.actual_cost
+  )
+  const keyLabel = (k: KeyUsage) =>
+    k.key_name ||
+    (k.api_key_id ? `历史密钥 · ${k.api_key_id.slice(0, 8)}` : '未关联密钥')
   const change =
     (fn: (value: string) => void) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       fn(e.target.value)
-      setPage(1)
     }
   function exportPage() {
     const columns = [
@@ -139,7 +170,7 @@ export function UsageRecordsPage() {
     }
     const csv = [
       columns.join(','),
-      ...(q.data?.items || []).map((r) =>
+      ...(data?.items || []).map((r) =>
         columns.map((c) => escape(r[c])).join(',')
       ),
     ].join('\r\n')
@@ -157,13 +188,17 @@ export function UsageRecordsPage() {
       title={admin ? '使用记录' : '我的使用记录'}
       extra={
         <div className='flex gap-2'>
-          <Button variant='outline' onClick={() => void q.refetch()}>
+          <Button
+            variant='outline'
+            disabled={!valid || q.isFetching}
+            onClick={() => void q.refetch()}
+          >
             <RefreshCw className='size-4' />
             刷新
           </Button>
           <Button
             variant='outline'
-            disabled={!q.data?.items.length}
+            disabled={!data?.items.length}
             onClick={exportPage}
           >
             <Download className='size-4' />
@@ -177,41 +212,41 @@ export function UsageRecordsPage() {
           ? '查看所有用户的调用情况，按用户、订阅或槽位定位用量。'
           : '仅展示由你的 API Key 发起的请求，共享槽位的其他用户记录不会显示。'}
       </p>
-      <div className='mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+      <div className='mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4'>
         <StatCard
+          compact
           label='总请求数'
-          value={fmtNum(t?.requests || 0)}
+          value={t ? fmtNum(t.requests) : '—'}
           hint={`成功 ${fmtNum(t?.success || 0)}`}
         />
         <StatCard
+          compact
           label='总 Token'
-          value={fmtNum(
-            (t?.input_tokens || 0) +
-              (t?.output_tokens || 0) +
-              (t?.cache_read_tokens || 0) +
-              (t?.cache_creation_tokens || 0)
-          )}
+          value={t ? fmtNum(usageTokens(t)) : '—'}
           hint={`输入 ${fmtNum(t?.input_tokens || 0)} · 输出 ${fmtNum(t?.output_tokens || 0)} · 缓存 ${fmtNum((t?.cache_read_tokens || 0) + (t?.cache_creation_tokens || 0))}`}
         />
         <StatCard
+          compact
           label='额度消耗'
-          value={fmtUsd(t?.actual_cost || 0)}
-          hint={`参考费用 ${fmtUsd(t?.reference_cost || 0)}`}
+          value={t ? usageMoney(t.actual_cost) : '—'}
+          hint={`参考费用 ${usageMoney(t?.reference_cost || 0)}`}
         />
         <StatCard
+          compact
           label='平均耗时'
-          value={`${((t?.duration_ms || 0) / 1000).toFixed(2)}s`}
+          value={t ? `${(t.duration_ms / 1000).toFixed(2)}s` : '—'}
         />
       </div>
       <div className='mb-6 flex flex-wrap items-end gap-3 rounded-xl border bg-card p-4'>
-        <label className='grid gap-1 text-xs text-muted-foreground'>
-          开始日期
-          <Input type='date' value={from} onChange={change(setFrom)} />
-        </label>
-        <label className='grid gap-1 text-xs text-muted-foreground'>
-          结束日期
-          <Input type='date' value={until} onChange={change(setUntil)} />
-        </label>
+        <div className='w-full border-b pb-4'>
+          <DateRange
+            search={search}
+            onChange={(value) => patch({ ...value, page: '1' })}
+          />
+          <p className='mt-2 text-xs text-muted-foreground'>
+            日期按浏览器本地时区筛选；趋势按北京时间分日。统计基于保留的调用记录。
+          </p>
+        </div>
         {admin && (
           <>
             <select
@@ -262,6 +297,9 @@ export function UsageRecordsPage() {
           onChange={change(setKey)}
         >
           <option value=''>全部密钥</option>
+          {key && !keys.data?.keys.some((k) => k.id === key) && (
+            <option value={key}>所选密钥 · {key.slice(0, 8)}</option>
+          )}
           {keys.data?.keys.map((k) => (
             <option key={k.id} value={k.id}>
               {k.name || k.id}
@@ -286,11 +324,134 @@ export function UsageRecordsPage() {
           <option value='error'>失败</option>
         </select>
       </div>
+      <div className='mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground'>
+        <span>
+          {key
+            ? `当前密钥：${keys.data?.keys.find((k) => k.id === key)?.name || key.slice(0, 8)}`
+            : '当前显示全部密钥'}
+        </span>
+        {key && (
+          <Button size='sm' variant='ghost' onClick={() => setKey('')}>
+            查看全部密钥
+          </Button>
+        )}
+        <Button
+          size='sm'
+          variant='ghost'
+          onClick={() =>
+            void navigate({
+              to: '/usage-records',
+              search: {
+                range: search.range,
+                from: search.from,
+                until: search.until,
+              },
+              replace: true,
+            })
+          }
+        >
+          清除筛选
+        </Button>
+        {q.isFetching && <span role='status'>正在更新…</span>}
+      </div>
       {q.error && (
         <p role='alert' className='mb-4 text-destructive'>
           {q.error.message}
         </p>
       )}
+      <section className='mb-6 rounded-xl border bg-card p-4 sm:p-5'>
+        <div className='mb-3 flex flex-wrap items-center justify-between gap-3'>
+          <div>
+            <h2 className='font-semibold'>密钥用量对比</h2>
+            <p className='mt-1 text-xs text-muted-foreground'>
+              遵循上方时间与筛选条件，点击密钥查看调用明细。
+            </p>
+          </div>
+          <select
+            aria-label='密钥用量排序'
+            className={selectClass}
+            value={keySort}
+            onChange={(e) => setKeySort(e.target.value)}
+          >
+            <option value='cost'>按额度消耗</option>
+            <option value='tokens'>按 Token</option>
+            <option value='requests'>按请求数</option>
+          </select>
+        </div>
+        <div className='space-y-2'>
+          {(showAllKeys ? keyRows : keyRows.slice(0, 8)).map((k) => (
+            <div
+              key={k.api_key_id || 'unassigned'}
+              className='grid grid-cols-2 items-center gap-3 rounded-lg bg-muted/25 p-3 sm:grid-cols-[minmax(130px,1fr)_90px_90px_110px_70px]'
+            >
+              <div className='min-w-0'>
+                {k.api_key_id ? (
+                  <button
+                    className='max-w-full truncate text-left text-sm font-medium text-primary hover:underline'
+                    onClick={() => setKey(k.api_key_id!)}
+                  >
+                    {keyLabel(k)}
+                  </button>
+                ) : (
+                  <span>{keyLabel(k)}</span>
+                )}
+                <div className='mt-2 h-1 rounded bg-muted'>
+                  <div
+                    className='h-1 rounded bg-primary/60'
+                    style={{
+                      width: `${t?.actual_cost ? Math.min(100, (k.actual_cost / t.actual_cost) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              <p className='text-sm tabular-nums'>
+                <span className='block text-xs text-muted-foreground'>
+                  请求数
+                </span>
+                {fmtNum(k.requests)}
+              </p>
+              <p className='text-sm tabular-nums'>
+                <span className='block text-xs text-muted-foreground'>
+                  Token
+                </span>
+                {fmtNum(usageTokens(k))}
+              </p>
+              <p className='text-sm font-medium tabular-nums'>
+                <span className='block text-xs font-normal text-muted-foreground'>
+                  额度消耗
+                </span>
+                {usageMoney(k.actual_cost)}
+              </p>
+              <p className='text-sm'>
+                <span className='block text-xs text-muted-foreground'>
+                  失败
+                </span>
+                {fmtNum(k.requests - k.success)}
+              </p>
+            </div>
+          ))}
+          {!keyRows.length && (
+            <p className='py-6 text-center text-sm text-muted-foreground'>
+              {q.isLoading
+                ? '正在加载…'
+                : q.error
+                  ? '用量加载失败，请重试'
+                  : !valid
+                    ? '请调整时间范围'
+                    : '所选范围暂无密钥用量'}
+            </p>
+          )}
+        </div>
+        {keyRows.length > 8 && (
+          <Button
+            variant='ghost'
+            className='mt-3'
+            onClick={() => setShowAllKeys(!showAllKeys)}
+          >
+            {showAllKeys ? '收起' : `查看全部 ${keyRows.length} 个密钥`}
+          </Button>
+        )}
+      </section>
       <div className='mb-6 grid gap-4 xl:grid-cols-3'>
         <div className='rounded-xl border bg-card p-5 xl:col-span-2'>
           <h3 className='mb-4 font-semibold'>
@@ -299,9 +460,9 @@ export function UsageRecordsPage() {
               按日 · 北京时间
             </span>
           </h3>
-          {q.data?.trend.length ? (
+          {data?.trend.length ? (
             <ResponsiveContainer width='100%' height={220}>
-              <AreaChart data={q.data.trend}>
+              <AreaChart data={data!.trend}>
                 <CartesianGrid strokeDasharray='3 3' vertical={false} />
                 <XAxis dataKey='day' tick={{ fontSize: 11 }} />
                 <YAxis width={55} tick={{ fontSize: 11 }} />
@@ -324,14 +485,14 @@ export function UsageRecordsPage() {
         </div>
         <div className='rounded-xl border bg-card p-5'>
           <h3 className='mb-4 font-semibold'>模型分布</h3>
-          {q.data?.models.map((m) => (
+          {data?.models.map((m) => (
             <div
               key={m.model || 'unknown'}
               className='border-b py-3 text-sm last:border-0'
             >
               <div className='mb-1 flex justify-between gap-2'>
                 <span className='truncate'>{m.model || '未识别'}</span>
-                <span>{fmtUsd(m.actual_cost)}</span>
+                <span>{usageMoney(m.actual_cost)}</span>
               </div>
               <span className='text-xs text-muted-foreground'>
                 {fmtNum(m.requests)} 次请求
@@ -361,7 +522,7 @@ export function UsageRecordsPage() {
             </tr>
           </thead>
           <tbody>
-            {q.data?.items.map((r) => (
+            {data?.items.map((r) => (
               <tr key={r.request_id} className='border-b last:border-0'>
                 <td className='p-3 whitespace-nowrap'>
                   <button
@@ -393,7 +554,7 @@ export function UsageRecordsPage() {
                   )}
                 </td>
                 <td className='p-3'>
-                  {r.actual_cost == null ? '待计价' : fmtUsd(r.actual_cost)}
+                  {r.actual_cost == null ? '待计价' : usageMoney(r.actual_cost)}
                 </td>
                 <td className='p-3'>{(r.duration_ms / 1000).toFixed(2)}s</td>
                 <td className='p-3'>
@@ -413,9 +574,15 @@ export function UsageRecordsPage() {
             ))}
           </tbody>
         </table>
-        {!q.data?.items.length && (
+        {!data?.items.length && (
           <p className='p-12 text-center text-muted-foreground'>
-            {q.isLoading ? '正在加载…' : '所选范围没有使用记录'}
+            {q.isLoading
+              ? '正在加载…'
+              : q.error
+                ? '加载失败，请点击刷新重试'
+                : !valid
+                  ? '请调整时间范围'
+                  : '所选范围没有使用记录'}
           </p>
         )}
       </div>
@@ -430,8 +597,10 @@ export function UsageRecordsPage() {
           <p className='break-all'>请求 ID：{detail.request_id}</p>
           <p>
             参考费用：
-            {detail.total_cost == null ? '待计价' : fmtUsd(detail.total_cost)} ·
-            缓存读取：{fmtNum(detail.cache_read_tokens)} · 缓存写入：
+            {detail.total_cost == null
+              ? '待计价'
+              : usageMoney(detail.total_cost)}{' '}
+            · 缓存读取：{fmtNum(detail.cache_read_tokens)} · 缓存写入：
             {fmtNum(detail.cache_creation_tokens)} · 首字耗时：
             {detail.first_token_ms == null ? '—' : `${detail.first_token_ms}ms`}
           </p>
@@ -439,7 +608,7 @@ export function UsageRecordsPage() {
       )}
       <div className='mt-4 flex items-center justify-between text-sm text-muted-foreground'>
         <span>
-          共 {q.data?.total || 0} 条 · 第 {page} 页
+          共 {data?.total || 0} 条 · 第 {page} 页
         </span>
         <div className='flex gap-2'>
           <Button
@@ -453,7 +622,7 @@ export function UsageRecordsPage() {
           <Button
             variant='outline'
             size='sm'
-            disabled={q.isFetching || page * 25 >= (q.data?.total || 0)}
+            disabled={q.isFetching || page * 25 >= (data?.total || 0)}
             onClick={() => setPage(page + 1)}
           >
             下一页

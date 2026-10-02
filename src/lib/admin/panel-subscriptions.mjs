@@ -62,7 +62,7 @@ export function usageRecords(db, params, userId, admin = false) {
   const totals = db.prepare(`SELECT ${select} FROM usage_logs l ${cond}`).get(...values)
   const items = db
     .prepare(
-      `SELECT l.request_id,l.created_at,l.model,l.status,l.input_tokens,l.output_tokens,l.cache_read_tokens,l.cache_creation_tokens,l.actual_cost,l.total_cost,l.duration_ms,l.first_token_ms,l.group_id,l.subscription_id,l.api_key_id,${admin ? 'l.user_id,l.vm_id,u.username,' : ''}g.name AS plan_name,k.name AS key_name FROM usage_logs l LEFT JOIN groups g ON g.id=l.group_id LEFT JOIN api_keys k ON k.id=l.api_key_id LEFT JOIN users u ON u.id=l.user_id ${cond} ORDER BY l.created_at DESC,l.id DESC LIMIT ? OFFSET ?`,
+      `SELECT l.request_id,l.created_at,l.model,l.status,l.input_tokens,l.output_tokens,l.cache_read_tokens,l.cache_creation_tokens,l.actual_cost,l.total_cost,l.duration_ms,l.first_token_ms,l.group_id,l.subscription_id,l.api_key_id,${admin ? 'l.user_id,l.vm_id,u.username,' : ''}g.name AS plan_name,k.name AS key_name FROM usage_logs l LEFT JOIN groups g ON g.id=l.group_id LEFT JOIN api_keys k ON k.id=l.api_key_id ${admin ? '' : 'AND k.user_id=l.user_id'} LEFT JOIN users u ON u.id=l.user_id ${cond} ORDER BY l.created_at DESC,l.id DESC LIMIT ? OFFSET ?`,
     )
     .all(...values, size, (page - 1) * size)
   const trend = db
@@ -73,7 +73,22 @@ export function usageRecords(db, params, userId, admin = false) {
   const models = db
     .prepare(`SELECT l.model,${select} FROM usage_logs l ${cond} GROUP BY l.model ORDER BY requests DESC LIMIT 20`)
     .all(...values)
-  return { items, totals, trend, models, page, page_size: size, total: totals.requests, timezone: 'Asia/Shanghai' }
+  const keys = db
+    .prepare(
+      `SELECT l.api_key_id,MAX(k.name) AS key_name,MAX(l.created_at) AS last_used_at,${select} FROM usage_logs l LEFT JOIN api_keys k ON k.id=l.api_key_id ${admin ? '' : 'AND k.user_id=l.user_id'} ${cond} GROUP BY l.api_key_id ORDER BY actual_cost DESC,requests DESC,l.api_key_id`,
+    )
+    .all(...values)
+  return {
+    items,
+    totals,
+    trend,
+    models,
+    keys,
+    page,
+    page_size: size,
+    total: totals.requests,
+    timezone: 'Asia/Shanghai',
+  }
 }
 
 export async function handleSubscriptionPanel(req, res, { path, json, readBody, projectRoot }) {
