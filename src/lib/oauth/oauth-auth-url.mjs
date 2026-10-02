@@ -228,6 +228,7 @@ export async function exchangeAuthCode({ sessionId, code, proxyUrl, vmId, fetchI
       email_address: identity.email,
       account_uuid: identity.account_uuid,
       org_uuid: identity.org_uuid,
+      subscription_type: identity.subscription_type,
       source: session.source || 'oauth-auth-url',
       flavor: session.flavor || 'cai',
     },
