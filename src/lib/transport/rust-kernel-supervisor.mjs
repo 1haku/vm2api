@@ -26,6 +26,7 @@ import {
 } from '../vm/slot-engine.mjs'
 import {
   ensureOfficialCredentialLink,
+  ensureSlotSubscriptionType,
   slotUidGidFromHomeDir,
   chownSlotRuntimeFile,
   replaceSlotOwnedFile,
@@ -452,6 +453,9 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec, force 
   if (exec?.homeDir) {
     const ids = slotUidGidFromHomeDir(exec.homeDir)
     ensureOfficialCredentialLink(exec.homeDir, ids || {})
+    try {
+      ensureSlotSubscriptionType(exec.homeDir, exec.vm?.claude?.account_tier)
+    } catch {}
   }
   const paths = rustKernelPaths(exec)
   if (!paths.socketPath) return { ok: false, reason: 'socket_missing' }

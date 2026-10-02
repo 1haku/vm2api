@@ -59,7 +59,7 @@ export function panelShellLaunch(cliBin) {
 }
 // Closing the hijacked stream does not end a TTY exec: bash would linger in the
 // slot. Every process of the session inherits the marker, so HUP them by it.
-const REAP_SCRIPT = `for d in /proc/[0-9]*; do tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -qx "${SESSION_ENV}=$1" && kill -HUP "\${d#/proc/}" 2>/dev/null; done; exit 0`
+const REAP_SCRIPT = `for d in /proc/[0-9]*; do tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -qx "${SESSION_ENV}=$1" || continue; cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true); case "$cmd" in *cli-node*) kill -KILL "\${d#/proc/}" 2>/dev/null || true ;; *) kill -HUP "\${d#/proc/}" 2>/dev/null || true ;; esac; done; exit 0`
 
 function clampInt(v, lo, hi, dflt) {
   const n = Number.parseInt(v, 10)
@@ -73,6 +73,7 @@ function refuse(status, code, message) {
 
 export function createSlotShell({ projectRoot, logger = console }) {
   const tickets = new Map()
+  const liveTokens = new Set()
   let sessions = 0
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 })
 
@@ -131,6 +132,7 @@ export function createSlotShell({ projectRoot, logger = console }) {
 
   async function attach(ws, vm, size) {
     const token = crypto.randomBytes(12).toString('hex')
+    liveTokens.add(token)
     const container = slotContainerName({ vm })
     let connect = null
     let session = null
@@ -139,6 +141,7 @@ export function createSlotShell({ projectRoot, logger = console }) {
     const release = () => {
       if (released) return
       released = true
+      liveTokens.delete(token)
       sessions -= 1
     }
     const send = (data) => ws.readyState === ws.OPEN && ws.send(data)
@@ -209,5 +212,5 @@ export function createSlotShell({ projectRoot, logger = console }) {
     for (const msg of pending.splice(0)) apply(msg)
   }
 
-  return { issueTicket, handleUpgrade }
+  return { issueTicket, handleUpgrade, liveShellTokens: () => [...liveTokens] }
 }
