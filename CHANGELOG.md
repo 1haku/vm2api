@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+## 1.3.94 — 2026-10-03
+
 - Claude 完整 OAuth 槽可以查询并兑换原生限额重置。面板在用量窗口和详情额度区沿用 GPT 重置券的「查询 / 使用」按钮，使用前二次确认。`POST /api/panel/vms/:id/claude-reset/query` 只读；`POST /api/panel/vms/:id/claude-reset/redeem` 必须带 `Idempotency-Key`，由服务端选择下一次可兑换的 grant。请求经槽内 worker 出站，响应和落盘都不含 grant / 组织 ID。未确认的兑换会按组织挡住后续兑换。Setup Token 和 API Key 不显示这组按钮。槽内 `kin-worker` 需要带 `reset-status` / `reset-redeem` 的新二进制，只更新 Node 时查询会返回 worker 不支持。
+- 修复 Claude Code auto 权限分类请求经过 Node、kernel、native CLI 时被普通请求策略改写的问题。按原始分类约定识别用途并逐 job 传递，保留分类 system/cache、合法 thinking、采样、预算和 stop；支持关闭 thinking 的模型保留显式 disabled。已知必须 adaptive 的 XML 分类只增加一次 2048 token 余量并校验上限。不静默切换客户端指定模型，旧强制工具与模型能力冲突或旧运行时缺能力时明确报错。
+- 分类链路保留真实上游错误、request-id/retry-after、JSON 的上游 id/stop_sequence 和正常 max_tokens 终结；零上游执行不消耗执行预算或惩罚账户。日志只保存有界分类摘要。更新 Rust kernel 两份副本及 UPX 压缩的 cli-node，新增跨层分类和旧 CLI 组合回归。
+- 修复登录页的导入排序与 JSX 格式，使 web CI 的 Prettier 检查通过；重编控制台。
+
+已部署机升级：更新 Node 控制面（`src/`）、`web/dist`、`bin/kin-worker`、`bin/kin-kernel`、`share/wrap-cli/kin-kernel.bin` 和 `share/wrap-cli/cli-node`，重启一次 Node。**需要 `wrap-cli/sync`** 将配套 kernel/CLI 同步进 Claude 槽；各槽还需更新并重载 kin-worker，才能使用原生限额重置。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.93 — 2026-10-03
 
