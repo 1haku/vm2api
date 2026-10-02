@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { ChevronsUpDown, Info, LogOut, Settings, Users } from 'lucide-react'
+import { useAuthStore } from '@/stores/auth-store'
 import { getDisplayNameInitials } from '@/lib/utils'
 import useDialogState from '@/hooks/use-dialog-state'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -29,6 +30,7 @@ type NavUserProps = {
 }
 
 export function NavUser({ user }: NavUserProps) {
+  const admin = useAuthStore((s) => s.me?.role === 'admin')
   const { isMobile } = useSidebar()
   const [open, setOpen] = useDialogState()
   return (
@@ -73,26 +75,28 @@ export function NavUser({ user }: NavUserProps) {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem asChild>
-                  <Link to='/settings/$tab' params={{ tab: 'sticky' }}>
-                    <Settings />
-                    设置
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to='/settings/$tab' params={{ tab: 'about' }}>
-                    <Info />
-                    关于 / 更新
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to='/users'>
-                    <Users />
-                    用户
-                  </Link>
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
+              {admin && (
+                <DropdownMenuGroup>
+                  <DropdownMenuItem asChild>
+                    <Link to='/settings/$tab' params={{ tab: 'sticky' }}>
+                      <Settings />
+                      设置
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to='/settings/$tab' params={{ tab: 'about' }}>
+                      <Info />
+                      关于 / 更新
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to='/users'>
+                      <Users />
+                      用户
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setOpen(true)}>
                 <LogOut />

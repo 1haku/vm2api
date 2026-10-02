@@ -9,6 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { writeWorkerCredentialFile } from '../src/lib/oauth/oauth-credentials.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const GATEWAY_ROOT = path.resolve(__dirname, '../src')
@@ -61,6 +62,7 @@ export function seedVm({ project, id = 'vm-sim-01', oauth = true } = {}) {
       : {},
   }
   fs.writeFileSync(path.join(vms, `${id}.json`), JSON.stringify(rec, null, 2))
+  if (oauth) writeWorkerCredentialFile(path.join(vms, id, 'cli-home'), rec.claude)
   fs.writeFileSync(path.join(vms, 'active.json'), JSON.stringify({ active_vm: id }, null, 2))
   return rec
 }
@@ -102,6 +104,7 @@ export async function startGateway(opts = {}) {
     KIN_MOCK_TRACE_FILE: traceFile,
     KIN_MOCK_TEXT: opts.mockText || 'pong',
     KIN_CRS_MOCK: '1',
+    KIN_KERNEL_BIN: path.join(project, 'mock-kernel'),
   }
   if (opts.env) Object.assign(env, opts.env)
 

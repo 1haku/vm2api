@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 
 export type ViewId =
+  | 'subscriptions'
+  | 'usage-records'
   | 'overview'
   | 'cluster'
   | 'vm'
@@ -38,6 +40,8 @@ export type ViewId =
   | 'wrap'
 
 export const VIEW_TITLES: Record<ViewId, string> = {
+  subscriptions: '订阅管理',
+  'usage-records': '使用记录',
   overview: '总览',
   cluster: '集群',
   vm: '虚拟机',
@@ -63,6 +67,8 @@ export const NAV_ITEMS: {
   url: string
   icon: typeof LayoutDashboard
 }[] = [
+  { id: 'subscriptions', url: '/subscriptions', icon: Users },
+  { id: 'usage-records', url: '/usage-records', icon: LineChart },
   { id: 'overview', url: '/overview', icon: LayoutDashboard },
   { id: 'cluster', url: '/cluster', icon: Network },
   { id: 'vm', url: '/vm', icon: Monitor },

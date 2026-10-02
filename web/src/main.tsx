@@ -36,6 +36,7 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
       if (error instanceof ApiError && error.status === 401) {
+        if (!useAuthStore.getState().token) return
         useAuthStore.getState().signOut()
         toast.error('鉴权失效，请重新登录')
         if (!window.location.hash.startsWith('#/login')) {

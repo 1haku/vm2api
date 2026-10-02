@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=ghcr.io/dofastted/vm2api:v1.3.90
+FROM ${BASE_IMAGE}
+WORKDIR /opt/vm2api
+COPY src/ src/
+COPY scripts/ scripts/
+RUN rm -rf /opt/vm2api/web/dist
+COPY web/dist/ web/dist/
+COPY VERSION VERSION
+LABEL org.vm2api.variant="shared-subscriptions-20261002"

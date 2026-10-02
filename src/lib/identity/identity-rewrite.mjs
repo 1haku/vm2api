@@ -297,7 +297,8 @@ function resolvePassthroughOutboundSessionId(caller, opts) {
  * official-keeps-A / unofficial-hash behavior.
  */
 export function resolveOutboundSessionId(callerSession, opts = {}) {
-  const caller = String(callerSession || '').trim()
+  const rawCaller = String(callerSession || '').trim()
+  const caller = rawCaller && opts.tenantId ? uuidFromSeed(`tenant:${opts.tenantId}:${rawCaller}`) : rawCaller
   const mode = opts.mode || outboundSessionMode(opts.routing)
   if (mode === 'passthrough') return resolvePassthroughOutboundSessionId(caller, opts)
 

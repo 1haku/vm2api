@@ -1,0 +1,1 @@
+import{g as e}from"./button-BZberCQA.js";import{g as t}from"./index-Bs-TFk-k.js";function n(n=`vm`){return t({queryKey:[`panel`,`billing`,n],queryFn:()=>e(`/api/panel/billing?group_by=${encodeURIComponent(n)}`)})}export{n as t};

@@ -14,9 +14,9 @@ const serverSrc = [
   fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/server.mjs'), 'utf8'),
 ].join('\n')
 
-test('user sees vm / proxies / keys / billing / logs', () => {
-  assert.deepEqual(viewsForRole('user'), ['vm', 'proxies', 'keys', 'billing', 'logs'])
-  assert.equal(canViewPage('user', 'vm'), true)
+test('user sees subscriptions / usage records / keys', () => {
+  assert.deepEqual(viewsForRole('user'), ['subscriptions', 'usage-records', 'keys'])
+  assert.equal(canViewPage('user', 'vm'), false)
   assert.equal(canViewPage('user', 'overview'), false)
   assert.equal(canViewPage('super', 'vm'), true)
   assert.equal(canViewPage('admin', 'users'), true)

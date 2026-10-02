@@ -18,7 +18,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { redactSecrets } from '../core/security.mjs'
-import { resolveStoreDb } from '../db/database.mjs'
+import { resolveStoreDb, withTransaction } from '../db/database.mjs'
+import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
 import { classifyRequestError, resolveMutedErrorClasses } from './error-class.mjs'
 import { costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
@@ -387,7 +388,7 @@ export class RequestLogStore {
    * Write debug full record when mode===debug.
    */
   finish(ctx, extra = {}) {
-    if (!ctx || ctx.mode === 'off') return null
+    if (!ctx || (ctx.mode === 'off' && !extra.user_id && !extra.subscription_id)) return null
     const duration_ms = Math.max(0, Date.now() - (ctx.t0 || Date.now()))
     const usage = normalizeUsage(extra.usage || {})
     const summary = {
@@ -430,6 +431,7 @@ export class RequestLogStore {
       final_account_id: extra.final_account_id || extra.account_id || null,
       // sub2api ownership + billing columns
       user_id: extra.user_id ?? null,
+      subscription_id: extra.subscription_id ?? null,
       group_id: extra.group_id ?? 1,
       rate_multiplier: Number.isFinite(Number(extra.rate_multiplier)) ? Number(extra.rate_multiplier) : 1,
       ...costColumnsFromUsage(
@@ -453,9 +455,10 @@ export class RequestLogStore {
     const classified = classifyRequestError(summary)
     if (classified?.error_class) summary.error_class = classified.error_class
 
-    try {
+    withTransaction(this.db, () => {
       this.repo.insertSummaryIfAbsent(summary)
-    } catch {}
+      new SubscriptionsRepo(this.db).settle(summary.request_id, summary.subscription_id, summary.actual_cost)
+    })
     if (this.jsonlMirror) this._appendJsonl(summary)
     this._mem.push(summary)
     if (this._mem.length > this._memMax) this._mem = this._mem.slice(-this._memMax)

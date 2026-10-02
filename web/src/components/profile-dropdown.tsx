@@ -38,19 +38,23 @@ export function ProfileDropdown() {
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <Link to='/settings/$tab' params={{ tab: 'sticky' }}>
-              设置
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to='/settings/$tab' params={{ tab: 'about' }}>
-              关于 / 更新
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to='/users'>用户</Link>
-          </DropdownMenuItem>
+          {role === 'admin' && (
+            <>
+              <DropdownMenuItem asChild>
+                <Link to='/settings/$tab' params={{ tab: 'sticky' }}>
+                  设置
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to='/settings/$tab' params={{ tab: 'about' }}>
+                  关于 / 更新
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to='/users'>用户</Link>
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant='destructive' onClick={() => setOpen(true)}>
             退出

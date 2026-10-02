@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { ApiKeyItem } from '@/types/panel-keys'
+import { useAuthStore } from '@/stores/auth-store'
+import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -98,6 +101,15 @@ export function KeyLimitsDialog({
   pending: boolean
   onSubmit: (draft: KeyLimitsDraft) => void
 }) {
+  const user = useAuthStore((s) => s.me)
+  const plans = useQuery({
+    queryKey: ['subscription-plans', user?.user],
+    queryFn: () =>
+      api<{ items: { id: number; name: string }[] }>(
+        '/api/panel/subscription-plans'
+      ),
+    enabled: open,
+  })
   const [draft, setDraft] = useState<KeyLimitsDraft>({
     name: '',
     category: 'oauth',
@@ -113,6 +125,7 @@ export function KeyLimitsDialog({
     if (mode === 'edit' && initial) {
       setDraft({
         name: initial.name || '',
+        group_id: initial.group_id,
         category: initial.category === 'api' ? 'api' : 'oauth',
         max_concurrency: Number(initial.max_concurrency ?? 20),
         quota_requests: Number(initial.quota_requests ?? 0),
@@ -155,6 +168,31 @@ export function KeyLimitsDialog({
           </p>
         ) : null}
         <div className='grid gap-3 sm:grid-cols-2'>
+          <Field label='订阅方案'>
+            <select
+              aria-label='订阅方案'
+              className='h-9 w-full rounded-md border bg-background px-3 text-sm'
+              value={draft.group_id || ''}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  group_id: Number(e.target.value) || undefined,
+                  category: 'oauth',
+                })
+              }
+            >
+              <option value=''>
+                {user?.role === 'user'
+                  ? '请选择已分配订阅'
+                  : '平台 / 原有个人槽位'}
+              </option>
+              {plans.data?.items.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </Field>
           {mode === 'create' ? (
             <Field label='名称'>
               <Input
@@ -181,7 +219,9 @@ export function KeyLimitsDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value='oauth'>OAuth 槽位</SelectItem>
-                <SelectItem value='api'>API 直连</SelectItem>
+                {user?.role === 'admin' && !draft.group_id && (
+                  <SelectItem value='api'>API 直连</SelectItem>
+                )}
               </SelectContent>
             </Select>
           </Field>

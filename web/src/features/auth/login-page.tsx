@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
@@ -10,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export function LoginPage() {
+  const queryClient = useQueryClient()
   const navigate = useNavigate()
   const search = useSearch({ from: '/login' })
   const signIn = useAuthStore((s) => s.signIn)
@@ -32,6 +34,8 @@ export function LoginPage() {
         password,
         base: hideBase ? '' : base.trim().replace(/\/$/, '') || apiBase(),
       })
+      await queryClient.cancelQueries()
+      queryClient.clear()
       signIn(result.token, result.user)
       toast.success('登录成功')
       const next = search.redirect

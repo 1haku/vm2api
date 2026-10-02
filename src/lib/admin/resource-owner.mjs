@@ -3,6 +3,9 @@
  * vm.json is SSOT for VM owner/origin; this module is the only decoder.
  */
 
+import { getDb, isDbOpen } from '../db/database.mjs'
+import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
+
 export const VM_ORIGIN = {
   platform: 'platform',
   adminAssigned: 'admin_assigned',
@@ -51,6 +54,11 @@ export function ownerScopeFromApiKey(record, { apiKeyKind = null, ownerRole = nu
 
 export function ownerScopeFromRequest(req, usersRepo = null) {
   const rec = req?.apiKeyRecord || null
+  const db = usersRepo?.db || (isDbOpen() ? getDb() : null)
+  if (rec && db) {
+    const sub = new SubscriptionsRepo(db).entitlement(rec)
+    if (sub) return { type: 'subscription', vmIds: sub.vmIds, groupId: sub.group_id, key: rec }
+  }
   let ownerRole = null
   const userId = normalizeOwnerId(rec?.user_id)
   if (userId && usersRepo?.getById) {
@@ -66,6 +74,18 @@ export function ownerScopeFromRequest(req, usersRepo = null) {
 export function vmMatchesOwnerScope(vm, scope = PLATFORM_SCOPE) {
   const type = scope?.type || 'platform'
   if (type === 'any') return true
+  if (type === 'subscription') {
+    if (!(scope.vmIds || []).includes(vm.id) || vmOwnerId(vm)) return false
+    if (scope.key && isDbOpen()) {
+      try {
+        return new SubscriptionsRepo().entitlement(scope.key)?.vmIds.includes(vm.id) === true
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+  if (isDbOpen() && getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(vm.id)) return false
   const owner = vmOwnerId(vm)
   if (type === 'platform') return !owner
   if (type === 'user') return owner === normalizeOwnerId(scope.userId)

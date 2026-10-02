@@ -2,6 +2,7 @@
  * /v1 protocol handler. URLs, auth, and response envelopes stay with the
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
  */
+import crypto from 'node:crypto'
 import { applyIntercept } from '../core/intercept.mjs'
 import { detectDistill, distillBlockError } from '../core/distill-detect.mjs'
 import {
@@ -45,6 +46,7 @@ import {
 import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
+import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import {
   resolveInferenceEngine,
   resolveOfficialCcInference,
@@ -342,7 +344,7 @@ export function createHandleProtocol(deps) {
     return acceptAssistantHop(workerResult)
   }
 
-  async function handleProtocol(req, res, protocol, pathName) {
+  async function handleProtocolInner(req, res, protocol, pathName) {
     const logCtx = requestLog.start(req, { protocol, pathName })
     res._kinRequestId = logCtx.request_id
     const logBag = {
@@ -373,7 +375,7 @@ export function createHandleProtocol(deps) {
       first_token_ms: null,
       stop_reason: null,
     }
-    res.on('finish', () => {
+    req.finalizeSubscriptionUsage = () => {
       try {
         const groupId = req.apiKeyRecord?.group_id ?? 1
         requestLog.finish(logCtx, {
@@ -382,16 +384,23 @@ export function createHandleProtocol(deps) {
           api_key_id: req.apiKeyRecord?.id || null,
           user_id: req.apiKeyRecord?.user_id ?? null,
           group_id: groupId,
-          rate_multiplier: deps.groupsRepo.rateMultiplier(groupId),
+          rate_multiplier: req.subscriptionAdmission?.group.rate_multiplier ?? deps.groupsRepo.rateMultiplier(groupId),
+          subscription_id: req.subscriptionAdmission?.id ?? null,
           ...logBag,
         })
-      } catch {}
-    })
+      } catch (error) {
+        console.error('[usage] settlement failed', logCtx.request_id, error.message)
+      }
+    }
     if (!requireAuth(req, res)) {
       logBag.error_code = req.authError?.code || ErrorCode.INVALID_API_KEY
       logBag.error_message = req.authError?.message || 'Invalid credentials'
       logBag.api_key_presented = presentedApiKeyForLog(req.presentedApiKey)
       return
+    }
+    if (req.apiKeyRecord) {
+      logCtx.request_id = crypto.randomUUID()
+      res._kinRequestId = logCtx.request_id
     }
 
     let inbound
@@ -420,8 +429,27 @@ export function createHandleProtocol(deps) {
     logBag.stream = isClientStream(inbound, req.headers)
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
 
+    try {
+      if (req.apiKeyRecord && apiKeyStore?.repo?.db) {
+        req.subscriptionAdmission = new SubscriptionsRepo(apiKeyStore.repo.db).reserve(
+          req.apiKeyRecord,
+          logCtx.request_id,
+          inbound,
+        )
+        if (req.subscriptionAdmission && resolveInferenceBackend(req) === 'api')
+          throw Object.assign(new Error('订阅只允许访问已分配槽位'), { status: 403, code: 'subscription_scope' })
+      }
+    } catch (error) {
+      logBag.error_code = error.code || 'subscription_invalid'
+      return json(res, error.status || 400, {
+        error: { type: 'permission_error', code: logBag.error_code, message: error.message },
+      })
+    }
+
     const fp = fingerprintRequest(req, inbound)
-    const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
+    const healthDecision = req.subscriptionAdmission
+      ? null
+      : getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
     if (healthDecision?.action === 'fail') {
       stats.requests++
       stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
@@ -649,6 +677,7 @@ export function createHandleProtocol(deps) {
     })
     const sessionMode = outboundSessionMode(getRouting())
     const sessionContext = {
+      tenantId: req.apiKeyRecord?.user_id || '',
       officialClient: officialTraffic,
       clientDiscriminator,
       firstUserText,
@@ -690,7 +719,7 @@ export function createHandleProtocol(deps) {
         }
     const stickyKey = sessionKeys.stickyKey || null
     const stickyKeys = sessionKeys.stickyKeys || []
-    const deviceKey = stickyDeviceId ? stickyRouter?.canonicalDeviceKey?.(stickyDeviceId) || null : null
+    const deviceKey = stickyDeviceId ? stickyRouter?.canonicalDeviceKey?.(stickyDeviceId, req) || null : null
     const parentSession = explicitParentSessionId(inbound, req.headers)
     const familySession = parentSession || callerSession
     const familyTrusted =
@@ -703,7 +732,7 @@ export function createHandleProtocol(deps) {
     const familyVmId = familyKey ? stickyRouter?.resolve?.(familyKey)?.vmId || null : null
     // An explicit child counts against its root's conversation window, not a
     // new one. Without a local root record there is no relation to trust.
-    const rootWindowKey = parentSession ? stickyRouter?.canonicalSessionKey?.(parentSession) || null : null
+    const rootWindowKey = parentSession ? stickyRouter?.canonicalSessionKey?.(parentSession, req) || null : null
     const windowKey = rootWindowKey && stickyRouter?.resolve?.(rootWindowKey) ? rootWindowKey : undefined
     const stickyBound =
       stickyKey && typeof stickyRouter?.resolve === 'function' ? stickyRouter.resolve(stickyKey) : null
@@ -1313,5 +1342,13 @@ export function createHandleProtocol(deps) {
     return json(res, 200, ctx.body)
   }
 
+  async function handleProtocol(req, res, protocol, pathName) {
+    try {
+      return await handleProtocolInner(req, res, protocol, pathName)
+    } finally {
+      req.finalizeSubscriptionUsage?.()
+      delete req.finalizeSubscriptionUsage
+    }
+  }
   return { handleProtocol, mapProtocolClientError, applyDistillGuard, streamAndAssembleClaudeMessage }
 }

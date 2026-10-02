@@ -23,8 +23,10 @@ import { Route as AuthenticatedModelsRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
 import { Route as AuthenticatedProtocolRouteImport } from './routes/_authenticated/protocol'
 import { Route as AuthenticatedProxiesRouteImport } from './routes/_authenticated/proxies'
+import { Route as AuthenticatedSubscriptionsRouteImport } from './routes/_authenticated/subscriptions'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedUsageRouteImport } from './routes/_authenticated/usage'
+import { Route as AuthenticatedUsageRecordsRouteImport } from './routes/_authenticated/usage-records'
 import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
 import { Route as AuthenticatedWrapRouteImport } from './routes/_authenticated/wrap'
 import { Route as AuthenticatedLoadtestIndexRouteImport } from './routes/_authenticated/loadtest/index'
@@ -103,6 +105,12 @@ const AuthenticatedProxiesRoute = AuthenticatedProxiesRouteImport.update({
   path: '/proxies',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSubscriptionsRoute =
+  AuthenticatedSubscriptionsRouteImport.update({
+    id: '/subscriptions',
+    path: '/subscriptions',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemRoute = AuthenticatedSystemRouteImport.update({
   id: '/system',
   path: '/system',
@@ -113,6 +121,12 @@ const AuthenticatedUsageRoute = AuthenticatedUsageRouteImport.update({
   path: '/usage',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedUsageRecordsRoute =
+  AuthenticatedUsageRecordsRouteImport.update({
+    id: '/usage-records',
+    path: '/usage-records',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedUsersRoute = AuthenticatedUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -172,8 +186,10 @@ export interface FileRoutesByFullPath {
   '/overview': typeof AuthenticatedOverviewRoute
   '/protocol': typeof AuthenticatedProtocolRoute
   '/proxies': typeof AuthenticatedProxiesRoute
+  '/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/system': typeof AuthenticatedSystemRoute
   '/usage': typeof AuthenticatedUsageRoute
+  '/usage-records': typeof AuthenticatedUsageRecordsRoute
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
   '/loadtest/$tab': typeof AuthenticatedLoadtestTabRoute
@@ -196,8 +212,10 @@ export interface FileRoutesByTo {
   '/overview': typeof AuthenticatedOverviewRoute
   '/protocol': typeof AuthenticatedProtocolRoute
   '/proxies': typeof AuthenticatedProxiesRoute
+  '/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/system': typeof AuthenticatedSystemRoute
   '/usage': typeof AuthenticatedUsageRoute
+  '/usage-records': typeof AuthenticatedUsageRecordsRoute
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
   '/': typeof AuthenticatedIndexRoute
@@ -223,8 +241,10 @@ export interface FileRoutesById {
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
   '/_authenticated/protocol': typeof AuthenticatedProtocolRoute
   '/_authenticated/proxies': typeof AuthenticatedProxiesRoute
+  '/_authenticated/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
   '/_authenticated/usage': typeof AuthenticatedUsageRoute
+  '/_authenticated/usage-records': typeof AuthenticatedUsageRecordsRoute
   '/_authenticated/users': typeof AuthenticatedUsersRoute
   '/_authenticated/wrap': typeof AuthenticatedWrapRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
@@ -251,8 +271,10 @@ export interface FileRouteTypes {
     | '/overview'
     | '/protocol'
     | '/proxies'
+    | '/subscriptions'
     | '/system'
     | '/usage'
+    | '/usage-records'
     | '/users'
     | '/wrap'
     | '/loadtest/$tab'
@@ -275,8 +297,10 @@ export interface FileRouteTypes {
     | '/overview'
     | '/protocol'
     | '/proxies'
+    | '/subscriptions'
     | '/system'
     | '/usage'
+    | '/usage-records'
     | '/users'
     | '/wrap'
     | '/'
@@ -301,8 +325,10 @@ export interface FileRouteTypes {
     | '/_authenticated/overview'
     | '/_authenticated/protocol'
     | '/_authenticated/proxies'
+    | '/_authenticated/subscriptions'
     | '/_authenticated/system'
     | '/_authenticated/usage'
+    | '/_authenticated/usage-records'
     | '/_authenticated/users'
     | '/_authenticated/wrap'
     | '/_authenticated/'
@@ -419,6 +445,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProxiesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/subscriptions': {
+      id: '/_authenticated/subscriptions'
+      path: '/subscriptions'
+      fullPath: '/subscriptions'
+      preLoaderRoute: typeof AuthenticatedSubscriptionsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/system': {
       id: '/_authenticated/system'
       path: '/system'
@@ -431,6 +464,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/usage'
       preLoaderRoute: typeof AuthenticatedUsageRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/usage-records': {
+      id: '/_authenticated/usage-records'
+      path: '/usage-records'
+      fullPath: '/usage-records'
+      preLoaderRoute: typeof AuthenticatedUsageRecordsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/users': {
@@ -504,8 +544,10 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
   AuthenticatedProtocolRoute: typeof AuthenticatedProtocolRoute
   AuthenticatedProxiesRoute: typeof AuthenticatedProxiesRoute
+  AuthenticatedSubscriptionsRoute: typeof AuthenticatedSubscriptionsRoute
   AuthenticatedSystemRoute: typeof AuthenticatedSystemRoute
   AuthenticatedUsageRoute: typeof AuthenticatedUsageRoute
+  AuthenticatedUsageRecordsRoute: typeof AuthenticatedUsageRecordsRoute
   AuthenticatedUsersRoute: typeof AuthenticatedUsersRoute
   AuthenticatedWrapRoute: typeof AuthenticatedWrapRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
@@ -529,8 +571,10 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
   AuthenticatedProtocolRoute: AuthenticatedProtocolRoute,
   AuthenticatedProxiesRoute: AuthenticatedProxiesRoute,
+  AuthenticatedSubscriptionsRoute: AuthenticatedSubscriptionsRoute,
   AuthenticatedSystemRoute: AuthenticatedSystemRoute,
   AuthenticatedUsageRoute: AuthenticatedUsageRoute,
+  AuthenticatedUsageRecordsRoute: AuthenticatedUsageRecordsRoute,
   AuthenticatedUsersRoute: AuthenticatedUsersRoute,
   AuthenticatedWrapRoute: AuthenticatedWrapRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,

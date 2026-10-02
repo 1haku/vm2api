@@ -89,6 +89,7 @@ import { createRoutingRuntime } from './lib/admin/routing-runtime.mjs'
 import { createImportCommit } from './lib/oauth/import-commit.mjs'
 import { createHandleProtocol } from './lib/protocol/handle-protocol.mjs'
 import { handleUserCountTokens, handleUserUsage } from './lib/protocol/user-count-tokens.mjs'
+import { SubscriptionsRepo } from './lib/db/repos/subscriptions-repo.mjs'
 import { createPanelHandler } from './lib/admin/panel-routes.mjs'
 
 const FEATURES = [
@@ -282,6 +283,7 @@ accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
 
 const apiKeyStore = new ApiKeyStore({ dataDir: cfg.paths.data })
 groupsRepo = new GroupsRepo()
+new SubscriptionsRepo().recoverReservations()
 const apiEndpointStore = new ApiEndpointStore({ dataDir: cfg.paths.data })
 const apiScheduler = new ApiScheduler()
 apiScheduler.reload(apiEndpointStore.listRaw())
@@ -645,6 +647,18 @@ function requireAuth(req, res) {
   // Panel session
   const session = verifyPanelSession(token)
   if (session) {
+    if (String(req.url || '').startsWith('/v1/')) {
+      return rejectAuth(
+        req,
+        res,
+        makeError({
+          type: ErrorType.PERMISSION,
+          code: 'api_key_required',
+          message: '协议调用请使用个人 API Key',
+          status: 403,
+        }),
+      )
+    }
     if (!allowRate('panel:' + session.user)) {
       return rejectAuth(
         req,
@@ -732,6 +746,23 @@ function requireAuth(req, res) {
   }
   req.apiKeyKind = 'managed'
   req.apiKeyRecord = managed.record
+  try {
+    const sub = new SubscriptionsRepo().entitlement(managed.record)
+    const owner = apiKeyStore.users.getById(managed.record.user_id)
+    if ((sub || owner?.role === 'user') && managed.record.category === 'api')
+      throw Object.assign(new Error('此密钥不能访问公共 API 池'), { status: 403, code: 'subscription_scope' })
+  } catch (error) {
+    return rejectAuth(
+      req,
+      res,
+      makeError({
+        type: ErrorType.PERMISSION,
+        code: error.code || 'subscription_invalid',
+        message: error.message,
+        status: error.status || 403,
+      }),
+    )
+  }
   return true
 }
 

@@ -74,6 +74,8 @@ import {
 } from './concurrent-test.mjs'
 import { startProbeTest, getProbeTest, listProbeTests, cancelProbeTest, getProbeCatalog } from './probe-test.mjs'
 import { publicKeyView } from './api-keys.mjs'
+import { handleSubscriptionPanel } from './panel-subscriptions.mjs'
+import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
@@ -769,6 +771,8 @@ export function createPanelHandler(ctx) {
       ) {
         return true
       }
+      if (await handleSubscriptionPanel(req, res, { path: p, json, readBody, projectRoot: cfg.paths.project }))
+        return true
       if (p.startsWith('/api/panel/cluster/')) return ctx.clusterRoutes.handle(req, res, url)
       if (req.method === 'GET' && p === '/api/panel/database/metrics') {
         const snapshot = snapshotDatabaseMetrics({
@@ -878,6 +882,12 @@ export function createPanelHandler(ctx) {
         const body = await readBody(req, 8192).catch(() => ({}))
         const input = normalizePanelApiKeyInput(body)
         try {
+          new SubscriptionsRepo().assertKey(
+            panelIdentity(req).role === 'user' ? req.panelUserId : body.user_id || req.panelUserId,
+            body.group_id,
+            body.category,
+            panelIdentity(req).role,
+          )
           const defaultConc = Number(
             ctx.routingConfig?.concurrency?.default_key_concurrency ??
               ctx.routingConfig?.concurrency?.default_max_per_account ??
@@ -922,6 +932,17 @@ export function createPanelHandler(ctx) {
         if (denyIfUserMissesKey(req, res, { apiKeyStore, json, keyId: id })) return true
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
+          const existing = apiKeyStore.repo.getById(id)
+          if (existing) {
+            if (panelIdentity(req).role === 'user') delete body.user_id
+            if (body.group_id !== undefined || body.category !== undefined || body.user_id !== undefined)
+              new SubscriptionsRepo().assertKey(
+                body.user_id ?? existing.user_id,
+                body.group_id ?? existing.group_id,
+                body.category ?? existing.category,
+                panelIdentity(req).role,
+              )
+          }
           const rec = apiKeyStore.update(id, normalizePanelApiKeyInput(body || {}))
           if (!rec) {
             return json(res, 404, { ok: false, error: { message: 'api key not found' } })
@@ -1609,6 +1630,9 @@ export function createPanelHandler(ctx) {
         if (nextOwner && !panelUsers.getById(nextOwner)) {
           return json(res, 404, { ok: false, error: { message: 'user not found' } })
         }
+        if (nextOwner && getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(id)) {
+          return json(res, 409, { ok: false, error: { message: '请先在订阅方案中解除该槽位绑定' } })
+        }
         const currentOrigin = vm.origin || VM_ORIGIN.platform
         if (!nextOwner && currentOrigin === VM_ORIGIN.userCreated) {
           return json(res, 400, {
@@ -2149,6 +2173,9 @@ export function createPanelHandler(ctx) {
       // DELETE /api/panel/vms/:id — remove VM record, cli-home, unbind proxy
       if (req.method === 'DELETE' && /^\/api\/panel\/vms\/[^/]+$/.test(p)) {
         const id = p.split('/')[4]
+        if (getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(id)) {
+          return json(res, 409, { ok: false, error: { message: '请先在订阅方案中移除此槽位，再删除账号' } })
+        }
         if (!isValidVmId(id)) {
           return json(res, 400, { ok: false, error: { message: 'invalid vm id' } })
         }

@@ -6,6 +6,7 @@ export type KeyLimitsDraft = {
   quota_usd: number
   rpm: number
   expires_in_days: number
+  group_id?: number
 }
 
 function nonNegative(value: number, label: string): number {
@@ -22,6 +23,7 @@ export function keyLimitsPayload(
   if (!Number.isInteger(requests)) throw new Error('请求额度必须是整数')
 
   const body: Record<string, unknown> = {
+    ...(draft.group_id ? { group_id: draft.group_id } : {}),
     category: draft.category,
     max_concurrency: nonNegative(draft.max_concurrency, '并发'),
     quota_requests: requests,

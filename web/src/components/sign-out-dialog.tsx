@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -9,6 +10,7 @@ interface SignOutDialogProps {
 
 export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const signOut = useAuthStore((s) => s.signOut)
 
   return (
@@ -20,7 +22,9 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       confirmText='退出'
       cancelBtnText='取消'
       destructive
-      handleConfirm={() => {
+      handleConfirm={async () => {
+        await queryClient.cancelQueries()
+        queryClient.clear()
         signOut()
         navigate({
           to: '/login',

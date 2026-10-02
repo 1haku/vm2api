@@ -80,6 +80,7 @@ const SUMMARY_COLUMNS = [
   'total_cost',
   'pricing_model',
   'user_id',
+  'subscription_id',
   'group_id',
   'actual_cost',
   'rate_multiplier',
@@ -186,8 +187,8 @@ function ownerPred(ownerUserId) {
   const id = String(ownerUserId || '').trim()
   if (!id) return { sql: '', params: [] }
   return {
-    sql: `(user_id = ? OR IFNULL(api_key_id, '') IN (SELECT id FROM api_keys WHERE user_id = ? AND deleted_at IS NULL) OR IFNULL(vm_id, '') IN (SELECT id FROM vms WHERE owner_user_id = ?))`,
-    params: [id, id, id],
+    sql: 'user_id = ?',
+    params: [id],
   }
 }
 

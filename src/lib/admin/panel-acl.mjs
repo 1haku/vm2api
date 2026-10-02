@@ -3,7 +3,7 @@
  *
  *   admin  — full console + user management
  *   super  — overview / cluster / usage / logs + VM page (schedule only)
- *   user   — tenant: vm / proxies / keys / billing / logs (owner-scoped)
+ *   user   — subscriptions / usage records / keys (owner-scoped)
  */
 
 export const PANEL_VIEWS = [
@@ -25,10 +25,12 @@ export const PANEL_VIEWS = [
   'users',
   'wrap',
   'billing',
+  'subscriptions',
+  'usage-records',
 ]
 
 const ROLE_VIEWS = {
-  user: ['vm', 'proxies', 'keys', 'billing', 'logs'],
+  user: ['subscriptions', 'usage-records', 'keys'],
   super: ['overview', 'cluster', 'usage', 'logs', 'vm'],
   admin: PANEL_VIEWS.slice(),
 }
@@ -95,6 +97,9 @@ const USER_EXACT_GET = new Set([
   '/api/panel/request-logs/export',
   '/api/panel/request-logs/stats',
   '/api/panel/billing',
+  '/api/panel/subscriptions',
+  '/api/panel/subscription-plans',
+  '/api/panel/usage-records',
 ])
 
 const USER_EXACT_POST = new Set(['/api/panel/vms/create', '/api/panel/vms/import', '/api/panel/proxies/import'])
@@ -190,6 +195,8 @@ function userKeyPathAllowed(method, path) {
   if (path === '/api/panel/api-keys') return method === 'GET' || method === 'POST'
   if (/^\/api\/panel\/api-keys\/[^/]+$/.test(path)) return method === 'GET' || method === 'PATCH' || method === 'DELETE'
   if (/^\/api\/panel\/api-keys\/[^/]+\/reveal$/.test(path) && method === 'POST') return true
+  if (/^\/api\/panel\/api-keys\/[^/]+\/rotate$/.test(path) && method === 'POST') return true
+  if (/^\/api\/panel\/api-keys\/[^/]+\/reset-quota$/.test(path) && method === 'POST') return true
   if (/^\/api\/panel\/api-keys\/[^/]+\/reset$/.test(path) && method === 'POST') return true
   return false
 }

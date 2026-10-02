@@ -14,10 +14,21 @@ import {
   Settings,
   Shield,
   Sparkles,
+  Users,
+  CreditCard,
 } from 'lucide-react'
 import type { NavGroup, NavItem, SidebarData } from '../types'
 
 const ALL_GROUPS: NavGroup[] = [
+  {
+    title: '订阅与用量',
+    items: [
+      { title: '订阅管理', url: '/subscriptions', icon: CreditCard },
+      { title: '使用记录', url: '/usage-records', icon: Gauge },
+      { title: '用户管理', url: '/users', icon: Users },
+      { title: '计费汇总', url: '/billing', icon: Gauge },
+    ],
+  },
   {
     title: '集群',
     items: [

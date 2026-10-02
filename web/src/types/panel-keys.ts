@@ -1,5 +1,6 @@
 export type ApiKeyItem = {
   id: string
+  group_id?: number
   name?: string
   /** 旧字段别名。列表请用 `key_prefix` / `maskApiKeyItem()`。 */
   prefix?: string

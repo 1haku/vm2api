@@ -31,6 +31,8 @@ import { applyOpenaiWashLog } from './openai-wash.mjs'
 import { extractCallerSession, outboundSessionMode, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
 import { extractFirstUserText } from '../identity/crs-persona.mjs'
 import { clientIp } from '../pool/sticky-router.mjs'
+import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 
 function sessionFrom(req, body) {
   const headers = req.headers || {}
@@ -104,8 +106,14 @@ export function pickCodexCandidates(
   }
   const stickyKeys = stickyRouter?.collectPoolKeys?.(req, body || {}, { platform: 'openai' }) || []
   const sessionKey = stickyRouter?.extractPoolKey?.(req, body || {}, { platform: 'openai' }) || stickyKeys[0] || null
-  const bound = sessionKey ? stickyRouter?.resolve?.(sessionKey) : null
-  const vms = listVms(projectRoot)
+  let bound = sessionKey ? stickyRouter?.resolve?.(sessionKey) : null
+  if (body?.previous_response_id && req.apiKeyRecord?.user_id) {
+    const owner = new SubscriptionsRepo().responseOwner(body.previous_response_id, req.apiKeyRecord)
+    if (!owner) return { error: 'response_not_portable', ids: [], sessionKey, stickyKeys }
+    bound = { ...bound, vmId: owner.vm_id }
+  }
+  const scope = ownerScopeFromRequest(req)
+  const vms = listVms(projectRoot).filter((vm) => vmMatchesOwnerScope(vm, scope))
   const continuesResponse = !!body?.previous_response_id && !!bound?.vmId
   const ordered = orderCodexSessionSlots(continuesResponse ? vms.filter((vm) => vm.id === bound.vmId) : vms, {
     boundVmId: bound?.vmId || null,
@@ -450,9 +458,11 @@ export async function handleCodexProtocol({
         let streamedUsage = null
         const attemptStartedAt = Date.now()
         const outboundSessionId =
-          sessionMode === 'passthrough'
+          sessionMode === 'passthrough' && !req.apiKeyRecord?.user_id
             ? inboundSession.session_id
             : resolveOutboundSessionId(callerSession, {
+                tenantId: req.apiKeyRecord?.user_id || '',
+                apiKeyId: req.apiKeyRecord?.id || '',
                 mode: sessionMode,
                 boundSessionId: stickyBound?.sessionId || '',
                 boundVmId: stickyBound?.vmId || '',
@@ -467,7 +477,11 @@ export async function handleCodexProtocol({
           session_id: outboundSessionId,
           previous_response_id: inboundSession.previous_response_id,
         }
-        const outboundBody = applyCodexRebuildBody({ ...converted.body, stream: true }, outboundSessionId, sessionMode)
+        const outboundBody = applyCodexRebuildBody(
+          { ...converted.body, stream: true },
+          outboundSessionId,
+          req.apiKeyRecord?.user_id ? 'rebuild' : sessionMode,
+        )
         const result = await runCodexKernelHop({
           hop,
           args: {
@@ -481,6 +495,19 @@ export async function handleCodexProtocol({
             },
           },
           onEvent: async (line) => {
+            if (req.apiKeyRecord?.user_id) {
+              for (const part of String(line).split('\n')) {
+                if (!part.startsWith('data:')) continue
+                let event
+                try {
+                  event = JSON.parse(part.slice(5).trim())
+                } catch {
+                  continue
+                }
+                if (event.response?.id)
+                  new SubscriptionsRepo().rememberResponse(event.response.id, req.apiKeyRecord, vm.id)
+              }
+            }
             const tier = serviceTierFromSseLine(line)
             if (tier) responseServiceTier = tier
             const seen = usageFromSseLine(line)
@@ -504,6 +531,12 @@ export async function handleCodexProtocol({
           },
         })
         ingestCodexHop(projectRoot, vm.id, result)
+        if (req.apiKeyRecord?.user_id)
+          new SubscriptionsRepo().rememberResponse(
+            result.body?.response?.id || result.body?.id,
+            req.apiKeyRecord,
+            vm.id,
+          )
         if (result?.transport_retried) logBag.transport_retried = true
         last = result
         const hopUsage = result.usage || result.body?.usage || result.body?.response?.usage || null

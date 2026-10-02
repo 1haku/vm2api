@@ -360,21 +360,24 @@ export class StickyRouter {
   }
 
   /** Canonical session identity — exact sticky, never scoped to an API key. */
-  canonicalSessionKey(sessionId) {
+  canonicalSessionKey(sessionId, req = null) {
     const id = String(sessionId || '').trim()
-    return id ? `sess:${id}` : null
+    const tenant = req?.apiKeyRecord?.user_id
+    return id ? `${tenant ? `u${tenant}:` : ''}sess:${id}` : null
   }
 
   /** Canonical device identity — VM affinity, never scoped to an API key. */
-  canonicalDeviceKey(deviceId) {
+  canonicalDeviceKey(deviceId, req = null) {
     const id = String(deviceId || '').trim()
-    return id ? `dev2:${id}` : null
+    const tenant = req?.apiKeyRecord?.user_id
+    return id ? `${tenant ? `u${tenant}:` : ''}dev2:${id}` : null
   }
 
   /** Canonical family identity — parent/root session, never scoped to an API key. */
-  canonicalFamilyKey(sessionId) {
+  canonicalFamilyKey(sessionId, req = null) {
     const id = String(sessionId || '').trim()
-    return id ? `family2:${id}` : null
+    const tenant = req?.apiKeyRecord?.user_id
+    return id ? `${tenant ? `u${tenant}:` : ''}family2:${id}` : null
   }
 
   /**
@@ -385,7 +388,8 @@ export class StickyRouter {
    */
   sessionPoolKeys(req, body = {}, { sessionId = '', deviceId = '', migrate = true } = {}) {
     if (!this.config.enabled) return { stickyKey: null, stickyKeys: [] }
-    const canonical = this.canonicalSessionKey(sessionId)
+    const canonical = this.canonicalSessionKey(sessionId, req)
+    if (canonical && req?.apiKeyRecord?.user_id) return { stickyKey: canonical, stickyKeys: [canonical] }
     if (!canonical) {
       return {
         stickyKey: this.extractPoolKey(req, body, { platform: 'anthropic' }),
@@ -411,7 +415,8 @@ export class StickyRouter {
   familyPoolKey(req, sessionId, { trusted = false } = {}) {
     const legacy = this.familyKey(req, sessionId, 'anthropic')
     if (!trusted || !legacy) return legacy
-    const canonical = this.canonicalFamilyKey(sessionId)
+    const canonical = this.canonicalFamilyKey(sessionId, req)
+    if (req?.apiKeyRecord?.user_id) return canonical
     if (!this.resolve(canonical)) {
       const prev = this.resolve(legacy)
       if (prev?.accountId && prev?.vmId) {
