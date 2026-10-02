@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 槽运维终端里的 `claude` 启动该槽的 cli-node（本机 `/home/kincli/.kin/cli-node`，集群节点 `/opt/kin/cli-node`），不走 PATH 上的官方 `claude`。只对这次面板会话生效，不改槽里的 `~/.bashrc`。
+- 槽运维终端启动时把 `CLAUDE_CONFIG_DIR` 指到 `$HOME/.claude`。令牌仍只放在该目录的 `credentials.json`；若缺少官方入口 `.credentials.json` 或家目录 `~/.claude.json`，会话里补上指向 `.claude` 内文件的链接。`claude` 仍启动该槽的 cli-node。
 
 ## 1.3.92 — 2026-10-02
 
