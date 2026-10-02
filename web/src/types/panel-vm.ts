@@ -248,7 +248,7 @@ export type Vm = {
   last_probe?: {
     at?: string
     ok?: boolean
-    error?: string
+    error?: unknown
     source?: string
     transport?: boolean
     rate_limited?: boolean
@@ -258,7 +258,7 @@ export type Vm = {
     ok?: boolean
     source?: string
     via?: string
-    error?: string | null
+    error?: unknown
     data_at?: string | null
   } | null
   probe_source?: string
