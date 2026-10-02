@@ -179,6 +179,22 @@ export type Vm = {
     credits?: Array<{ expires_at?: string }>
     fetched_at?: string
   } | null
+  /** Claude 原生限额重置。只含可展示字段，没有 grant / 组织 ID。 */
+  claude_reset_credits?: {
+    eligible?: boolean
+    available_count?: number
+    credits?: Array<{
+      label?: string
+      resets_left?: number
+      starts_at?: string
+      expires_at?: string
+      clears?: string[]
+      redeemable?: boolean
+    }>
+    cooldown_until?: string
+    weekly_resets_at?: string
+    fetched_at?: string
+  } | null
   near_limit?: boolean
   fable?: Record<string, unknown>
   weekly_split?: Record<string, unknown>
