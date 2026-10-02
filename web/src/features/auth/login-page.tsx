@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { Logo } from '@/assets/logo'
 import { useAuthStore } from '@/stores/auth-store'
 import { loginRequest } from '@/lib/api'
 import { apiBase, sameOriginPanel, setApiBase } from '@/lib/session'
@@ -8,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Logo } from '@/assets/logo'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -56,8 +56,12 @@ export function LoginPage() {
             <Logo className='size-8' />
           </div>
           <div>
-            <CardTitle className='text-2xl font-bold tracking-tight'>vm2api</CardTitle>
-            <p className='text-sm text-muted-foreground'>虚拟化号池网关控制台</p>
+            <CardTitle className='text-2xl font-bold tracking-tight'>
+              vm2api
+            </CardTitle>
+            <p className='text-sm text-muted-foreground'>
+              虚拟化号池网关控制台
+            </p>
           </div>
         </CardHeader>
         <CardContent>

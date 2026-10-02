@@ -70,6 +70,38 @@ function success(text = 'ok') {
   }
 }
 
+test('unsupported classifier runtime stops without counting execution or cooling accounts', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({ scheduler })
+  let calls = 0
+  const result = await runner.run({
+    requestId: 'classifier-runtime',
+    model: 'claude-sonnet-4-6',
+    canonicalBody: { model: 'claude-sonnet-4-6' },
+    callAttempt: async () => {
+      calls++
+      return {
+        ok: false,
+        status: 400,
+        upstreamExecutions: 0,
+        terminalState: 'rejected',
+        body: {
+          error: {
+            type: 'invalid_request_error',
+            code: 'classifier_runtime_unsupported',
+            message: 'unsupported runtime',
+          },
+        },
+      }
+    },
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.attemptCount, 0)
+  assert.equal(result.body.error.code, 'classifier_runtime_unsupported')
+  assert.deepEqual(scheduler.cooldowns, [])
+  assert.equal(scheduler.selectCalls, 1)
+})
+
 test('account1 quota exhausted rotates to account2 and commits final sticky', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const attempts = new Attempts()
