@@ -16,6 +16,7 @@ import {
   readWorkerCredentialFile,
   readSlotCredentialIdentity,
   writeWorkerCredentialFile,
+  ensureSlotSubscriptionType,
   slotUidGidFromHomeDir,
   ensureSlotClaudeOwnership,
   REFRESH_SKEW_MS,
@@ -359,6 +360,43 @@ test('writeWorkerCredentialFile stores claudeAiOauth and reads back', () => {
   const official = path.join(home, '.claude', '.credentials.json')
   assert.equal(fs.lstatSync(official).isSymbolicLink(), true)
   assert.equal(fs.readlinkSync(official), 'credentials.json')
+  fs.rmSync(home, { recursive: true, force: true })
+})
+
+test('writeWorkerCredentialFile stores subscriptionType and falls back to the vm plan', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-sub-'))
+  writeWorkerCredentialFile(home, {
+    type: 'setup-token',
+    access_token: 'sk-ant-oat01-SUB',
+    subscription_type: 'max',
+  })
+  let raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
+  assert.equal(raw.claudeAiOauth.subscriptionType, 'max')
+  assert.equal(readWorkerCredentialFile(home).subscription_type, 'max')
+  writeWorkerCredentialFile(home, {
+    type: 'setup-token',
+    access_token: 'sk-ant-oat01-SUB',
+    account_tier: 'pro',
+  })
+  raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
+  assert.equal(raw.claudeAiOauth.subscriptionType, 'pro')
+  writeWorkerCredentialFile(home, {
+    type: 'setup-token',
+    access_token: 'sk-ant-oat01-SUB',
+  })
+  raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
+  assert.equal(raw.claudeAiOauth.subscriptionType, 'pro')
+  fs.rmSync(home, { recursive: true, force: true })
+})
+
+test('ensureSlotSubscriptionType fills an old credential and keeps an existing plan', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-migrate-'))
+  const file = path.join(home, '.claude', 'credentials.json')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-OLD' } }))
+  assert.deepEqual(ensureSlotSubscriptionType(home, 'max'), { wrote: true, subscriptionType: 'max' })
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).claudeAiOauth.subscriptionType, 'max')
+  assert.deepEqual(ensureSlotSubscriptionType(home, 'pro'), { wrote: false, reason: 'present' })
   fs.rmSync(home, { recursive: true, force: true })
 })
 

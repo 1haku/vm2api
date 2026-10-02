@@ -3,6 +3,9 @@
 ## Unreleased
 
 - 槽运维终端启动时把 `CLAUDE_CONFIG_DIR` 指到 `$HOME/.claude`。令牌仍只放在该目录的 `credentials.json`；若缺少官方入口 `.credentials.json` 或家目录 `~/.claude.json`，会话里补上指向 `.claude` 内文件的链接。`claude` 仍启动该槽的 cli-node。
+- 换票从授权响应原文提取 `subscriptionType`（`pro` / `max` / `team` / `enterprise`）并写入槽凭证 `claudeAiOauth`。原文没有套餐时用该 VM 已识别的 `account_tier`，仍没有则记 `pro`。重写凭证时保留已有值。
+- 新版本启动时给旧凭证补上缺失的 `subscriptionType`（已识别套餐，否则 `pro`），已有值不改。
+- 每个 Claude 槽只留内核的一个 `cli-node`。运维终端里的交互进程在会话还连着时保留；断开后若进程还在（cli-node 不响应 SIGHUP）则杀掉。
 
 ## 1.3.92 — 2026-10-02
 
