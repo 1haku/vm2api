@@ -1865,6 +1865,22 @@ export function createPanelHandler(ctx) {
         if (result.status) return json(res, result.status, result.body)
         return json(res, 200, result)
       }
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/claude-reset\/query$/.test(p)) {
+        const id = p.split('/')[4]
+        const result = await panel.buildClaudeResetQuery({ cfg, id })
+        if (result.status) return json(res, result.status, result.body)
+        return json(res, 200, result)
+      }
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/claude-reset\/redeem$/.test(p)) {
+        const id = p.split('/')[4]
+        const result = await panel.buildClaudeResetRedeem({
+          cfg,
+          id,
+          idempotencyKey: req.headers['idempotency-key'],
+        })
+        if (result.status) return json(res, result.status, result.body)
+        return json(res, 200, result)
+      }
 
       // POST /api/panel/vms/:id/test-chat — sub2api-style model connectivity test
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/test-chat$/.test(p)) {
