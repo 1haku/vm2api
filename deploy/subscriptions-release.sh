@@ -11,7 +11,7 @@ IMAGE="vm2api-subscriptions:$STAMP"
 BACKUP="$ROOT/backups/$STAMP"
 # Build and test Go before interrupting the running service.
 docker build --build-arg "CUSTOM_REVISION=$REVISION" -f deploy/Dockerfile.subscriptions -t "$IMAGE" .
-docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" "$IMAGE" --test test/unit/subscriptions.test.mjs test/unit/custom-migrations.test.mjs test/unit/panel-acl.test.mjs test/unit/slot-shell-rc.test.mjs test/e2e/subscriptions.e2e.test.mjs
+docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" "$IMAGE" --test test/unit/subscriptions.test.mjs test/unit/custom-migrations.test.mjs test/unit/panel-acl.test.mjs test/unit/slot-shell-rc.test.mjs test/unit/cli-node-guard.test.mjs test/unit/oauth-identity.test.mjs test/unit/oauth-credentials.test.mjs test/e2e/subscriptions.e2e.test.mjs test/e2e/slot-plan-startup.e2e.test.mjs
 mkdir -p "$BACKUP/migration-check"
 chmod 700 "$BACKUP"
 docker inspect vm2api --format '{{.Config.Image}}' > "$BACKUP/previous-image.txt"
