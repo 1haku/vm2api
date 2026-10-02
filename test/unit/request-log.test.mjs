@@ -489,6 +489,33 @@ test('off mode writes nothing', () => {
   assert.equal(store.listNormal({ limit: 5 }).length, 0)
 })
 
+test('classifier debug diagnostics omit system and transcript bodies', () => {
+  const store = tmpStore('debug')
+  const ctx = store.start(
+    { method: 'POST', headers: {}, socket: {} },
+    { protocol: 'anthropic.messages', pathName: '/v1/messages' },
+  )
+  const body = {
+    model: 'claude-sonnet-4-6',
+    system: 'sensitive policy',
+    messages: [{ role: 'user', content: 'sensitive transcript' }],
+  }
+  const classifier = {
+    purpose: 'auto_mode_classifier',
+    format: 'xml',
+    layer: 'node_object',
+    wire_observed: false,
+    before: { max_tokens: 64 },
+  }
+  store.finish(ctx, { status: 200, classifier, inbound_body: body, outbound_body: body })
+  const [debug] = store.listDebug({ limit: 1 })
+  assert.deepEqual(debug.classifier, classifier)
+  assert.equal(debug.request_body_snapshot, null)
+  assert.equal(debug.inbound_body, null)
+  assert.equal(debug.outbound_body, null)
+  assert.equal(JSON.stringify(debug).includes('sensitive transcript'), false)
+})
+
 function logOne(store, extra = {}) {
   const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: extra.path || '/v1/messages' })
   return store.finish(ctx, { status: 200, ...extra })

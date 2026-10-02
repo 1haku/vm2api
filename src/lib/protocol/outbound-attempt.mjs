@@ -49,6 +49,7 @@ import {
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { applyModelRequestRules } from './model-policy.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
+import { prepareClassifierBody } from './request-purpose.mjs'
 
 export const INFERENCE_UA = 'kin-inference/1.0'
 
@@ -170,8 +171,9 @@ function stabilizeMessageBudgets(body) {
  */
 export function prepareCliHopBody(
   canonicalBody,
-  { stream = true, repaired = false, cacheTtl = DEFAULT_CACHE_TTL } = {},
+  { stream = true, repaired = false, cacheTtl = DEFAULT_CACHE_TTL, requestContext = null } = {},
 ) {
+  if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   const leftover = stripCliOwnedSystem(body.system)
@@ -206,6 +208,7 @@ export function pinHaikuCliThinking(body = {}) {
 }
 
 export function prepareOutboundAttempt({
+  requestContext = null,
   canonicalBody,
   inbound = {},
   identity,
@@ -267,13 +270,15 @@ export function prepareOutboundAttempt({
   )
   const callerSessionId = sessionIdFromOutboundBody(identified)
   if (identity && callerSessionId) identity.callerSessionId = callerSessionId
-  if (identity) {
+  if (identity && !requestContext) {
     identified = refreshOfficialSystemEnvironment(identified, identity, identified.model)
   }
   const stampOwnedBilling = String(sessionIdOverride || '').trim() && (mode !== 'passthrough' || !keepCallerSession)
   if (stampOwnedBilling) {
     identified = stampBillingPromptId(identified, sessionId, firstUserText)
   }
+  if (requestContext?.purpose === 'auto_mode_classifier')
+    return { body: prepareClassifierBody(identified, { stream }), toolNames: {} }
   // Official Claude Code places its own breakpoints; adding ours would shift the
   // prefix it already caches.
   let cleaned = prepareAnthropicRequest(identified, {

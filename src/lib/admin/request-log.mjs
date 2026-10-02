@@ -465,16 +465,24 @@ export class RequestLogStore {
         ...summary,
         headers: ctx.headers,
         inbound_summary: extra.inbound_summary || summarizeBody(extra.inbound_body),
-        request_body_snapshot: extra.inbound_body != null ? sanitizeRequestBodySnapshot(extra.inbound_body) : null,
-        inbound_body: extra.inbound_body != null ? clampBody(extra.inbound_body, this.maxDebugBodyChars) : null,
+        request_body_snapshot:
+          !extra.classifier && extra.inbound_body != null ? sanitizeRequestBodySnapshot(extra.inbound_body) : null,
+        inbound_body:
+          !extra.classifier && extra.inbound_body != null
+            ? clampBody(extra.inbound_body, this.maxDebugBodyChars)
+            : null,
         hop_meta: extra.hop_meta || null,
         via: extra.via || extra.hop_meta?.via || null,
         upstream_status: extra.upstream_status ?? null,
         outbound_summary: extra.outbound_summary || null,
         cache_prefix: extra.cache_prefix || null,
         cache_continuity: extra.cache_continuity || null,
+        classifier: extra.classifier || null,
         outbound_headers: extra.outbound_headers != null ? redactHeaders(extra.outbound_headers) : null,
-        outbound_body: extra.outbound_body != null ? clampBody(extra.outbound_body, this.maxDebugBodyChars) : null,
+        outbound_body:
+          !extra.classifier && extra.outbound_body != null
+            ? clampBody(extra.outbound_body, this.maxDebugBodyChars)
+            : null,
       }
       try {
         this.repo.insertDebug(summary.request_id || summary.id, summary.ts, debugRec)
