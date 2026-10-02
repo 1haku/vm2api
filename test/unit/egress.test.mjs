@@ -156,12 +156,7 @@ test('local egress readiness is direct and does not require kin-egress', () => {
 })
 
 test('dns primary preserves auto and built-in fallback order', () => {
-  const defaults = [
-    'https://1.1.1.1/dns-query',
-    'https://8.8.8.8/dns-query',
-    '8.8.8.8:53',
-    '1.1.1.1:53',
-  ]
+  const defaults = ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query', '8.8.8.8:53', '1.1.1.1:53']
   assert.equal(dnsUpstreamChain('auto'), '')
   assert.equal(validDnsPrimary('auto'), true)
   for (const primary of defaults) {
@@ -189,7 +184,13 @@ test('custom HTTPS DNS upstreams precede the unchanged default fallbacks', () =>
 
 test('DNS upstream validation rejects unsafe or malformed URL boundaries', () => {
   for (const primary of [
-    undefined, null, 123, {}, '', 'bogus', '9.9.9.9:53',
+    undefined,
+    null,
+    123,
+    {},
+    '',
+    'bogus',
+    '9.9.9.9:53',
     'http://dns.example.com/dns-query',
     'HTTPS://dns.example.com/dns-query',
     'hTtPs://dns.example.com/dns-query',
