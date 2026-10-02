@@ -20,8 +20,35 @@ const SHELL_RE = /^\/api\/panel\/vms\/([^/]+)\/shell$/
 const TICKET_TTL_MS = 30_000
 const MAX_TICKETS = 64
 const MAX_SESSIONS = 8
-const SHELL_CMD = ['/bin/sh', '-c', 'command -v bash >/dev/null 2>&1 && exec bash -i; exec sh -i']
 const SESSION_ENV = 'KIN_PANEL_SHELL'
+const RC_ENV = 'KIN_PANEL_RC'
+
+/**
+ * Interactive shell for one panel session. `claude` is this slot's cli-node,
+ * not whatever `claude` is on PATH. The rcfile is session-only; the slot's
+ * own ~/.bashrc is sourced, not rewritten.
+ * @returns {{ cmd: string[], rc: string }}
+ */
+export function panelShellLaunch(cliBin) {
+  const bin = String(cliBin || '')
+  if (!bin.startsWith('/') || /[\n\r\0]/.test(bin)) throw new Error('invalid cli-node path')
+  const q = `'${bin.replace(/'/g, `'\\''`)}'`
+  const rc = [
+    '[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc',
+    '[ -f ~/.bashrc ] && . ~/.bashrc',
+    'unalias claude 2>/dev/null || true',
+    `claude() { if [ -x ${q} ]; then ${q} "$@"; else echo "cli-node 不在 ${q}" >&2; return 127; fi; }`,
+    'rm -f "$KIN_PANEL_RCFILE"',
+  ].join('\n')
+  return {
+    cmd: [
+      '/bin/sh',
+      '-c',
+      `rc=$(mktemp) && printf '%s\\n' "$${RC_ENV}" > "$rc" && export KIN_PANEL_RCFILE=$rc && if command -v bash >/dev/null 2>&1; then exec bash --rcfile "$rc" -i; fi; ENV=$rc exec sh -i`,
+    ],
+    rc,
+  }
+}
 // Closing the hijacked stream does not end a TTY exec: bash would linger in the
 // slot. Every process of the session inherits the marker, so HUP them by it.
 const REAP_SCRIPT = `for d in /proc/[0-9]*; do tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -qx "${SESSION_ENV}=$1" && kill -HUP "\${d#/proc/}" 2>/dev/null; done; exit 0`
@@ -139,9 +166,10 @@ export function createSlotShell({ projectRoot, logger = console }) {
     })
     try {
       connect = slotHost(vm).dockerApi()
+      const launch = panelShellLaunch(slotHost(vm).bins.cli)
       session = await openExecTty(connect, container, {
-        cmd: SHELL_CMD,
-        env: ['TERM=xterm-256color', `${SESSION_ENV}=${token}`],
+        cmd: launch.cmd,
+        env: ['TERM=xterm-256color', `${SESSION_ENV}=${token}`, `${RC_ENV}=${launch.rc}`],
         cols: size.cols,
         rows: size.rows,
       })
