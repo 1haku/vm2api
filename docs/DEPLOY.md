@@ -149,8 +149,8 @@ docker exec kin-<槽> curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 ht
 Node 听 `:8787`。HTTPS 放在 nginx。
 
 ```nginx
-# 集群页终端是 WebSocket：必须透传 Upgrade，并直连 Node（前面若有会丢 Upgrade 的网关，也要绕过）。
-location ~ ^/api/panel/cluster/nodes/[^/]+/shell$ {
+# 集群页 / 槽位运维终端是 WebSocket：必须透传 Upgrade，并直连 Node（前面若有会丢 Upgrade 的网关，也要绕过）。
+location ~ ^/api/panel/(cluster/nodes|vms)/[^/]+/shell$ {
   proxy_pass http://127.0.0.1:8787;
   proxy_http_version 1.1;
   proxy_set_header Host $host;
