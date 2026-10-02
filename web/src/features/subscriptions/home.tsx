@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Copy, KeyRound, ArrowRight, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAuthStore } from '@/stores/auth-store'
 import { copyText } from '@/lib/clipboard'
 import { apiBase } from '@/lib/session'
 import { Badge } from '@/components/ui/badge'
@@ -41,7 +40,6 @@ export function SubscriptionHome({
   onCreate: (s: Subscription) => void
   pending: boolean
 }) {
-  const user = useAuthStore((s) => s.user)
   const [selected, setSelected] = useState('')
   const [guideOpen, setGuideOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -61,32 +59,19 @@ export function SubscriptionHome({
     : `curl '${base}/v1/messages' \\\n  -H 'x-api-key: YOUR_API_KEY' \\\n  -H 'anthropic-version: 2023-06-01' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"YOUR_MODEL","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'`
   return (
     <div className='space-y-6'>
-      <div className='workspace-welcome relative flex flex-wrap items-center justify-between gap-5 overflow-hidden rounded-2xl border bg-card p-6 sm:p-8'>
-        <div>
-          <p className='mb-2 text-xs font-medium tracking-wider text-primary'>
-            我的工作空间
-          </p>
-          <h2 className='text-xl font-semibold sm:text-2xl'>
-            {user}，欢迎回来
-          </h2>
-          <p className='mt-3 text-sm leading-6 text-muted-foreground'>
-            订阅额度、个人密钥和每次请求，都在这里。
-          </p>
-        </div>
-        <div className='flex flex-wrap gap-2'>
-          <Button asChild>
-            <Link to='/keys'>
-              <KeyRound className='size-4' />
-              我的密钥
-            </Link>
-          </Button>
-          <Button asChild variant='outline'>
-            <Link to='/usage-records'>
-              我的使用明细
-              <ArrowRight className='size-4' />
-            </Link>
-          </Button>
-        </div>
+      <div className='flex flex-wrap gap-2'>
+        <Button asChild variant='outline'>
+          <Link to='/keys'>
+            <KeyRound className='size-4' />
+            我的密钥
+          </Link>
+        </Button>
+        <Button asChild variant='outline'>
+          <Link to='/usage-records'>
+            我的使用明细
+            <ArrowRight className='size-4' />
+          </Link>
+        </Button>
       </div>
       <div className='grid grid-cols-2 gap-3 sm:grid-cols-3'>
         {[

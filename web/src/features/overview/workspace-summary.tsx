@@ -10,7 +10,6 @@ import {
   AlertCircle,
   Server,
 } from 'lucide-react'
-import { useAuthStore } from '@/stores/auth-store'
 import { fmtNum } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { overviewQuery } from '@/features/subscriptions/admin-overview'
@@ -20,7 +19,6 @@ import { usageMoney } from '@/features/usage-records/filters'
 export function WorkspaceSummary() {
   const [assignOpen, setAssignOpen] = useState(false)
   const q = useQuery(overviewQuery())
-  const user = useAuthStore((s) => s.user)
   const data = q.data
   const active = (data?.subscriptions || []).filter(
     (s) =>
@@ -62,25 +60,12 @@ export function WorkspaceSummary() {
   ]
   return (
     <section className='mb-8 space-y-5' aria-label='订阅工作台'>
-      <div className='workspace-welcome relative overflow-hidden rounded-2xl border bg-card p-6 sm:p-8'>
-        <div className='relative z-10 flex flex-wrap items-center justify-between gap-6'>
-          <div>
-            <p className='mb-2 text-xs font-medium tracking-wider text-primary'>
-              订阅与资源管理
-            </p>
-            <h2 className='text-xl font-semibold tracking-tight sm:text-2xl'>
-              {user}，欢迎回来
-            </h2>
-            <p className='mt-3 text-sm leading-6 text-muted-foreground'>
-              分配订阅、管理用户，在这里掌握今天的使用情况。
-            </p>
-          </div>
-          <Button className='h-10' onClick={() => setAssignOpen(true)}>
-            <CreditCard className='size-4' />
-            分配订阅
-            <ArrowRight className='size-4' />
-          </Button>
-        </div>
+      <div className='flex flex-wrap items-center justify-between gap-3'>
+        <h2 className='text-base font-semibold'>订阅概况</h2>
+        <Button onClick={() => setAssignOpen(true)}>
+          <CreditCard className='size-4' />
+          分配订阅
+        </Button>
       </div>
       {q.error && (
         <div

@@ -2,29 +2,6 @@
 @import 'tw-animate-css';
 @import './theme.css';
 
-.login-story::before {
-  content: '';
-  position: absolute;
-  width: 620px;
-  height: 620px;
-  right: -300px;
-  bottom: -240px;
-  border: 1px solid rgb(167 243 208 / 14%);
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 65px rgb(167 243 208 / 3%),
-    0 0 0 130px rgb(167 243 208 / 3%);
-  pointer-events: none;
-}
-
-.workspace-welcome {
-  background-image: radial-gradient(
-    ellipse at top right,
-    color-mix(in oklch, var(--primary) 9%, transparent),
-    transparent 65%
-  );
-}
-
 @custom-variant dark (&:is(.dark *));
 
 @layer base {

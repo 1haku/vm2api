@@ -255,28 +255,6 @@ export function SubscriptionsPage() {
         </div>
       }
     >
-      <section className='mb-6 rounded-xl border border-primary/25 bg-primary/5 p-5'>
-        <h2 className='text-lg font-semibold'>把一个槽位，分配给多位用户</h2>
-        <p className='mt-2 text-sm text-muted-foreground'>
-          选择已有方案，或新建方案并绑定槽位，再勾选用户完成分配。
-        </p>
-        <div className='mt-4 flex flex-wrap gap-3'>
-          <Button onClick={() => setWizard({ mode: 'existing' })}>
-            开始分配订阅 →
-          </Button>
-          <Button variant='outline' asChild>
-            <Link to='/users'>创建 / 管理用户</Link>
-          </Button>
-          <Button variant='outline' asChild>
-            <Link to='/vm'>管理账号槽位</Link>
-          </Button>
-        </div>
-      </section>
-      <p className='mb-6 text-sm text-muted-foreground'>
-        {admin
-          ? '绑定账号槽位，将订阅批量分配给用户；每位用户独立计量。'
-          : '使用自己的 API Key 调用已分配的订阅，查看个人额度与有效期。'}
-      </p>
       <div className='mb-6 grid gap-4 sm:grid-cols-3'>
         <StatCard label='生效订阅' value={String(active.length)} />
         <StatCard

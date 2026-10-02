@@ -148,14 +148,7 @@ export function OverviewPage() {
   if (errs > 0) alerts.push({ t: `错误 ${errs}`, to: '/logs', tone: 'bad' })
 
   return (
-    <PageHeader
-      title={admin ? '工作台' : VIEW_TITLES.overview}
-      description={
-        admin
-          ? '订阅、用户与账号资源，一目了然。'
-          : '查看账号资源与服务运行情况。'
-      }
-    >
+    <PageHeader title={admin ? '工作台' : VIEW_TITLES.overview}>
       {admin && <WorkspaceSummary />}
       <div className='mb-4 flex items-center gap-2'>
         <Activity className='size-4 text-primary' />
