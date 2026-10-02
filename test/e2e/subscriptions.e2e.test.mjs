@@ -2,6 +2,43 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { startGateway, api } from '../harness.mjs'
 
+test('guided provisioning creates plan and assignments atomically', async () => {
+  const gw = await startGateway()
+  try {
+    const user = await api(gw, 'POST', '/api/panel/users', {
+      body: { username: 'wizard-user', password: 'test-password-123', role: 'user' },
+    })
+    const userId = user.json.data.item.id
+    const plan = { name: 'Wizard plan', platform: 'claude', vm_ids: ['vm-sim-01'], daily_limit_usd: 30 }
+    const invalid = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: { plan, user_ids: [userId, 'missing-user'] },
+    })
+    assert.equal(invalid.status, 400)
+    assert.equal((await api(gw, 'GET', '/api/panel/subscription-plans')).json.data.items.length, 0)
+    assert.equal((await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.length, 0)
+    const created = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: { plan, user_ids: [userId], validity_days: 7 },
+    })
+    assert.equal(created.status, 200, created.text)
+    assert.equal(created.json.data.ids.length, 1)
+    const login = await api(gw, 'POST', '/api/panel/login', {
+      body: { username: 'wizard-user', password: 'test-password-123' },
+    })
+    const headers = { authorization: `Bearer ${login.json.token}` }
+    const own = await api(gw, 'GET', '/api/panel/subscriptions', { headers })
+    assert.equal(own.json.data.items[0].availability.code, 'configured')
+    assert.equal(own.json.data.items[0].vm_ids, undefined)
+    assert.equal(own.json.data.items[0].assigned_by, undefined)
+    assert.equal(
+      (await api(gw, 'POST', '/api/panel/subscriptions/provision', { headers, body: { plan, user_ids: [userId] } }))
+        .status,
+      403,
+    )
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('two subscribers share a slot, cannot see each other, and revocation invalidates old keys', async () => {
   const gw = await startGateway({ mockText: 'subscription-ok', readyMs: 15000 })
   try {

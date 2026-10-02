@@ -32,6 +32,7 @@ import {
 import { CredLaneChip, SlotIdentity } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
+import { SlotSubscription } from '@/features/subscriptions/slot-subscription'
 import { NodeChip } from '@/features/vm/node-chip'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
 import {
@@ -359,6 +360,7 @@ function SlotCell({ vm }: { vm: Vm }) {
   return (
     <div className='min-w-0 space-y-0.5 overflow-hidden'>
       <SlotIdentity vm={vm} compact className='text-sm font-medium' />
+      <SlotSubscription vm={vm} />
       <div className='flex min-w-0 items-center gap-1.5'>
         <TierBadge vm={vm} />
         <NodeChip nodeId={vm.node_id} />

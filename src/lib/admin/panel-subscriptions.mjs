@@ -1,8 +1,34 @@
 import { SubscriptionsRepo, subscriptionError } from '../db/repos/subscriptions-repo.mjs'
-import { getDb } from '../db/database.mjs'
+import { getDb, withTransaction } from '../db/database.mjs'
 import { panelIdentity } from './panel-acl.mjs'
-import { getVm } from '../vm/vm-registry.mjs'
+import { getVm, listVms } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
+
+// This is a configuration readiness summary, not an upstream health probe.
+export function subscriptionAvailability(sub, slots = [], pending = 0) {
+  if (sub.plan_status !== 'active') return { code: 'plan_disabled', message: '方案已停用，请联系管理员' }
+  if (sub.status !== 'active')
+    return {
+      code: sub.status,
+      message:
+        {
+          expired: '订阅已到期，请联系管理员续期',
+          suspended: '订阅已暂停，请联系管理员',
+          revoked: '订阅已撤销，请联系管理员',
+        }[sub.status] || '订阅尚未生效',
+    }
+  if (
+    (sub.daily_limit_usd > 0 && sub.daily_used + pending >= sub.daily_limit_usd) ||
+    (sub.weekly_limit_usd > 0 && sub.weekly_used + pending >= sub.weekly_limit_usd)
+  )
+    return { code: 'quota_exhausted', message: '个人额度已用尽或被进行中请求预留，请等待重置' }
+  if (!slots.length) return { code: 'no_slots', message: '尚未配置可用账号，请联系管理员' }
+  if (!slots.some((v) => v.has_token))
+    return { code: 'login_required', message: '上游账号尚未登录，请联系管理员完成登录' }
+  if (!slots.some((v) => v.has_token && v.schedulable !== false && v.status === 'running'))
+    return { code: 'unavailable', message: '上游账号暂未开放调用，请联系管理员检查状态' }
+  return { code: 'configured', message: '已配置调用条件；实际可用性以上游响应为准' }
+}
 
 export function usageRecords(db, params, userId, admin = false) {
   const where = []
@@ -62,6 +88,22 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
       result = usageRecords(db, new URL(req.url, 'http://localhost').searchParams, req.panelUserId, admin)
     } else if (path === '/api/panel/subscriptions' && req.method === 'GET') {
       result = { items: repo.list(admin ? null : req.panelUserId || '__no_user__') }
+      const slots = listVms(projectRoot)
+      const plans = new Map(repo.plans().map((p) => [p.id, p]))
+      result.items = result.items.map((s) => {
+        const pending = db
+          .prepare('SELECT COALESCE(SUM(amount),0) AS n FROM subscription_reservations WHERE subscription_id=?')
+          .get(s.id).n
+        return {
+          ...s,
+          pending_cost: pending,
+          availability: subscriptionAvailability(
+            s,
+            slots.filter((v) => plans.get(s.group_id)?.vm_ids.includes(v.id)),
+            pending,
+          ),
+        }
+      })
       if (!admin) result.items = result.items.map(({ assigned_by, username, ...s }) => s)
     } else if (path === '/api/panel/subscription-plans' && req.method === 'GET') {
       const own = new Set(
@@ -81,7 +123,23 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
     } else {
       if (!admin) throw subscriptionError('仅管理员可执行此操作', 403)
       const body = req.method === 'GET' ? {} : await readBody(req, 32768)
-      if (
+      if (path === '/api/panel/subscriptions/provision' && req.method === 'POST') {
+        const plan = body.plan
+        if (!plan || !Array.isArray(plan.vm_ids)) throw subscriptionError('请选择方案槽位')
+        for (const id of plan.vm_ids) {
+          const vm = getVm(projectRoot, id)
+          if (!vm || (isCodexVm(vm) ? 'openai' : 'claude') !== (plan.platform || 'claude'))
+            throw subscriptionError('所选槽位与方案平台不匹配')
+        }
+        result = withTransaction(db, () => {
+          const created = repo.savePlan(plan, req.panelUserId || 'master')
+          const ids = repo.assign(
+            { group_id: created.id, user_ids: body.user_ids, validity_days: body.validity_days },
+            req.panelUserId || 'master',
+          )
+          return { plan: created, ids }
+        })
+      } else if (
         (path === '/api/panel/subscription-plans' && req.method === 'POST') ||
         (/^\/api\/panel\/subscription-plans\/\d+$/.test(path) && req.method === 'PATCH')
       ) {

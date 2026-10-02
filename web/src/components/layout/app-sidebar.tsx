@@ -16,7 +16,16 @@ export function AppSidebar() {
   const { collapsible, variant } = useLayout()
   const me = useAuthStore((s) => s.me)
   const userName = useAuthStore((s) => s.user) || me?.user || 'admin'
-  const groups = navGroupsFor(me?.views)
+  const groups = navGroupsFor(me?.views).map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      me?.role === 'user' && item.url === '/subscriptions'
+        ? { ...item, title: '我的订阅' }
+        : me?.role === 'user' && item.url === '/keys'
+          ? { ...item, title: '我的密钥' }
+          : item
+    ),
+  }))
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
       <SidebarHeader>

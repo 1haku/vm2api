@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { copyText } from '@/lib/clipboard'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -29,8 +30,7 @@ export function KeyRevealDialog({
       toast.error('没有可复制的密钥')
       return
     }
-    void navigator.clipboard
-      .writeText(plain)
+    void copyText(plain)
       .then(() => toast.success('已复制明文密钥，请妥善保存'))
       .catch(() => toast.error('复制失败'))
   }

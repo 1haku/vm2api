@@ -16,6 +16,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { adoptLegacySubscriptions, applyCustomMigrations } from './custom-migrations.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations')
@@ -184,6 +185,7 @@ export function closeDatabase() {
  */
 export function applyMigrations(db, { migrationsDir } = {}) {
   const dir = migrationsDir || MIGRATIONS_DIR
+  const useCustom = path.resolve(dir) === path.resolve(MIGRATIONS_DIR)
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version TEXT PRIMARY KEY,
     name TEXT,
@@ -191,6 +193,7 @@ export function applyMigrations(db, { migrationsDir } = {}) {
     applied_at TEXT
   )`)
 
+  if (useCustom) adoptLegacySubscriptions(db)
   const files = fs.existsSync(dir)
     ? fs
         .readdirSync(dir)
@@ -233,6 +236,7 @@ export function applyMigrations(db, { migrationsDir } = {}) {
     }
     results.push(file)
   }
+  if (useCustom) results.push(...applyCustomMigrations(db))
   return results
 }
 

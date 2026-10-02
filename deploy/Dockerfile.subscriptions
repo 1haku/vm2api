@@ -1,9 +1,11 @@
 ARG BASE_IMAGE=ghcr.io/dofastted/vm2api:v1.3.90
 FROM ${BASE_IMAGE}
+ARG CUSTOM_REVISION=unknown
 WORKDIR /opt/vm2api
 COPY src/ src/
 COPY scripts/ scripts/
 RUN rm -rf /opt/vm2api/web/dist
 COPY web/dist/ web/dist/
 COPY VERSION VERSION
-LABEL org.vm2api.variant="shared-subscriptions-20261002"
+ENV VM2API_CUSTOM_BUILD=subscriptions-v2
+LABEL org.vm2api.variant="shared-subscriptions-v2" org.opencontainers.image.revision=${CUSTOM_REVISION}

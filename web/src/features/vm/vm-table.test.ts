@@ -1,6 +1,11 @@
 import type { Vm } from '@/types/panel-vm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { filterVms } from './vm-table'
+
+// These tests exercise pure filtering; the subscription UI requires browser auth.
+vi.mock('../subscriptions/slot-subscription', () => ({
+  SlotSubscription: () => null,
+}))
 
 function vm(over: Partial<Vm> = {}): Vm {
   return {

@@ -18,6 +18,26 @@ import {
   INSTALL_SCRIPT_URL,
 } from '../../src/lib/admin/release.mjs'
 
+test('custom builds reject official update before network or host mutations', async (t) => {
+  const old = process.env.VM2API_CUSTOM_BUILD
+  process.env.VM2API_CUSTOM_BUILD = 'subscriptions-v2'
+  t.after(() => {
+    if (old === undefined) delete process.env.VM2API_CUSTOM_BUILD
+    else process.env.VM2API_CUSTOM_BUILD = old
+  })
+  const result = await startHostUpgrade({
+    confirm: true,
+    fetchImpl: () => {
+      throw new Error('must not fetch')
+    },
+    spawnImpl: () => {
+      throw new Error('must not spawn')
+    },
+  })
+  assert.equal(result.status, 409)
+  assert.equal(result.error.code, 'custom_build_upgrade_required')
+})
+
 const FIXTURE = `# Changelog
 
 ## Unreleased

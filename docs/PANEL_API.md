@@ -29,6 +29,7 @@
 | GET | `/subscription-plans` | 管理员全部方案；用户仅可使用的方案，不含槽位信息 |
 | POST / PATCH | `/subscription-plans` / `/subscription-plans/:id` | 管理员：名称、平台、vm_ids、日/周 USD 额度、有效天数、每人并发、倍率和状态 |
 | GET / POST | `/subscriptions` | 查询本人/全部订阅；管理员批量分配 `{group_id,user_ids,validity_days}` |
+| POST | `/subscriptions/provision` | 管理员向导一次提交 `{plan,user_ids,validity_days}`，在同一事务中创建方案、绑定槽位和分配订阅；失败全部回滚 |
 | PATCH | `/subscriptions/:id` | 管理员：`{action:'renew',days}` / `{action:'reset'}` / `{status:'active'|'suspended'|'revoked'}` |
 | GET | `/subscriptions/events` | 管理员查看最近 100 条订阅操作记录 |
 | GET | `/usage-records` | 分页明细、汇总、按日趋势及模型分布。from/until/group_id/api_key_id/model/status/page/page_size；管理员另可 user_id/vm_id |
@@ -40,6 +41,10 @@
 订阅槽位不进入公共池，也不能直接重新分配为个人槽位或删除。需先修改方案绑定；停用方案允许清空槽位。Codex response ID 归属按用户、方案、槽位持久化校验，其他用户不能接续该响应。
 
 使用记录默认最近 7 天，可筛选日期与导出本页。明细保留期沿用日志设置；订阅账本独立保留，清理日志不恢复额度。
+
+分配向导入口包括订阅管理、账号槽位行和用户行。普通用户「我的订阅」展示个人额度、进行中请求预留、重置时间、到期时间以及接入指引。`GET /subscriptions` 新增 `pending_cost` 和 `availability: {code,message}`；后者只表示配置条件，不是上游实时健康探测。未登录、暂停、到期、额度耗尽等原因会明确显示，响应不包含底层槽位标识或凭据。
+
+定制版本的发布与上游合并流程见 [CUSTOM_SUBSCRIPTIONS.md](CUSTOM_SUBSCRIPTIONS.md)。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

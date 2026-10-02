@@ -25,6 +25,8 @@ import {
   KeyRevealDialog,
   type RevealedKey,
 } from '@/features/keys/key-reveal-dialog'
+import { SubscriptionHome } from './home'
+import { SubscriptionWizard, type WizardPreset } from './wizard'
 
 export type Plan = {
   id: number
@@ -40,7 +42,9 @@ export type Plan = {
   subscription_concurrency: number
   rate_multiplier: number
 }
-type Subscription = {
+export type Subscription = {
+  pending_cost?: number
+  availability?: { code: string; message: string }
   id: string
   user_id: string
   group_id: number
@@ -89,11 +93,8 @@ export function SubscriptionsPage() {
   const [planOpen, setPlanOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [draft, setDraft] = useState(emptyPlan)
-  const [assignOpen, setAssignOpen] = useState(false)
-  const [groupId, setGroupId] = useState('')
-  const [days, setDays] = useState(30)
-  const [selected, setSelected] = useState<string[]>([])
-  const [userSearch, setUserSearch] = useState('')
+  const [wizard, setWizard] = useState<WizardPreset | null>(null)
+
   const [action, setAction] = useState<{
     sub: Subscription
     action: string
@@ -153,7 +154,7 @@ export function SubscriptionsPage() {
     onSuccess: async () => {
       toast.success('已保存')
       setPlanOpen(false)
-      setAssignOpen(false)
+
       setAction(null)
       await refresh()
     },
@@ -197,6 +198,26 @@ export function SubscriptionsPage() {
   )
   const error =
     subs.error || plans.error || (admin ? users.error || vms.error : null)
+  if (!admin)
+    return (
+      <PageHeader
+        title='我的订阅'
+        extra={
+          <Button variant='outline' onClick={() => void refresh()}>
+            刷新
+          </Button>
+        }
+      >
+        <SubscriptionHome
+          items={items}
+          loading={subs.isPending}
+          error={subs.error}
+          onCreate={(s) => key.mutate(s)}
+          pending={key.isPending}
+        />
+        <KeyRevealDialog value={revealed} onClose={() => setRevealed(null)} />
+      </PageHeader>
+    )
   return (
     <PageHeader
       title={admin ? '订阅管理' : '我的订阅'}
@@ -211,9 +232,7 @@ export function SubscriptionsPage() {
               <Button
                 variant='outline'
                 onClick={() => {
-                  setEditId(null)
-                  setDraft(emptyPlan)
-                  setPlanOpen(true)
+                  setWizard({ mode: 'new' })
                 }}
               >
                 <Plus className='size-4' />
@@ -221,9 +240,7 @@ export function SubscriptionsPage() {
               </Button>
               <Button
                 onClick={() => {
-                  setSelected([])
-                  setGroupId('')
-                  setAssignOpen(true)
+                  setWizard({ mode: 'existing' })
                 }}
               >
                 <Users className='size-4' />
@@ -234,6 +251,23 @@ export function SubscriptionsPage() {
         </div>
       }
     >
+      <section className='mb-6 rounded-xl border border-primary/25 bg-primary/5 p-5'>
+        <h2 className='text-lg font-semibold'>把一个槽位，分配给多位用户</h2>
+        <p className='mt-2 text-sm text-muted-foreground'>
+          选择已有方案，或新建方案并绑定槽位，再勾选用户完成分配。
+        </p>
+        <div className='mt-4 flex flex-wrap gap-3'>
+          <Button onClick={() => setWizard({ mode: 'existing' })}>
+            开始分配订阅 →
+          </Button>
+          <Button variant='outline' asChild>
+            <Link to='/users'>创建 / 管理用户</Link>
+          </Button>
+          <Button variant='outline' asChild>
+            <Link to='/vm'>管理账号槽位</Link>
+          </Button>
+        </div>
+      </section>
       <p className='mb-6 text-sm text-muted-foreground'>
         {admin
           ? '绑定账号槽位，将订阅批量分配给用户；每位用户独立计量。'
@@ -479,6 +513,13 @@ export function SubscriptionsPage() {
               >
                 编辑方案与槽位
               </Button>
+              <Button
+                className='ml-2'
+                disabled={p.status !== 'active'}
+                onClick={() => setWizard({ planId: p.id })}
+              >
+                分配给用户
+              </Button>
             </div>
           ))}
           {!plans.data?.items.length && (
@@ -686,106 +727,9 @@ export function SubscriptionsPage() {
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>批量分配订阅</DialogTitle>
-          </DialogHeader>
-          <form
-            className='space-y-4'
-            onSubmit={(e) => {
-              e.preventDefault()
-              mutate.mutate({
-                path: '/api/panel/subscriptions',
-                body: {
-                  group_id: Number(groupId),
-                  user_ids: selected,
-                  validity_days: days,
-                },
-              })
-            }}
-          >
-            <label className='grid gap-2 text-sm'>
-              订阅方案
-              <select
-                required
-                className={selectClass}
-                value={groupId}
-                onChange={(e) => {
-                  setGroupId(e.target.value)
-                  setDays(
-                    plans.data?.items.find(
-                      (p) => p.id === Number(e.target.value)
-                    )?.default_validity_days || 30
-                  )
-                }}
-              >
-                <option value=''>请选择</option>
-                {plans.data?.items
-                  .filter((p) => p.status === 'active')
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label className='grid gap-2 text-sm'>
-              有效天数
-              <Input
-                required
-                min={1}
-                max={3650}
-                type='number'
-                value={days}
-                onChange={(e) => setDays(Number(e.target.value))}
-              />
-            </label>
-            <Input
-              aria-label='搜索用户'
-              placeholder='搜索用户名'
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-            />
-            <div className='max-h-60 space-y-2 overflow-y-auto rounded-lg border p-3'>
-              {users.data?.items
-                .filter(
-                  (u) =>
-                    u.enabled !== false &&
-                    u.username.toLowerCase().includes(userSearch.toLowerCase())
-                )
-                .map((u) => (
-                  <label
-                    key={u.id}
-                    className='flex items-center gap-2 py-1 text-sm'
-                  >
-                    <input
-                      type='checkbox'
-                      checked={selected.includes(u.id)}
-                      onChange={(e) =>
-                        setSelected(
-                          e.target.checked
-                            ? [...selected, u.id]
-                            : selected.filter((x) => x !== u.id)
-                        )
-                      }
-                    />
-                    {u.username}
-                  </label>
-                ))}
-            </div>
-            <p className='text-xs text-muted-foreground'>
-              已有相同订阅的用户将续期，当前用量保留。
-            </p>
-            <Button
-              className='w-full'
-              disabled={mutate.isPending || !selected.length || !groupId}
-            >
-              分配给 {selected.length} 位用户
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {wizard && (
+        <SubscriptionWizard preset={wizard} onClose={() => setWizard(null)} />
+      )}
       <Dialog
         open={!!action}
         onOpenChange={(open) => {

@@ -41,6 +41,7 @@ import { PageHeader } from '@/components/page-header'
 import { TableSkeleton } from '@/components/page-skeletons'
 import { PasswordInput } from '@/components/password-input'
 import { QueryGate } from '@/components/query-gate'
+import { SubscriptionWizard } from '@/features/subscriptions/wizard'
 import { usersQueryOptions } from '@/features/users/queries'
 
 // Mirrors assertPassword() in src/lib/admin/panel-users.mjs.
@@ -62,6 +63,7 @@ function passwordError(pass: string, confirm: string): string {
 }
 
 export function UsersPage() {
+  const [assignUser, setAssignUser] = useState<string | null>(null)
   const qc = useQueryClient()
   const me = useAuthStore((s) => s.me)
   const q = useQuery(usersQueryOptions())
@@ -147,6 +149,16 @@ export function UsersPage() {
                       {fmtAgo(u.last_login_at) || '从未'}
                     </TableCell>
                     <TableCell className='space-x-1 text-end whitespace-nowrap'>
+                      {u.role !== 'super' && (
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          disabled={u.enabled === false}
+                          onClick={() => setAssignUser(u.id)}
+                        >
+                          分配订阅
+                        </Button>
+                      )}
                       <Button
                         size='sm'
                         variant='ghost'
@@ -183,6 +195,12 @@ export function UsersPage() {
         </div>
       </QueryGate>
 
+      {assignUser && (
+        <SubscriptionWizard
+          preset={{ userId: assignUser }}
+          onClose={() => setAssignUser(null)}
+        />
+      )}
       <CreateUserDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

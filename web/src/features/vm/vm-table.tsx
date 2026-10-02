@@ -22,6 +22,7 @@ import {
 } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
+import { SlotSubscription } from '@/features/subscriptions/slot-subscription'
 import { NodeChip } from '@/features/vm/node-chip'
 import {
   SchedulableSwitch,
@@ -108,6 +109,7 @@ function VmCard({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
         )}
       </div>
 
+      <SlotSubscription vm={vm} />
       <ProxyChip vm={vm} className='w-full' compact />
 
       <VmUsageWindows vm={vm} accounts={accounts} quiet quotaActions />

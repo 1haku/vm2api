@@ -319,6 +319,15 @@ export async function startHostUpgrade({
   fetchImpl,
   now,
 } = {}) {
+  if (process.env.VM2API_CUSTOM_BUILD) {
+    return {
+      status: 409,
+      error: {
+        code: 'custom_build_upgrade_required',
+        message: '当前为订阅定制版，请合并上游、完成测试并构建定制镜像后升级，避免覆盖定制功能。',
+      },
+    }
+  }
   if (version != null && String(version).trim() !== '' && !normalizeTag(version)) {
     return {
       status: 400,
