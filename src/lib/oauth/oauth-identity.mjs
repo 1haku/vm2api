@@ -6,6 +6,7 @@
 import { makeProxyFetch } from '../protocol/codex-models.mjs'
 import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
 import { BETA_OAUTH, BOOTSTRAP_UA } from './oauth-contract.mjs'
+import { tierFromOauthProfile } from './official-cc-stats.mjs'
 
 export const CLAUDE_CLI_BOOTSTRAP_URL =
   'https://api.anthropic.com/api/claude_cli/bootstrap?entrypoint=claude-vscode&model=claude-opus-5'
@@ -20,6 +21,45 @@ function firstText(...values) {
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+const SUBSCRIPTION_TYPES = new Set(['pro', 'max', 'team', 'enterprise'])
+
+export function normalizeSubscriptionType(value) {
+  const key = String(value || '')
+    .trim()
+    .toLowerCase()
+  return SUBSCRIPTION_TYPES.has(key) ? key : null
+}
+
+function subscriptionTypeFromText(text) {
+  const blob = String(text || '').toLowerCase()
+  if (!blob) return null
+  if (/\b(claude[_\s-]*max|max\s*20x)\b/.test(blob)) return 'max'
+  if (/\bclaude[_\s-]*enterprise\b/.test(blob)) return 'enterprise'
+  if (/\bclaude[_\s-]*team\b/.test(blob)) return 'team'
+  if (/\bclaude[_\s-]*pro\b/.test(blob)) return 'pro'
+  return null
+}
+
+/** Plan from the exchange/bootstrap body. Explicit field, profile, then text. */
+export function subscriptionTypeFromOauthRaw(raw) {
+  if (raw == null) return null
+  if (typeof raw === 'string') return subscriptionTypeFromText(raw)
+  if (typeof raw !== 'object') return null
+  const explicit = normalizeSubscriptionType(
+    raw.subscriptionType || raw.subscription_type || raw.claudeAiOauth?.subscriptionType,
+  )
+  if (explicit) return explicit
+  const profiles = [raw, raw.profile, raw.oauth_profile].filter((item) => item && typeof item === 'object')
+  for (const profile of profiles) {
+    const tier = tierFromOauthProfile(profile)
+    if (tier) return tier
+    const orgType = String(profile.organization?.organization_type || profile.organization_type || '').toLowerCase()
+    if (orgType === 'claude_enterprise') return 'enterprise'
+    if (orgType === 'claude_team') return 'team'
+  }
+  return subscriptionTypeFromText(JSON.stringify(raw))
 }
 
 export function flattenOauthIdentity(raw = {}) {
@@ -56,6 +96,7 @@ export function flattenOauthIdentity(raw = {}) {
       oauthAccount.organization_uuid,
       profile.organization_uuid,
     ),
+    subscription_type: subscriptionTypeFromOauthRaw(raw),
   }
 }
 
@@ -71,6 +112,7 @@ export function applyOauthIdentity(cred = {}, identity = {}) {
   }
   if (identity.account_uuid) next.account_uuid = identity.account_uuid
   if (identity.org_uuid) next.org_uuid = identity.org_uuid
+  if (identity.subscription_type) next.subscription_type = identity.subscription_type
   return next
 }
 

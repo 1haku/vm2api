@@ -14,7 +14,7 @@ import { atomicWriteJson } from '../vm/vm-file.mjs'
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
 import { credentialModeFromOauth, isApiKeyMode } from './credential-mode.mjs'
 import { resolveAuthScheme } from './auth-scheme.mjs'
-import { flattenOauthIdentity } from './oauth-identity.mjs'
+import { flattenOauthIdentity, normalizeSubscriptionType } from './oauth-identity.mjs'
 
 export const REFRESH_SKEW_MS = 5 * 60 * 1000
 
@@ -200,6 +200,7 @@ export function readWorkerCredentialFile(homeDir) {
       account_uuid: oauth.accountUuid || oauth.account_uuid || null,
       org_uuid: oauth.orgUuid || oauth.org_uuid || null,
       scope,
+      subscription_type: oauth.subscriptionType || oauth.subscription_type || null,
       source: 'go-slot-worker',
       auth_scheme: resolveAuthScheme({
         mode,
@@ -355,6 +356,15 @@ export function writeWorkerCredentialFile(homeDir, cred) {
     if (!scopes.includes('user:inference')) scopes = ['user:inference']
   }
   const expiresAtMs = expiresAtToMs(n.expires_at) || null
+  let previousType = null
+  try {
+    const prev = JSON.parse(fs.readFileSync(file, 'utf8'))
+    previousType = normalizeSubscriptionType(prev?.claudeAiOauth?.subscriptionType)
+  } catch {}
+  const subscriptionType =
+    normalizeSubscriptionType(cred.subscription_type || cred.subscriptionType) ||
+    normalizeSubscriptionType(cred.account_tier) ||
+    previousType
   const oauth = {
     accessToken: n.access_token || '',
   }
@@ -365,6 +375,7 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   if (n.org_uuid) oauth.orgUuid = n.org_uuid
   if (scopes.length) oauth.scopes = scopes
   if (mode === 'setup-token') oauth.type = 'setup-token'
+  if (subscriptionType) oauth.subscriptionType = subscriptionType
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
   ensureSlotClaudeOwnership(homeDir)
   try {
@@ -375,6 +386,32 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   sealSlotCredentialFile(file)
   ensureOfficialCredentialLink(homeDir)
   return file
+}
+
+/**
+ * Old slot files predate subscriptionType. A release fills it once:
+ * the VM's identified plan, otherwise pro. An existing value is kept.
+ */
+export function ensureSlotSubscriptionType(homeDir, accountTier = null) {
+  const file = slotWorkerCredentialPath(homeDir)
+  if (!file || !fs.existsSync(file)) return { wrote: false, reason: 'missing' }
+  let doc
+  try {
+    doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return { wrote: false, reason: 'unreadable' }
+  }
+  const oauth = doc?.claudeAiOauth
+  if (!oauth || typeof oauth !== 'object') return { wrote: false, reason: 'no_oauth' }
+  if (normalizeSubscriptionType(oauth.subscriptionType)) return { wrote: false, reason: 'present' }
+  const tier = normalizeSubscriptionType(accountTier) || 'pro'
+  oauth.subscriptionType = tier
+  try {
+    fs.chmodSync(file, 0o600)
+  } catch {}
+  atomicWriteJson(file, doc, { mode: 0o600 })
+  chownSlotCredentialFile(homeDir, file)
+  return { wrote: true, subscriptionType: tier }
 }
 
 export function persistSlotAuthScheme(projectRoot, vmId, rawScheme) {

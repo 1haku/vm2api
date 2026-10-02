@@ -27,6 +27,8 @@ import {
   normalizeCredentialRefreshConfig,
 } from './lib/oauth/credential-refresh-monitor.mjs'
 import { createKernelWatchdog, normalizeKernelWatchdogConfig } from './lib/transport/kernel-watchdog.mjs'
+import { ensureSlotSubscriptionType } from './lib/oauth/oauth-credentials.mjs'
+import { createCliNodeGuard } from './lib/vm/cli-node-guard.mjs'
 
 import { createUsageProbeMonitor, normalizeUsageProbeConfig } from './lib/oauth/usage-probe-monitor.mjs'
 import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs'
@@ -155,6 +157,7 @@ const routingConfigPath = routingConfigFile(cfg.paths.project)
 let healthMonitor = null
 let credentialRefreshMonitor = null
 let kernelWatchdog = null
+let cliNodeGuard = null
 let usageProbeMonitor = null
 let notifyMonitor = null
 
@@ -813,6 +816,18 @@ if (proxyPool.snapshot().config.ipv6_enabled !== true) {
 }
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
 const slotShell = createSlotShell({ projectRoot: cfg.paths.project })
+for (const vm of listVms(cfg.paths.project)) {
+  if (isCodexVm(vm)) continue
+  try {
+    ensureSlotSubscriptionType(path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'), vm.claude?.account_tier)
+  } catch (error) {
+    console.warn('[credential-subscription]', vm.id, error?.message || error)
+  }
+}
+cliNodeGuard = createCliNodeGuard({
+  listTargets: () => listVms(cfg.paths.project),
+  liveTokens: () => slotShell.liveShellTokens?.() || [],
+})
 
 const handlePanel = createPanelHandler({
   json,
@@ -1105,6 +1120,9 @@ function shutdown(signal) {
     kernelWatchdog?.stop?.()
   } catch {}
   try {
+    cliNodeGuard?.stop?.()
+  } catch {}
+  try {
     usageProbeMonitor?.stop?.()
   } catch {}
 
@@ -1147,7 +1165,11 @@ server.listen(cfg.port, cfg.host, () => {
   } catch (e) {
     console.warn('[kernel-watchdog] start failed', e?.message || e)
   }
-
+  try {
+    cliNodeGuard?.start?.({ immediate: true })
+  } catch (e) {
+    console.warn('[cli-node-guard] start failed', e?.message || e)
+  }
   try {
     usageProbeMonitor?.start?.({ immediate: true })
   } catch (e) {
