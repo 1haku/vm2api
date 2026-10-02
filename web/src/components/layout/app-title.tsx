@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { REPO_URL } from '@/config/repo'
-import { ArrowUpRight, Menu, X } from 'lucide-react'
+import { Menu, X } from 'lucide-react'
 import { IconGithub } from '@/assets/brand-icons'
 import { Logo } from '@/assets/logo'
 import { cn } from '@/lib/utils'
@@ -12,7 +12,7 @@ import {
 import { Button } from '../ui/button'
 
 const CHIP_CLASS =
-  'inline-flex h-8 min-w-0 items-center gap-1.5 rounded-lg border border-sidebar-foreground/15 bg-sidebar/70 px-2.5 text-[13px] font-medium text-sidebar-foreground shadow-xs outline-hidden transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-sidebar-ring'
+  'inline-flex h-6 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium text-sidebar-foreground/65 outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring'
 
 const CHIP_LINK_CLASS =
   'cursor-pointer hover:border-primary/45 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
@@ -21,15 +21,15 @@ export function AppTitle({ version }: { version?: string }) {
   const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenu>
-      <SidebarMenuItem className='rounded-xl border border-primary/25 bg-gradient-to-br from-primary/12 via-primary/[0.03] to-transparent p-2.5 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-none group-data-[collapsible=icon]:p-0'>
+      <SidebarMenuItem className='border-b border-sidebar-border px-2 pt-3 pb-4 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:p-0'>
         <div className='flex items-center gap-2'>
           <Link
-            to='/overview'
+            to='/'
             onClick={() => setOpenMobile(false)}
-            aria-label='vm2api 概览'
+            aria-label='vm2api 首页'
             className='flex min-w-0 flex-1 items-center gap-2.5 rounded-lg outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring'
           >
-            <span className='grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30 group-data-[collapsible=icon]:size-8'>
+            <span className='grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15 group-data-[collapsible=icon]:size-8'>
               <Logo
                 aria-hidden
                 className='size-5 group-data-[collapsible=icon]:size-4'
@@ -40,27 +40,26 @@ export function AppTitle({ version }: { version?: string }) {
                 vm2api
               </span>
               <span className='truncate text-xs text-sidebar-foreground/60'>
-                管理台
+                共享订阅控制台
               </span>
             </span>
           </Link>
           <ToggleSidebar className='group-data-[collapsible=icon]:hidden' />
         </div>
-        <div className='mt-2.5 grid grid-cols-[minmax(0,1fr)_auto] gap-1.5 group-data-[collapsible=icon]:hidden'>
+        <div className='mt-3 flex items-center gap-1 group-data-[collapsible=icon]:hidden'>
           <VersionChip version={version?.replace(/^v/i, '')} />
+          <span className='rounded bg-primary/8 px-1.5 py-0.5 text-[10px] text-primary'>
+            订阅定制版
+          </span>
           <a
             href={REPO_URL}
             target='_blank'
             rel='noreferrer'
-            title='github.com/dofastted/vm2api'
-            className={cn(CHIP_CLASS, CHIP_LINK_CLASS)}
+            title='查看上游 GitHub 项目'
+            aria-label='查看上游 GitHub 项目'
+            className={cn(CHIP_CLASS, CHIP_LINK_CLASS, 'ml-auto')}
           >
             <IconGithub aria-hidden className='size-4 shrink-0' />
-            GitHub
-            <ArrowUpRight
-              aria-hidden
-              className='size-3.5 shrink-0 opacity-60'
-            />
           </a>
         </div>
       </SidebarMenuItem>
@@ -87,7 +86,6 @@ function VersionChip({ version }: { version?: string }) {
       title={`v${version} 发布说明`}
       className={cn(CHIP_CLASS, CHIP_LINK_CLASS)}
     >
-      <span className='size-2 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px] shadow-primary/20' />
       <span className='truncate font-mono font-semibold tabular-nums'>
         v{version}
       </span>

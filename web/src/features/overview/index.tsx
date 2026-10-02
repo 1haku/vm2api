@@ -10,6 +10,7 @@ import {
   Server,
   ShieldCheck,
 } from 'lucide-react'
+import { useAuthStore } from '@/stores/auth-store'
 import { fmtNum, pct } from '@/lib/format'
 import { opsSince } from '@/lib/ops-window'
 import {
@@ -41,6 +42,7 @@ import {
 } from '@/features/overview/queries'
 import { StatisticsChartCard } from '@/features/overview/statistics-chart-card'
 import { TrafficOps } from '@/features/overview/traffic-ops'
+import { WorkspaceSummary } from './workspace-summary'
 
 type AlertTone = 'caution' | 'warn' | 'bad'
 
@@ -71,6 +73,7 @@ function AlertChip({
 }
 
 export function OverviewPage() {
+  const admin = useAuthStore((s) => s.me?.role === 'admin')
   const dash = useQuery(dashboardQueryOptions())
   const usage = useQuery(usageQueryOptions())
   const since = opsSince('1h')
@@ -145,7 +148,22 @@ export function OverviewPage() {
   if (errs > 0) alerts.push({ t: `错误 ${errs}`, to: '/logs', tone: 'bad' })
 
   return (
-    <PageHeader title={VIEW_TITLES.overview}>
+    <PageHeader
+      title={admin ? '工作台' : VIEW_TITLES.overview}
+      description={
+        admin
+          ? '订阅、用户与账号资源，一目了然。'
+          : '查看账号资源与服务运行情况。'
+      }
+    >
+      {admin && <WorkspaceSummary />}
+      <div className='mb-4 flex items-center gap-2'>
+        <Activity className='size-4 text-primary' />
+        <h2 className='text-base font-semibold'>运行监控</h2>
+        <span className='ml-auto text-xs text-muted-foreground'>
+          账号状态与网关指标
+        </span>
+      </div>
       <QueryGate
         loading={dash.isLoading}
         error={dash.error || (d.error ? new Error(d.error) : null)}

@@ -55,7 +55,7 @@ export function HealthDonut({
       />
       <text
         x={36}
-        y={36}
+        y={31}
         textAnchor='middle'
         dominantBaseline='central'
         className='fill-foreground text-[19px] font-semibold'
@@ -65,7 +65,7 @@ export function HealthDonut({
       </text>
       <text
         x={36}
-        y={49}
+        y={51}
         textAnchor='middle'
         className='fill-muted-foreground'
         style={{ fontSize: 8.5 }}

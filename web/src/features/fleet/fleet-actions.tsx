@@ -4,6 +4,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
+import { ChevronDown, RefreshCw, Wrench, Gauge, Layers } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { wrapSyncKernelFails } from '@/lib/wrap-health'
@@ -15,6 +16,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import {
   dashboardQueryOptions,
   usageQueryOptions,
@@ -75,7 +83,7 @@ export function FleetActions() {
   const qc = useQueryClient()
   const [fleetOpen, setFleetOpen] = useState(false)
   const refresh = useMutation({
-    mutationFn: () => invalidateFleet(qc),
+    mutationFn: () => qc.invalidateQueries(),
     onSuccess: () => toast.success('已刷新'),
   })
   const probe = useMutation({
@@ -155,43 +163,56 @@ export function FleetActions() {
   })
 
   return (
-    <div className='hidden items-center gap-2 md:flex'>
+    <div className='flex items-center gap-1'>
       <Button
         variant='outline'
-        size='sm'
+        size='icon'
+        aria-label='刷新数据'
+        className='size-8'
         onClick={() => refresh.mutate()}
         disabled={refresh.isPending}
         loading={refresh.isPending}
       >
-        刷新
+        <RefreshCw className='size-4' />
       </Button>
-      <Button
-        variant='outline'
-        size='sm'
-        onClick={() => probe.mutate()}
-        disabled={probe.isPending}
-        loading={probe.isPending}
-      >
-        额度探测
-      </Button>
-      <Button
-        variant='outline'
-        size='sm'
-        onClick={() => setFleetOpen(true)}
-        disabled={fleet.isPending}
-        loading={fleet.isPending}
-      >
-        全槽更新
-      </Button>
-      <Button
-        variant='outline'
-        size='sm'
-        onClick={() => wrapSync.mutate()}
-        disabled={wrapSync.isPending}
-        loading={wrapSync.isPending}
-      >
-        重装当前内核
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant='ghost'
+            size='sm'
+            aria-label='运维工具'
+            className='gap-1.5 px-2'
+          >
+            <Wrench className='size-4' />
+            <span className='hidden lg:inline'>运维工具</span>
+            <ChevronDown className='hidden size-3 lg:block' />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align='end'>
+          <DropdownMenuItem
+            onSelect={() => probe.mutate()}
+            disabled={probe.isPending}
+          >
+            <Gauge className='size-4' />
+            {probe.isPending ? '正在探测…' : '额度探测'}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => setFleetOpen(true)}
+            disabled={fleet.isPending}
+          >
+            <RefreshCw className='size-4' />
+            全槽更新
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => wrapSync.mutate()}
+            disabled={wrapSync.isPending}
+          >
+            <Layers className='size-4' />
+            {wrapSync.isPending ? '正在重装…' : '重装当前内核'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <Dialog open={fleetOpen} onOpenChange={setFleetOpen}>
         <DialogContent>

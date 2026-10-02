@@ -5,9 +5,13 @@ import { DatabaseSync } from 'node:sqlite'
 import { verifySubscriptionSchema } from '../src/lib/db/subscription-snapshot.mjs'
 const manifest = JSON.parse(fs.readFileSync('release-manifest.json', 'utf8'))
 assert.equal(manifest.revision, process.argv[2])
-assert.equal(process.env.VM2API_CUSTOM_BUILD, 'subscriptions-v4')
+assert.equal(process.env.VM2API_CUSTOM_BUILD, 'subscriptions-v5')
 for (const [file, expected] of Object.entries(manifest.files)) {
-  const actual = file.startsWith('image-bin/') ? file.replace('image-bin/', 'bin/') : file
+  const actual = file.startsWith('image-bin/')
+    ? file.replace('image-bin/', 'bin/')
+    : file.startsWith('image-wrap-cli/')
+      ? file.replace('image-wrap-cli/', 'share/wrap-cli/')
+      : file
   assert.equal(
     crypto.createHash('sha256').update(fs.readFileSync(actual)).digest('hex'),
     expected,

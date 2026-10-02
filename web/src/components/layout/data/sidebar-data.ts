@@ -21,18 +21,22 @@ import type { NavGroup, NavItem, SidebarData } from '../types'
 
 const ALL_GROUPS: NavGroup[] = [
   {
+    title: '工作空间',
+    items: [{ title: '工作台', url: '/overview', icon: LayoutDashboard }],
+  },
+  {
     title: '订阅与用量',
     items: [
       { title: '订阅管理', url: '/subscriptions', icon: CreditCard },
       { title: '使用记录', url: '/usage-records', icon: Gauge },
       { title: '用户管理', url: '/users', icon: Users },
+      { title: '密钥', url: '/keys', icon: KeyRound },
       { title: '计费汇总', url: '/billing', icon: Gauge },
     ],
   },
   {
-    title: '集群',
+    title: '账号与资源',
     items: [
-      { title: '总览', url: '/overview', icon: LayoutDashboard },
       { title: '集群', url: '/cluster', icon: Boxes },
       { title: '虚拟机', url: '/vm', icon: Server },
       { title: '导入', url: '/import', icon: Download },
@@ -45,7 +49,6 @@ const ALL_GROUPS: NavGroup[] = [
       { title: '模型', url: '/models', icon: Sparkles },
       { title: '协议', url: '/protocol', icon: Shield },
       { title: 'system提示词', url: '/system', icon: MessageSquareText },
-      { title: '密钥', url: '/keys', icon: KeyRound },
       { title: '压测', url: '/loadtest', icon: Activity },
     ],
   },

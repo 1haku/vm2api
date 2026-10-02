@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-const out = path.resolve(process.argv[2] || '.tmp/subscriptions-v4.tar.gz')
+const out = path.resolve(process.argv[2] || '.tmp/subscriptions-v5.tar.gz')
 if (execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim())
   throw new Error('Commit and validate the release before packaging')
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()

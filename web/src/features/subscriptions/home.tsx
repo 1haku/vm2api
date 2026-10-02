@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Copy, KeyRound, ArrowRight, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { copyText } from '@/lib/clipboard'
 import { apiBase } from '@/lib/session'
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +41,7 @@ export function SubscriptionHome({
   onCreate: (s: Subscription) => void
   pending: boolean
 }) {
+  const user = useAuthStore((s) => s.user)
   const [selected, setSelected] = useState('')
   const [guideOpen, setGuideOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -59,21 +61,66 @@ export function SubscriptionHome({
     : `curl '${base}/v1/messages' \\\n  -H 'x-api-key: YOUR_API_KEY' \\\n  -H 'anthropic-version: 2023-06-01' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"YOUR_MODEL","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'`
   return (
     <div className='space-y-6'>
-      <div className='flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4'>
+      <div className='workspace-welcome relative flex flex-wrap items-center justify-between gap-5 overflow-hidden rounded-2xl border bg-card p-6 sm:p-8'>
         <div>
-          <p className='font-semibold'>
-            {loading ? '正在读取订阅' : `${active.length} 个生效订阅`}
+          <p className='mb-2 text-xs font-medium tracking-wider text-primary'>
+            我的工作空间
           </p>
-          <p className='mt-1 text-sm text-muted-foreground'>
-            查看剩余额度与到期时间，按需创建密钥接入客户端。
+          <h2 className='text-xl font-semibold sm:text-2xl'>
+            {user}，欢迎回来
+          </h2>
+          <p className='mt-3 text-sm leading-6 text-muted-foreground'>
+            订阅额度、个人密钥和每次请求，都在这里。
           </p>
         </div>
-        <Button asChild variant='outline'>
-          <Link to='/usage-records'>
-            我的使用明细
-            <ArrowRight className='size-4' />
-          </Link>
-        </Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button asChild>
+            <Link to='/keys'>
+              <KeyRound className='size-4' />
+              我的密钥
+            </Link>
+          </Button>
+          <Button asChild variant='outline'>
+            <Link to='/usage-records'>
+              我的使用明细
+              <ArrowRight className='size-4' />
+            </Link>
+          </Button>
+        </div>
+      </div>
+      <div className='grid grid-cols-2 gap-3 sm:grid-cols-3'>
+        {[
+          ['生效订阅', `${active.length} 个`, '每个订阅独立计算额度'],
+          [
+            '今日已用',
+            usd(items.reduce((sum, s) => sum + s.daily_used, 0)),
+            '当前订阅今日累计消费',
+          ],
+          [
+            '即将到期',
+            `${active.filter((s) => Date.parse(s.expires_at) <= now + 7 * 86400000).length} 个`,
+            '未来 7 天内到期',
+          ],
+        ].map(([label, value, hint]) => (
+          <div
+            key={label}
+            className='rounded-xl border bg-card p-4 last:col-span-2 sm:p-5 sm:last:col-span-1'
+          >
+            <p className='text-sm text-muted-foreground'>{label}</p>
+            <p className='mt-3 text-2xl font-semibold tracking-tight tabular-nums'>
+              {loading || error ? '—' : value}
+            </p>
+            <p className='mt-2 text-xs leading-5 text-muted-foreground'>
+              {hint}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <h2 className='text-base font-semibold'>订阅与额度</h2>
+        <span className='text-xs text-muted-foreground'>
+          个人额度与上游账号额度分别计算
+        </span>
       </div>
       {error && (
         <p role='alert' className='text-destructive'>
@@ -97,7 +144,10 @@ export function SubscriptionHome({
             Math.ceil((Date.parse(s.expires_at) - Date.now()) / 86400000)
           )
           return (
-            <section key={s.id} className='rounded-xl border bg-card p-5'>
+            <section
+              key={s.id}
+              className='rounded-2xl border bg-card p-5 sm:p-6'
+            >
               <div className='flex flex-wrap items-center justify-between gap-2'>
                 <h3 className='text-lg font-semibold'>{s.plan_name}</h3>
                 <Badge variant={usable ? 'secondary' : 'outline'}>

@@ -42,7 +42,7 @@ export type ViewId =
 export const VIEW_TITLES: Record<ViewId, string> = {
   subscriptions: '订阅管理',
   'usage-records': '使用记录',
-  overview: '总览',
+  overview: '工作台',
   cluster: '集群',
   vm: '虚拟机',
   import: '导入',

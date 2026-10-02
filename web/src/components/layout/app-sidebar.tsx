@@ -40,7 +40,14 @@ export function AppSidebar() {
         <NavUser
           user={{
             name: userName,
-            email: me?.role || sidebarData.user.email,
+            email:
+              me?.role === 'admin'
+                ? '管理员'
+                : me?.role === 'user'
+                  ? '普通用户'
+                  : me?.role === 'super'
+                    ? '运维用户'
+                    : sidebarData.user.email,
             avatar: '',
           }}
         />

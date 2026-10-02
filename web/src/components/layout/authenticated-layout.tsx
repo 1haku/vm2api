@@ -7,7 +7,6 @@ import { SearchProvider } from '@/context/search-provider'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppSidebar } from '@/components/layout/app-sidebar'
-import { StarHint } from '@/components/layout/star-hint'
 import { SkipToMain } from '@/components/skip-to-main'
 
 type AuthenticatedLayoutProps = {
@@ -29,7 +28,7 @@ export function AuthenticatedLayout({
           <SidebarInset
             className={cn(
               // Set content container, so we can use container queries
-              '@container/content',
+              '@container/content bg-muted/25',
 
               // If layout is fixed, set the height
               // to 100svh to prevent overflow
@@ -43,7 +42,6 @@ export function AuthenticatedLayout({
             <AppHeader actions={headerActions} />
             {children ?? <Outlet />}
           </SidebarInset>
-          <StarHint />
         </SidebarProvider>
       </LayoutProvider>
     </SearchProvider>
