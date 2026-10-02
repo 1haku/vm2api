@@ -85,7 +85,7 @@ export function vmMatchesOwnerScope(vm, scope = PLATFORM_SCOPE) {
     }
     return true
   }
-  if (isDbOpen() && getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(vm.id)) return false
+  if (isDbOpen() && getDb().prepare('SELECT 1 FROM custom_subscription_slots WHERE vm_id=?').get(vm.id)) return false
   const owner = vmOwnerId(vm)
   if (type === 'platform') return !owner
   if (type === 'user') return owner === normalizeOwnerId(scope.userId)

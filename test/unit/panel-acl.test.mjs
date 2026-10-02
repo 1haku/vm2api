@@ -1,4 +1,13 @@
 import test from 'node:test'
+
+test('custom administration and upstream shell tickets remain admin-only', () => {
+  for (const role of ['user', 'super']) {
+    assert.equal(authorizePanelRoute('GET', '/api/panel/subscriptions/admin-overview', role).ok, false)
+    assert.equal(authorizePanelRoute('POST', '/api/panel/subscriptions/batch', role).ok, false)
+    assert.equal(authorizePanelRoute('POST', '/api/panel/vms/owned-slot/shell-ticket', role).ok, false)
+  }
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/owned-slot/shell-ticket', 'admin').ok, true)
+})
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'

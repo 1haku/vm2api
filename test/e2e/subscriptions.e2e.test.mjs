@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import WebSocket from 'ws'
 import { startGateway, api } from '../harness.mjs'
 
 test('guided provisioning creates plan and assignments atomically', async () => {
@@ -25,6 +26,50 @@ test('guided provisioning creates plan and assignments atomically', async () => 
       body: { username: 'wizard-user', password: 'test-password-123' },
     })
     const headers = { authorization: `Bearer ${login.json.token}` }
+    const adminTicket = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/shell-ticket', { body: {} })
+    assert.equal(adminTicket.status, 200, adminTicket.text)
+    const unauthorizedUpgrade = await new Promise((resolve, reject) => {
+      const ws = new WebSocket(gw.baseUrl.replace(/^http/, 'ws') + '/api/panel/vms/vm-sim-01/shell?ticket=invalid', {
+        headers,
+        handshakeTimeout: 3000,
+      })
+      ws.on('unexpected-response', (_request, response) => {
+        resolve(response.statusCode)
+        ws.terminate()
+      })
+      ws.on('error', () => {})
+      ws.on('open', () => {
+        ws.close()
+        reject(new Error('Invalid shell ticket accepted'))
+      })
+      setTimeout(() => {
+        ws.terminate()
+        reject(new Error('Shell denial timeout'))
+      }, 3500).unref()
+    })
+    assert.equal(unauthorizedUpgrade, 401)
+    assert.equal((await api(gw, 'GET', '/api/panel/subscriptions/admin-overview', { headers })).status, 403)
+    assert.equal(
+      (
+        await api(gw, 'POST', '/api/panel/subscriptions/batch', {
+          headers,
+          body: { ids: created.json.data.ids, action: 'suspend' },
+        })
+      ).status,
+      403,
+    )
+    assert.equal((await api(gw, 'POST', '/api/panel/vms/vm-sim-01/shell-ticket', { headers, body: {} })).status, 403)
+    const overview = await api(gw, 'GET', '/api/panel/subscriptions/admin-overview')
+    assert.equal(overview.status, 200, overview.text)
+    assert.equal(overview.json.data.slots.find((s) => s.vm_id === 'vm-sim-01').subscribed_users, 1)
+    assert.equal(
+      (
+        await api(gw, 'POST', '/api/panel/subscriptions/batch', {
+          body: { ids: created.json.data.ids, action: 'renew', days: 7 },
+        })
+      ).status,
+      200,
+    )
     const own = await api(gw, 'GET', '/api/panel/subscriptions', { headers })
     assert.equal(own.json.data.items[0].availability.code, 'configured')
     assert.equal(own.json.data.items[0].vm_ids, undefined)

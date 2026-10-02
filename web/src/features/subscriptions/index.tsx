@@ -25,6 +25,8 @@ import {
   KeyRevealDialog,
   type RevealedKey,
 } from '@/features/keys/key-reveal-dialog'
+import { SlotLoadPanel } from './admin-overview'
+import { BatchActions } from './batch-actions'
 import { SubscriptionHome } from './home'
 import { SubscriptionWizard, type WizardPreset } from './wizard'
 
@@ -87,6 +89,7 @@ export function SubscriptionsPage() {
   const me = useAuthStore((s) => s.me)
   const admin = me?.role === 'admin'
   const qc = useQueryClient()
+  const [selected, setSelected] = useState<string[]>([])
   const [tab, setTab] = useState('members')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
@@ -139,6 +142,7 @@ export function SubscriptionsPage() {
       qc.invalidateQueries({ queryKey: ['subscriptions'] }),
       qc.invalidateQueries({ queryKey: ['subscription-plans'] }),
       qc.invalidateQueries({ queryKey: ['subscription-events'] }),
+      qc.invalidateQueries({ queryKey: ['subscription-overview'] }),
     ])
   }
   const mutate = useMutation({
@@ -293,10 +297,11 @@ export function SubscriptionsPage() {
         />
       </div>
       {admin && (
-        <div className='mb-4 flex gap-2'>
+        <div className='mb-4 flex flex-wrap gap-2'>
           {[
             ['members', '用户订阅'],
             ['plans', '订阅方案'],
+            ['slots', '槽位负载'],
             ['events', '操作记录'],
           ].map(([id, label]) => (
             <Button
@@ -317,6 +322,7 @@ export function SubscriptionsPage() {
       {subs.isLoading && (
         <p className='p-8 text-muted-foreground'>正在加载订阅…</p>
       )}
+      {tab === 'slots' && <SlotLoadPanel />}
       {(tab === 'members' || !admin) && (
         <>
           <div className='mb-4 flex flex-wrap gap-3'>
@@ -325,13 +331,19 @@ export function SubscriptionsPage() {
               aria-label='搜索订阅'
               placeholder={admin ? '搜索用户或方案' : '搜索方案'}
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setSelected([])
+              }}
             />
             <select
               aria-label='订阅状态'
               className={selectClass}
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={(e) => {
+                setFilter(e.target.value)
+                setSelected([])
+              }}
             >
               <option value='all'>全部状态</option>
               {Object.entries(statusName).map(([v, l]) => (
@@ -347,10 +359,36 @@ export function SubscriptionsPage() {
               查看使用明细 →
             </Link>
           </div>
+          <div className='mb-3'>
+            <BatchActions
+              items={visible.filter((s) => selected.includes(s.id))}
+              onDone={() => setSelected([])}
+            />
+          </div>
           <div className='overflow-x-auto rounded-xl border bg-card'>
             <table className='w-full text-left text-sm'>
               <thead className='border-b bg-muted/40'>
                 <tr>
+                  <th className='p-4'>
+                    <input
+                      type='checkbox'
+                      className='size-4 accent-primary'
+                      aria-label='选择当前结果（最多100个）'
+                      checked={
+                        visible.length > 0 &&
+                        visible
+                          .slice(0, 100)
+                          .every((s) => selected.includes(s.id))
+                      }
+                      onChange={(e) =>
+                        setSelected(
+                          e.target.checked
+                            ? visible.slice(0, 100).map((s) => s.id)
+                            : []
+                        )
+                      }
+                    />
+                  </th>
                   {[
                     ...(admin ? ['用户'] : []),
                     '订阅方案',
@@ -368,6 +406,21 @@ export function SubscriptionsPage() {
               <tbody>
                 {visible.map((s) => (
                   <tr key={s.id} className='border-b last:border-0'>
+                    <td className='p-4'>
+                      <input
+                        type='checkbox'
+                        className='size-4 accent-primary'
+                        aria-label={`选择 ${s.username} ${s.plan_name}`}
+                        checked={selected.includes(s.id)}
+                        onChange={(e) =>
+                          setSelected((v) =>
+                            e.target.checked
+                              ? [...v, s.id]
+                              : v.filter((id) => id !== s.id)
+                          )
+                        }
+                      />
+                    </td>
                     {admin && <td className='p-4 font-medium'>{s.username}</td>}
                     <td className='p-4'>
                       <div className='flex items-center gap-2'>

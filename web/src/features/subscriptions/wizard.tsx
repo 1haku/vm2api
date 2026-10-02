@@ -107,9 +107,12 @@ export function SubscriptionWizard({
       ),
     onSuccess: async () => {
       await Promise.all(
-        ['subscriptions', 'subscription-plans', 'subscription-events'].map(
-          (k) => qc.invalidateQueries({ queryKey: [k] })
-        )
+        [
+          'subscriptions',
+          'subscription-plans',
+          'subscription-events',
+          'subscription-overview',
+        ].map((k) => qc.invalidateQueries({ queryKey: [k] }))
       )
       toast.success(`已为 ${selected.length} 位用户分配订阅`)
       onClose()

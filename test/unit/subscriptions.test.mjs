@@ -11,6 +11,7 @@ import { usageRecords } from '../../src/lib/admin/panel-subscriptions.mjs'
 import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../../src/lib/admin/resource-owner.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { resolveOutboundSessionId } from '../../src/lib/identity/identity-rewrite.mjs'
+import { subscriptionOverview } from '../../src/lib/admin/subscription-overview.mjs'
 
 function setup(t, config = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subscription-test-'))
@@ -122,12 +123,13 @@ test('shared slot grants separate entitlements and rejects unassigned, paused, e
   repo.update(repo.entitlement(a).id, { status: 'revoked' }, 'admin')
   assert.throws(() => repo.entitlement(a), /订阅/)
   assert.ok(repo.entitlement(b))
-  db.prepare('UPDATE user_subscriptions SET expires_at=? WHERE user_id=?').run('2020-01-01T00:00:00.000Z', 'b')
+  db.prepare('UPDATE custom_user_subscriptions SET expires_at=? WHERE user_id=?').run('2020-01-01T00:00:00.000Z', 'b')
   assert.throws(() => repo.entitlement(b), /到期/)
   assert.equal(repo.plans().find((p) => p.id === plan.id).members, 0)
 })
 
 test('multiple keys share quota and concurrency; settlement is idempotent; reset retains history', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
   const { repo, db, a, b } = setup(t, { subscription_concurrency: 1 })
   const admitted = repo.reserve(a, 'request-a', body)
   assert.throws(() => repo.reserve({ ...a, id: 'second-key' }, 'request-a2', body), /并发/)
@@ -138,10 +140,78 @@ test('multiple keys share quota and concurrency; settlement is idempotent; reset
   assert.throws(() => repo.reserve({ ...a, id: 'second-key' }, 'request-a3', body), /额度/)
   repo.update(admitted.id, { action: 'reset' }, 'admin')
   assert.equal(
-    db.prepare('SELECT COUNT(*) AS n FROM subscription_ledger WHERE subscription_id=?').get(admitted.id).n,
+    db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger WHERE subscription_id=?').get(admitted.id).n,
     1,
   )
   assert.ok(repo.reserve(a, 'request-a4', body))
+  repo.settle('request-a4', admitted.id, 1.25)
+  assert.equal(repo.list('a')[0].daily_used, 1.25)
+})
+
+test('batch updates validate all members before modifying and retain quota history', (t) => {
+  const { repo, db, a, plan } = setup(t)
+  const subs = repo.list(),
+    ids = subs.map((s) => s.id)
+  repo.settle('settled', subs[0].id, 3)
+  assert.throws(() => repo.batch({ ids: [ids[0], 'missing'], action: 'suspend' }, 'admin'), /不存在/)
+  assert.equal(repo.list().filter((s) => s.status === 'active').length, 2)
+  repo.batch({ ids, action: 'suspend' }, 'admin')
+  assert.throws(() => repo.entitlement(a), /暂停/)
+  repo.batch({ ids, action: 'resume' }, 'admin')
+  assert.ok(repo.entitlement(a))
+  repo.batch({ ids, action: 'renew', days: 7 }, 'admin')
+  for (const sub of repo.list())
+    assert.equal(Date.parse(sub.expires_at) - Date.parse(subs.find((s) => s.id === sub.id).expires_at), 7 * 86400000)
+  assert.equal(repo.list().find((s) => s.id === subs[0].id).daily_used, 3)
+  assert.throws(() => repo.batch({ ids, action: 'renew', days: 1.5 }, 'admin'), /整数/)
+  repo.savePlan({ status: 'disabled' }, 'admin', plan.id)
+  assert.throws(() => repo.batch({ ids, action: 'renew', days: 7 }, 'admin'), /停用/)
+  assert.equal(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM custom_subscription_events WHERE action LIKE 'batch_%' AND actor_id='admin'")
+      .get().n,
+    3,
+  )
+})
+
+test('admin overview attributes usage to original caller and aggregates slots without credentials', (t) => {
+  const { db, repo, plan } = setup(t)
+  const logs = new UsageLogsRepo(db)
+  for (const [id, user, status, cost] of [
+    ['one', 'a', 200, 1],
+    ['two', 'b', 503, 2],
+  ])
+    logs.insertSummary({
+      id,
+      request_id: id,
+      user_id: user,
+      vm_id: 'vm-1',
+      api_key_id: 'old-key',
+      group_id: plan.id,
+      created_at: new Date().toISOString(),
+      status,
+      actual_cost: cost,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 30,
+      cache_creation_tokens: 40,
+    })
+  const data = subscriptionOverview(
+    db,
+    [{ id: 'vm-1', name: 'Slot', status: 'running', has_token: true, max_concurrency: 4, secret: 'never expose' }],
+    1,
+    { 'vm-1': 2 },
+  )
+  assert.equal(data.users.find((u) => u.user_id === 'a').cost, 1)
+  assert.equal(data.slots[0].requests, 2)
+  assert.equal(data.slots[0].tokens, 200)
+  assert.equal(data.slots[0].errors, 1)
+  assert.equal(data.slots[0].subscribed_users, 2)
+  assert.equal(data.slots[0].active_users, 2)
+  assert.equal(data.slots[0].inflight, 2)
+  assert.equal(data.slots[0].secret, undefined)
+  repo.batch({ ids: [repo.list('a')[0].id], action: 'suspend' }, 'admin')
+  assert.equal(subscriptionOverview(db, [{ id: 'vm-1' }]).slots[0].subscribed_users, 1)
 })
 
 test('usage stays attached to caller after VM/key transfer, including totals and export source', (t) => {
@@ -191,8 +261,8 @@ test('log off still records subscription usage and settles reservation exactly o
   log.finish(ctx, extra)
   log.finish(ctx, extra)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM usage_logs').get().n, 1)
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM subscription_ledger').get().n, 1)
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM subscription_reservations').get().n, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger').get().n, 1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_reservations').get().n, 0)
   assert.ok(repo.progress(sub).daily_used > 0)
 })
 
@@ -226,7 +296,7 @@ test('restart releases unknown reservations without inventing actual costs', (t)
   assert.equal(repo.recoverReservations(), 0)
   assert.equal(repo.progress(sub).daily_used, 0)
   assert.equal(
-    db.prepare('SELECT action FROM subscription_events ORDER BY id DESC LIMIT 1').get().action,
+    db.prepare('SELECT action FROM custom_subscription_events ORDER BY id DESC LIMIT 1').get().action,
     'interrupted_reservation_released',
   )
 })

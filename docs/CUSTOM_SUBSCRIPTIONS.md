@@ -10,13 +10,15 @@
 
 `subscriptions-v3-20261002` 增加按 Key 展示用量、带筛选的明细跳转、密钥用量对比、URL 筛选保留、局域网 HTTP 复制兼容和手机卡片布局；订阅首页缩小引导并折叠接入教程。Key 自身限额和订阅额度独立展示，重置 Key 的计数不会恢复订阅额度或删除历史用量。本版本没有新增数据库迁移。
 
+v4 合入上游 `fe643cd7e54befd395537ba06d2f25df8c6101fb`（1.3.92）。管理员用户页增加生效订阅、最近到期、今日请求/费用、详情侧栏及按用户查看各 Key 用量。订阅表和用户详情支持批量续期、暂停、恢复，最多 100 条，事务保证整批成功或整批不变，操作保留审计。订阅管理的「槽位负载」提供今天/7天/30天的请求、Token、费用、失败率、活跃用户与实时席位占用。席位占用与并发配置是不同指标，不表示上游配额余额。普通用户和运维均无权调用管理汇总、批量接口或新增的槽位终端凭证接口。
+
 ## 合并上游
 
 1. 保存当前修改，并给线上版本保留标签及数据库备份。
 2. `git fetch upstream` 后从定制分支创建临时合并分支，例如 `git switch -c codex/merge-upstream codex/subscriptions`，再 `git merge upstream/main`。如果上游使用其他主分支，按其实际名称调整。
 3. 检查冲突，重点复核鉴权、请求路由、记账、数据库和前端导航。定制边界主要在 `panel-subscriptions.mjs`、`subscriptions-repo.mjs`、`custom-migrations`、`web/src/features/subscriptions`，但请求鉴权和计费也修改了核心调用链，不能只保留这几个目录就假定合并正确。
 4. 运行相关后端测试与前端测试，执行 TypeScript 检查和 Vite 构建。确认普通用户不能跨用户读数据，撤销订阅立即阻止密钥调用，失败的向导提交不留下半成品。
-5. 对齐 Docker 基础镜像与合并后的上游版本，包括 Node 依赖、worker、egress 二进制。当前 Dockerfile 是在上游镜像上覆盖源代码与前端；它不会自动安装新版依赖或编译 Go，因此升级上游不能永远沿用旧基础镜像。
+5. 使用 `deploy/Dockerfile.subscriptions` 完整构建：从当前 lockfile 安装 Node 依赖，在 Go 构建阶段执行竞态测试并编译 worker/egress，复制当前提交的内核及 wrap-cli 资产。其余内核二进制仍采用上游仓库预编译资产，升级时需复核来源。镜像生成文件 SHA256 清单，发布后核对实际挂载目录内的二进制、前端和迁移文件。基础镜像标签可变，严格重现历史构建应使用保存的镜像 ID/镜像本身，或将基础镜像固定到 digest。
 6. 在数据库副本验证后部署，完成验收再把通过的合并结果快进到 `codex/subscriptions` 并建立新版本标签。
 
 不直接用上游镜像覆盖定制容器。定制镜像设置 `VM2API_CUSTOM_BUILD`，面板的官方升级接口会拒绝覆盖并说明原因。
@@ -27,10 +29,18 @@
 
 v1 的 `027_subscriptions.sql` 在 v2 改为定制 `001_subscriptions.sql`。升级时先验证旧迁移文件名与内容校验和，再把记录移到定制表，不重复执行 SQL、不删除业务数据。后续上游的 027 可以正常使用。命名空间隔离不会自动解决同名表、列或行为上的冲突，仍须审查上游变更。
 
+v4 新增 `002_subscription_namespace.sql`，原已发布的 001 完全不变。7 张业务表统一采用 `custom_` 前缀，日/周额度、默认期限和订阅并发移入 `custom_subscription_plans`。`groups` 上旧扩展字段作为历史兼容数据保留，定制代码不再依赖它们；方案名称/平台/状态仍关联上游 groups，`usage_logs.subscription_id` 也仍是扩展列。因此降低了合并冲突范围，但不能保证未来 main 的任何改动都兼容。
+
+账本采用显式整数主键，手工重置记录账目顺序边界，解决同一毫秒结算与重置的歧义；VACUUM 不改变该顺序。账目只追加，不通过删除历史记录恢复额度。
+
+`node scripts/check-subscriptions-upgrade.mjs <数据库副本路径>` 会在副本执行迁移，验证 SQLite 完整性、外键、迁移版本，并比较用户、Key、槽位、订阅、配置额度、预留、账本、响应归属和请求记录的规范化内容摘要。报告只含计数和摘要，不输出凭据。上游如果有意变更这些数据，预检会中止，需要审查并明确调整比较规则，不能仅因行数相同就放行。
+
 ## 当前部署与回滚
 
-服务器目录 `/home/yibocho/vm2api`，服务端口 8787。发布包放入 `releases/subscriptions-*` 新目录，写入当前提交哈希到 `CUSTOM_REVISION`，再从该目录运行 `sh deploy/subscriptions-release.sh`。发布包必须包含 `src`、`scripts`、`VERSION`、`web/dist` 和部署文件；不打包 `.env`、账号凭据或运行数据。
+服务器目录 `/home/yibocho/vm2api`，服务端口 8787。先提交通过验证的改动，执行 `node scripts/package-subscriptions-release.mjs`，从干净提交打包源码、测试、依赖锁、前端产物、Go 源码及上游二进制资产。把包解压至新的 `releases/subscriptions-*` 目录，将随包 `.revision` 文件的内容保存为 `CUSTOM_REVISION`，再从该目录运行 `sh deploy/subscriptions-release.sh`。不打包 `.env`、账号凭据或运行数据。
 
-脚本保存数据库一致性快照、配置、Compose 文件与旧镜像标识到 `backups/<UTC时间>`，构建定制镜像，用数据库副本执行迁移，检查完整性及核心表行数，然后只重建 vm2api 服务。发布后检查健康接口、前端资源、角色权限、订阅分配和撤销。当前槽位没有上游凭据时，不能把本地或模拟测试当作真实模型调用验收。
+脚本先完成镜像构建和 Linux 环境的订阅、权限、终端回归测试，再把数据库一致性快照、配置、Compose 文件与旧镜像标识保存到 `backups/<UTC时间>`。数据库副本内容校验通过后停止 vm2api，通过容器另存切换前准确的 DB/WAL/SHM 至 `stopped-data`，然后只重建 vm2api 服务。发布后检查健康接口、文件清单、迁移状态，并进一步验证角色权限和页面。当前槽位没有上游凭据时，不能把本地或模拟测试当作真实模型调用验收。
 
 从 v2 回退 v1 时必须恢复配套的数据库快照：v1 不认识独立的定制迁移记录，单纯切换旧镜像不安全。先停止 vm2api、另存当前数据库及其 WAL/SHM，再恢复该备份目录的 `kin.db`、配置和 Compose 覆盖文件并启动；切换数据库会丢失备份之后的业务写入，应在实际回滚前核对时间和影响。不要删除账号槽位容器或其他服务。
+
+v4 回退 v3 同样必须同时恢复数据库。核对备份时间和业务写入影响后，运行本次发布目录的 `sh deploy/subscriptions-rollback.sh /home/yibocho/vm2api/backups/<时间>`；脚本归档被替换的数据库，再恢复 `stopped-data`、配置和旧镜像。不会自动回滚，避免在未知业务写入后直接切回旧快照。保留发布镜像、备份和 Git bundle；不要执行会清理这些恢复材料的无差别 prune。

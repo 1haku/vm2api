@@ -771,7 +771,15 @@ export function createPanelHandler(ctx) {
       ) {
         return true
       }
-      if (await handleSubscriptionPanel(req, res, { path: p, json, readBody, projectRoot: cfg.paths.project }))
+      if (
+        await handleSubscriptionPanel(req, res, {
+          path: p,
+          json,
+          readBody,
+          projectRoot: cfg.paths.project,
+          slotInflight: (id) => ctx.poolScheduler?.usedSlotCount(id) ?? 0,
+        })
+      )
         return true
       if (p.startsWith('/api/panel/cluster/')) return ctx.clusterRoutes.handle(req, res, url)
       if (req.method === 'GET' && p === '/api/panel/database/metrics') {
@@ -1636,7 +1644,7 @@ export function createPanelHandler(ctx) {
         if (nextOwner && !panelUsers.getById(nextOwner)) {
           return json(res, 404, { ok: false, error: { message: 'user not found' } })
         }
-        if (nextOwner && getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(id)) {
+        if (nextOwner && getDb().prepare('SELECT 1 FROM custom_subscription_slots WHERE vm_id=?').get(id)) {
           return json(res, 409, { ok: false, error: { message: '请先在订阅方案中解除该槽位绑定' } })
         }
         const currentOrigin = vm.origin || VM_ORIGIN.platform
@@ -2179,7 +2187,7 @@ export function createPanelHandler(ctx) {
       // DELETE /api/panel/vms/:id — remove VM record, cli-home, unbind proxy
       if (req.method === 'DELETE' && /^\/api\/panel\/vms\/[^/]+$/.test(p)) {
         const id = p.split('/')[4]
-        if (getDb().prepare('SELECT 1 FROM subscription_slots WHERE vm_id=?').get(id)) {
+        if (getDb().prepare('SELECT 1 FROM custom_subscription_slots WHERE vm_id=?').get(id)) {
           return json(res, 409, { ok: false, error: { message: '请先在订阅方案中移除此槽位，再删除账号' } })
         }
         if (!isValidVmId(id)) {

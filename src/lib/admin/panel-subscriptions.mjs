@@ -3,6 +3,7 @@ import { getDb, withTransaction } from '../db/database.mjs'
 import { panelIdentity } from './panel-acl.mjs'
 import { getVm, listVms } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
+import { subscriptionOverview } from './subscription-overview.mjs'
 
 // This is a configuration readiness summary, not an upstream health probe.
 export function subscriptionAvailability(sub, slots = [], pending = 0) {
@@ -91,7 +92,7 @@ export function usageRecords(db, params, userId, admin = false) {
   }
 }
 
-export async function handleSubscriptionPanel(req, res, { path, json, readBody, projectRoot }) {
+export async function handleSubscriptionPanel(req, res, { path, json, readBody, projectRoot, slotInflight = () => 0 }) {
   if (!/^\/api\/panel\/(subscription-plans|subscriptions|usage-records)(\/|$)/.test(path)) return false
   const ident = panelIdentity(req)
   const admin = ident.role === 'admin'
@@ -107,7 +108,7 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
       const plans = new Map(repo.plans().map((p) => [p.id, p]))
       result.items = result.items.map((s) => {
         const pending = db
-          .prepare('SELECT COALESCE(SUM(amount),0) AS n FROM subscription_reservations WHERE subscription_id=?')
+          .prepare('SELECT COALESCE(SUM(amount),0) AS n FROM custom_subscription_reservations WHERE subscription_id=?')
           .get(s.id).n
         return {
           ...s,
@@ -138,7 +139,13 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
     } else {
       if (!admin) throw subscriptionError('仅管理员可执行此操作', 403)
       const body = req.method === 'GET' ? {} : await readBody(req, 32768)
-      if (path === '/api/panel/subscriptions/provision' && req.method === 'POST') {
+      if (path === '/api/panel/subscriptions/admin-overview' && req.method === 'GET') {
+        const days = Number(new URL(req.url, 'http://localhost').searchParams.get('days') || 1)
+        const slots = listVms(projectRoot)
+        result = subscriptionOverview(db, slots, days, Object.fromEntries(slots.map((s) => [s.id, slotInflight(s.id)])))
+      } else if (path === '/api/panel/subscriptions/batch' && req.method === 'POST') {
+        result = repo.batch(body, req.panelUserId || 'master')
+      } else if (path === '/api/panel/subscriptions/provision' && req.method === 'POST') {
         const plan = body.plan
         if (!plan || !Array.isArray(plan.vm_ids)) throw subscriptionError('请选择方案槽位')
         for (const id of plan.vm_ids) {
@@ -175,7 +182,7 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
         result = {
           items: db
             .prepare(
-              'SELECT e.*,u.username AS actor_name,g.name AS plan_name FROM subscription_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC LIMIT 100',
+              'SELECT e.*,u.username AS actor_name,g.name AS plan_name FROM custom_subscription_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC LIMIT 100',
             )
             .all(),
         }
