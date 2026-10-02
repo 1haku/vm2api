@@ -16,17 +16,30 @@ function makePool() {
   return pool
 }
 
-test('proxy pool persists dns_primary and rejects unknown choices', () => {
+test('proxy pool persists custom dns_primary and rejects invalid URLs without changing it', (t) => {
   const dir = tmpDir()
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const pool = new ProxyPool({ dataDir: dir })
   pool.stopScheduler()
-  assert.equal(pool.snapshot().config.dns_primary, 'auto')
   assert.equal(pool.updateConfig({ dns_primary: '8.8.8.8:53' }).ok, true)
-  assert.equal(pool.updateConfig({ dns_primary: '9.9.9.9:53' }).error, 'invalid_dns_primary')
-  assert.equal(pool.snapshot().config.dns_primary, '8.8.8.8:53')
+  const primary = 'https://cloudflare-dns.com:8443/dns-query?key=a%2Cb'
+  assert.equal(pool.updateConfig({ dns_primary: primary }).ok, true)
+  for (const invalid of [
+    '9.9.9.9:53',
+    'http://cloudflare-dns.com/dns-query',
+    'https://user@cloudflare-dns.com/dns-query',
+    'https://cloudflare-dns.com/dns-query#fragment',
+    'https://cloudflare-dns.com/dns-query?key=a,b',
+    'https://cloudflare-dns.com:65536/dns-query',
+  ]) {
+    const result = pool.updateConfig({ dns_primary: invalid })
+    assert.equal(result.ok, false, invalid)
+    assert.equal(result.error, 'invalid_dns_primary', invalid)
+    assert.equal(pool.snapshot().config.dns_primary, primary)
+  }
   const reopened = new ProxyPool({ dataDir: dir })
   reopened.stopScheduler()
-  assert.equal(reopened.snapshot().config.dns_primary, '8.8.8.8:53')
+  assert.equal(reopened.snapshot().config.dns_primary, primary)
 })
 
 test('clampBindLimit defaults to 5 and stays in 1..32', () => {

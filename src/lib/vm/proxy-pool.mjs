@@ -640,7 +640,13 @@ export class ProxyPool {
       return { ok: false, error: 'invalid_ipv6_enabled' }
     }
     if (patch.dns_primary != null && !validDnsPrimary(patch.dns_primary)) {
-      return { ok: false, error: 'invalid_dns_primary', allowed: [DNS_PRIMARY_AUTO, ...DNS_UPSTREAMS] }
+      return {
+        ok: false,
+        error: 'invalid_dns_primary',
+        message:
+          'dns_primary must be auto, a built-in DNS upstream, or a valid https:// URL with a valid host and port, without userinfo, fragment, whitespace, backslash, or raw comma',
+        allowed: [DNS_PRIMARY_AUTO, ...DNS_UPSTREAMS],
+      }
     }
     if (patch.dns_primary != null) this.state.config.dns_primary = patch.dns_primary
     if (patch.probe_interval_min != null) {

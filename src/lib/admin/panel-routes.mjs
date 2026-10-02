@@ -1603,6 +1603,12 @@ export function createPanelHandler(ctx) {
         }
         return json(res, 200, panel.ok({ id, reload: reloaded }))
       }
+      // POST /api/panel/vms/:id/shell-ticket — single-use ticket for the slot terminal WebSocket
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/shell-ticket$/.test(p)) {
+        const issued = ctx.slotShell.issueTicket(p.split('/')[4])
+        if (!issued.ok) return json(res, issued.status, { ok: false, error: issued.error })
+        return json(res, 200, panel.ok({ ticket: issued.ticket, expires_in: issued.expires_in }))
+      }
       // POST /api/panel/vms/:id/collect-identity
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/collect-identity$/.test(p)) {
         const id = p.split('/')[4]
@@ -3681,6 +3687,7 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/proxies') {
         const ident = panelIdentity(req)
         const snap = ident.role === 'user' ? proxyPool.snapshot({ ownerUserId: req.panelUserId }) : proxyPool.snapshot()
+        if (ident.role !== 'admin') delete snap.config.dns_primary
         return json(res, 200, panel.ok(snap))
       }
       if (req.method === 'POST' && p === '/api/panel/proxies/local') {
@@ -3738,7 +3745,9 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok(result))
       }
       if (req.method === 'GET' && p === '/api/panel/proxies/config') {
-        return json(res, 200, panel.ok(proxyPool.snapshot().config))
+        const config = proxyPool.snapshot().config
+        if (panelIdentity(req).role !== 'admin') delete config.dns_primary
+        return json(res, 200, panel.ok(config))
       }
       if (req.method === 'PUT' && p === '/api/panel/proxies/config') {
         const body = await readBody(req, 64 * 1024)

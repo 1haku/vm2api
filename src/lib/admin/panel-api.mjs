@@ -57,6 +57,7 @@ import {
   probeFromPassiveHeaders,
   shouldHopOfficialUsage,
   shouldProbeFable,
+  usageErrorText,
 } from '../oauth/crs-usage-probe.mjs'
 import { proxyHasVm } from '../vm/proxy-pool.mjs'
 import { collectLivePanelCredentials } from './panel-live-credentials.mjs'
@@ -1003,7 +1004,7 @@ export async function buildProbeOne({
         ? null
         : rateLimited
           ? '官方 /usage 限流，请稍后再试'
-          : result.error || result.usage_error || null,
+          : usageErrorText({ error: result.error || result.usage_error }) || null,
     usage_scope_missing: result.usage_scope_missing === true,
     credential_scope_required: result.credential_scope_required || null,
   }

@@ -260,13 +260,30 @@ export const DNS_UPSTREAMS = Object.freeze([
 export const DNS_PRIMARY_AUTO = 'auto'
 
 export function validDnsPrimary(value) {
-  return value === DNS_PRIMARY_AUTO || DNS_UPSTREAMS.includes(value)
+  if (value === DNS_PRIMARY_AUTO || DNS_UPSTREAMS.includes(value)) return true
+  // The upstream chain is comma-delimited. Reject URL forms that URL() would
+  // silently normalize or that cannot be carried unchanged to kin-egress.
+  if (typeof value !== 'string' || /[\s\x00-\x1f\x7f\\,#]/.test(value)) return false
+  if (/%(?![a-f0-9]{2})/i.test(value)) return false
+  const authority = /^https:\/\/(\[[^\]]+\]|[^/:?#]+)(?::([0-9]+))?(?:[/?]|$)/.exec(value)
+  if (!authority || authority[1].includes('@')) return false
+  if (authority[2] != null && (Number(authority[2]) < 1 || Number(authority[2]) > 65535)) return false
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.hash) return false
+    // URL() validates bracketed IPv6 literals and numeric IPv4 addresses.
+    if (authority[1].startsWith('[')) return true
+    const host = authority[1].replace(/\.$/, '')
+    return host.length <= 253 && host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+  } catch {
+    return false
+  }
 }
 
 // Operator picks which DNS to try first; the rest stay behind it as fallback.
 // 'auto' -> '' so kin-egress uses its built-in order.
 export function dnsUpstreamChain(primary) {
-  if (!DNS_UPSTREAMS.includes(primary)) return ''
+  if (primary === DNS_PRIMARY_AUTO || !validDnsPrimary(primary)) return ''
   return [primary, ...DNS_UPSTREAMS.filter((u) => u !== primary)].join(',')
 }
 
