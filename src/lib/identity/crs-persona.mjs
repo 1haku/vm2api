@@ -252,7 +252,11 @@ export function isOfficialClaudeSecurityMonitorPrompt(system) {
   for (const text of eachSystemText(system)) {
     if (text.length < CLAUDE_CODE_SECURITY_MONITOR_MIN_LEN) continue
     if (!text.startsWith(CLAUDE_CODE_SECURITY_MONITOR_PREFIX)) continue
-    if (CLAUDE_CODE_SECURITY_MONITOR_MARKERS.every((marker) => text.includes(marker))) return true
+    const hasRules = CLAUDE_CODE_SECURITY_MONITOR_MARKERS.slice(0, 6).every((marker) => text.includes(marker))
+    const hasOutput =
+      CLAUDE_CODE_SECURITY_MONITOR_MARKERS.slice(6).every((marker) => text.includes(marker)) ||
+      text.includes('Use the classify_result tool to report your classification.')
+    if (hasRules && hasOutput) return true
   }
   return false
 }
@@ -1537,6 +1541,7 @@ function headerBetaTokens(headers = {}) {
 
 function systemLooksLikeRelayedClaudeCode(system) {
   if (hasOfficialClaudeLine(system)) return true
+  if (isOfficialClaudeSecurityMonitorPrompt(system)) return true
   return eachSystemText(system).some((text) => looksLikeAgentPrompt(text))
 }
 
