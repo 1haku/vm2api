@@ -28,7 +28,10 @@ const PROBE_MINS = [5, 10, 30, 60]
 const DNS_CHOICES = [
   { value: 'auto', label: '自动（默认顺序）' },
   { value: 'https://1.1.1.1/dns-query', label: 'Cloudflare DoH' },
-  { value: 'https://cloudflare-dns.com/dns-query', label: 'Cloudflare DoH（域名）' },
+  {
+    value: 'https://cloudflare-dns.com/dns-query',
+    label: 'Cloudflare DoH（域名）',
+  },
   { value: 'https://8.8.8.8/dns-query', label: 'Google DoH' },
   { value: '8.8.8.8:53', label: 'Google TCP 53（明文）' },
   { value: '1.1.1.1:53', label: 'Cloudflare TCP 53（明文）' },
@@ -277,7 +280,8 @@ export function ProxyManagePanel({
                 id='proxy-dns-url-help'
                 className='text-[11px] text-muted-foreground'
               >
-                输入完整 HTTPS URL，支持域名或 IP（IPv6 地址需加方括号）；不能包含用户名、密码、片段（#）或逗号。
+                输入完整 HTTPS URL，支持域名或 IP（IPv6
+                地址需加方括号）；不能包含用户名、密码、片段（#）或逗号。
               </p>
               <Button
                 type='submit'
