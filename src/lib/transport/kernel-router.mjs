@@ -251,6 +251,22 @@ async function runHop({ mode, opts }) {
       slotWaitMs: opts.slotWaitMs,
     })
     if (ready?.ok) {
+      if (opts.requestContext && opts.cliHop && ready.health?.classifier_request_context !== true) {
+        return {
+          ok: false,
+          status: 400,
+          terminalState: 'rejected',
+          upstreamExecutions: 0,
+          body: {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              code: 'classifier_runtime_unsupported',
+              message: 'The kernel/CLI runtime does not support classifier request context.',
+            },
+          },
+        }
+      }
       reason = ready.reason || 'configured_rust'
     } else {
       return {
