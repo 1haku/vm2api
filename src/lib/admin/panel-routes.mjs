@@ -1582,6 +1582,12 @@ export function createPanelHandler(ctx) {
         }
         return json(res, 200, panel.ok({ id, reload: reloaded }))
       }
+      // POST /api/panel/vms/:id/shell-ticket — single-use ticket for the slot terminal WebSocket
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/shell-ticket$/.test(p)) {
+        const issued = ctx.slotShell.issueTicket(p.split('/')[4])
+        if (!issued.ok) return json(res, issued.status, { ok: false, error: issued.error })
+        return json(res, 200, panel.ok({ ticket: issued.ticket, expires_in: issued.expires_in }))
+      }
       // POST /api/panel/vms/:id/collect-identity
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/collect-identity$/.test(p)) {
         const id = p.split('/')[4]
