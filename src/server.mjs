@@ -74,6 +74,7 @@ import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
 import { bindPlacement } from './lib/cluster/placement.mjs'
+import { createSlotShell } from './lib/vm/slot-shell.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -811,6 +812,7 @@ if (proxyPool.snapshot().config.ipv6_enabled !== true) {
   }
 }
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
+const slotShell = createSlotShell({ projectRoot: cfg.paths.project })
 
 const handlePanel = createPanelHandler({
   json,
@@ -872,6 +874,7 @@ const handlePanel = createPanelHandler({
   refreshWorkerCredentialForVm,
   fetchWorkerModels,
   clusterRoutes,
+  slotShell,
 })
 
 const server = http.createServer(async (req, res) => {
@@ -1030,7 +1033,8 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.on('upgrade', (req, socket, head) => {
-  if (!clusterRoutes.handleUpgrade(req, socket, head)) socket.destroy()
+  if (clusterRoutes.handleUpgrade(req, socket, head)) return
+  if (!slotShell.handleUpgrade(req, socket, head)) socket.destroy()
 })
 
 server.on('clientError', (err, socket) => {

@@ -643,7 +643,8 @@ export class ProxyPool {
       return {
         ok: false,
         error: 'invalid_dns_primary',
-        message: 'dns_primary must be auto, a built-in DNS upstream, or a valid https:// URL with a valid host and port, without userinfo, fragment, whitespace, backslash, or raw comma',
+        message:
+          'dns_primary must be auto, a built-in DNS upstream, or a valid https:// URL with a valid host and port, without userinfo, fragment, whitespace, backslash, or raw comma',
         allowed: [DNS_PRIMARY_AUTO, ...DNS_UPSTREAMS],
       }
     }
