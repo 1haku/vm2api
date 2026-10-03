@@ -5,26 +5,9 @@ const COOKIE = 'kin_panel_token'
 
 export { LS_TOKEN, LS_USER, LS_BASE, COOKIE }
 
-export function sameOriginPanel(host = location.hostname): boolean {
-  return /^kin\.fkcodex\.com$/i.test(host || '')
-}
-
 export function apiBase(): string {
-  const host = location.hostname || ''
-  if (sameOriginPanel(host)) return ''
-  const saved = (localStorage.getItem(LS_BASE) || '').replace(/\/$/, '')
-  if (saved) return saved
-  // No saved base: talk to the backend that served this page.
+  // Always use the serving origin, including browsers with a legacy saved API base.
   return ''
-}
-
-export function setApiBase(base: string) {
-  const trimmed = base.trim().replace(/\/$/, '')
-  if (sameOriginPanel() || !trimmed) {
-    localStorage.removeItem(LS_BASE)
-    return
-  }
-  localStorage.setItem(LS_BASE, trimmed)
 }
 
 function clearClientCookie(name: string) {

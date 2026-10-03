@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { logoutRequest } from './api'
+import { loginRequest, logoutRequest } from './api'
 import {
   LS_BASE,
   LS_TOKEN,
   LS_USER,
   hasSession,
-  setApiBase,
+  apiBase,
   setSession,
 } from './session'
 
@@ -50,13 +50,27 @@ describe('panel session storage', () => {
     expect(hasSession()).toBe(false)
   })
 
-  it('keeps the bearer fallback for a separate API origin', () => {
+  it('ignores a legacy API origin for login and authenticated requests', async () => {
     const values = installBrowser('localhost')
-    setApiBase('http://127.0.0.1:8787')
+    values.set(LS_BASE, 'https://old-server.invalid')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ token: 'test-token', user: 'admin' }), {
+          status: 200,
+        })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await loginRequest({ username: 'admin', password: 'test-password' })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/panel/login')
+    expect(apiBase()).toBe('')
 
     setSession('secret-token', 'admin')
 
-    expect(values.get(LS_BASE)).toBe('http://127.0.0.1:8787')
+    logoutRequest()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/panel/logout')
     expect(values.get(LS_TOKEN)).toBe('secret-token')
   })
 

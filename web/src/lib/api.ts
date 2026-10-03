@@ -151,10 +151,8 @@ export function patchVm<T = unknown>(id: string, body: VmPatch) {
 export async function loginRequest(input: {
   username: string
   password: string
-  base?: string
 }): Promise<{ token: string; user: string }> {
-  const base = input.base ?? apiBase()
-  const url = `${base || ''}/api/panel/login`
+  const url = '/api/panel/login'
   let res: Response
   try {
     res = await fetch(url, {

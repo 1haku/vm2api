@@ -5,7 +5,6 @@ import { toast } from 'sonner'
 import { Logo } from '@/assets/logo'
 import { useAuthStore } from '@/stores/auth-store'
 import { loginRequest } from '@/lib/api'
-import { apiBase, sameOriginPanel, setApiBase } from '@/lib/session'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,22 +18,17 @@ export function LoginPage() {
   const signIn = useAuthStore((s) => s.signIn)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [base, setBase] = useState(apiBase())
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
-  const hideBase = sameOriginPanel()
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
     setError('')
     setPending(true)
     try {
-      if (hideBase) setApiBase('')
-      else setApiBase(base)
       const result = await loginRequest({
         username: username.trim(),
         password,
-        base: hideBase ? '' : base.trim().replace(/\/$/, '') || apiBase(),
       })
       await queryClient.cancelQueries()
       queryClient.clear()
@@ -98,28 +92,6 @@ export function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
-          {hideBase ? null : (
-            <details
-              className='rounded-lg border px-3 py-2.5 text-sm'
-              open={Boolean(base) || undefined}
-            >
-              <summary className='cursor-pointer text-muted-foreground'>
-                连接设置
-              </summary>
-              <div className='mt-3 space-y-2'>
-                <Label htmlFor='api-base'>服务地址</Label>
-                <Input
-                  id='api-base'
-                  placeholder={window.location.origin}
-                  value={base}
-                  onChange={(e) => setBase(e.target.value)}
-                />
-                <p className='text-xs leading-5 text-muted-foreground'>
-                  留空使用当前站点。仅连接其他服务时填写。
-                </p>
-              </div>
-            </details>
-          )}
           {error ? (
             <p
               role='alert'
