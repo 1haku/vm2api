@@ -1,4 +1,5 @@
 import type { Vm } from '@/types/panel-vm'
+import { describe, expect, it } from 'vitest'
 import {
   billingRowSlot,
   isLeftoverUsageAccount,
@@ -6,7 +7,6 @@ import {
   usageAccountForVm,
   vmTotalCost,
 } from '@/lib/vm-usage'
-import { describe, expect, it } from 'vitest'
 
 describe('billingRowSlot', () => {
   const byId = new Map<string, Vm>([
@@ -38,7 +38,11 @@ describe('billingRowSlot', () => {
 })
 
 describe('GPT vm-id usage rows are live when the slot has no uuid', () => {
-  const vm = { id: 'vm-codex-01', email: 'lemeryvorhees@gmail.com', platform: 'openai' } as Vm
+  const vm = {
+    id: 'vm-codex-01',
+    email: 'lemeryvorhees@gmail.com',
+    platform: 'openai',
+  } as Vm
   const row = {
     account_id: 'vm-codex-01',
     vm_id: 'vm-codex-01',
@@ -60,7 +64,12 @@ describe('GPT vm-id usage rows are live when the slot has no uuid', () => {
 
   it('still drops a reused Claude slot leftover', () => {
     const claude = { id: 'vm-02', account_uuid: 'new-uuid' } as Vm
-    const leftover = { account_id: 'vm-02', vm_id: 'vm-02', total_cost: 0, today_cost: 0 }
+    const leftover = {
+      account_id: 'vm-02',
+      vm_id: 'vm-02',
+      total_cost: 0,
+      today_cost: 0,
+    }
     expect(isLeftoverUsageRow(leftover, claude)).toBe(true)
     expect(usageAccountForVm(claude, [leftover])).toBeNull()
   })
