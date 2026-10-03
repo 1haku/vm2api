@@ -51,7 +51,7 @@ function probeOlderThanRefresh(vm: Vm): boolean {
  * 一次失败不能当成授权吊销或凭证作废。
  */
 const TEST_PROBE_SOURCES =
-  /^(test-chat|kin-console-test|kin-console-loadtest|health-probe|kin-health-probe)$/i
+  /^(test-chat|kin-console-test|health-probe|kin-health-probe)$/i
 
 const USAGE_PROBE_SOURCES = new Set([
   'vm-oauth-usage',
