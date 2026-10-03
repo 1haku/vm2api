@@ -1,4 +1,4 @@
-import { CLAUDE_CODE_SECURITY_MONITOR_PREFIX } from '../identity/crs-persona.mjs'
+import { findClaudeSecurityMonitorPrompt } from '../identity/crs-persona.mjs'
 import { getModelEntry } from './model-policy.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
 import { stripIllegalCacheControlFields } from './cache-ttl.mjs'
@@ -8,55 +8,57 @@ function textOf(content) {
   return Array.isArray(content) ? content.map((b) => (b?.type === 'text' ? b.text : '')).join('') : ''
 }
 
-/** Purpose is derived from the original contract, never from a public header/context. */
-export function classifyClaudeRequestPurpose(body, { officialTraffic = false } = {}) {
-  if (!officialTraffic) return null
-  const system = Array.isArray(body?.system)
-    ? body.system
-        .map((block) => textOf([block]))
-        .find((text) => text.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_PREFIX)) || ''
-    : textOf(body?.system)
-  if (!system.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_PREFIX)) return null
-  if (
-    !['## Threat Model', '## HARD BLOCK', '## SOFT BLOCK', '## Classification Process', '## Output Format'].every((s) =>
-      system.includes(s),
-    )
-  )
-    return null
-  const last = Array.isArray(body.messages) ? body.messages.at(-1) : null
-  if (last?.role !== 'user') return null
-  const content = textOf(last.content)
-  // The action is a compact tool record (plain or JSONL), after user history.
-  const action = content.split('</transcript>')[0].trim().split('\n').at(-1)
-  if (!/^(?:(?!User:)[A-Za-z][\w.:-]* [^\n]+|\{(?!"user":)"[^"\n]+":)/.test(action || '')) return null
-  if (
-    system.includes('<block>yes</block>') &&
-    system.includes('<block>no</block>') &&
-    content.includes('<transcript>') &&
-    content.includes('</transcript>')
-  ) {
-    const context = { purpose: 'auto_mode_classifier', format: 'xml' }
-    if (content.includes('Use <thinking> before responding with <block>.')) context.stage = 'xml_s2'
-    else if (content.includes('Err on the side of blocking. <block> immediately.')) {
-      if (body.stop_sequences?.includes('</block>')) context.stage = 'xml_s1'
-      else context.stage = 'fast'
-    }
-    return context
-  }
-  const tool = body.tools?.find((t) => t?.name === 'classify_result')
-  const schema = tool?.input_schema
-  if (
-    system.includes('Use the classify_result tool to report your classification.') &&
+const TRANSCRIPT_OPEN = '<transcript>'
+const TRANSCRIPT_CLOSE = '</transcript>'
+// The action is a compact tool record (plain or JSONL), never a user turn.
+const ACTION_RE = /^(?:(?!User:)[A-Za-z][\w.:-]* [^\n]+|\{(?!"user":)"[^"\n]+":)/
+
+function isClassifyResultContract(body) {
+  const schema = body.tools?.find((t) => t?.name === 'classify_result')?.input_schema
+  return (
     body.tool_choice?.type === 'tool' &&
     body.tool_choice.name === 'classify_result' &&
     schema?.type === 'object' &&
     schema.properties?.shouldBlock?.type === 'boolean' &&
     ['thinking', 'reason'].every((k) => schema.properties?.[k]?.type === 'string') &&
     ['thinking', 'reason', 'shouldBlock'].every((k) => schema.required?.includes(k))
-  ) {
-    return { purpose: 'auto_mode_classifier', format: 'tool' }
+  )
+}
+
+// Diagnostic label only; the client's suffix text is flag-controlled, so stage
+// comes from wire parameters: only two-stage stage 1 sets a stop sequence.
+function xmlStage(body, suffix) {
+  if (Array.isArray(body.stop_sequences) && body.stop_sequences.length > 0) return 'xml_s1'
+  if (suffix.includes('<thinking>')) return 'xml_s2'
+  return suffix.trim() ? 'fast' : undefined
+}
+
+/**
+ * Purpose is derived from the original contract, never from a public header/context.
+ * Recognition uses the classifier rule sections only. The verdict format
+ * (`<block>`, `<severity>`, …) changes with client version and server flags and
+ * only decides how the body is relayed: forced classify_result is `tool`,
+ * anything else wrapped in `<transcript>` is a text verdict (`xml`).
+ */
+export function classifyClaudeRequestPurpose(body, { officialTraffic = false } = {}) {
+  if (!officialTraffic) return null
+  if (!findClaudeSecurityMonitorPrompt(body?.system)) return null
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  if (messages.at(-1)?.role !== 'user') return null
+  // Clients may send each transcript block as its own user message.
+  const content = messages.map((m) => textOf(m?.content)).join('')
+  const close = content.lastIndexOf(TRANSCRIPT_CLOSE)
+  const open = close < 0 ? -1 : content.lastIndexOf(TRANSCRIPT_OPEN, close)
+  const transcript = open < 0 ? content : content.slice(open + TRANSCRIPT_OPEN.length, close)
+  if (!ACTION_RE.test(transcript.trim().split('\n').at(-1) || '')) return null
+  if (body.tool_choice !== undefined) {
+    return isClassifyResultContract(body) ? { purpose: 'auto_mode_classifier', format: 'tool' } : null
   }
-  return null
+  if (open < 0) return null
+  const context = { purpose: 'auto_mode_classifier', format: 'xml' }
+  const stage = xmlStage(body, content.slice(close + TRANSCRIPT_CLOSE.length))
+  if (stage) context.stage = stage
+  return context
 }
 
 function incompatible(message, code = 'classifier_model_incompatible') {
