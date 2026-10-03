@@ -48,7 +48,7 @@ import {
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { applyModelRequestRules } from './model-policy.mjs'
-import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
+import { isApiKeyMode, isAnySetupTokenMode } from '../oauth/credential-mode.mjs'
 import { prepareClassifierBody } from './request-purpose.mjs'
 
 export const INFERENCE_UA = 'kin-inference/1.0'
@@ -237,7 +237,7 @@ export function prepareOutboundAttempt({
   authScheme,
   credentialMode,
 } = {}) {
-  const inferenceOnly = isSetupTokenMode(credentialMode) || isApiKeyMode(credentialMode)
+  const inferenceOnly = isAnySetupTokenMode(credentialMode) || isApiKeyMode(credentialMode)
   const keepCallerSession = officialClient === true || (officialClient == null && !unofficial)
   const sessionContext = {
     officialClient: keepCallerSession,
@@ -296,7 +296,7 @@ export function prepareOutboundAttempt({
 }
 
 export function prepareOutboundHeaders(reqHeaders, homeDir, identity, model, { credentialMode, want1m } = {}) {
-  if (isSetupTokenMode(credentialMode) || isApiKeyMode(credentialMode)) {
+  if (isAnySetupTokenMode(credentialMode) || isApiKeyMode(credentialMode)) {
     return {
       'user-agent': INFERENCE_UA,
       'anthropic-version': '2023-06-01',
@@ -385,7 +385,7 @@ export function prepareOutboundEnvelope({
     delete headers.Authorization
   }
   if (stream) headers.accept = 'text/event-stream'
-  if (!isSetupTokenMode(credentialMode)) {
+  if (!isAnySetupTokenMode(credentialMode)) {
     const beta = ensureFastModeBeta(headers['anthropic-beta'] || '', prepared.body)
     if (beta) headers['anthropic-beta'] = beta
   }
