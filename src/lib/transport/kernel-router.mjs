@@ -17,15 +17,12 @@ import {
   kernelFaults,
 } from './rust-kernel-client.mjs'
 import {
-  ensureRustKernel,
   kernelBinPath,
-  scheduleWrapRecycle,
   awaitWrapRecycle,
   noteWrapHop,
   beginWrapHop,
   endWrapHop,
   wrapHopInflight,
-  credentialsNewerThanKernel,
 } from './rust-kernel-supervisor.mjs'
 
 const rustHealthCache = new Map()
@@ -186,27 +183,12 @@ async function prepareSlotCredentials(exec) {
   ensureOfficialCredentialLink(exec.homeDir, ids || {})
 }
 
-async function bounceRustForFreshTicket(exec) {
-  await prepareSlotCredentials(exec)
-  await ensureWorkerCredential(exec)
-  const rec = scheduleWrapRecycle(exec, { cooldownMs: 0 })
-  if (rec.pending) await rec.pending
-  clearRustHealthCache(cacheKey(exec))
-  const started = await ensureRustKernel(exec)
-  if (started?.ok) rememberRustHealth(exec, started)
-  else clearRustHealthCache(cacheKey(exec))
-  return started
-}
-
 async function prepareRust(exec, { ensure, routing, slotWaitMs } = {}) {
   await awaitWrapRecycle(exec)
   const fault = kernelFaults.get(cacheKey(exec))
   if (fault) return { ok: false, reason: 'kernel_unavailable', error: fault }
   if (typeof ensure === 'function') return ensure(exec)
   await prepareSlotCredentials(exec)
-  if (credentialsNewerThanKernel(exec)) {
-    return bounceRustForFreshTicket(exec)
-  }
   const ttl = rustHealthTtlMs(routing)
   const cached = peekRustHealth(exec, ttl)
   if (cached && rustKernelReachable(cached.health)) {
@@ -300,9 +282,8 @@ async function runHop({ mode, opts }) {
       const ensured = await ensure(opts.exec, { force: true })
       if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
       else {
-        const recycle = opts.recycleWrap || scheduleWrapRecycle
-        recycle(opts.exec)
-        await awaitWrapRecycle(opts.exec)
+        // The CLI invalidates its OAuth cache from the shared credential file
+        // before creating each API client. Recycling here kills sibling hops.
         result = await send(opts)
         result = { ...result, credential_retried: true }
         noteWrapHop(opts.exec)
