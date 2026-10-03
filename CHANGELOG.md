@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-- 限额重置的 `reset-status` / `reset-redeem` 固定使用 `claude-cli/<version> (external, cli)`。遥测 UA `claude-code/` 会被上游标成 `ineligible_reason=surface`，查询次数为 0。普通 `/api/oauth/usage` 仍用遥测 UA。
-- 面板按平台显示按钮：Claude 槽始终显示「限额查询 / 限额重置」，Codex 槽始终显示「券查询 / 重置券」，不再要求 `credential_mode=oauth`。带 `user:profile` 的 setup-token 可以查询兑换；纯 inference 和 API Key 点查询仍会 400。
-- 官方 `claude setup-token`（一年期、仅 `user:inference`、无 refresh）落盘为 `official-setup-token`，与面板转换的完整 Setup Token 区分。旧文件按 source/flavor/无 refresh+仅 inference 识别。`office-setup-token` 视为同一类型。
+## 1.3.95 — 2026-10-03
 
+- 限额重置的 `reset-status` / `reset-redeem` 固定使用 `claude-cli/<version> (external, cli)`。遥测 UA `claude-code/` 会被上游标成 `ineligible_reason=surface`，查询次数为 0。普通 `/api/oauth/usage` 仍用遥测 UA。
+- 面板按平台显示按钮：Claude 槽始终显示「限额查询 / 限额重置」，Codex 槽始终显示「券查询 / 重置券」，不再要求 `credential_mode=oauth`。带 `user:profile` 的转换后 Setup Token 可以查询兑换；官方一年期 token 和 API Key 点查询仍会 400。
+- 官方 `claude setup-token`（一年期、仅 `user:inference`、无 refresh）落盘为 `official-setup-token`，面板显示「官方 Setup Token」，与 Cookie/授权链转换的完整 Setup Token 区分。旧文件按 source/flavor/无 refresh+仅 inference 识别。`office-setup-token` 视为同一类型。
+
+已部署机升级：更新 Node 控制面（`src/`）、`web/dist`、`bin/kin-worker`，重启一次 Node，并对挂载 `kin-worker` 的槽执行 `docker restart`（不要 `docker rm`）。kernel / `cli-node` 未变，不需要 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.94 — 2026-10-03
 
@@ -15,6 +18,7 @@
 - 修复登录页的导入排序与 JSX 格式，使 web CI 的 Prettier 检查通过；重编控制台。
 
 已部署机升级：更新 Node 控制面（`src/`）、`web/dist`、`bin/kin-worker`、`bin/kin-kernel`、`share/wrap-cli/kin-kernel.bin` 和 `share/wrap-cli/cli-node`，重启一次 Node。**需要 `wrap-cli/sync`** 将配套 kernel/CLI 同步进 Claude 槽；各槽还需更新并重载 kin-worker，才能使用原生限额重置。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 
 ## 1.3.93 — 2026-10-03
 
