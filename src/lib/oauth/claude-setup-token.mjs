@@ -96,8 +96,8 @@ export function officialSetupTokenToOauth(token, extra = {}) {
     throw fail('setup_token_invalid', '需要官方 claude setup-token 打印的一年期 sk-ant-oat01-…')
   }
   return {
-    type: 'setup-token',
-    mode: 'setup-token',
+    type: 'official-setup-token',
+    mode: 'official-setup-token',
     access_token: access,
     refresh_token: '',
     expires_at: Date.now() + 365 * 24 * 60 * 60 * 1000,

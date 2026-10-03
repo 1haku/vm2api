@@ -116,7 +116,7 @@ export type Vm = {
   has_refresh?: boolean
   cred_status?: string | { text?: string; key?: string; tone?: string }
   /**
-   * 凭证类型的权威字段（连字符风格：`oauth` / `setup-token` / `apikey` / `console`）。
+   * 凭证类型的权威字段（`oauth` / `setup-token` / `official-setup-token` / `apikey`）。
    * gateway 的三个 Vm 序列化函数只产出这一个。
    */
   credential_mode?: string
