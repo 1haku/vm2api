@@ -42,9 +42,9 @@ test('fake branch still rejects non-sid keys', async () => {
   delete process.env.KIN_FAKE_SESSION_OAUTH
 })
 
-test('sessionKeyToOAuth requires a non-empty VM SOCKS5 in production', async () => {
+test('sessionKeyToOAuth refuses an unbound VM in production', async () => {
   await assert.rejects(
-    () => sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', { proxyUrl: '' }),
+    () => sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', { proxyUrl: null }),
     (e) => e.code === 'proxy_required',
   )
 })
