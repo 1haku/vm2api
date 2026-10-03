@@ -114,6 +114,8 @@ export const OFFICIAL_CC_CHILD_PROMPT_PREFIXES = Object.freeze([
 ])
 export const CLAUDE_CODE_SECURITY_MONITOR_PREFIX = 'You are a security monitor for autonomous AI coding agents.'
 export const CLAUDE_CODE_SECURITY_MONITOR_MIN_LEN = 10_000
+// Rule sections only. The verdict format (`<block>`, `<severity>`, classify_result, …)
+// follows client version and server flags, so it must never gate recognition (#220).
 export const CLAUDE_CODE_SECURITY_MONITOR_MARKERS = Object.freeze([
   '## Threat Model',
   '- `<transcript>`:',
@@ -121,8 +123,6 @@ export const CLAUDE_CODE_SECURITY_MONITOR_MARKERS = Object.freeze([
   '## SOFT BLOCK',
   '## Classification Process',
   '## Output Format',
-  '<block>yes</block>',
-  '<block>no</block>',
 ])
 export const PROMPT_LEAK_USER_WHITELIST = [
   /repeat your prompt/i,
@@ -248,17 +248,18 @@ export function hasOfficialClaudeChildPrompt(system) {
   return false
 }
 
-export function isOfficialClaudeSecurityMonitorPrompt(system) {
+/** The auto-mode classifier system block, or null. Identity and request purpose share this. */
+export function findClaudeSecurityMonitorPrompt(system) {
   for (const text of eachSystemText(system)) {
     if (text.length < CLAUDE_CODE_SECURITY_MONITOR_MIN_LEN) continue
-    if (!text.startsWith(CLAUDE_CODE_SECURITY_MONITOR_PREFIX)) continue
-    const hasRules = CLAUDE_CODE_SECURITY_MONITOR_MARKERS.slice(0, 6).every((marker) => text.includes(marker))
-    const hasOutput =
-      CLAUDE_CODE_SECURITY_MONITOR_MARKERS.slice(6).every((marker) => text.includes(marker)) ||
-      text.includes('Use the classify_result tool to report your classification.')
-    if (hasRules && hasOutput) return true
+    if (!text.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_PREFIX)) continue
+    if (CLAUDE_CODE_SECURITY_MONITOR_MARKERS.every((marker) => text.includes(marker))) return text
   }
-  return false
+  return null
+}
+
+export function isOfficialClaudeSecurityMonitorPrompt(system) {
+  return findClaudeSecurityMonitorPrompt(system) !== null
 }
 
 export function hasOfficialClaudeEntrypoint(text) {

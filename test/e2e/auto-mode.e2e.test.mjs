@@ -76,11 +76,13 @@ async function harness(t, layout = 'zero', cliPath = cli) {
     const emit = () => {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_classifier_fixture' })
       const legacy = body.tool_choice?.name === 'classify_result'
+      const severity = JSON.stringify(body.system).includes('<severity>')
+      const stopSequence = body.stop_sequences?.[0]
       const stop = marker.includes('CASE_MAX')
         ? 'max_tokens'
         : legacy
           ? 'tool_use'
-          : body.stop_sequences?.includes('</block>')
+          : stopSequence
             ? 'stop_sequence'
             : 'end_turn'
       const events = [
@@ -129,14 +131,20 @@ async function harness(t, layout = 'zero', cliPath = cli) {
                 index: 0,
                 delta: {
                   type: 'text_delta',
-                  text: marker.includes('CASE_EMPTY') ? '' : marker.includes('CASE_BLOCK') ? '<block>yes' : '<block>no',
+                  text: marker.includes('CASE_EMPTY')
+                    ? ''
+                    : marker.includes('CASE_BLOCK')
+                      ? '<block>yes'
+                      : severity
+                        ? '<severity>3'
+                        : '<block>no',
                 },
               },
             ]),
         { type: 'content_block_stop', index: 0 },
         {
           type: 'message_delta',
-          delta: { stop_reason: stop, stop_sequence: stop === 'stop_sequence' ? '</block>' : null },
+          delta: { stop_reason: stop, stop_sequence: stop === 'stop_sequence' ? stopSequence : null },
           usage: { output_tokens: 5 },
         },
         { type: 'message_stop' },
@@ -378,29 +386,33 @@ for (const layout of ['zero', 'identity'])
   test(`actual Node → kernel → CLI classifier wire and responses (${layout})`, { timeout: 30000 }, async (t) => {
     const h = await harness(t, layout)
     assert.equal(h.health.classifier_request_context, true)
-    for (const stage of ['xml_s1', 'fast', 'xml_s2']) {
-      const input = classifierFixture({ stage })
-      const result = await h.send(input)
-      assert.equal(result.status, 200, result.text)
-      const response = JSON.parse(result.text)
-      assert.equal(response.id, 'msg_classifier_fixture')
-      assert.equal(response.content[0].text, '<block>no')
-      assert.equal(parseXmlBlock(response.content[0].text), false)
-      assert.equal(response.stop_sequence, stage === 'xml_s1' ? '</block>' : null)
-      const wire = h.captured.at(-1)
-      assert.deepEqual(wire.thinking, { type: 'disabled' })
-      assert.equal(wire.temperature, 0)
-      assert.equal(wire.max_tokens, input.max_tokens)
-      assert.equal(wire.output_config, undefined)
-      assert.equal(wire.context_management, undefined)
-      assert.deepEqual(
-        wire.system.filter((b) => !b.text.startsWith('x-anthropic-billing-header:')),
-        input.system,
-      )
-      assert.deepEqual(wire.messages, input.messages)
-      assert.equal(wire.request_context, undefined)
-      assert.equal(response.usage.cache_read_input_tokens, 7)
-    }
+    for (const [verdict, text] of [
+      ['block', '<block>no'],
+      ['severity', '<severity>3'],
+    ])
+      for (const stage of ['xml_s1', 'fast', 'xml_s2']) {
+        const input = classifierFixture({ stage, verdict })
+        const result = await h.send(input)
+        assert.equal(result.status, 200, result.text)
+        const response = JSON.parse(result.text)
+        assert.equal(response.id, 'msg_classifier_fixture')
+        assert.equal(response.content[0].text, text)
+        assert.equal(response.stop_sequence, stage === 'xml_s1' ? input.stop_sequences[0] : null)
+        const wire = h.captured.at(-1)
+        assert.deepEqual(wire.thinking, { type: 'disabled' })
+        assert.equal(wire.temperature, 0)
+        assert.equal(wire.max_tokens, input.max_tokens)
+        assert.deepEqual(wire.stop_sequences, input.stop_sequences)
+        assert.equal(wire.output_config, undefined)
+        assert.equal(wire.context_management, undefined)
+        assert.deepEqual(
+          wire.system.filter((b) => !b.text.startsWith('x-anthropic-billing-header:')),
+          input.system,
+        )
+        assert.deepEqual(wire.messages, input.messages)
+        assert.equal(wire.request_context, undefined)
+        assert.equal(response.usage.cache_read_input_tokens, 7)
+      }
     const stream = await h.send({ ...classifierFixture(), stream: true })
     assert.equal(stream.status, 200, stream.text)
     assert.match(stream.text, /"stop_sequence":"<\/block>"/)
@@ -439,9 +451,12 @@ for (const layout of ['zero', 'identity'])
     assert.equal(invalid.status, 400, invalid.text)
     assert.equal(JSON.parse(invalid.text).error.code, 'invalid_request_context')
     assert.ok(h.logs.some((log) => log.classifier?.layer === 'node_object' && log.classifier?.before.max_tokens === 64))
-    for (const format of ['xml', 'tool']) {
-      const relayed = classifierFixture({ format })
-      relayed.system[0].text += '\n' + 'Synthetic policy details. '.repeat(450)
+    for (const [format, verdict] of [
+      ['xml', 'block'],
+      ['xml', 'severity'],
+      ['tool', 'block'],
+    ]) {
+      const relayed = classifierFixture({ format, verdict })
       const result = await h.send(relayed, {
         billing: false,
         headers: { 'user-agent': 'Go-http-client/1.1', 'anthropic-beta': 'claude-code-20250219' },
@@ -453,6 +468,21 @@ for (const layout of ['zero', 'identity'])
         relayed.system,
       )
     }
+    // #220: 2.1.283 CLI sends severity classifiers without a billing line.
+    const severity = classifierFixture({ verdict: 'severity' })
+    severity.system.push({ type: 'text', text: '## Session Context\nCWD: /work' })
+    const direct220 = await h.send(severity, {
+      billing: false,
+      headers: { 'user-agent': 'claude-cli/2.1.283 (external, cli)' },
+    })
+    assert.equal(direct220.status, 200, direct220.text)
+    assert.equal(JSON.parse(direct220.text).stop_sequence, '</severity>')
+    assert.equal(h.captured.at(-1).max_tokens, 64)
+    assert.deepEqual(h.captured.at(-1).stop_sequences, ['</severity>'])
+    assert.deepEqual(
+      h.captured.at(-1).system.filter((b) => !b.text.startsWith('x-anthropic-billing-header:')),
+      severity.system,
+    )
   })
 
 function withCase(body, marker) {
