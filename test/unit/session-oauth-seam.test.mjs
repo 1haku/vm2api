@@ -255,7 +255,6 @@ function makeStrictOAuthFetch(seen, opts = {}) {
       assert.equal(body.code_challenge_method, 'S256')
       assert.ok(body.code_challenge)
       assert.ok(body.state)
-      assert.equal(Object.prototype.hasOwnProperty.call(body, 'organization_uuid'), false)
       const status = opts.authorizeStatus || 200
       if (status >= 400) return response(status, opts.authorizeBody || { error: 'authorize failed' })
       return response(200, { redirect_uri: `${REDIRECT_URI}?code=auth-code&state=${body.state}` })

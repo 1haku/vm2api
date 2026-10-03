@@ -34,6 +34,10 @@ commitImportedOauth → 仅完整 OAuth 运行模式排队官方 Claude Code 初
 
 换出的 access/refresh 只写入 credentials.json。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。Claude 面板默认选 Setup Token + Cookie。
 
+Cookie authorize 的组织 UUID 同时出现在 `/v1/oauth/{uuid}/authorize` 路径和 JSON 的 `organization_uuid` 字段；只有路径 UUID 不够，上游会返回 400 `Invalid request format`。
+
+SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交阶段先启动节点槽并同步凭据；远端配置与票据均按 UTF-8/Buffer 的字节长度分块写入 SFTP，0600 临时文件原子替换，不跟随目标符号链接。节点启动失败不代表上游授权失败。
+
 ## 刷新规则
 
 **只有 host `RefreshIfNeeded` 决定是否换票**，没有第二套定时器。Go worker 不再 Ensure。
