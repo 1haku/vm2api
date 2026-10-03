@@ -401,8 +401,8 @@ export function writeWorkerCredentialFile(homeDir, cred) {
 }
 
 /**
- * Old slot files predate subscriptionType. A release fills it once:
- * the VM's identified plan, otherwise pro. An existing value is kept.
+ * Old slot files predate subscriptionType. Fill from the identified plan,
+ * otherwise pro; repair the legacy pro fallback for an identified Max slot.
  */
 export function ensureSlotSubscriptionType(homeDir, accountTier = null) {
   const file = slotWorkerCredentialPath(homeDir)
@@ -415,12 +415,16 @@ export function ensureSlotSubscriptionType(homeDir, accountTier = null) {
   }
   const oauth = doc?.claudeAiOauth
   if (!oauth || typeof oauth !== 'object') return { wrote: false, reason: 'no_oauth' }
-  if (normalizeSubscriptionType(oauth.subscriptionType)) {
+  const present = normalizeSubscriptionType(oauth.subscriptionType)
+  const identified = normalizeSubscriptionType(accountTier)
+  // Startup summaries used to lose the identified tier and write pro. A pro
+  // hint may itself be a default, so it must not downgrade an existing plan.
+  if (present && !(present === 'pro' && identified === 'max')) {
     chownSlotCredentialFile(homeDir, file)
     return { wrote: false, reason: 'present' }
   }
 
-  const tier = normalizeSubscriptionType(accountTier) || 'pro'
+  const tier = identified || 'pro'
   oauth.subscriptionType = tier
   try {
     fs.chmodSync(file, 0o600)

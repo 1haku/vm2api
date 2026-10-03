@@ -173,6 +173,25 @@ function readPid(file) {
     return 0
   }
 }
+
+function ownsEgressProcess(pid, configPath) {
+  if (!pidAlive(pid)) return false
+  try {
+    // PID files survive container restarts; a live PID may belong to another
+    // process or another proxy. Verify both before reusing or signaling it.
+    const exe = fs.readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, '')
+    const args = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
+    const configIndex = args.indexOf('-config')
+    if (path.basename(exe) !== 'kin-egress' || configIndex <= 0 || !args[configIndex + 1]) return false
+    const argument = args[configIndex + 1]
+    const actualConfig = path.isAbsolute(argument)
+      ? path.resolve(argument)
+      : path.resolve(fs.readlinkSync(`/proc/${pid}/cwd`), argument)
+    return actualConfig === path.resolve(configPath)
+  } catch {
+    return false
+  }
+}
 export function inspectEgressNetwork(proxyId, run = docker) {
   const name = networkName(proxyId)
   if (!name) return null
@@ -316,7 +335,7 @@ export function startEgressProcess({
   const listenTcp = `${listenHost}:${tcpPort}`
   const listenDns = `${listenHost}:${dnsPort}`
   const existing = readPid(pidFile)
-  if (existing && pidAlive(existing)) {
+  if (ownsEgressProcess(existing, cfgPath)) {
     try {
       const old = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
       if (
@@ -356,14 +375,14 @@ export function stopEgressProcess(projectRoot, proxyId) {
   const dir = egressRunDir(projectRoot, proxyId)
   const pidFile = path.join(dir, 'egress.pid')
   const pid = readPid(pidFile)
-  if (pid && pidAlive(pid)) {
+  if (ownsEgressProcess(pid, path.join(dir, 'egress.json'))) {
     try {
       process.kill(pid, 'SIGTERM')
     } catch (error) {
       if (error.code !== 'ESRCH') return { ok: false, error: `egress_stop_failed: ${error.code || error.message}` }
     }
     // Keep the PID while termination is pending so policy reconciliation can verify/retry it.
-    if (pidAlive(pid)) return { ok: true }
+    if (ownsEgressProcess(pid, path.join(dir, 'egress.json'))) return { ok: true }
   }
   try {
     fs.rmSync(pidFile, { force: true })
@@ -376,7 +395,9 @@ export function stopEgressProcess(projectRoot, proxyId) {
 export function inspectEgressProcess(projectRoot, proxyId) {
   const dir = egressRunDir(projectRoot, proxyId)
   const pid = readPid(path.join(dir, 'egress.pid'))
-  if (!pid || !pidAlive(pid)) return { ok: false, pid: pid || null, reason: 'not_running' }
+  if (!ownsEgressProcess(pid, path.join(dir, 'egress.json'))) {
+    return { ok: false, pid: pid || null, reason: 'not_running' }
+  }
   let listenTcp = ''
   try {
     listenTcp = String(JSON.parse(fs.readFileSync(path.join(dir, 'egress.json'), 'utf8')).listen_tcp || '')

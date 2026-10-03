@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { runInNewContext } from 'node:vm'
+import { listVms, isCodexVm } from '../../src/lib/vm/vm-registry.mjs'
 import {
   needsRefresh,
   expiresAtToMs,
@@ -400,6 +402,57 @@ test('ensureSlotSubscriptionType fills an old credential and keeps an existing p
   assert.deepEqual(ensureSlotSubscriptionType(home, 'pro'), { wrote: false, reason: 'present' })
   fs.rmSync(home, { recursive: true, force: true })
 })
+
+for (const subscriptionType of [undefined, 'pro']) {
+  test(`startup preserves an identified Max plan when the credential contains ${subscriptionType || 'no plan'}`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-startup-plan-'))
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+    const home = path.join(root, 'vms', 'vm-max', 'cli-home')
+    const file = path.join(home, '.claude', 'credentials.json')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const oauth = { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', subscriptionType }
+    fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: oauth, kinGeneration: 42 }))
+    fs.writeFileSync(
+      path.join(root, 'vms', 'vm-max.json'),
+      JSON.stringify({
+        id: 'vm-max',
+        claude: { account_tier: 'max', account_tier_source: 'usage', has_access: true },
+      }),
+    )
+    const source = fs.readFileSync(new URL('../../src/server.mjs', import.meta.url), 'utf8')
+    const start = source.indexOf(
+      'for (const vm of listVms(cfg.paths.project)) {\n  if (isCodexVm(vm)) continue\n  try {\n    ensureSlotSubscriptionType',
+    )
+    assert.ok(start >= 0, 'the startup credential migration must be exercised')
+    const end = source.indexOf('\ncliNodeGuard =', start)
+    assert.ok(end > start)
+    runInNewContext(source.slice(start, end), {
+      listVms,
+      isCodexVm,
+      ensureSlotSubscriptionType,
+      path,
+      cfg: { paths: { project: root } },
+      console,
+    })
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+    assert.equal(doc.claudeAiOauth.subscriptionType, 'max')
+    assert.equal(doc.claudeAiOauth.accessToken, oauth.accessToken)
+    assert.equal(doc.claudeAiOauth.refreshToken, oauth.refreshToken)
+    assert.equal(doc.kinGeneration, 42)
+    const written = fs.readFileSync(file, 'utf8')
+    const mtime = fs.statSync(file).mtimeMs
+    runInNewContext(source.slice(start, end), {
+      listVms,
+      isCodexVm,
+      ensureSlotSubscriptionType,
+      path,
+      cfg: { paths: { project: root } },
+      console,
+    })
+    assert.equal(fs.readFileSync(file, 'utf8'), written)
+    assert.equal(fs.statSync(file).mtimeMs, mtime, 'a correct plan must not rewrite the ticket on every start')
+  })
+}
 
 test('slotUidGidFromHomeDir maps numeric and named slot homes', () => {
   assert.deepEqual(slotUidGidFromHomeDir('/opt/kin-gateway-rust/vms/vm-03/cli-home'), { uid: 10003, gid: 987 })
