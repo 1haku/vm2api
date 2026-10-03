@@ -1,7 +1,6 @@
 import type { Dashboard } from '@/types/panel-overview'
 import type { Vm, VmKernelSnapshot, VmProxySnap } from '@/types/panel-vm'
 import type { StatusTone } from '@/types/status'
-import { credTypeOf } from '@/lib/cred-type'
 import {
   fableCap,
   fableCardInfo,
@@ -316,9 +315,7 @@ export function VmStatusBoard(props: Props) {
                     hint={`${sess.active}/${sess.max}`}
                   />
                 ) : null}
-                {credTypeOf(vm) === 'oauth' ? (
-                  <ClaudeResetActions vm={vm} now={now} />
-                ) : null}
+                <ClaudeResetActions vm={vm} now={now} />
               </>
             )}
           </div>

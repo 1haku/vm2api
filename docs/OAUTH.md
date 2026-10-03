@@ -28,9 +28,9 @@ commitImportedOauth → 仅完整 OAuth 运行模式排队官方 Claude Code 初
 | 入口 | 路径 | 说明 |
 |------|------|------|
 | sessionKey（默认 Setup Token） | `POST /api/panel/vms/import` `{ type: "setup-token", sessionKey }` | `sk-ant-sid*` 经槽位 SOCKS5 申请完整 OAuth scope（profile、inference、sessions、MCP、文件），采集 bootstrap 身份并 PATCH Grove；落盘后以 Setup Token 运行模式执行，不跑官方初装。 |
-| 已有 OAuth → Setup Token | `POST /api/panel/vms/:id/oauth/to-setup-token` | 读 worker 活票，仅切换运行模式；保留 access、refresh、真实过期时间和全部实际 scope。不会凭空增加权限，也不会删 scope。 |
+| 已有 OAuth → Setup Token | `POST /api/panel/vms/:id/oauth/to-setup-token` | 读 worker 活票，仅切换运行模式；保留 access、refresh、真实过期时间和全部实际 scope。不会凭空增加权限，也不会删 scope。官方一年期 token（`official-setup-token`）不能转。 |
+| 官方 `claude setup-token` | 槽内 PTY / 粘贴一年期 oat | 只有 `user:inference`、无 refresh。落盘 `credential_mode=official-setup-token`，与面板转换的完整 Setup Token 区分。 |
 | 授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | CAI、Claude Code、Setup Token flavor 都请求完整 OAuth scope。Setup Token flavor 仍只改变运行模式；服务端 PKCE，30min；无代理不能生成 URL。 |
-| 粘贴授权码 | `POST /api/panel/vms/:id/oauth/exchange-code` | 经槽 SOCKS5 换票，再执行 bootstrap 与 Grove PATCH，最后 `commitImportedOauth`。 |
 
 换出的 access/refresh 只写入 credentials.json。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。Claude 面板默认选 Setup Token + Cookie。
 

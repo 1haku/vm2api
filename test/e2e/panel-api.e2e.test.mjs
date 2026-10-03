@@ -252,7 +252,7 @@ test('pasted setup token survives identity enrichment and persists inference cre
     })
     assert.equal(result.status, 200, result.text)
     const vm = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms', 'vm-sim-01.json'), 'utf8'))
-    assert.equal(vm.claude.mode, 'setup-token')
+    assert.equal(vm.claude.mode, 'official-setup-token')
     assert.equal(vm.claude.has_access, true)
     assert.equal(vm.claude.has_refresh, false)
     assert.equal(vm.claude.scope, 'user:inference')

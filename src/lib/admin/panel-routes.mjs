@@ -32,6 +32,8 @@ import {
 import {
   canOfficialCc,
   isApiKeyMode,
+  isAnySetupTokenMode,
+  isOfficialSetupTokenMode,
   isSetupTokenMode,
   looksLikeConsoleApiKey,
   credentialModeOfVm,
@@ -1905,7 +1907,7 @@ export function createPanelHandler(ctx) {
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'vm not found' } })
         const mode = credentialModeOfVm(vm)
-        if (!isSetupTokenMode(mode) && !isApiKeyMode(mode)) {
+        if (!isAnySetupTokenMode(mode) && !isApiKeyMode(mode)) {
           return json(res, 400, {
             ok: false,
             error: {
@@ -2855,15 +2857,16 @@ export function createPanelHandler(ctx) {
               scope: body.scope || (inference ? 'user:inference' : null),
               source: body.source || (inference ? 'claude-setup-token' : 'access-token'),
             }
-            if (inference) {
+            if (looksLikeOfficialSetupToken(accessToken) || (inference && !String(body.refresh_token || '').trim())) {
+              oauth.type = 'official-setup-token'
+              oauth.mode = 'official-setup-token'
+              oauth.refresh_token = ''
+              oauth.scope = 'user:inference'
+              oauth.source = body.source || 'claude-setup-token'
+              if (!oauth.expires_at) oauth.expires_at = Date.now() + 365 * 24 * 60 * 60 * 1000
+            } else if (inference) {
               oauth.type = 'setup-token'
               oauth.mode = 'setup-token'
-              if (!oauth.refresh_token) {
-                oauth.refresh_token = ''
-                if (!oauth.expires_at) {
-                  oauth.expires_at = Date.now() + 365 * 24 * 60 * 60 * 1000
-                }
-              }
             }
           } else {
             return json(res, 400, { ok: false, error: { message: 'sessionKey or access_token required' } })
@@ -3033,12 +3036,13 @@ export function createPanelHandler(ctx) {
                 proxyUrl: slotProxy.proxyUrl,
                 vmId: id,
               })
-          if (
+          if (looksLikeOfficialSetupToken(code) || oauth.flavor === SETUP_TOKEN_FLAVOR) {
+            oauth.type = 'official-setup-token'
+            oauth.mode = 'official-setup-token'
+          } else if (
             normalizeOauthFlavor(flavor) === 'setup_token' ||
             oauth.flavor === 'setup_token' ||
-            oauth.flavor === 'setup-token' ||
-            oauth.flavor === SETUP_TOKEN_FLAVOR ||
-            looksLikeOfficialSetupToken(code)
+            oauth.flavor === 'setup-token'
           ) {
             oauth.type = 'setup-token'
             oauth.mode = 'setup-token'
@@ -3173,6 +3177,15 @@ export function createPanelHandler(ctx) {
             error: { code: 'credential_kind_mismatch', message: 'Console API Key 不能转为 Setup Token' },
           })
         }
+        if (isOfficialSetupTokenMode(existing.claude?.mode) || isOfficialSetupTokenMode(cred?.type || cred?.mode)) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              code: 'credential_kind_mismatch',
+              message: '官方 Setup Token 只有 inference，不能转为完整 Setup Token',
+            },
+          })
+        }
         if (isSetupTokenMode(existing.claude?.mode) || isSetupTokenMode(cred?.type || cred?.mode)) {
           return json(
             res,
@@ -3260,7 +3273,10 @@ export function createPanelHandler(ctx) {
             error: { code: 'credential_mode_unsupported', message: 'Console API Key 不能刷新' },
           })
         }
-        if (isSetupTokenMode(vm?.claude?.mode) && !vm?.claude?.has_refresh) {
+        if (
+          isOfficialSetupTokenMode(vm?.claude?.mode) ||
+          (isSetupTokenMode(vm?.claude?.mode) && !vm?.claude?.has_refresh)
+        ) {
           return json(res, 400, {
             ok: false,
             error: { code: 'credential_mode_unsupported', message: '官方 Setup Token（无 refresh）不能刷新' },

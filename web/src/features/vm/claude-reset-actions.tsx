@@ -190,7 +190,7 @@ export function ClaudeResetActions({
           />
           {queryCredits.isPending
             ? '查询中'
-            : `查询${credits ? ` ${available}` : ''}`}
+            : `限额查询${credits ? ` ${available}` : ''}`}
         </Button>
         <Button
           size='sm'
@@ -198,8 +198,8 @@ export function ClaudeResetActions({
           disabled={busy || available < 1}
           title={
             available < 1
-              ? '先查询可兑换次数'
-              : `消费 1 / ${available} 次上游限额重置`
+              ? '先查询 Claude 限额重置次数'
+              : `消费 1 / ${available} 次 Claude 限额重置`
           }
           className={
             compact
@@ -211,7 +211,7 @@ export function ClaudeResetActions({
           <RotateCcw
             className={cn('size-3', redeem.isPending && 'animate-spin')}
           />
-          {redeem.isPending ? '使用中' : compact ? '重置' : '使用重置'}
+          {redeem.isPending ? '使用中' : '限额重置'}
         </Button>
       </div>
       {!compact && credits ? (
