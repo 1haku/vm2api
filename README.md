@@ -5,7 +5,7 @@
 ### 完全隔离的虚拟机级 AI 订阅转 API 生产网关
 **Next-Generation Fully Isolated VM-Level AI Subscription-to-API Gateway**
 
-[![Release](https://img.shields.io/badge/Release-v1.3.99-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
+[![Release](https://img.shields.io/badge/Release-v1.3.100-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
 [![License](https://img.shields.io/badge/License-Noncommercial-amber.svg?style=for-the-badge)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-@VM2API-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/VM2API)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Clean%20Verified-00C853?style=for-the-badge&logo=shield)](docs/benchmarks/README.md)
