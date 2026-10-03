@@ -651,7 +651,8 @@ function requireAuth(req, res) {
   // Panel session
   const session = verifyPanelSession(token)
   if (session) {
-    if (String(req.url || '').startsWith('/v1/')) {
+    const authPath = new URL(req.url || '/', 'http://localhost').pathname
+    if (authPath.startsWith('/v1/') && authPath !== '/v1/meta') {
       return rejectAuth(
         req,
         res,
@@ -768,6 +769,24 @@ function requireAuth(req, res) {
     )
   }
   return true
+}
+
+function requireAdminMetadata(req, res) {
+  // Never cache operational details or an authorization failure at a shared proxy.
+  res.setHeader('Cache-Control', 'no-store')
+  if (!requireAuth(req, res)) return false
+  if (req.apiKeyKind === 'master' || (req.panelUser && req.panelRole === 'admin')) return true
+  json(
+    res,
+    403,
+    makeError({
+      type: ErrorType.PERMISSION,
+      code: 'forbidden',
+      message: 'Service metadata requires an administrator',
+      status: 403,
+    }).body,
+  )
+  return false
 }
 
 function fetchWorkerModels() {
@@ -958,26 +977,17 @@ const server = http.createServer(async (req, res) => {
       )
     }
 
-    if (p.startsWith('/admin') || p.startsWith('/api/panel')) {
-      const handled = await handlePanel(req, res, url)
-      if (handled !== false) return
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/') {
+      res.writeHead(302, { Location: '/console/#/login', 'Cache-Control': 'no-store' })
+      return res.end()
     }
 
-    if (req.method === 'GET' && tryServeWebDist(res, cfg.paths.project, p)) return
-    if (req.method === 'GET' && (p === '/console' || p === '/console/')) {
-      return json(res, 404, { error: { message: 'console not found; run pnpm -C web build' } })
-    }
-
-    // CLIProxyAPI-style liveness: no auth, no inference.
-    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/healthz') {
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/api/panel/service-status') {
+      if (!requireAdminMetadata(req, res)) return
       if (req.method === 'HEAD') {
         res.writeHead(200)
         return res.end()
       }
-      return json(res, 200, { status: 'ok' })
-    }
-
-    if (req.method === 'GET' && (p === '/' || p === '/health')) {
       return json(res, 200, {
         status: 'ok',
         service: 'vm2api',
@@ -997,7 +1007,32 @@ const server = http.createServer(async (req, res) => {
       })
     }
 
-    if (req.method === 'GET' && p === '/v1/meta') {
+    if (p.startsWith('/admin') || p.startsWith('/api/panel')) {
+      const handled = await handlePanel(req, res, url)
+      if (handled !== false) return
+    }
+
+    if (req.method === 'GET' && tryServeWebDist(res, cfg.paths.project, p)) return
+    if (req.method === 'GET' && (p === '/console' || p === '/console/')) {
+      return json(res, 404, { error: { message: 'console not found; run pnpm -C web build' } })
+    }
+
+    // CLIProxyAPI-style liveness: no auth, no inference.
+    if ((req.method === 'GET' || req.method === 'HEAD') && (p === '/healthz' || p === '/health')) {
+      res.setHeader('Cache-Control', 'no-store')
+      if (req.method === 'HEAD') {
+        res.writeHead(200)
+        return res.end()
+      }
+      return json(res, 200, { status: 'ok' })
+    }
+
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/v1/meta') {
+      if (!requireAdminMetadata(req, res)) return
+      if (req.method === 'HEAD') {
+        res.writeHead(200)
+        return res.end()
+      }
       return json(res, 200, {
         base_url: cfg.base_url,
         rewrite_default: cfg.rewrite.enabled,

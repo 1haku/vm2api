@@ -26,6 +26,8 @@ v6 合入上游 `362caf9`（1.3.96，包含 1.3.95、OAuth 本地出口、Arch �
 
 ## 合并上游
 
+1.3.98 定制安全修复：根路径重定向登录页，`/health` 与 `/healthz` 仅公开最小存活状态。原详细状态移到管理员接口 `/api/panel/service-status`，`/v1/meta` 增加管理员鉴权，个人 API Key 不能访问两者。GET/HEAD 的匿名、非法凭据、普通用户、运维、管理员会话和 Master Key 都纳入发布回归；数据库与前端资源未修改。
+
 1. 保存当前修改，并给线上版本保留标签及数据库备份。
 2. `git fetch upstream` 和 `git fetch origin` 后，从最新定制 `main` 创建临时合并分支，例如 `git switch -c codex/merge-upstream main`，再 `git merge upstream/main`。若 `origin/main` 有其他人的新提交，先合并这些提交，不强推覆盖。
 3. 检查冲突，重点复核鉴权、请求路由、记账、数据库和前端导航。定制边界主要在 `panel-subscriptions.mjs`、`subscriptions-repo.mjs`、`custom-migrations`、`web/src/features/subscriptions`，但请求鉴权和计费也修改了核心调用链，不能只保留这几个目录就假定合并正确。

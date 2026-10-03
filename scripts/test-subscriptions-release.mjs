@@ -27,7 +27,7 @@ const unit = [
   'request-log',
   'vm-test-chat-billing',
 ]
-const e2e = ['subscriptions', 'slot-plan-startup', 'panel-api', 'auto-mode']
+const e2e = ['subscriptions', 'slot-plan-startup', 'panel-api', 'auto-mode', 'health']
 const result = spawnSync(
   process.execPath,
   [

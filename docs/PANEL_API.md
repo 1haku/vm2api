@@ -8,6 +8,10 @@
 
 ## RBAC
 
+公开入口：`GET/HEAD /` 以 302 跳转到 `/console/#/login`；`GET /health` 和 `/healthz` 只返回 `{"status":"ok"}`，HEAD 不返回正文。公开健康接口不再提供槽位、探测回复或运行统计。
+
+详细状态移到 `GET /api/panel/service-status`（原始状态对象）；`GET /v1/meta` 仍返回原始元数据对象。两者仅允许管理员登录会话或 Master Key，普通用户、运维和个人 API Key 均拒绝，响应带 `Cache-Control: no-store`。面板会话访问 `/v1/meta` 的例外不适用于模型调用接口。
+
 | 角色 | 页面 | 能力 |
 |------|------|------|
 | `user` | 我的订阅 / 使用记录 / 密钥 | 按本人身份查询与记账；旧个人槽位接口仍按属主校验；不能调用公共槽位池 |
