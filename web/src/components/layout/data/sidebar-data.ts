@@ -1,5 +1,4 @@
 import {
-  Activity,
   Boxes,
   Cable,
   Database,
@@ -35,7 +34,6 @@ const ALL_GROUPS: NavGroup[] = [
       { title: '协议', url: '/protocol', icon: Shield },
       { title: 'system提示词', url: '/system', icon: MessageSquareText },
       { title: '密钥', url: '/keys', icon: KeyRound },
-      { title: '压测', url: '/loadtest', icon: Activity },
     ],
   },
   {

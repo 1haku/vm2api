@@ -195,17 +195,13 @@ attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终
 
 流式 usage 由 worker SSE 校验器合并后经 trailer 回传，终态 attempt 只记一次。
 
-## 压测 / 探针
+## 虚拟机测试
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/test-models` | 可测模型。`vm_id` 按槽位平台过滤：GPT/Codex 只返回 `gpt-*`/`codex-*`，Claude 槽不含 GPT。`platform=openai|anthropic` 无 `vm_id` 时同样过滤。GPT 槽 `refresh=1` 经该槽 SOCKS 拉 ChatGPT `/backend-api/models` 并入矩阵，401 不换票。回包带 `platform`、`protocol`（`openai.responses` / `anthropic.messages`）、`inbound_path`。 |
-| POST/GET | `/concurrent-test` | 研报压测；默认并发 10、2 轮、Opus5/Sonnet5/Fable5、预算 32000。走 `/v1` |
-| GET | `/concurrent-tests` · `/concurrent-test-reports` | 历史与落盘报告（`data/loadtests/reports/`） |
-| GET | `/probe-test/catalog` | 能力 / 答题用例 |
-| POST/GET | `/probe-test` · `/probe-tests` | 与研报互斥 |
 
-Claude 槽测试与能力探针走官方 CC 入站（`/v1/messages`）。GPT/Codex 槽测试走 `/v1/responses`。研报保持第三方 UA。
+Claude 槽测试走官方 CC 入站（`/v1/messages`）。GPT/Codex 槽测试走 `/v1/responses`。
 
 ## 备份 / 代理
 
