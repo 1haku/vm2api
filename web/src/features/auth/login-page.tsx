@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { Logo } from '@/assets/logo'
 import { useAuthStore } from '@/stores/auth-store'
 import { loginRequest } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -57,13 +56,7 @@ export function LoginPage() {
           <ThemeSwitch />
         </div>
         <div className='mb-7'>
-          <div className='mb-5 flex items-center gap-2.5'>
-            <span className='grid size-9 place-items-center rounded-lg bg-primary/10 text-primary'>
-              <Logo className='size-5' />
-            </span>
-            <span className='text-lg font-semibold tracking-tight'>vm2api</span>
-          </div>
-          <h1 id='login-title' className='text-xl font-semibold'>
+          <h1 id='login-title' className='pe-12 text-xl font-semibold'>
             登录控制台
           </h1>
         </div>
@@ -109,9 +102,6 @@ export function LoginPage() {
             {pending ? '登录中…' : '登录'}
           </Button>
         </form>
-        <p className='mt-6 text-xs leading-5 text-muted-foreground'>
-          开通账号或重置密码，请联系管理员。
-        </p>
       </section>
     </main>
   )
