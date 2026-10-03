@@ -40,6 +40,8 @@ const result = spawnSync(
   process.execPath,
   [
     '--test',
+    // Native CLI fixtures have a bounded cold-start deadline; avoid starting all test files at once.
+    '--test-concurrency=2',
     ...unit.map((name) => `test/unit/${name}.test.mjs`),
     ...e2e.map((name) => `test/e2e/${name}.e2e.test.mjs`),
   ],
