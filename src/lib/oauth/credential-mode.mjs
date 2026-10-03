@@ -3,6 +3,7 @@
  * and Anthropic Console API Key.
  */
 import { flattenOauthIdentity } from './oauth-identity.mjs'
+import { isCodexVm } from '../vm/vm-kind.mjs'
 
 export const CREDENTIAL_OAUTH = 'oauth'
 export const CREDENTIAL_SETUP_TOKEN = 'setup-token'
@@ -74,6 +75,23 @@ export function credentialModeFromOauth(oauth = {}) {
 
 export function credentialModeOfVm(vm = {}) {
   return normalizeCredentialMode(vm.credential_mode || vm.claude?.mode || vm.claude_mode)
+}
+
+/** Reset credits only. A setup-token label with user:profile is still a full OAuth grant. */
+export function canClaudeResetCredits(vm = {}, { hasToken } = {}) {
+  if (isCodexVm(vm)) return false
+  const mode = credentialModeOfVm(vm)
+  if (isApiKeyMode(mode)) return false
+  const token =
+    hasToken != null
+      ? !!hasToken
+      : !!(vm.has_token || vm.claude?.has_access || vm.claude?.access_token || vm.claude?.refresh_token)
+  if (!token) return false
+  const scope = [vm.claude?.scope, Array.isArray(vm.claude?.scopes) ? vm.claude.scopes.join(' ') : '', vm.oauth_scope]
+    .filter(Boolean)
+    .join(' ')
+  if (/(^|\s)user:profile(\s|$)/.test(scope)) return true
+  return !isSetupTokenMode(mode)
 }
 
 function fail(code, message) {

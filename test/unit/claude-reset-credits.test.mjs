@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { canClaudeResetCredits } from '../../src/lib/oauth/credential-mode.mjs'
 import test from 'node:test'
 import { buildClaudeResetQuery, buildClaudeResetRedeem } from '../../src/lib/admin/panel-api.mjs'
 import {
@@ -186,6 +187,45 @@ test('missing profile scope does not call the worker', async () => {
     },
   })
   assert.equal(result.error, 'CLAUDE_RESET_PROFILE_SCOPE_REQUIRED')
+})
+
+test('setup-token label with user:profile still queries', async () => {
+  const root = rootDir()
+  fs.mkdirSync(path.join(root, 'vms'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'vms', 'vm-03.json'),
+    JSON.stringify({
+      id: 'vm-03',
+      platform: 'anthropic',
+      claude: { mode: 'setup-token', has_access: true, scope: 'user:profile user:inference' },
+    }),
+  )
+  let calls = 0
+  const result = await queryClaudeResetCredits({
+    projectRoot: root,
+    vmId: 'vm-03',
+    transport: async () => {
+      calls += 1
+      return { ok: true, status: 200, body: { cedar_ember: null } }
+    },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(calls, 1)
+  assert.equal(result.claude_reset_credits.available_count, 0)
+  assert.equal(
+    canClaudeResetCredits({
+      platform: 'anthropic',
+      claude: { mode: 'setup-token', has_access: true, scope: 'user:profile user:inference' },
+    }),
+    true,
+  )
+  assert.equal(
+    canClaudeResetCredits({
+      platform: 'anthropic',
+      claude: { mode: 'setup-token', has_access: true, scope: 'user:inference' },
+    }),
+    false,
+  )
 })
 
 test('malformed or absent cedar blocks', () => {

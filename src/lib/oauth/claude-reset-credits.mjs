@@ -9,7 +9,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { runSlotOauth } from '../transport/slot-oauth.mjs'
-import { credentialModeOfVm, isApiKeyMode, isSetupTokenMode } from './credential-mode.mjs'
+import { credentialModeOfVm, isApiKeyMode } from './credential-mode.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { getVm } from '../vm/vm-registry.mjs'
 import { atomicWriteJson, withVmLock } from '../vm/vm-file.mjs'
@@ -198,7 +198,7 @@ function scopeText(vm) {
 function loadAccount(projectRoot, vmId) {
   const vm = getVm(projectRoot, vmId)
   if (!vm) return fail('vm_not_found', 'VM not found', 404)
-  if (isCodexVm(vm) || isApiKeyMode(credentialModeOfVm(vm)) || isSetupTokenMode(credentialModeOfVm(vm))) {
+  if (isCodexVm(vm) || isApiKeyMode(credentialModeOfVm(vm))) {
     return fail('CLAUDE_RESET_OAUTH_REQUIRED', '只有 Claude 完整 OAuth 槽可以兑换原生限额重置', 400)
   }
   const scopes = scopeText(vm).split(/\s+/).filter(Boolean)
