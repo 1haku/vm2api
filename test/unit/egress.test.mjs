@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import {
   LOCAL_EGRESS_ID,
   boundProxyUrl,
@@ -27,7 +29,187 @@ import {
   portsForProxy,
   slotNetworkForVm,
   startEgressProcess,
+  stopEgressProcess,
 } from '../../src/lib/vm/egress.mjs'
+
+const egressBin = path.resolve(import.meta.dirname, '../../bin/kin-egress')
+
+async function waitForProcess(predicate) {
+  for (let i = 0; i < 100; i++) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.fail('process state did not converge')
+}
+
+function egressFixture(t, proxyId = 'px-process') {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-eg-process-'))
+  const dir = egressRunDir(root, proxyId)
+  fs.mkdirSync(dir, { recursive: true })
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const base = {
+    projectRoot: root,
+    proxyId,
+    proxyUrl: 'socks5h://192.0.2.1:1080',
+    listenHost: '127.0.0.1',
+    tcpPort: 0,
+    dnsPort: 0,
+    bin: egressBin,
+  }
+  const pidFile = path.join(dir, 'egress.pid')
+  const configPath = path.join(dir, 'egress.json')
+  const start = (opts = {}) => {
+    const result = startEgressProcess({ ...base, ...opts })
+    if (result.pid)
+      t.after(() => {
+        try {
+          process.kill(result.pid, 'SIGTERM')
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error
+        }
+      })
+    return result
+  }
+  return { root, dir, base, pidFile, configPath, start }
+}
+
+for (const sameConfig of [true, false]) {
+  test(`a recycled PID is neither reused nor killed with ${sameConfig ? 'matching' : 'changed'} egress config`, {
+    skip: process.platform !== 'linux',
+  }, async (t) => {
+    const fx = egressFixture(t)
+    const sleeper = spawn('sleep', ['60'])
+    const closed = once(sleeper, 'close')
+    t.after(async () => {
+      sleeper.kill('SIGTERM')
+      await closed
+    })
+    await once(sleeper, 'spawn')
+    fs.writeFileSync(fx.pidFile, String(sleeper.pid))
+    fs.writeFileSync(
+      fx.configPath,
+      JSON.stringify({
+        listen_tcp: '127.0.0.1:0',
+        listen_dns: '127.0.0.1:0',
+        proxy_url: sameConfig ? fx.base.proxyUrl : 'socks5h://192.0.2.2:1080',
+      }),
+    )
+    const stale = inspectEgressProcess(fx.root, fx.base.proxyId)
+    const started = fx.start()
+    assert.equal(started.ok, true)
+    assert.equal(started.reused, false)
+    assert.notEqual(started.pid, sleeper.pid)
+    await waitForProcess(() => {
+      try {
+        return path.basename(fs.readlinkSync(`/proc/${started.pid}/exe`)) === 'kin-egress'
+      } catch {
+        return false
+      }
+    })
+    assert.equal(inspectEgressProcess(fx.root, fx.base.proxyId).ok, true)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(sleeper.signalCode, null)
+    assert.equal(sleeper.exitCode, null)
+    assert.equal(stale.ok, false, 'sleep is not an egress helper')
+  })
+}
+
+test('stop discards a recycled PID without signaling its new owner', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  const sleeper = spawn('sleep', ['60'])
+  const closed = once(sleeper, 'close')
+  t.after(async () => {
+    sleeper.kill('SIGTERM')
+    await closed
+  })
+  await once(sleeper, 'spawn')
+  fs.writeFileSync(fx.pidFile, String(sleeper.pid))
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(fs.existsSync(fx.pidFile), false)
+  assert.equal(sleeper.signalCode, null)
+  assert.equal(sleeper.exitCode, null)
+})
+
+test('an egress helper can be reused, replaced and stopped only by its own proxy', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  const original = fx.start()
+  await waitForProcess(() => {
+    try {
+      return path.basename(fs.readlinkSync(`/proc/${original.pid}/exe`)) === 'kin-egress'
+    } catch {
+      return false
+    }
+  })
+  const reused = fx.start()
+  assert.equal(reused.reused, true)
+  assert.equal(reused.pid, original.pid)
+  const other = egressRunDir(fx.root, 'px-other')
+  fs.mkdirSync(other, { recursive: true })
+  fs.writeFileSync(path.join(other, 'egress.pid'), String(original.pid))
+  assert.equal(inspectEgressProcess(fx.root, 'px-other').ok, false)
+  assert.equal(stopEgressProcess(fx.root, 'px-other').ok, true)
+  assert.equal(inspectEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  const replacement = fx.start({ proxyUrl: 'socks5h://192.0.2.2:1080' })
+  assert.equal(replacement.reused, false)
+  assert.notEqual(replacement.pid, original.pid)
+  await waitForProcess(() => !fs.existsSync(`/proc/${original.pid}`))
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  await waitForProcess(() => !fs.existsSync(`/proc/${replacement.pid}`))
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  assert.equal(fs.existsSync(fx.pidFile), false)
+})
+
+test('a running egress remains identifiable after its binary was replaced', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  const bin = path.join(fx.root, 'kin-egress')
+  fs.copyFileSync(egressBin, bin)
+  fs.chmodSync(bin, 0o755)
+  const started = fx.start({ bin })
+  await waitForProcess(() => {
+    try {
+      return fs.readlinkSync(`/proc/${started.pid}/exe`) === bin
+    } catch {
+      return false
+    }
+  })
+  fs.unlinkSync(bin)
+  assert.match(fs.readlinkSync(`/proc/${started.pid}/exe`), / \(deleted\)$/)
+  assert.equal(inspectEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  assert.equal(fx.start({ bin }).reused, true)
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  await waitForProcess(() => !fs.existsSync(`/proc/${started.pid}`))
+})
+
+test('redundant separators in an egress config path do not change its owner', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  fs.writeFileSync(
+    fx.configPath,
+    JSON.stringify({ proxy_url: fx.base.proxyUrl, listen_tcp: '127.0.0.1:0', listen_dns: '127.0.0.1:0' }),
+  )
+  const child = spawn(egressBin, ['-config', fx.dir + '//egress.json'], { stdio: 'ignore' })
+  const closed = once(child, 'close')
+  t.after(async () => {
+    child.kill('SIGTERM')
+    await closed
+  })
+  await once(child, 'spawn')
+  fs.writeFileSync(fx.pidFile, String(child.pid))
+  assert.equal(inspectEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  const reused = fx.start()
+  assert.equal(reused.reused, true)
+  assert.equal(reused.pid, child.pid)
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  await closed
+})
 
 test('names stay short and stable per proxy id', () => {
   assert.equal(networkName('px-a1b2c3d4'), 'kin-eg-px-a1b2c3d4')
@@ -256,8 +438,30 @@ test('egress readiness checks the exact listener without opening a connection', 
   const proxyId = 'px-passive-probe'
   const dir = egressRunDir(root, proxyId)
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'egress.pid'), String(process.pid))
   const config = path.join(dir, 'egress.json')
+  const helper = startEgressProcess({
+    projectRoot: root,
+    proxyId,
+    proxyUrl: 'socks5h://192.0.2.1:1080',
+    listenHost: '127.0.0.1',
+    tcpPort: 0,
+    dnsPort: 0,
+    bin: egressBin,
+  })
+  t.after(() => {
+    try {
+      process.kill(helper.pid, 'SIGTERM')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  })
+  await waitForProcess(() => {
+    try {
+      return path.basename(fs.readlinkSync(`/proc/${helper.pid}/exe`)) === 'kin-egress'
+    } catch {
+      return false
+    }
+  })
   const port = listener.address().port
   fs.writeFileSync(config, JSON.stringify({ listen_tcp: `127.0.0.1:${port}` }))
   assert.equal(egressListening(root, proxyId).ok, true)
