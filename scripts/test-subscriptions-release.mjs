@@ -36,6 +36,7 @@ const result = spawnSync(
       ...process.env,
       KIN_AUTOMODE_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
       KIN_AUTOMODE_CLI: '/opt/vm2api/image-wrap-cli/cli-node',
+      KIN_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
     },
   },
 )

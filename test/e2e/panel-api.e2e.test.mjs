@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { REPO_ROOT, startGateway, api } from '../harness.mjs'
+import { FULL_OAUTH_SCOPE } from '../../src/lib/oauth/oauth-contract.mjs'
 
 test('panel login → cookie → /api/panel/me', async () => {
   const gw = await startGateway()
@@ -303,7 +304,8 @@ test('generate-auth-url claude_code flavor then exchange-code', async () => {
     assert.equal(out.flavor, 'claude_code')
     const vm = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms', 'vm-sim-01.json'), 'utf8'))
     assert.match(vm.claude.scope, /user:sessions:claude_code/)
-    assert.doesNotMatch(vm.claude.scope, /user:file_upload/)
+    assert.equal(vm.claude.scope, FULL_OAUTH_SCOPE)
+    assert.equal(new URL(data.auth_url).searchParams.get('scope'), FULL_OAUTH_SCOPE)
   } finally {
     await gw.stop()
   }

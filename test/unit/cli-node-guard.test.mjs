@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { once } from 'node:events'
 import { createCliNodeGuard, selectCliNodePidsToKill } from '../../src/lib/vm/cli-node-guard.mjs'
 
 test('guard shell only signals actual CLI executables, preserving helpers and live shells', {
@@ -41,7 +42,9 @@ test('guard shell only signals actual CLI executables, preserving helpers and li
     await promisify(execFile)('/bin/sh', ['-c', script.replaceAll('/proc/', root + '/'), 'guard', 'live'], {
       timeout: 5000,
     })
-    await new Promise((resolve) => setImmediate(resolve))
+    if (leaked.exitCode === null && leaked.signalCode === null) {
+      await once(leaked, 'exit', { signal: AbortSignal.timeout(3000) })
+    }
     assert.equal(worker.signalCode, null, 'primary worker survives')
     assert.equal(helper.signalCode, null, 'shell mentioning cli-node survives')
     assert.equal(live.signalCode, null, 'connected shell survives')
