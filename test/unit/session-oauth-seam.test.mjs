@@ -49,6 +49,15 @@ test('sessionKeyToOAuth requires a non-empty VM SOCKS5 in production', async () 
   )
 })
 
+// Spawns the shipped bin/kin-oauth-auth: a bundle with an unbound constant
+// fails with ReferenceError before dialing, instead of a transport error.
+test('sessionKeyToOAuth binary dials the claude.ai organizations hop', async () => {
+  await assert.rejects(
+    () => sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', { scope: 'inference', proxyUrl: 'socks5://127.0.0.1:1' }),
+    (e) => e.code === 'get_organizations_transport' && /claude\.ai\/api\/organizations/.test(e.message),
+  )
+})
+
 test('sessionKeyToOAuth on local egress hops without PROXY_URL', { skip: localAuthSkip }, async () => {
   const seen = []
   const cred = await sessionKeyToOAuth('sk-ant-sid01-testaaaaaaaa', {
