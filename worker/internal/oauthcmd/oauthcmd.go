@@ -130,6 +130,9 @@ func Run(args []string, stdin io.Reader, stdout io.Writer) int {
 			return writeAndReturn(stdout, errorEnvelope(0, "invalid_arguments", "invalid count-tokens input"), 2)
 		}
 	case "reset-status":
+		// cedar_ember hides grants unless the caller is the external CLI surface.
+		// The slot telemetry UA is claude-code/<ver>, which upstream answers as ineligible_reason=surface.
+		headers["user-agent"] = claudeResetUserAgent(cfg)
 		headers["x-app"] = "cli"
 		response, err = client.Get(ctx, claudeResetUsagePath, headers)
 	case "reset-redeem":
@@ -149,6 +152,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer) int {
 		if marshalErr != nil {
 			return writeAndReturn(stdout, errorEnvelope(0, "invalid_arguments", "invalid reset redeem request"), 2)
 		}
+		headers["user-agent"] = claudeResetUserAgent(cfg)
 		headers["x-app"] = "cli"
 		response, err = client.Post(ctx, target, payload, headers)
 	}
@@ -211,6 +215,14 @@ func userAgent(cfg config.Config) string {
 		return "claude-cli/" + version + " (external, cli)"
 	}
 	return "claude-cli/2.1.284 (external, cli)"
+}
+
+func claudeResetUserAgent(cfg config.Config) string {
+	version := strings.TrimSpace(cfg.Telemetry.Identity.CLIVersion)
+	if version == "" {
+		version = "2.1.284"
+	}
+	return "claude-cli/" + version + " (external, cli)"
 }
 
 func mergeHeaders(base, extra map[string]string) map[string]string {

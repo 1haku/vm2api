@@ -116,7 +116,7 @@ export type Vm = {
   has_refresh?: boolean
   cred_status?: string | { text?: string; key?: string; tone?: string }
   /**
-   * 凭证类型的权威字段（连字符风格：`oauth` / `setup-token` / `apikey` / `console`）。
+   * 凭证类型的权威字段（`oauth` / `setup-token` / `official-setup-token` / `apikey`）。
    * gateway 的三个 Vm 序列化函数只产出这一个。
    */
   credential_mode?: string
@@ -179,7 +179,8 @@ export type Vm = {
     credits?: Array<{ expires_at?: string }>
     fetched_at?: string
   } | null
-  /** Claude 原生限额重置。只含可展示字段，没有 grant / 组织 ID。 */
+  /** 限额重置按钮。setup-token 标签但 scope 含 user:profile 时也为 true。 */
+  can_claude_reset?: boolean
   claude_reset_credits?: {
     eligible?: boolean
     available_count?: number

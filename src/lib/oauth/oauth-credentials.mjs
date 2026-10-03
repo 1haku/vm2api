@@ -12,7 +12,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
-import { credentialModeFromOauth, isApiKeyMode } from './credential-mode.mjs'
+import {
+  credentialModeFromOauth,
+  isApiKeyMode,
+  isAnySetupTokenMode,
+  isOfficialSetupTokenMode,
+  isSetupTokenMode,
+} from './credential-mode.mjs'
 import { resolveAuthScheme } from './auth-scheme.mjs'
 import { flattenOauthIdentity, normalizeSubscriptionType } from './oauth-identity.mjs'
 
@@ -186,10 +192,15 @@ export function readWorkerCredentialFile(homeDir) {
     const scope = Array.isArray(oauth.scopes) ? oauth.scopes.join(' ') : oauth.scope || null
     const mode = credentialModeFromOauth({
       type: doc.type || oauth.type,
+      mode: doc.mode || oauth.mode,
       scope,
       scopes: oauth.scopes,
       access_token: oauth.accessToken || oauth.access_token,
+      refresh_token: oauth.refreshToken || oauth.refresh_token,
+      source: oauth.source,
+      flavor: oauth.flavor,
     })
+
     return {
       type: mode,
       mode,
@@ -351,7 +362,9 @@ export function writeWorkerCredentialFile(homeDir, cred) {
     : String(n.scope || cred.scope || '')
         .split(/\s+/)
         .filter(Boolean)
-  if (mode === 'setup-token') {
+  if (isOfficialSetupTokenMode(mode)) {
+    scopes = ['user:inference']
+  } else if (isSetupTokenMode(mode)) {
     scopes = scopes.map((s) => (s === 'inference' ? 'user:inference' : s))
     if (!scopes.includes('user:inference')) scopes = ['user:inference']
   }
@@ -368,13 +381,14 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   const oauth = {
     accessToken: n.access_token || '',
   }
-  if (n.refresh_token) oauth.refreshToken = n.refresh_token
+  if (n.refresh_token && !isOfficialSetupTokenMode(mode)) oauth.refreshToken = n.refresh_token
   if (expiresAtMs) oauth.expiresAt = expiresAtMs
   if (n.email) oauth.email = n.email
   if (n.account_uuid) oauth.accountUuid = n.account_uuid
   if (n.org_uuid) oauth.orgUuid = n.org_uuid
   if (scopes.length) oauth.scopes = scopes
-  if (mode === 'setup-token') oauth.type = 'setup-token'
+  if (isAnySetupTokenMode(mode)) oauth.type = mode
+
   if (subscriptionType) oauth.subscriptionType = subscriptionType
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
   ensureSlotClaudeOwnership(homeDir)
@@ -502,9 +516,11 @@ export function persistOauthToVm(vmPath, cred, { acceptLiveGrant = false } = {})
   if (n.email) vm.claude.email = n.email
   if (n.account_uuid) vm.claude.account_uuid = n.account_uuid
   if (n.org_uuid) vm.claude.org_uuid = n.org_uuid
-  if (n.scope) {
-    vm.claude.scope = mode === 'setup-token' && n.scope === 'inference' ? 'user:inference' : n.scope
-  } else if (mode === 'setup-token') {
+  if (isOfficialSetupTokenMode(mode)) {
+    vm.claude.scope = 'user:inference'
+  } else if (n.scope) {
+    vm.claude.scope = isSetupTokenMode(mode) && n.scope === 'inference' ? 'user:inference' : n.scope
+  } else if (isSetupTokenMode(mode)) {
     vm.claude.scope = 'user:inference'
   }
   if (n.source) vm.claude.source = n.source
@@ -522,7 +538,7 @@ export function persistOauthToVm(vmPath, cred, { acceptLiveGrant = false } = {})
     vm.claude.has_refresh = false
     delete vm.claude.expires_at
     delete vm.claude.scope
-  } else if (mode === 'setup-token' && !n.refresh_token) {
+  } else if (isOfficialSetupTokenMode(mode) || (isSetupTokenMode(mode) && !n.refresh_token)) {
     delete vm.claude.has_api_key
     vm.claude.has_refresh = false
   } else {

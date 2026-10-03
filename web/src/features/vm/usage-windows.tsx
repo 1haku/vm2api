@@ -1,6 +1,5 @@
 import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
-import { credTypeOf } from '@/lib/cred-type'
 import {
   expiresAtToMs,
   fmtResetClock,
@@ -149,7 +148,7 @@ export function VmUsageWindows({
           <OpenaiQuotaActions vm={vm} compact />
         </div>
       ) : null}
-      {quotaActions && !codex && credTypeOf(vm) === 'oauth' ? (
+      {quotaActions && !codex ? (
         <div className='pt-0.5'>
           <ClaudeResetActions vm={vm} compact now={now} />
         </div>
