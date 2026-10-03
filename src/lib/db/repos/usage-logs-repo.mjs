@@ -205,7 +205,7 @@ function filterCond({ since = null, until = null, vmId = null, accountId = null 
   return { cond: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params }
 }
 
-/** Same percentile pick as concurrent-test / sub2api ops cards. */
+/** Same percentile pick as sub2api ops cards. */
 export function percentile(sorted, p) {
   if (!sorted.length) return null
   const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))
