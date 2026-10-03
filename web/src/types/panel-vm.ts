@@ -179,7 +179,8 @@ export type Vm = {
     credits?: Array<{ expires_at?: string }>
     fetched_at?: string
   } | null
-  /** Claude 原生限额重置。只含可展示字段，没有 grant / 组织 ID。 */
+  /** 限额重置按钮。setup-token 标签但 scope 含 user:profile 时也为 true。 */
+  can_claude_reset?: boolean
   claude_reset_credits?: {
     eligible?: boolean
     available_count?: number

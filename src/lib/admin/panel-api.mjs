@@ -1613,6 +1613,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     oauth_source: v.oauth_source || null,
     credential_mode: v.credential_mode || v.claude?.mode || 'oauth',
     auth_scheme: v.auth_scheme || v.claude?.auth_scheme || null,
+    can_claude_reset: isCodex ? false : v.can_claude_reset === true,
     has_refresh: !!(v.has_refresh || workerCred?.has_refresh),
     has_session_key: !!v.has_session_key,
     proxy: merged.proxy,
