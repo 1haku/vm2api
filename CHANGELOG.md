@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 1.3.102 — 2026-10-04
+
+- 修复 SSH 扩展节点的 SOCKS5 槽在换票提交时启动失败：远端 `egress.json` 字符串先编码为 Buffer，再按字节分块写入 SFTP，避免 `buffer is not a Buffer`；原子替换和 0600 权限不变。
+- 修复 Cookie（sessionKey）换票的 authorize 请求漏传 `organization_uuid`，被上游以 400 `Invalid request format` 拒绝；重编 `bin/kin-oauth-auth`，授权码换票协议不变。
+
+已部署机升级：更新 Node 控制面（`src/`）、`bin/kin-oauth-auth` 和 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.101 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.101 — 2026-10-04
+
+- 修复 OAuth 凭证刷新、落盘更新及 401 恢复触发共享 kernel/CLI 重启，导致同槽其它并发请求断流的问题（#224）。CLI 在创建 API client 前读取最新凭证；刷新后仅重试当前请求，保留在途请求及现有进程。
+- 修复启动时读取 VM 摘要中的套餐字段错误，把 Max 槽凭证写成 Pro 的问题（#226）。按已识别的 Max 套餐修复历史 Pro 默认值，保留 token、凭证 generation 和其它有效套餐。
+- 修复出口 PID 文件过期或 PID 被复用时误认进程、误发 SIGTERM 的问题（#227）。启动、停止和探测均核对 kin-egress 可执行文件及其配置路径，兼容已替换的可执行文件和等价路径写法。
+- 重新构建控制台产物，与当前前端源码保持一致。
+
+已部署机升级：更新 Node 控制面（`src/`）和 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` 与 1.3.100 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.100 — 2026-10-04
+
+- 下线控制台压测页（研报并发、能力/答题探针）及对应管理 API（`/api/panel/concurrent-test*`、`/api/panel/probe-test*`）。侧栏不再显示「压测」。虚拟机测试与 `GET /api/panel/test-models` 保留。
+
+已部署机升级：更新 Node 控制面（`src/`）和 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` 与 1.3.99 相同，**不需要 `wrap-cli/sync`**。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.99 — 2026-10-03
+
+- 修复 GPT 槽（无 `account_uuid`、用量行 `account_id` 等于槽 id 且没有 email）在 VM 页被当成 leftover，累计/窗口费用显示 $0。`lemeryvorhees@gmail.com`（`vm-codex-01`）日志里有费用，`vm-01` 因为用量行带着 email 所以正常。现在 leftover 判定与后端一致：没有 uuid 的槽保留该行；`/usage` 用槽 email 补上；`GET /api/panel/vms` 也盖费用字段。
+
+已部署机升级：更新 Node 控制面（`src/`）和 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` 与 1.3.98 相同，**不需要 `wrap-cli/sync`**。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.98 — 2026-10-03
 
 - Codex hop 把公开 API 的 `service_tier: "fast"` 改写成官方线值 `priority`，并在 kernel envelope 里带上 Codex 兼容头和 `x-codex-routing-hint`。客户端 Authorization 不转发，由 kernel 贴所选 OAuth。`bin/kin-codex-kernel` 按 codex-proxy-rs 出站契约补齐：body 规范化（`store=false`、string input、system→developer、拒绝字段剥离）、默认 originator/version、≥15MiB 先 HTTP、WS close 1009 不当传输重试、SOCKS5/`socks5h` 含 IPv6 literal。Unix-socket 查询契约不变。已运行的 Codex kernel 进程要重启；不要 `docker rm`。

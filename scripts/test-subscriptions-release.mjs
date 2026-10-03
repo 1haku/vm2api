@@ -26,8 +26,16 @@ const unit = [
   'guest-identity-reader',
   'request-log',
   'vm-test-chat-billing',
+  'panel-billing-lookup',
+  'panel-route-coverage',
+  'kernel-router',
+  'outbound-parity',
+  'distill-detect',
+  'remote-fs',
+  'egress',
+  'oauth-binary',
 ]
-const e2e = ['subscriptions', 'slot-plan-startup', 'panel-api', 'auto-mode', 'health']
+const e2e = ['subscriptions', 'slot-plan-startup', 'panel-api', 'auto-mode', 'health', 'credential-rotation']
 const result = spawnSync(
   process.execPath,
   [
@@ -42,6 +50,7 @@ const result = spawnSync(
       KIN_AUTOMODE_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
       KIN_AUTOMODE_CLI: '/opt/vm2api/image-wrap-cli/cli-node',
       KIN_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
+      KIN_EGRESS_BIN: '/opt/vm2api/image-bin/kin-egress',
     },
   },
 )

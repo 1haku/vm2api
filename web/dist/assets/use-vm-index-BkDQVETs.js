@@ -1,1 +1,0 @@
-import{F as e,M as t}from"./button-DPtbF4F_.js";import{t as n}from"./useQuery-PKaaFnZO.js";import{r}from"./vm-kind-BsatQoBI.js";import{t as i}from"./queries-B7WBs2Km.js";var a=e(t(),1);function o(){let e=n(i());return{vms:(0,a.useMemo)(()=>r(e.data?.vms),[e.data?.vms]),list:e.data?.vms||[],isLoading:e.isLoading}}export{o as t};

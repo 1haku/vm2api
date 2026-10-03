@@ -2,7 +2,6 @@ import {
   Box,
   Database,
   Download,
-  Gauge,
   KeyRound,
   LayoutDashboard,
   LineChart,
@@ -28,7 +27,6 @@ export type ViewId =
   | 'billing'
   | 'proxies'
   | 'models'
-  | 'loadtest'
   | 'protocol'
   | 'system'
   | 'keys'
@@ -50,7 +48,6 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   billing: '计费',
   proxies: '代理池',
   models: '模型',
-  loadtest: '压测',
   protocol: '协议',
   system: 'system提示词',
   keys: '密钥',
@@ -77,7 +74,6 @@ export const NAV_ITEMS: {
   { id: 'billing', url: '/billing', icon: LineChart },
   { id: 'proxies', url: '/proxies', icon: Shield },
   { id: 'models', url: '/models', icon: List },
-  { id: 'loadtest', url: '/loadtest/reports', icon: Gauge },
   { id: 'protocol', url: '/protocol', icon: Box },
   { id: 'system', url: '/system', icon: MessageSquareText },
   { id: 'keys', url: '/keys', icon: KeyRound },
