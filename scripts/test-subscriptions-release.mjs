@@ -17,6 +17,8 @@ const unit = [
   'claude-reset-credits',
   'auto-mode',
   'auto-mode-api',
+  'crs-persona',
+  'official-fingerprint',
   'failover-runner',
   'guest-identity-reader',
   'request-log',

@@ -53,14 +53,16 @@ test('classifier rejection releases subscription reservations without charging o
     assert.equal(afterReject.pending_cost, 0)
     assert.equal(afterReject.daily_used, 0)
     // The mock runtime has no classifier capability: rejection must also release its reserved seat.
-    const unsupported = await call(classifierFixture())
-    assert.equal(unsupported.status, 400, unsupported.text)
-    assert.equal(unsupported.json.error.code, 'classifier_runtime_unsupported')
-    const afterUnsupported = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find(
-      (s) => s.id === subId,
-    )
-    assert.equal(afterUnsupported.pending_cost, 0)
-    assert.equal(afterUnsupported.daily_used, 0)
+    for (const verdict of ['block', 'severity']) {
+      const unsupported = await call(classifierFixture({ verdict }))
+      assert.equal(unsupported.status, 400, unsupported.text)
+      assert.equal(unsupported.json.error.code, 'classifier_runtime_unsupported')
+      const afterUnsupported = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find(
+        (s) => s.id === subId,
+      )
+      assert.equal(afterUnsupported.pending_cost, 0)
+      assert.equal(afterUnsupported.daily_used, 0)
+    }
     const accepted = await call({
       model: 'claude-sonnet-4-6',
       max_tokens: 64,
@@ -72,7 +74,7 @@ test('classifier rejection releases subscription reservations without charging o
     assert.ok(after.daily_used > 0)
     assert.equal(after.pending_cost, 0)
     const logs = await api(gw, 'GET', `/api/panel/usage-records?group_id=${sub.group_id}`)
-    assert.equal(logs.json.data.total, 3, logs.text)
+    assert.equal(logs.json.data.total, 4, logs.text)
     assert.ok(
       logs.json.data.items.every((r) => r.user_id === user.json.data.item.id && r.api_key_id === key.json.item.id),
     )
@@ -81,6 +83,7 @@ test('classifier rejection releases subscription reservations without charging o
       200,
     )
     assert.equal((await call(classifierFixture())).status, 403)
+    assert.equal((await call(classifierFixture({ verdict: 'severity' }))).status, 403)
   } finally {
     await gw.stop()
   }

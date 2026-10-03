@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.97 — 2026-10-03
+
+- 修复 Claude Code 2.1.283+ 的 auto mode 分类请求（输出 `<severity>N</severity>`，`stop_sequences: ["</severity>"]`）不被识别为官方流量、被按 `official_full` 改写的问题（#220）。改写后分类提示词被换成官方 CLI 提示词，原缓存标记失效，`max_tokens` 64 被 `min_max_tokens` 抬到 128，费用放大且部分结论被截断。现在官方身份和分类用途共用同一套识别：security monitor 前缀 + 规则段标记，判决格式（`<block>`、`<severity>`、`classify_result`）只决定透传方式，不再参与识别；transcript 拆成多条 user 消息也能识别。kernel 与 cli-node 对 XML 分类的一致性校验同样去掉 `<block>` 要求，只看 “无 `tool_choice` + 含 `<transcript>`”。重编 `bin/kin-kernel`、`share/wrap-cli/kin-kernel.bin` 和 UPX 压缩的 `share/wrap-cli/cli-node`。
+
+已部署机升级：更新 Node 控制面（`src/`）、`bin/kin-kernel`、`share/wrap-cli/kin-kernel.bin`、`share/wrap-cli/cli-node`，重启一次 Node，**需要 `wrap-cli/sync`**。Node 与 kernel/CLI 必须一起更新：只换 Node 时 `<severity>` 分类会被旧 kernel 以 400 `invalid_request_context` 拒绝。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.96 — 2026-10-03
 
 - 修复绑定本地出口（`px-local`）的槽生成授权链接时报「该槽未绑定健康的 SOCKS5」/「虚拟机未绑定 SOCKS5，请先分配代理再生成授权链接」。本地出口没有 SOCKS URL，控制面按约定传空串表示直连，但授权链接入口和 `kin-oauth-auth` 把空串当成未绑定。现在空串按宿主机默认路由直连：授权链接、粘贴授权码换票和 sessionKey 导入都可用于本地出口槽。未绑定出口（`null`）仍拒绝，远程 SOCKS5 行为不变。

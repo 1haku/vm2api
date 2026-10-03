@@ -9,7 +9,7 @@ import {
 } from '../../src/lib/protocol/request-purpose.mjs'
 import { mapUpstreamError } from '../../src/lib/core/errors.mjs'
 import { classifyUpstreamResult } from '../../src/lib/pool/upstream-error-policy.mjs'
-import { isProxiedOfficialClaudeCode } from '../../src/lib/identity/crs-persona.mjs'
+import { isOfficialClaudeCodeTraffic, isProxiedOfficialClaudeCode } from '../../src/lib/identity/crs-persona.mjs'
 
 const context = { purpose: 'auto_mode_classifier', format: 'xml', stage: 'xml_s1' }
 test('classifier assembly retains caller fields across both outbound paths', () => {
@@ -30,30 +30,52 @@ test('classifier assembly retains caller fields across both outbound paths', () 
   }
 })
 
-for (const stage of ['xml_s1', 'fast', 'xml_s2'])
-  test(`recognizes XML ${stage} from contract and suffix`, () => {
-    const input = classifierFixture({ stage })
-    assert.deepEqual(classifyClaudeRequestPurpose(input, { officialTraffic: true }), {
-      purpose: 'auto_mode_classifier',
-      format: 'xml',
-      stage,
+for (const verdict of ['block', 'severity'])
+  for (const stage of ['xml_s1', 'fast', 'xml_s2'])
+    test(`recognizes ${verdict} XML ${stage} from the wire contract`, () => {
+      const input = classifierFixture({ stage, verdict })
+      assert.deepEqual(classifyClaudeRequestPurpose(input, { officialTraffic: true }), {
+        purpose: 'auto_mode_classifier',
+        format: 'xml',
+        stage,
+      })
+      assert.equal(classifyClaudeRequestPurpose(input), null)
+      const withBilling = structuredClone(input)
+      withBilling.system.unshift({ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.284;' })
+      assert.deepEqual(classifyClaudeRequestPurpose(withBilling, { officialTraffic: true }), {
+        purpose: 'auto_mode_classifier',
+        format: 'xml',
+        stage,
+      })
+      for (const max_tokens of [64, 256, 4096, 345]) {
+        const body = prepareClassifierBody({ ...input, max_tokens })
+        assert.equal(body.max_tokens, max_tokens)
+        assert.equal(body.temperature, 0)
+        assert.deepEqual(body.stop_sequences, input.stop_sequences)
+      }
     })
-    assert.equal(classifyClaudeRequestPurpose(input), null)
-    const withBilling = structuredClone(input)
-    withBilling.system.unshift({ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.284;' })
-    assert.deepEqual(classifyClaudeRequestPurpose(withBilling, { officialTraffic: true }), {
-      purpose: 'auto_mode_classifier',
-      format: 'xml',
-      stage,
-    })
-    for (const max_tokens of [64, 256, 4096, 345]) {
-      const body = prepareClassifierBody({ ...input, max_tokens })
-      assert.equal(body.max_tokens, max_tokens)
-      assert.equal(body.temperature, 0)
-    }
-  })
 
-test('legacy classifier requires output instruction, schema and named choice together', () => {
+test('#220 severity classifier without billing is official CLI traffic', () => {
+  const input = classifierFixture({ verdict: 'severity' })
+  input.metadata = { user_id: { device_id: 'fixture-device', session_id: 'fixture-session' } }
+  input.system.push({ type: 'text', text: '## Session Context\nCWD: /work' })
+  const headers = { 'user-agent': 'claude-cli/2.1.283 (external, cli)' }
+  assert.equal(isOfficialClaudeCodeTraffic(headers, input), true)
+  assert.deepEqual(classifyClaudeRequestPurpose(input, { officialTraffic: true }), context)
+  const body = prepareClassifierBody(input)
+  assert.equal(body.max_tokens, 64)
+  assert.deepEqual(body.stop_sequences, ['</severity>'])
+  assert.deepEqual(body.thinking, { type: 'disabled' })
+  assert.deepEqual(body.system, input.system)
+})
+
+test('transcript split across user messages is still one classifier request', () => {
+  const input = classifierFixture({ verdict: 'severity' })
+  input.messages = input.messages[0].content.map((block) => ({ role: 'user', content: [block] }))
+  assert.deepEqual(classifyClaudeRequestPurpose(input, { officialTraffic: true }), context)
+})
+
+test('legacy classifier requires schema and named choice together', () => {
   const input = classifierFixture({ format: 'tool' })
   assert.deepEqual(classifyClaudeRequestPurpose(input, { officialTraffic: true }), {
     purpose: 'auto_mode_classifier',
@@ -64,6 +86,9 @@ test('legacy classifier requires output instruction, schema and named choice tog
   assert.deepEqual(body.tool_choice, input.tool_choice)
   delete input.tools[0].input_schema.properties.shouldBlock
   assert.equal(classifyClaudeRequestPurpose(input, { officialTraffic: true }), null)
+  const auto = classifierFixture()
+  auto.tool_choice = { type: 'auto' }
+  assert.equal(classifyClaudeRequestPurpose(auto, { officialTraffic: true }), null)
 })
 
 test('recognizes the actual string encoding of WebSearch, WebFetch and JSONL actions', () => {
@@ -82,9 +107,12 @@ test('recognizes the actual string encoding of WebSearch, WebFetch and JSONL act
 })
 
 test('strong classifier rules identify relayed official traffic without billing', () => {
-  for (const format of ['xml', 'tool']) {
-    const input = classifierFixture({ format })
-    input.system[0].text += '\n' + 'Synthetic policy details. '.repeat(450)
+  for (const [format, verdict] of [
+    ['xml', 'block'],
+    ['xml', 'severity'],
+    ['tool', 'block'],
+  ]) {
+    const input = classifierFixture({ format, verdict })
     input.metadata = { user_id: { device_id: 'fixture-device', session_id: 'fixture-session' } }
     const headers = { 'user-agent': 'Go-http-client/1.1', 'anthropic-beta': 'claude-code-20250219' }
     assert.equal(isProxiedOfficialClaudeCode(input, headers), true)
@@ -104,8 +132,11 @@ test('strong classifier rules identify relayed official traffic without billing'
 })
 
 test('phrase, same-name tool, short budget or public context cannot set purpose', () => {
+  const missingRules = classifierFixture({ verdict: 'severity' })
+  missingRules.system[0].text = missingRules.system[0].text.replace('## HARD BLOCK', '')
   for (const input of [
     { ...classifierFixture(), system: 'You are a security monitor for autonomous AI coding agents.' },
+    missingRules,
     { ...classifierFixture(), messages: [{ role: 'user', content: 'WebSearch documentation' }] },
     { ...classifierFixture({ format: 'tool' }), system: 'Use classify_result to summarize search' },
     {
