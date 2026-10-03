@@ -28,6 +28,7 @@ import {
 } from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
 import { queryOpenaiQuota, resetOpenaiQuota } from '../oauth/openai-quota.mjs'
+import { queryClaudeResetCredits, redeemClaudeResetCredit } from '../oauth/claude-reset-credits.mjs'
 import { canOfficialUsage, credentialModeOfVm, isSetupTokenMode } from '../oauth/credential-mode.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
@@ -748,6 +749,56 @@ export async function buildOpenaiQuotaReset({ cfg, id, rotate = true } = {}) {
   return ok({
     vm_id: id,
     source: 'openai-wham-reset',
+    ...result,
+  })
+}
+
+function claudeResetFail(result) {
+  const status = result.status || 400
+  return fail(
+    makeError({
+      type:
+        status === 404
+          ? ErrorType.NOT_FOUND
+          : status >= 500
+            ? ErrorType.UPSTREAM
+            : status === 409
+              ? ErrorType.API
+              : ErrorType.INVALID_REQUEST,
+      code: result.error || 'claude_reset_failed',
+      message: result.message || 'Claude 限额重置失败',
+      status,
+    }),
+  )
+}
+
+export async function buildClaudeResetQuery({ cfg, id, transport, now } = {}) {
+  const result = await queryClaudeResetCredits({
+    projectRoot: cfg.paths.project,
+    vmId: id,
+    ...(transport ? { transport } : {}),
+    ...(now ? { now } : {}),
+  })
+  if (!result.ok) return claudeResetFail(result)
+  return ok({
+    vm_id: id,
+    source: 'claude-reset-credits',
+    ...result,
+  })
+}
+
+export async function buildClaudeResetRedeem({ cfg, id, idempotencyKey, transport, now } = {}) {
+  const result = await redeemClaudeResetCredit({
+    projectRoot: cfg.paths.project,
+    vmId: id,
+    idempotencyKey,
+    ...(transport ? { transport } : {}),
+    ...(now ? { now } : {}),
+  })
+  if (!result.ok) return claudeResetFail(result)
+  return ok({
+    vm_id: id,
+    source: 'claude-reset-redeem',
     ...result,
   })
 }
@@ -1562,6 +1613,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     oauth_source: v.oauth_source || null,
     credential_mode: v.credential_mode || v.claude?.mode || 'oauth',
     auth_scheme: v.auth_scheme || v.claude?.auth_scheme || null,
+    can_claude_reset: isCodex ? false : v.can_claude_reset === true,
     has_refresh: !!(v.has_refresh || workerCred?.has_refresh),
     has_session_key: !!v.has_session_key,
     proxy: merged.proxy,
@@ -1597,6 +1649,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     status_7d_oi: isCodex ? null : q.status_7d_oi,
     codex_usage: v.codex_usage || null,
     reset_credits: isCodex ? v.reset_credits || v.codex?.reset_credits || null : null,
+    claude_reset_credits: isCodex ? null : v.claude_reset_credits || null,
     plan_type: isCodex ? v.plan_type || null : null,
     ...(q.weekly_split ? { weekly_split: q.weekly_split } : {}),
     fable_inflight: fablePool.fable_inflight,

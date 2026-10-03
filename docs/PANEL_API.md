@@ -104,7 +104,7 @@
 | POST | `/vms/reconcile-fingerprints` | 用官方 `~/.claude.json` 对齐指纹 |
 | POST | `/probe` | 全量额度探测 |
 | GET/POST | `/health-probe` | 读/跑官方 hello 健康探测缓存 |
-| GET | `/usage` | 用量汇总（含缓存 token、官方价；账号行 `credential_mode` = `oauth` / `setup-token` / `apikey`） |
+| GET | `/usage` | 用量汇总（含缓存 token、官方价；账号行 `credential_mode` = `oauth` / `setup-token` / `official-setup-token` / `apikey`） |
 | GET | `/models` | 策略目录（不 hop worker） |
 | GET | `/oauth` | 全槽脱敏 credential |
 

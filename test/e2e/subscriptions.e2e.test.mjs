@@ -2,6 +2,89 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import WebSocket from 'ws'
 import { startGateway, api } from '../harness.mjs'
+import { classifierFixture } from '../fixtures/auto-mode.mjs'
+
+test('classifier rejection releases subscription reservations without charging or bypassing revocation', async () => {
+  const gw = await startGateway()
+  try {
+    const user = await api(gw, 'POST', '/api/panel/users', {
+      body: { username: 'classifier-subscriber', password: 'test-password-123', role: 'user' },
+    })
+    assert.equal(user.status, 201, user.text)
+    const assigned = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: {
+        plan: {
+          name: 'Classifier plan',
+          platform: 'claude',
+          vm_ids: ['vm-sim-01'],
+          daily_limit_usd: 30,
+          subscription_concurrency: 1,
+        },
+        user_ids: [user.json.data.item.id],
+      },
+    })
+    assert.equal(assigned.status, 200, assigned.text)
+    const subId = assigned.json.data.ids[0]
+    const sub = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === subId)
+    const key = await api(gw, 'POST', '/api/panel/api-keys', {
+      body: { name: 'classifier', group_id: sub.group_id, user_id: user.json.data.item.id },
+    })
+    assert.equal(key.status, 201, key.text)
+    const call = (body) =>
+      api(gw, 'POST', '/v1/messages', {
+        headers: {
+          authorization: `Bearer ${key.json.item.key}`,
+          'user-agent': 'claude-cli/2.1.284 (external, sdk-cli)',
+          'x-kin-log': 'off',
+        },
+        body: {
+          ...body,
+          metadata: { user_id: { device_id: 'fixture-device', session_id: 'fixture-session' } },
+          system: [
+            { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.284; cc_entrypoint=sdk-cli; cch=00000;' },
+            ...body.system,
+          ],
+        },
+      })
+    const rejected = await call({ ...classifierFixture(), thinking: { type: 'invalid' } })
+    assert.equal(rejected.status, 400, rejected.text)
+    assert.equal(rejected.json.error.code, 'classifier_model_incompatible')
+    const afterReject = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === subId)
+    assert.equal(afterReject.pending_cost, 0)
+    assert.equal(afterReject.daily_used, 0)
+    // The mock runtime has no classifier capability: rejection must also release its reserved seat.
+    const unsupported = await call(classifierFixture())
+    assert.equal(unsupported.status, 400, unsupported.text)
+    assert.equal(unsupported.json.error.code, 'classifier_runtime_unsupported')
+    const afterUnsupported = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find(
+      (s) => s.id === subId,
+    )
+    assert.equal(afterUnsupported.pending_cost, 0)
+    assert.equal(afterUnsupported.daily_used, 0)
+    const accepted = await call({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 64,
+      system: [],
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    assert.equal(accepted.status, 200, accepted.text)
+    const after = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === subId)
+    assert.ok(after.daily_used > 0)
+    assert.equal(after.pending_cost, 0)
+    const logs = await api(gw, 'GET', `/api/panel/usage-records?group_id=${sub.group_id}`)
+    assert.equal(logs.json.data.total, 3, logs.text)
+    assert.ok(
+      logs.json.data.items.every((r) => r.user_id === user.json.data.item.id && r.api_key_id === key.json.item.id),
+    )
+    assert.equal(
+      (await api(gw, 'PATCH', `/api/panel/subscriptions/${subId}`, { body: { status: 'revoked' } })).status,
+      200,
+    )
+    assert.equal((await call(classifierFixture())).status, 403)
+  } finally {
+    await gw.stop()
+  }
+})
 
 test('guided provisioning creates plan and assignments atomically', async () => {
   const gw = await startGateway()

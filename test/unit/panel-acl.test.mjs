@@ -89,6 +89,14 @@ test('admin is unrestricted', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'admin').ok, true)
 })
 
+test('Claude native reset routes remain administrator-only', () => {
+  for (const action of ['query', 'redeem']) {
+    const path = `/api/panel/vms/vm-01/claude-reset/${action}`
+    assert.equal(authorizePanelRoute('POST', path, 'admin').ok, true)
+    for (const role of ['user', 'super']) assert.equal(authorizePanelRoute('POST', path, role).ok, false)
+  }
+})
+
 test('managed keys cannot bypass admin role checks through models refresh', async () => {
   let authCalls = 0
   const response = {}

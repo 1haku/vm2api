@@ -306,7 +306,7 @@ test('readWorkerCredentialFile infers setup-token from inference-only scopes', (
   assert.equal(cred.scope, 'user:inference')
 })
 
-test('writeWorkerCredentialFile maps setup-token inference scope to user:inference', () => {
+test('writeWorkerCredentialFile maps inference-only oats to official-setup-token', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-scope-'))
   writeWorkerCredentialFile(home, {
     type: 'setup-token',
@@ -314,9 +314,10 @@ test('writeWorkerCredentialFile maps setup-token inference scope to user:inferen
     scope: 'inference',
   })
   const cred = readWorkerCredentialFile(home)
-  assert.equal(cred.type, 'setup-token')
+  assert.equal(cred.type, 'official-setup-token')
   assert.equal(cred.scope, 'user:inference')
   const raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
+  assert.equal(raw.type, 'official-setup-token')
   assert.deepEqual(raw.claudeAiOauth.scopes, ['user:inference'])
   fs.rmSync(home, { recursive: true, force: true })
 })
@@ -489,7 +490,7 @@ test('official setup-token persist omits refresh and marks mode', () => {
     { acceptLiveGrant: true },
   )
   const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-  assert.equal(vm.claude.mode, 'setup-token')
+  assert.equal(vm.claude.mode, 'official-setup-token')
   assert.equal(vm.claude.has_access, true)
   assert.equal(vm.claude.has_refresh, false)
   assert.equal(vm.claude.source, 'claude-setup-token')
@@ -503,10 +504,10 @@ test('official setup-token persist omits refresh and marks mode', () => {
     scope: 'user:inference',
   })
   const raw = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'credentials.json'), 'utf8'))
-  assert.equal(raw.type, 'setup-token')
-  assert.equal(raw.claudeAiOauth.type, 'setup-token')
+  assert.equal(raw.type, 'official-setup-token')
+  assert.equal(raw.claudeAiOauth.type, 'official-setup-token')
   assert.ok(!Object.prototype.hasOwnProperty.call(raw.claudeAiOauth, 'refreshToken'))
   const cred = readWorkerCredentialFile(home)
-  assert.equal(cred.type, 'setup-token')
+  assert.equal(cred.type, 'official-setup-token')
   assert.equal(cred.refresh_token, '')
 })

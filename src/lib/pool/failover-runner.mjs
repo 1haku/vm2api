@@ -283,6 +283,7 @@ function emptyHopReleased(result) {
 
 /** Hidden transport / credential retries inside one hop still spend that unit's budget. */
 function executionsOf(result) {
+  if (result?.upstreamExecutions === 0) return 0
   return 1 + (result?.rust_transport_retried ? 1 : 0) + (result?.credential_retried ? 1 : 0)
 }
 
@@ -664,7 +665,8 @@ export class FailoverRunner {
       const noteHop = (value) => {
         if (hopNoted) return
         hopNoted = true
-        budget.noteHop(selected.accountId, selected.vmId, executionsOf(value))
+        const executions = executionsOf(value)
+        if (executions > 0) budget.noteHop(selected.accountId, selected.vmId, executions)
       }
       try {
         const prepared =

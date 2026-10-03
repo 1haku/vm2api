@@ -244,6 +244,26 @@ test('generate-auth-url then exchange-code writes fake oauth', async () => {
   }
 })
 
+test('local egress slot generates auth url and exchanges code', async () => {
+  const gw = await startGateway({ oauth: false })
+  try {
+    const bind = await api(gw, 'POST', '/api/panel/proxies/px-local/bind', { body: { vm_id: 'vm-sim-01' } })
+    assert.equal(bind.status, 200, bind.text)
+    const vm = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms', 'vm-sim-01.json'), 'utf8'))
+    assert.equal(vm.proxy?.id, 'px-local')
+    const gen = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/oauth/generate-auth-url', { body: {} })
+    assert.equal(gen.status, 200, gen.text)
+    const data = gen.json.data || gen.json
+    const ex = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/oauth/exchange-code', {
+      body: { session_id: data.session_id, code: 'pasted-auth-code' },
+    })
+    assert.equal(ex.status, 200, ex.text)
+    assert.equal((ex.json.data || ex.json).oauth_email, 'fake-oauth@kin.test')
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('pasted setup token survives identity enrichment and persists inference credentials', async () => {
   const gw = await startGateway({ oauth: false })
   try {
@@ -252,7 +272,7 @@ test('pasted setup token survives identity enrichment and persists inference cre
     })
     assert.equal(result.status, 200, result.text)
     const vm = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms', 'vm-sim-01.json'), 'utf8'))
-    assert.equal(vm.claude.mode, 'setup-token')
+    assert.equal(vm.claude.mode, 'official-setup-token')
     assert.equal(vm.claude.has_access, true)
     assert.equal(vm.claude.has_refresh, false)
     assert.equal(vm.claude.scope, 'user:inference')
