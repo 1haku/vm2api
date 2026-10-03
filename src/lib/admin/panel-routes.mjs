@@ -66,15 +66,6 @@ import { refreshCodexAccessToken } from '../protocol/codex-models.mjs'
 import { defaultSeedPolicy, seedTelemetryContract, standardSeedPolicy } from '../protocol/seed-policy.mjs'
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
-import {
-  startConcurrentTest,
-  getConcurrentTest,
-  listConcurrentTests,
-  cancelConcurrentTest,
-  listSavedReports,
-  readSavedReport,
-} from './concurrent-test.mjs'
-import { startProbeTest, getProbeTest, listProbeTests, cancelProbeTest, getProbeCatalog } from './probe-test.mjs'
 import { publicKeyView } from './api-keys.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
 import { publicUserView } from './panel-users.mjs'
@@ -1976,109 +1967,6 @@ export function createPanelHandler(ctx) {
           refresh,
         })
         return json(res, 200, panel.ok(payload))
-      }
-
-      // Concurrent persistent-conversation load test
-      if (req.method === 'POST' && p === '/api/panel/concurrent-test') {
-        const body = await readBody(req, 32 * 1024).catch(() => ({}))
-        const result = startConcurrentTest({
-          concurrency: body.concurrency,
-          turns: body.turns,
-          models: body.models,
-          stocks: body.stocks,
-          max_tokens: body.max_tokens,
-          stream: body.stream,
-          timeout_ms: body.timeout_ms,
-          baseUrl: `http://127.0.0.1:${cfg.port}`,
-          apiKey: cfg.api_key,
-          dataDir: cfg.paths?.data || path.join(cfg.paths.project, 'data'),
-        })
-        if (!result.ok) {
-          const status = result.error?.code === 'run_in_progress' ? 409 : 400
-          return json(res, status, { ok: false, error: result.error, data: result.data || null })
-        }
-        return json(res, 200, panel.ok(result.data))
-      }
-      if (req.method === 'GET' && p === '/api/panel/concurrent-test') {
-        const includeText = url.searchParams.get('text') === '1'
-        return json(res, 200, panel.ok(getConcurrentTest(null, { includeText })))
-      }
-      if (req.method === 'GET' && p === '/api/panel/concurrent-tests') {
-        return json(res, 200, panel.ok({ items: listConcurrentTests() }))
-      }
-      if (req.method === 'GET' && p === '/api/panel/concurrent-test-reports') {
-        const day = url.searchParams.get('day') || null
-        const dataDir = cfg.paths?.data || path.join(cfg.paths.project, 'data')
-        return json(res, 200, panel.ok(listSavedReports(dataDir, day)))
-      }
-      if (req.method === 'GET' && /^\/api\/panel\/concurrent-test-reports\/\d{4}-\d{2}-\d{2}\/[^/]+$/.test(p)) {
-        const day = p.split('/')[4]
-        const name = decodeURIComponent(p.split('/')[5] || '')
-        const dataDir = cfg.paths?.data || path.join(cfg.paths.project, 'data')
-        const data = readSavedReport(dataDir, day, name)
-        if (!data) return json(res, 404, { ok: false, error: { message: 'report not found' } })
-        return json(res, 200, panel.ok(data))
-      }
-      if (req.method === 'POST' && /^\/api\/panel\/concurrent-test\/[^/]+\/cancel$/.test(p)) {
-        const id = p.split('/')[4]
-        const result = cancelConcurrentTest(id)
-        if (!result.ok) return json(res, 404, { ok: false, error: result.error })
-        return json(res, 200, panel.ok(result.data))
-      }
-      if (req.method === 'GET' && /^\/api\/panel\/concurrent-test\/[^/]+$/.test(p)) {
-        const id = p.split('/')[4]
-        const includeText = url.searchParams.get('text') === '1'
-        const data = getConcurrentTest(id, { includeText })
-        if (!data) return json(res, 404, { ok: false, error: { message: 'run not found' } })
-        return json(res, 200, panel.ok(data))
-      }
-
-      if (req.method === 'GET' && p === '/api/panel/probe-test/catalog') {
-        return json(res, 200, panel.ok(getProbeCatalog()))
-      }
-      if (req.method === 'POST' && p === '/api/panel/probe-test') {
-        const body = await readBody(req, 32 * 1024).catch(() => ({}))
-        const result = startProbeTest({
-          suite: body.suite,
-          models: body.models,
-          cases: body.cases,
-          forms: body.forms,
-          questions: body.questions,
-          sample: body.sample ?? body.sample_size,
-          random: body.random,
-          seed: body.seed,
-          max_tokens: body.max_tokens,
-          concurrency: body.concurrency,
-          timeout_ms: body.timeout_ms,
-          baseUrl: `http://127.0.0.1:${cfg.port}`,
-          apiKey: cfg.api_key,
-          dataDir: cfg.paths?.data || path.join(cfg.paths.project, 'data'),
-        })
-        if (!result.ok) {
-          const status = result.error?.code === 'run_in_progress' ? 409 : 400
-          return json(res, status, { ok: false, error: result.error, data: result.data || null })
-        }
-        return json(res, 200, panel.ok(result.data))
-      }
-      if (req.method === 'GET' && p === '/api/panel/probe-test') {
-        const includeText = url.searchParams.get('text') === '1' || url.searchParams.get('raw') === '1'
-        return json(res, 200, panel.ok(getProbeTest(null, { includeText })))
-      }
-      if (req.method === 'GET' && p === '/api/panel/probe-tests') {
-        return json(res, 200, panel.ok({ items: listProbeTests() }))
-      }
-      if (req.method === 'POST' && /^\/api\/panel\/probe-test\/[^/]+\/cancel$/.test(p)) {
-        const id = p.split('/')[4]
-        const result = cancelProbeTest(id)
-        if (!result.ok) return json(res, 404, { ok: false, error: result.error })
-        return json(res, 200, panel.ok(result.data))
-      }
-      if (req.method === 'GET' && /^\/api\/panel\/probe-test\/[^/]+$/.test(p)) {
-        const id = p.split('/')[4]
-        const includeText = url.searchParams.get('text') === '1' || url.searchParams.get('raw') === '1'
-        const data = getProbeTest(id, { includeText })
-        if (!data) return json(res, 404, { ok: false, error: { message: 'run not found' } })
-        return json(res, 200, panel.ok(data))
       }
 
       // POST /api/panel/vms/:id/schedulable — sub2api-style schedule toggle
