@@ -34,6 +34,49 @@ import { clientIp } from '../pool/sticky-router.mjs'
 import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 
+// Official Codex client headers for ChatGPT Responses. Auth is attached by the kernel.
+const CODEX_KERNEL_HEADER_ALLOWLIST = Object.freeze([
+  'originator',
+  'openai-beta',
+  'session-id',
+  'thread-id',
+  'x-client-request-id',
+  'x-codex-beta-features',
+  'x-codex-installation-id',
+  'x-codex-parent-thread-id',
+  'x-codex-turn-metadata',
+  'x-codex-turn-state',
+  'x-codex-window-id',
+  'x-openai-internal-codex-responses-lite',
+  'x-openai-memgen-request',
+  'x-openai-subagent',
+])
+
+function headerString(headers, name) {
+  const value = headers?.[name]
+  return typeof value === 'string' && value.trim() ? value : ''
+}
+
+function codexKernelHeaders(reqHeaders = {}, body = {}, session = null) {
+  const headers = {}
+  for (const name of CODEX_KERNEL_HEADER_ALLOWLIST) {
+    const value = headerString(reqHeaders, name)
+    if (value) headers[name] = value
+  }
+  if (typeof session?.session_id === 'string' && session.session_id) {
+    headers['session-id'] = session.session_id
+  }
+  const model = typeof body?.model === 'string' ? body.model.trim() : ''
+  if (model) {
+    const tier = typeof body?.service_tier === 'string' ? body.service_tier.trim().toLowerCase() : ''
+    headers['x-codex-routing-hint'] =
+      tier && tier !== 'default' && tier !== 'standard' && tier !== 'auto'
+        ? `model=${model};tier=${tier}`
+        : `model=${model}`
+  }
+  return headers
+}
+
 function sessionFrom(req, body) {
   const headers = req.headers || {}
   return {
@@ -490,6 +533,7 @@ export async function handleCodexProtocol({
             reqHeaders: req.headers,
             envelope: {
               body: outboundBody,
+              headers: codexKernelHeaders(req.headers, outboundBody, session),
               stream: true,
               session,
             },
