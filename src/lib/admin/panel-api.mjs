@@ -551,6 +551,7 @@ export async function buildVmList({
   proxyPool = null,
   ownerUserId = null,
   role = 'admin',
+  requestLog = null,
 } = {}) {
   try {
     accountQuota?.runtimeRepo?.clearExpired?.(Date.now())
@@ -568,6 +569,23 @@ export async function buildVmList({
       liveById,
       projectRoot: cfg.paths.project,
     }),
+  )
+  const accounts = (() => {
+    try {
+      return accountQuota?.snapshot?.().accounts || []
+    } catch {
+      return []
+    }
+  })()
+  stampVmBilling(
+    vms,
+    (() => {
+      try {
+        return attachBillingMeta(panelBillingStats(requestLog, accountQuota, vms), accounts)
+      } catch {
+        return null
+      }
+    })(),
   )
   return ok({ items: vms, active_vm: active, total: vms.length, proxy_pool: summarizeProxyPool(proxyPool) })
 }
@@ -908,7 +926,7 @@ export async function buildProbeOne({
   accountQuota.ensure({
     account_id: accountId,
     vm_id: vm.id,
-    email: vm.claude?.email,
+    email: vm.email || vm.codex?.email || vm.claude?.email,
     max_concurrency: vm.policy?.maxConcurrency,
     max_rpm: vm.policy?.maxRpm ?? 0,
   })
@@ -1107,7 +1125,7 @@ export function buildUsage({ accountQuota, cfg, requestLog = null }) {
     return {
       account_id: a.account_id,
       vm_id: a.vm_id,
-      email: a.email,
+      email: a.email || vm?.email || vm?.codex?.email || vm?.claude?.email || null,
       credential_mode: vm && vmHasClaudeCredential(vm) ? credentialModeOfVm(vm) : null,
       ...quotaFromAccount(a, accountQuota?.config),
       inflight: a.inflight,

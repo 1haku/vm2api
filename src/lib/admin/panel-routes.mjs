@@ -372,9 +372,9 @@ export function createPanelHandler(ctx) {
     reloadActiveVm(cfg)
     const vm = getVm(cfg.paths.project, id)
     accountQuota.ensure({
-      account_id: vm?.claude?.account_uuid || id,
+      account_id: vm?.account_uuid || vm?.claude?.account_uuid || id,
       vm_id: id,
-      email: vm?.claude?.email || null,
+      email: vm?.email || vm?.codex?.email || vm?.claude?.email || null,
       type: normalizeCredentialMode(vm?.claude?.mode),
       max_concurrency: vm?.policy?.maxConcurrency || 2,
       max_rpm: vm?.policy?.maxRpm ?? 0,
@@ -1351,6 +1351,7 @@ export function createPanelHandler(ctx) {
             routingConfig: ctx.routingConfig,
             poolScheduler: ctx.poolScheduler,
             proxyPool,
+            requestLog,
             role: ident.role,
             ownerUserId: ident.role === 'user' ? req.panelUserId : null,
           }),
