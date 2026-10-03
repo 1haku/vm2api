@@ -439,29 +439,21 @@ test('egress readiness checks the exact listener without opening a connection', 
   const dir = egressRunDir(root, proxyId)
   fs.mkdirSync(dir, { recursive: true })
   const config = path.join(dir, 'egress.json')
-  const helper = startEgressProcess({
-    projectRoot: root,
-    proxyId,
-    proxyUrl: 'socks5h://192.0.2.1:1080',
-    listenHost: '127.0.0.1',
-    tcpPort: 0,
-    dnsPort: 0,
-    bin: egressBin,
+  fs.writeFileSync(config, JSON.stringify({ proxy_url: 'socks5h://192.0.2.1:1080', listen_tcp: '127.0.0.1:0' }))
+  const helper = spawn(egressBin, ['-config', config], { stdio: ['ignore', 'ignore', 'pipe'] })
+  const closed = once(helper, 'close')
+  let helperLog = ''
+  helper.stderr.on('data', (chunk) => {
+    helperLog += chunk
   })
-  t.after(() => {
-    try {
-      process.kill(helper.pid, 'SIGTERM')
-    } catch (error) {
-      if (error.code !== 'ESRCH') throw error
-    }
+  t.after(async () => {
+    helper.kill('SIGTERM')
+    await closed
   })
-  await waitForProcess(() => {
-    try {
-      return path.basename(fs.readlinkSync(`/proc/${helper.pid}/exe`)) === 'kin-egress'
-    } catch {
-      return false
-    }
-  })
+  fs.writeFileSync(path.join(dir, 'egress.pid'), String(helper.pid))
+  // exec precedes config loading. Wait for Serve before overwriting the file
+  // so the helper cannot read the probe's deliberately incomplete config.
+  await waitForProcess(() => helperLog.includes('kin-egress ready'))
   const port = listener.address().port
   fs.writeFileSync(config, JSON.stringify({ listen_tcp: `127.0.0.1:${port}` }))
   assert.equal(egressListening(root, proxyId).ok, true)
