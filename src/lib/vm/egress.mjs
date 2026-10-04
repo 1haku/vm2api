@@ -315,6 +315,11 @@ export function configuredDnsUpstream() {
   }
 }
 
+export function configuredDnsEmptyTypes() {
+  if (!isDbOpen()) return []
+  return new SettingsRepo(getDb()).get('proxy_pool_config')?.dns_disable_svcb_https === true ? [64, 65] : []
+}
+
 export function startEgressProcess({
   projectRoot,
   proxyId,
@@ -324,6 +329,7 @@ export function startEgressProcess({
   listenHost,
   bin = EGRESS_BIN,
   dnsUpstream = '',
+  dnsEmptyTypes = [],
 }) {
   const blocked = proxyBlockedReason({ url: proxyUrl })
   if (blocked) return { ok: false, error: blocked }
@@ -342,7 +348,8 @@ export function startEgressProcess({
         old.listen_tcp === listenTcp &&
         old.listen_dns === listenDns &&
         old.proxy_url === proxyUrl &&
-        (old.dns_upstream || '') === dnsUpstream
+        (old.dns_upstream || '') === dnsUpstream &&
+        JSON.stringify(old.dns_empty_types || []) === JSON.stringify(dnsEmptyTypes)
       ) {
         return { ok: true, pid: existing, reused: true, configPath: cfgPath }
       }
@@ -361,6 +368,7 @@ export function startEgressProcess({
     listen_dns: listenDns,
   }
   if (dnsUpstream) cfg.dns_upstream = dnsUpstream
+  if (dnsEmptyTypes.length) cfg.dns_empty_types = dnsEmptyTypes
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
   const child = spawn(bin, ['-config', cfgPath], {
     detached: true,
@@ -503,7 +511,12 @@ export function ensureLocalProxyEgress(proxy, { runDocker = docker } = {}) {
 export function ensureProxyEgress(
   projectRoot,
   proxy,
-  { runDocker = docker, runIptables = iptables, dnsUpstream = configuredDnsUpstream() } = {},
+  {
+    runDocker = docker,
+    runIptables = iptables,
+    dnsUpstream = configuredDnsUpstream(),
+    dnsEmptyTypes = configuredDnsEmptyTypes(),
+  } = {},
 ) {
   if (isLocalEgressProxy(proxy)) return ensureLocalProxyEgress(proxy, { runDocker })
   const blocked = proxyBlockedReason(proxy)
@@ -532,6 +545,7 @@ export function ensureProxyEgress(
     dnsPort: ports.dns,
     listenHost,
     dnsUpstream,
+    dnsEmptyTypes,
   })
   if (!started.ok) return started
   if (!waitListen(listenHost, ports.tcp))

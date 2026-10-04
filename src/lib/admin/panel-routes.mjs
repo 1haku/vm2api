@@ -3769,25 +3769,30 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'PUT' && p === '/api/panel/proxies/config') {
         const body = await readBody(req, 64 * 1024)
-        const previousDnsPrimary = proxyPool.snapshot().config.dns_primary
+        const previousConfig = proxyPool.snapshot().config
         const result = proxyPool.updateConfig(body)
         if (!result.ok)
           return json(res, 400, {
             ok: false,
             error: { type: 'invalid_request_error', code: result.error, message: result.error, details: result },
           })
-        // DNS order change must reach running egress helpers; slots stay intact.
+        // DNS changes must reach running egress helpers; slots stay intact.
         const egress = []
         if (
-          body.dns_primary != null &&
-          body.dns_primary !== previousDnsPrimary &&
+          ((body.dns_primary != null && body.dns_primary !== previousConfig.dns_primary) ||
+            (body.dns_disable_svcb_https != null &&
+              body.dns_disable_svcb_https !== previousConfig.dns_disable_svcb_https)) &&
           egressEnabled() &&
           process.env.KIN_CRS_MOCK !== '1'
         ) {
           const dnsUpstream = dnsUpstreamChain(result.config.dns_primary)
+          const dnsEmptyTypes = result.config.dns_disable_svcb_https ? [64, 65] : []
           for (const proxy of proxyPool.snapshot().proxies) {
             if (isLocalEgressProxy(proxy) || !proxy.bound_vm_ids?.length) continue
-            const r = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id), { dnsUpstream })
+            const r = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id), {
+              dnsUpstream,
+              dnsEmptyTypes,
+            })
             egress.push({ proxy_id: proxy.id, ok: r.ok, error: r.ok ? null : r.error })
           }
         }
