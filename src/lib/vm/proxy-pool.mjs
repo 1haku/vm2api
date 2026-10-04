@@ -23,6 +23,7 @@ import { proxyBlockedReason } from './proxy-policy.mjs'
 export const MAX_VMS_PER_PROXY = 5
 export const BIND_LIMIT_MIN = 1
 export const BIND_LIMIT_MAX = 32
+export const PROXY_LABEL_MAX = 64
 
 const DEFAULT_CONFIG = {
   probe_interval_min: 10, // 5 | 10 | 30 | 60
@@ -365,6 +366,7 @@ export class ProxyPool {
       id: p.id,
       host: p.host,
       port: p.port,
+      label: p.label || null,
       has_auth: !!(p.username || p.password),
       status: p.status, // unknown | ok | fail | dead
       enabled: p.enabled,
@@ -591,7 +593,9 @@ export class ProxyPool {
   }
 
   /**
-   * Edit one proxy in place. Only keys present in `patch` are touched, so the
+   * Edit one proxy in place. `label` is display-only: a label-only patch skips
+   * endpoint validation and reports `connection_changed: false` so the caller
+   * can leave bound workers alone. Only keys present in `patch` are touched, so the
    * caller can clear credentials (`username: ''`) without having to resend host
    * and port. Absent key = leave alone; empty string = clear.
    *
@@ -602,8 +606,20 @@ export class ProxyPool {
     const p = this.state.proxies.find((x) => x.id === proxyId)
     if (!p) return { ok: false, error: 'proxy_not_found' }
     const has = (k) => Object.prototype.hasOwnProperty.call(patch, k)
-    if (!['host', 'port', 'username', 'password'].some(has)) {
+    const connection = ['host', 'port', 'username', 'password'].some(has)
+    if (!connection && !has('label')) {
       return { ok: false, error: 'no_editable_fields' }
+    }
+    let label = p.label || null
+    if (has('label')) {
+      if (patch.label != null && typeof patch.label !== 'string') return { ok: false, error: 'invalid_label' }
+      label = String(patch.label || '').trim() || null
+      if (label && label.length > PROXY_LABEL_MAX) return { ok: false, error: 'label_too_long', max: PROXY_LABEL_MAX }
+    }
+    if (!connection) {
+      p.label = label
+      this.save()
+      return { ok: true, proxy: this.publicProxy(p), connection_changed: false }
     }
     const username = has('username') ? patch.username : p.username
     // SOCKS5 has no password-only auth: socks5Record() drops the password
@@ -630,8 +646,9 @@ export class ProxyPool {
     // socks5://user:pass@host form means a plaintext password sitting in the
     // store. Rewrite it to host:port so editing also cleans that up.
     p.raw = socksEndpoint(next.host, next.port)
+    p.label = label
     this.save()
-    return { ok: true, proxy: this.publicProxy(p) }
+    return { ok: true, proxy: this.publicProxy(p), connection_changed: true }
   }
 
   updateConfig(patch = {}) {
@@ -1036,6 +1053,11 @@ export class ProxyPool {
    * password, so it must never be handed to a panel response untouched. Only
    * `POST /api/panel/proxies/:id/reveal` may surface it, and only as a URI.
    */
+  /** Display name only — safe for panel responses, unlike getProxyByIdWithAuth(). */
+  labelOf(proxyId) {
+    return this.state.proxies.find((x) => x.id === proxyId)?.label || null
+  }
+
   getProxyByIdWithAuth(proxyId) {
     const p = this.state.proxies.find((x) => x.id === proxyId)
     if (!p) return null
