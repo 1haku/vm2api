@@ -834,3 +834,18 @@ test('exportRows + csv/jsonl keep presented key and ip', () => {
   const jsonl = logsToJsonl(items)
   assert.match(jsonl, /sk-export-plain/)
 })
+
+test('finish persists caller session (capped) and only known reasoning efforts', () => {
+  const store = tmpStore('normal')
+  const write = (extra) => {
+    const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
+    store.finish(ctx, { status: 200, ...extra })
+    return store.repo.getByRequestId(ctx.request_id)
+  }
+  const kept = write({ session_id: `  ${'s'.repeat(250)}  `, reasoning_effort: 'xhigh' })
+  assert.equal(kept.session_id, 's'.repeat(200))
+  assert.equal(kept.reasoning_effort, 'xhigh')
+  const dropped = write({ session_id: '   ', reasoning_effort: 'turbo' })
+  assert.equal(dropped.session_id, null)
+  assert.equal(dropped.reasoning_effort, null)
+})
