@@ -52,6 +52,7 @@ SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交�
 8. `invalid_grant` 先重读 generation，识别其他路径已完成的竞争刷新。
 9. 上游 401 **不** force-refresh（端点拒票 ≠ 过期；硬刷会把还能用的 grant 烧成 `invalid_grant`）。
 10. 目录 / 模型列表 **不** hop worker `/v1/models`。
+11. 槽内 cli-node（kernel 拉起的 native 槽、面板运维终端里的 `claude`、初装 hello / `/usage` / 常驻、`setup-token`）带 `CLAUDE_CODE_KIN_HOST_REFRESH=1`：临期或 401 时只重读 `credentials.json`，不请求 token 端点，不写回凭证。否则它与 host 同用一个轮换 RT，后到的一方拿 `invalid_grant`，且其写回会丢掉 `kinGeneration`。
 
 过期且无 refresh 的槽不入调度池。面板「网页可用」与调度选槽同一套资格。
 
@@ -85,7 +86,7 @@ SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交�
 
 1. wipe 初装文件  
 2. 物化 `~/.claude/.credentials.json`（worker 活票）  
-3. 官方 CLI 经 HTTP CONNECT → 槽 SOCKS5 跑 `hello`  
+3. 槽内 cli-node（`~/.kin/cli-node`，与 kernel 同一构建，不再另装官方 Claude Code）跑 `hello`；缺 cli-node 时报错，先 `wrap-cli/sync`  
 4. 槽内 CLI `/usage` 写 5h/7d/Fable 刻度，失败再试 2 次。账号等级只用成功且完整的官方 `/usage` 判定 Pro/Max
 5. 后置播种（含强制 env：`DISABLE_TELEMETRY` 等按 seed_policy）  
 6. `~/.claude.json` 的 userID/machineID 写入槽位指纹；清 leftover `.claude/.claude.json`  
