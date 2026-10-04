@@ -42,6 +42,28 @@ test('proxy pool persists custom dns_primary and rejects invalid URLs without ch
   assert.equal(reopened.snapshot().config.dns_primary, primary)
 })
 
+test('DNS type suppression persists both toggle states and rejects non-booleans', (t) => {
+  const dir = tmpDir()
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const pool = new ProxyPool({ dataDir: dir })
+  pool.stopScheduler()
+  assert.equal(pool.snapshot().config.dns_disable_svcb_https, false)
+  assert.equal(pool.updateConfig({ dns_disable_svcb_https: true }).ok, true)
+  for (const value of ['false', 1, null, [], {}]) {
+    const result = pool.updateConfig({ dns_disable_svcb_https: value, dns_primary: '8.8.8.8:53' })
+    assert.equal(result.error, 'invalid_dns_disable_svcb_https')
+    assert.equal(pool.snapshot().config.dns_disable_svcb_https, true)
+    assert.equal(pool.snapshot().config.dns_primary, 'auto')
+  }
+  const reopened = new ProxyPool({ dataDir: dir })
+  reopened.stopScheduler()
+  assert.equal(reopened.snapshot().config.dns_disable_svcb_https, true)
+  assert.equal(reopened.updateConfig({ dns_disable_svcb_https: false }).ok, true)
+  const disabled = new ProxyPool({ dataDir: dir })
+  disabled.stopScheduler()
+  assert.equal(disabled.snapshot().config.dns_disable_svcb_https, false)
+})
+
 test('clampBindLimit defaults to 5 and stays in 1..32', () => {
   assert.equal(clampBindLimit(undefined), MAX_VMS_PER_PROXY)
   assert.equal(clampBindLimit(5), 5)
