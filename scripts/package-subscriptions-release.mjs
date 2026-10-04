@@ -20,6 +20,7 @@ execFileSync('git', [
   'share/wrap-cli',
   'docker/kin-os',
   'web/dist',
+  'web/src',
   'deploy',
   'package.json',
   'package-lock.json',
