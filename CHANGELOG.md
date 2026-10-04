@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 修复无调用方会话 ID 时，首条 user 第一块是逐字固定的 `<system-reminder>`（日期、工作目录）会让同一天同一目录的不同会话共用一个粘滞槽和同一个出站 session（#236）。粘滞指纹与出站 session 种子现取首条 user 中第一个不是纯 `<system-reminder>` 的文本块；全是 reminder 时仍取第一块。后续块照旧不参与，同一会话逐轮增长不会新开槽。计费 / persona 使用的首条文本不变。
+- Codex `outbound_session: passthrough` 且入站没有会话 ID 时，不再发 `null`，改用同一套确定性种子派生出站 session。
+- 升级后以 reminder 开头、又没有会话 ID 的在途会话会重新绑定一次槽位。
+
 ## 1.3.104 — 2026-10-04
 
 - 修复 1.3.103 起槽内 cli-node 守护进程把非内核的 `-p` 进程一律 SIGKILL：面板运维终端里的 `claude -p`、官方初装的 hello / `/usage` / 常驻以及 `setup-token` 会被杀（终端里显示 `Killed`）。守护现按进程环境识别：内核 CLI 认 `CLAUDE_CODE_KIN_NATIVE_SLOTS`（只留最早一个），初装带 `KIN_OFFICIAL_CC=1`、`setup-token` 带 `KIN_SETUP_TOKEN=1` 的不动，活跃面板会话里的任意 `claude` 不动，其余泄漏进程照旧清理；读不到环境的进程不再误杀。
