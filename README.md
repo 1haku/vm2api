@@ -5,7 +5,7 @@
 ### 完全隔离的虚拟机级 AI 订阅转 API 生产网关
 **Next-Generation Fully Isolated VM-Level AI Subscription-to-API Gateway**
 
-[![Release](https://img.shields.io/badge/Release-v1.3.102-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
+[![Release](https://img.shields.io/badge/Release-v1.3.105-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
 [![License](https://img.shields.io/badge/License-Noncommercial-amber.svg?style=for-the-badge)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-@VM2API-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/VM2API)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Clean%20Verified-00C853?style=for-the-badge&logo=shield)](docs/benchmarks/README.md)
@@ -326,6 +326,18 @@ After deployment, access:
 - **Management Console**: `http://<YOUR_IP>:8787/console`
 - **Health Check**: `http://<YOUR_IP>:8787/health`
 - **API Endpoint**: `POST http://<YOUR_IP>:8787/v1/messages`
+
+---
+
+## 🐞 问题反馈 / Issue Reporting
+
+提交 Issue 前请阅读 [ISSUE_GUIDE.md](ISSUE_GUIDE.md)，按“版本 → 复现路线 → 环境（VPS / 代理）→ VM 与请求日志 → 源码定位（可选）→ 脱敏”收集信息，再用 [Bug 报告表单](https://github.com/dofastted/vm2api/issues/new/choose) 提交。
+
+Before opening an issue, follow [ISSUE_GUIDE.md](ISSUE_GUIDE.md): version, reproduction steps, host/proxy environment, VM and request logs, optional source pointers — and redact all secrets.
+
+<p align="center">
+  <img src="docs/images/issue-flow.svg" alt="vm2api Issue Reporting Roadmap" width="90%" />
+</p>
 
 ---
 

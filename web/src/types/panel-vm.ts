@@ -32,6 +32,8 @@ export type VmProxySnap = {
   id?: string
   host?: string
   port?: number | string
+  /** 代理名称，运维手写（如对应哪台机器）；未填为 null。 */
+  label?: string | null
   status?: string
   enabled?: boolean
   blocked_reason?: 'ipv6_disabled' | null
