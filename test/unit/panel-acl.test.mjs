@@ -59,6 +59,26 @@ test('user can manage owned vm/proxy/key surfaces and nothing else', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'user').ok, false)
 })
 
+test('usage-logs and statistics are read-only for user and super', () => {
+  const paths = [
+    '/api/panel/usage-logs',
+    '/api/panel/usage-logs/summary',
+    '/api/panel/usage-logs/filter-options',
+    '/api/panel/usage-logs/session-suggestions',
+    '/api/panel/usage-logs/active-sessions',
+    '/api/panel/usage-logs/overview',
+    '/api/panel/statistics',
+    '/api/panel/statistics/leaderboard',
+  ]
+  for (const role of ['user', 'super']) {
+    for (const p of paths) {
+      assert.equal(authorizePanelRoute('GET', p, role).ok, true, `${role} GET ${p}`)
+      assert.equal(authorizePanelRoute('POST', p, role).ok, false, `${role} POST ${p}`)
+    }
+    assert.equal(authorizePanelRoute('GET', '/api/panel/usage-logs/other', role).ok, false)
+  }
+})
+
 test('super can schedule VMs but cannot touch credentials or delete', () => {
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/vm-01', 'super').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/schedulable', 'super').ok, true)

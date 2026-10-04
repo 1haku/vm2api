@@ -21,7 +21,7 @@ function resetCountdown(value: string, now: number) {
 }
 async function copy(value: string) {
   try {
-    await copyText(value)
+    if (!(await copyText(value))) throw new Error('copy refused')
     toast.success('已复制')
   } catch {
     toast.error('浏览器不允许复制，请选中文本手动复制')

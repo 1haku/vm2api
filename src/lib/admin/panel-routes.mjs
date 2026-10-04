@@ -197,6 +197,68 @@ import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
 import { publicNotifyConfig, publicRoutingNotify } from './notify.mjs'
+import { UsageLogsView } from '../db/repos/usage-logs-view.mjs'
+import {
+  StatisticsRepo,
+  USER_ROLE_DIMENSIONS,
+  normalizeDimension,
+  normalizeRange,
+} from '../db/repos/statistics-repo.mjs'
+
+/** Tenants always see their own rows; other roles may narrow by `user_id`. */
+function logsOwner(req, u) {
+  return panelIdentity(req).role === 'user' ? req.panelUserId : u.searchParams.get('user_id') || null
+}
+
+/** Scrolling-log query string → `UsageLogsView` filters. Empty strings are dropped. */
+function usageLogFilters(req, u) {
+  const get = (k) => {
+    const v = u.searchParams.get(k)
+    return v == null || v === '' ? null : v
+  }
+  const isUser = panelIdentity(req).role === 'user'
+  return {
+    limit: get('limit'),
+    cursor_created_at: get('cursor_created_at'),
+    cursor_id: get('cursor_id'),
+    user_id: isUser ? null : get('user_id'),
+    key_id: get('key_id'),
+    vm_id: get('vm_id'),
+    account_id: get('account_id'),
+    session_id: get('session_id'),
+    model: get('model'),
+    endpoint: get('endpoint'),
+    protocol: get('protocol'),
+    status_code: get('status_code'),
+    exclude_status_200: get('exclude_status_200') === '1',
+    model_mismatch: get('model_mismatch') === '1',
+    min_attempt_count: get('min_attempt_count'),
+    error_class: get('error_class'),
+    exclude_error_class: get('exclude_error_class'),
+    include_muted: get('include_muted') === '1',
+    debug_only: get('log_mode') === 'debug',
+    start_time: get('start_time'),
+    end_time: get('end_time'),
+    q: get('q'),
+    owner_user_id: isUser ? req.panelUserId : null,
+  }
+}
+
+/**
+ * Validated statistics params. `user` may only group by key/model: user and
+ * vm groupings would reveal other tenants or the pool layout.
+ */
+function statsParams(req, u, dimensionKey) {
+  const isUser = panelIdentity(req).role === 'user'
+  const rawRange = u.searchParams.get('range')
+  const rawDim = u.searchParams.get(dimensionKey)
+  const range = rawRange ? normalizeRange(rawRange) : 'today'
+  if (!range) return { error: `invalid range: ${rawRange}` }
+  const dimension = rawDim ? normalizeDimension(rawDim) : 'model'
+  if (!dimension) return { error: `invalid ${dimensionKey}: ${rawDim}` }
+  if (isUser && !USER_ROLE_DIMENSIONS.includes(dimension)) return { error: `${dimensionKey} not allowed: ${dimension}` }
+  return { range, dimension, tz: u.searchParams.get('tz') || 'UTC', owner_user_id: logsOwner(req, u) }
+}
 
 async function commitImportedCodexVm({ cfg, vmPath, existing, account, catalogClientVersion = 'auto' }) {
   const saved = upsertCodexAccount(cfg.paths.project, existing.id, account)
@@ -264,6 +326,13 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   report.ok_count = report.items.length - failed.length
   report.failed_count = failed.length
   return report
+}
+
+/** Auth-link hint for the slot's proxy: `name · host:port`, or bare host:port when unnamed. */
+function slotProxyHint(px = {}, label = null) {
+  if (!px.host) return null
+  const endpoint = `${px.host}${px.port ? ':' + px.port : ''}`
+  return label ? `${label} · ${endpoint}` : endpoint
 }
 
 export function createPanelHandler(ctx) {
@@ -1246,6 +1315,69 @@ export function createPanelHandler(ctx) {
         const rec = requestLog.getDebug(id, { owner_user_id })
         if (!rec) return json(res, 404, { ok: false, error: { message: 'debug log not found' } })
         return json(res, 200, { ok: true, item: rec })
+      }
+
+      // Missing caller attribution must never widen a tenant query to all rows.
+      if (
+        panelIdentity(req).role === 'user' &&
+        !req.panelUserId &&
+        (p.startsWith('/api/panel/usage-logs') || p.startsWith('/api/panel/statistics'))
+      ) {
+        return json(res, 403, { ok: false, error: { code: 'forbidden', message: 'User identity required' } })
+      }
+      // ---- Scrolling usage logs (keyset cursor, camelCase rows) ----
+      // Lives beside /request-logs (offset + snake_case, still used by error
+      // collection and export); this surface never COUNTs the table.
+      const usageLogsView = () => new UsageLogsView(getDb(), { mutedErrorClasses: requestLog?.mutedErrorClasses })
+      const tenantId = () => (panelIdentity(req).role === 'user' ? req.panelUserId : null)
+      if (req.method === 'GET' && p === '/api/panel/usage-logs') {
+        const u = new URL(req.url, 'http://x')
+        return json(res, 200, panel.ok(usageLogsView().listBatch(usageLogFilters(req, u))))
+      }
+      if (req.method === 'GET' && p === '/api/panel/usage-logs/summary') {
+        const u = new URL(req.url, 'http://x')
+        return json(res, 200, panel.ok(usageLogsView().summary(usageLogFilters(req, u))))
+      }
+      if (req.method === 'GET' && p === '/api/panel/usage-logs/filter-options') {
+        return json(res, 200, panel.ok(usageLogsView().filterOptions({ owner_user_id: tenantId() })))
+      }
+      if (req.method === 'GET' && p === '/api/panel/usage-logs/session-suggestions') {
+        const u = new URL(req.url, 'http://x')
+        const q = u.searchParams.get('q') || ''
+        const limit = u.searchParams.get('limit')
+        return json(res, 200, panel.ok(usageLogsView().sessionSuggestions({ q, limit, owner_user_id: tenantId() })))
+      }
+      if (req.method === 'GET' && p === '/api/panel/usage-logs/active-sessions') {
+        const u = new URL(req.url, 'http://x')
+        const minutes = u.searchParams.get('minutes')
+        const limit = u.searchParams.get('limit')
+        return json(res, 200, panel.ok(usageLogsView().activeSessions({ minutes, limit, owner_user_id: tenantId() })))
+      }
+      if (req.method === 'GET' && p === '/api/panel/usage-logs/overview') {
+        const u = new URL(req.url, 'http://x')
+        const tz = u.searchParams.get('tz') || 'UTC'
+        return json(res, 200, panel.ok(usageLogsView().overview({ tz, owner_user_id: tenantId() })))
+      }
+
+      // ---- Statistics page ----
+      if (req.method === 'GET' && p === '/api/panel/statistics') {
+        const u = new URL(req.url, 'http://x')
+        const q = statsParams(req, u, 'dimension')
+        if (q.error) return json(res, 400, { ok: false, error: { message: q.error } })
+        const { range, dimension, tz, owner_user_id } = q
+        return json(res, 200, panel.ok(new StatisticsRepo(getDb()).statistics({ range, dimension, tz, owner_user_id })))
+      }
+      if (req.method === 'GET' && p === '/api/panel/statistics/leaderboard') {
+        const u = new URL(req.url, 'http://x')
+        const q = statsParams(req, u, 'scope')
+        if (q.error) return json(res, 400, { ok: false, error: { message: q.error } })
+        const { range, dimension: scope, tz, owner_user_id } = q
+        const limit = u.searchParams.get('limit')
+        return json(
+          res,
+          200,
+          panel.ok(new StatisticsRepo(getDb()).leaderboard({ range, scope, limit, tz, owner_user_id })),
+        )
       }
 
       if (req.method === 'GET' && p === '/api/panel/billing') {
@@ -2856,7 +2988,7 @@ export function createPanelHandler(ctx) {
               200,
               panel.ok({
                 ...generated,
-                proxy_hint: px.host ? `${px.host}${px.port ? ':' + px.port : ''}` : null,
+                proxy_hint: slotProxyHint(px, proxyPool?.labelOf(px.id)),
               }),
             )
           }
@@ -2872,7 +3004,7 @@ export function createPanelHandler(ctx) {
             200,
             panel.ok({
               ...generated,
-              proxy_hint: px.host ? `${px.host}${px.port ? ':' + px.port : ''}` : null,
+              proxy_hint: slotProxyHint(px, proxyPool?.labelOf(px.id)),
             }),
           )
         } catch (e) {
@@ -3716,7 +3848,7 @@ export function createPanelHandler(ctx) {
         // Forward only the keys the caller actually sent — update() reads
         // presence, not value, to tell "leave alone" from "clear".
         const patch = {}
-        for (const key of ['host', 'port', 'username', 'password']) {
+        for (const key of ['host', 'port', 'username', 'password', 'label']) {
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key]
         }
         const result = proxyPool.update(id, patch)
@@ -3725,6 +3857,9 @@ export function createPanelHandler(ctx) {
           const type = status === 404 ? 'not_found_error' : 'invalid_request_error'
           return json(res, status, { ok: false, error: { type, code: result.error, message: result.error } })
         }
+        // A label is display-only; reloading every bound worker for it would
+        // pull live slots out of scheduling for nothing.
+        if (!result.connection_changed) return json(res, 200, panel.ok({ proxy: result.proxy, workers: [] }))
         // The pool store is only one of three places the credentials live
         // (pool -> vms/<id>.json -> worker.json). Without this the edit looks
         // like it worked while every bound slot keeps dialing the old proxy.

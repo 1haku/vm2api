@@ -1,0 +1,1 @@
+import{P as e,j as t}from"./button-nre7L5bm.js";var n=e(t(),1);function r(e=3e4){let[t,r]=(0,n.useState)(()=>Date.now());return(0,n.useEffect)(()=>{let t=setInterval(()=>r(Date.now()),e);return()=>clearInterval(t)},[e]),t}export{r as t};

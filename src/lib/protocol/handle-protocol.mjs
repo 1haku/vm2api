@@ -46,6 +46,7 @@ import {
 import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.mjs'
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
+import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import {
@@ -77,6 +78,7 @@ import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
   applyCrsIdentityReplace,
   extractCallerSession,
+  extractFirstUserIdentity,
   outboundSessionMode,
   resolveInboundIdentity,
   resolveOutboundSessionId,
@@ -387,6 +389,8 @@ export function createHandleProtocol(deps) {
       upstream_model: null,
       first_token_ms: null,
       stop_reason: null,
+      session_id: null,
+      reasoning_effort: null,
     }
     req.finalizeSubscriptionUsage = () => {
       try {
@@ -441,6 +445,8 @@ export function createHandleProtocol(deps) {
     logBag.requested_model = inbound?.model || null
     logBag.stream = isClientStream(inbound, req.headers)
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
+    logBag.session_id = sessionIdForLog(extractCallerSession({ inbound, headers: req.headers }))
+    logBag.reasoning_effort = reasoningEffortOf(inbound)
 
     try {
       if (req.apiKeyRecord && apiKeyStore?.repo?.db) {
@@ -696,6 +702,9 @@ export function createHandleProtocol(deps) {
     const officialClient = isOfficialClaudeClient(fp.client_class)
     const callerSession = extractCallerSession({ inbound, body: ctx.body, headers: req.headers })
     const firstUserText = extractFirstUserText(ctx.body?.messages) || extractFirstUserText(inbound?.messages)
+    // Seed identity skips a leading <system-reminder>; firstUserText stays billing-only.
+    const firstUserIdentity =
+      extractFirstUserIdentity(ctx.body?.messages) || extractFirstUserIdentity(inbound?.messages)
     const clientDiscriminator = sessionContextDiscriminator({
       clientIp: clientIp(req),
       userAgent: req.headers['user-agent'] || '',
@@ -706,7 +715,7 @@ export function createHandleProtocol(deps) {
       tenantId: req.apiKeyRecord?.user_id || '',
       officialClient: officialTraffic,
       clientDiscriminator,
-      firstUserText,
+      firstUserIdentity,
       mode: sessionMode,
       routing: getRouting(),
     }
@@ -1132,6 +1141,7 @@ export function createHandleProtocol(deps) {
             mode: sessionMode,
             clientDiscriminator,
             firstUserText,
+            firstUserIdentity,
             apiKeyId: req.apiKeyRecord?.id ?? '',
             stream: upstreamStream,
             cacheControlLimit: Number(getRouting()?.compatibility?.cache_control_limit) || 4,

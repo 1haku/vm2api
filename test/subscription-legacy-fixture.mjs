@@ -8,6 +8,8 @@ export function legacySubscriptionDatabase(dir, { v1 = false } = {}) {
   const migrationsDir = path.join(dir, 'upstream-sql')
   fs.mkdirSync(migrationsDir)
   for (const file of fs.readdirSync(path.join(root, 'src/lib/db/migrations'))) {
+    // v1/v3 fixtures predate upstream 027/028; their 027 stamp was the old custom subscription SQL.
+    if (Number(file.slice(0, 3)) >= 27) continue
     fs.copyFileSync(path.join(root, 'src/lib/db/migrations', file), path.join(migrationsDir, file))
   }
   const db = createDatabase({ dataDir: dir, migrationsDir })

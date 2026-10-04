@@ -34,8 +34,24 @@ const unit = [
   'remote-fs',
   'egress',
   'oauth-binary',
+  'statistics-repo',
+  'usage-logs-view',
+  'identity-rewrite',
+  'sticky-router',
+  'log-fields',
+  'proxy-pool-update',
+  'panel-api-proxy',
+  'official-cc-bootstrap',
 ]
-const e2e = ['subscriptions', 'slot-plan-startup', 'panel-api', 'auto-mode', 'health', 'credential-rotation']
+const e2e = [
+  'subscriptions',
+  'slot-plan-startup',
+  'panel-api',
+  'auto-mode',
+  'health',
+  'credential-rotation',
+  'statistics-ownership',
+]
 const result = spawnSync(
   process.execPath,
   [

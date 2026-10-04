@@ -36,11 +36,20 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   db.prepare("INSERT INTO subscription_reservations VALUES('pending','sub',0.5,?)").run(now)
   db.prepare("INSERT INTO response_owners VALUES('response','a',9,'slot',?)").run(now)
   db.prepare("INSERT INTO subscription_events(action,detail,created_at) VALUES('assigned','{}',?)").run(now)
+  db.prepare(
+    "INSERT INTO usage_logs(id,request_id,user_id,api_key_id,vm_id,created_at,total_cost,actual_cost) VALUES('history','settled','a','key','slot',?,3.125,3.125)",
+  ).run(now)
+  db.prepare("INSERT INTO proxies(id,name,host,port) VALUES('proxy','old-proxy','192.0.2.1',1080)").run()
   const before = subscriptionSnapshot(db)
   db.close()
   db = createDatabase({ dataDir: dir })
   verifySubscriptionSchema(db)
   assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT session_id FROM usage_logs WHERE id='history'").get().session_id, null)
+  assert.equal(db.prepare("SELECT label FROM proxies WHERE id='proxy'").get().label, null)
+  db.prepare("UPDATE proxies SET label='changed' WHERE id='proxy'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /proxies/)
+  db.prepare("UPDATE proxies SET label=NULL WHERE id='proxy'").run()
   const repo = new SubscriptionsRepo(db)
   assert.equal(repo.entitlement({ user_id: 'a', group_id: 9 }).group.daily_limit_usd, 30)
   assert.equal(repo.responseOwner('response', { user_id: 'a', group_id: 9 }).vm_id, 'slot')
@@ -57,23 +66,27 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   assert.equal(repo.plans()[0].daily_limit_usd, 45)
 })
 
-test('fresh install uses independent migration namespace and leaves upstream 027 free', (t) => {
+test('fresh install applies upstream 027/028 alongside the independent custom migration namespace', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-migrations-'))
   const db = createDatabase({ dataDir: dir })
   t.after(() => {
     db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
-  assert.equal(db.prepare("SELECT version FROM schema_migrations WHERE version='027'").get(), undefined)
+  assert.equal(
+    db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
+    '027_usage_logs_session_effort.sql',
+  )
+  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='028'").get().name, '028_proxy_label.sql')
   assert.equal(
     db.prepare("SELECT name FROM custom_schema_migrations WHERE version='001'").get().name,
     '001_subscriptions.sql',
   )
   const upstream = path.join(dir, 'upstream')
   fs.mkdirSync(upstream)
-  fs.writeFileSync(path.join(upstream, '027_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
+  fs.writeFileSync(path.join(upstream, '029_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
   applyMigrations(db, { migrationsDir: upstream })
-  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name, '027_future.sql')
+  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='029'").get().name, '029_future.sql')
 })
 
 test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions', (t) => {
@@ -90,7 +103,10 @@ test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions
   )
   db.close()
   db = createDatabase({ dataDir: dir })
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version='027'").get().n, 0)
+  assert.equal(
+    db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
+    '027_usage_logs_session_effort.sql',
+  )
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 2)
   assert.equal(db.prepare('SELECT action FROM custom_subscription_events').get().action, 'sentinel')
 })
@@ -102,7 +118,7 @@ test('modified legacy migration fails closed and retains the legacy stamp', (t) 
     db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
-  db.prepare('INSERT INTO schema_migrations VALUES(?,?,?,?)').run('027', '027_subscriptions.sql', 'invalid', 'now')
+  db.prepare("UPDATE schema_migrations SET name='027_subscriptions.sql',checksum='invalid' WHERE version='027'").run()
   assert.throws(() => applyMigrations(db), /checksum mismatch/)
   assert.equal(db.prepare("SELECT checksum FROM schema_migrations WHERE version='027'").get().checksum, 'invalid')
 })

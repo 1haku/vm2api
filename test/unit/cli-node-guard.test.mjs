@@ -1,86 +1,96 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn, execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { once } from 'node:events'
-import { createCliNodeGuard, selectCliNodePidsToKill } from '../../src/lib/vm/cli-node-guard.mjs'
+import { GUARD_SCRIPT } from '../../src/lib/vm/cli-node-guard.mjs'
 
-test('guard shell only signals actual CLI executables, preserving helpers and live shells', {
-  skip: process.platform !== 'linux',
-}, async () => {
-  // Redirect /proc reads to a fixture. Signals can only target these test children.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-proc-'))
+// Real processes stand in for slot CLIs; a fake proc root carries their
+// cmdline/environ so the guard's own shell policy decides who gets SIGKILL.
+function slotFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-node-guard-'))
   const children = []
-  function processFixture(executable, args, panel = '') {
-    const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' })
-    children.push(child)
-    const dir = path.join(root, String(child.pid))
-    fs.mkdirSync(dir)
-    fs.symlinkSync(executable, path.join(dir, 'exe'))
-    fs.writeFileSync(path.join(dir, 'cmdline'), args.join('\0') + '\0')
-    fs.writeFileSync(path.join(dir, 'environ'), panel ? `KIN_PANEL_SHELL=${panel}\0` : '')
-    return child
-  }
-  try {
-    const worker = processFixture('/slot/.kin/cli-node', ['/slot/.kin/cli-node', '-p', ''])
-    const helper = processFixture('/bin/sh', ['/bin/sh', '-c', 'run cli-node -p cleanup'])
-    const live = processFixture('/slot/.kin/cli-node', ['/slot/.kin/cli-node'], 'live')
-    const leaked = processFixture('/slot/.kin/cli-node (deleted)', ['/slot/.kin/cli-node'], 'closed')
-    let script
-    const guard = createCliNodeGuard({
-      listTargets: () => [{ id: 'guard-fixture' }],
-      liveTokens: () => ['live'],
-      exec: async (_connect, _container, args) => {
-        script = args[2]
-      },
-    })
-    await guard.tick()
-    assert.ok(script)
-    await promisify(execFile)('/bin/sh', ['-c', script.replaceAll('/proc/', root + '/'), 'guard', 'live'], {
-      timeout: 5000,
-    })
-    if (leaked.exitCode === null && leaked.signalCode === null) {
-      await once(leaked, 'exit', { signal: AbortSignal.timeout(3000) })
-    }
-    assert.equal(worker.signalCode, null, 'primary worker survives')
-    assert.equal(helper.signalCode, null, 'shell mentioning cli-node survives')
-    assert.equal(live.signalCode, null, 'connected shell survives')
-    assert.equal(leaked.signalCode, 'SIGKILL', 'disconnected CLI is removed')
-  } finally {
-    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  t.after(() => {
+    for (const child of children) child.kill('SIGKILL')
     fs.rmSync(root, { recursive: true, force: true })
+  })
+  return {
+    add(args, env, executable = '/home/kincli/.kin/cli-node') {
+      const child = spawn('sleep', ['30'], { stdio: 'ignore' })
+      children.push(child)
+      const dir = path.join(root, String(child.pid))
+      fs.mkdirSync(dir)
+      fs.symlinkSync(executable, path.join(dir, 'exe'))
+      fs.writeFileSync(path.join(dir, 'cmdline'), ['/home/kincli/.kin/cli-node', ...args, ''].join('\0'))
+      if (env) fs.writeFileSync(path.join(dir, 'environ'), [...env, ''].join('\0'))
+      return child
+    },
+    run(liveTokens = []) {
+      const r = spawnSync('/bin/sh', ['-c', GUARD_SCRIPT, 'guard', ...liveTokens], {
+        env: { ...process.env, KIN_GUARD_PROC: root },
+        encoding: 'utf8',
+      })
+      assert.equal(r.status, 0, r.stderr)
+    },
   }
+}
+
+const alive = (child) => {
+  try {
+    process.kill(child.pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function settle() {
+  await new Promise((resolve) => setTimeout(resolve, 100))
+}
+
+test('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs including -p', async (t) => {
+  const slot = slotFixture(t)
+  const kernel = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const duplicate = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const hello = slot.add(['-p', 'hello', '--permission-mode', 'bypassPermissions'], ['KIN_OFFICIAL_CC=1'])
+  const usage = slot.add(['/usage', '--print'], ['KIN_OFFICIAL_CC=1'])
+  const setupToken = slot.add(['setup-token'], ['KIN_SETUP_TOKEN=1'])
+  const panelPrint = slot.add(['-p', 'hello'], ['KIN_PANEL_SHELL=live'])
+  const panelInteractive = slot.add([], ['KIN_PANEL_SHELL=live'])
+  slot.run(['live'])
+  await settle()
+  assert.equal(alive(kernel), true)
+  assert.equal(alive(duplicate), false)
+  for (const child of [hello, usage, setupToken, panelPrint, panelInteractive]) assert.equal(alive(child), true)
 })
 
-test('keeps the oldest worker and a cli-node whose panel shell is still open', () => {
-  const kill = selectCliNodePidsToKill(
-    [
-      { pid: 20, worker: true },
-      { pid: 8, worker: true },
-      { pid: 30, worker: false, panelToken: 'live' },
-      { pid: 31, worker: false, panelToken: 'gone' },
-      { pid: 32, worker: false, panelToken: null },
-    ],
-    ['live'],
-  )
-  assert.deepEqual(
-    kill.sort((a, b) => a - b),
-    [20, 31, 32],
-  )
+test('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t) => {
+  const slot = slotFixture(t)
+  const kernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const closedPanel = slot.add(['-p', 'hello'], ['KIN_PANEL_SHELL=gone'])
+  const stray = slot.add(['-p', 'hello'], ['HOME=/home/kincli'])
+  slot.run([])
+  await settle()
+  assert.equal(alive(kernel), true)
+  assert.equal(alive(closedPanel), false)
+  assert.equal(alive(stray), false)
 })
 
-test('kills every interactive cli-node when no panel shell is connected', () => {
-  assert.deepEqual(
-    selectCliNodePidsToKill(
-      [
-        { pid: 4, worker: true },
-        { pid: 9, worker: false, panelToken: 'stale' },
-      ],
-      [],
-    ),
-    [9],
-  )
+test('leaves a CLI alone when its environ cannot be read', async (t) => {
+  const slot = slotFixture(t)
+  const unknown = slot.add(['-p', 'hello'], null)
+  slot.run([])
+  await settle()
+  assert.equal(alive(unknown), true)
+})
+
+test('preserves helpers mentioning cli-node and recognizes deleted CLI executables', async (t) => {
+  const slot = slotFixture(t)
+  const helper = slot.add(['-p', 'cleanup cli-node'], ['HOME=/home/kincli'], '/bin/sh')
+  const orphan = slot.add([], ['KIN_PANEL_SHELL=closed'], '/home/kincli/.kin/cli-node (deleted)')
+  slot.run([])
+  await settle()
+  assert.equal(alive(helper), true)
+  assert.equal(alive(orphan), false)
 })

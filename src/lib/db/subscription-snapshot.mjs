@@ -15,10 +15,19 @@ const digest = (rows) =>
 
 // Keep secrets in memory only. Reports contain counts and hashes, never raw rows.
 export function subscriptionSnapshot(db) {
-  const tables = ['users', 'api_keys', 'groups', 'vms', 'usage_logs']
+  const tables = ['users', 'api_keys', 'groups', 'vms', 'usage_logs', 'proxies']
   const state = {}
   for (const table of tables) {
-    const rows = db.prepare(`SELECT * FROM ${table}`).all()
+    const rows = db
+      .prepare(`SELECT * FROM ${table}`)
+      .all()
+      .map((row) => {
+        // 027/028 only add nullable fields. Missing pre-upgrade fields and new NULLs are equivalent.
+        if (table === 'usage_logs')
+          return { ...row, session_id: row.session_id ?? null, reasoning_effort: row.reasoning_effort ?? null }
+        if (table === 'proxies') return { ...row, label: row.label ?? null }
+        return row
+      })
     state[table] = { count: rows.length, hash: digest(rows) }
   }
   for (const name of [

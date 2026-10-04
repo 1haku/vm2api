@@ -1,0 +1,1 @@
+import{d as e,k as t}from"./button-nre7L5bm.js";var n=t();function r({className:t,...r}){return(0,n.jsx)(`div`,{"data-slot":`skeleton`,className:e(`animate-pulse rounded-md bg-accent`,t),...r})}export{r as t};

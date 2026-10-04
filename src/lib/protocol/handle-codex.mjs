@@ -28,8 +28,14 @@ import {
 } from '../pool/openai-account-runtime.mjs'
 import { CLIENT_POOL_BUSY_MESSAGE } from '../core/errors.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
-import { extractCallerSession, outboundSessionMode, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
-import { extractFirstUserText } from '../identity/crs-persona.mjs'
+import { sessionIdForLog } from './log-fields.mjs'
+import {
+  extractCallerSession,
+  extractFirstUserIdentity,
+  firstUserIdentityText,
+  outboundSessionMode,
+  resolveOutboundSessionId,
+} from '../identity/identity-rewrite.mjs'
 import { clientIp } from '../pool/sticky-router.mjs'
 import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
@@ -91,21 +97,26 @@ function sessionFrom(req, body) {
   }
 }
 
-function firstUserTextFromCodex(body = {}) {
+/** Session seed identity: first non-empty input item, first non-reminder block (firstUserIdentityText). */
+function firstUserIdentityFromCodex(body = {}) {
   if (typeof body?.input === 'string') return body.input
   if (Array.isArray(body?.input)) {
     for (const item of body.input) {
-      if (typeof item === 'string' && item.trim()) return item.trim()
-      if (typeof item?.content === 'string' && item.content.trim()) return item.content.trim()
-      if (Array.isArray(item?.content)) {
-        for (const part of item.content) {
-          if (typeof part === 'string' && part.trim()) return part.trim()
-          if (typeof part?.text === 'string' && part.text.trim()) return part.text.trim()
-        }
-      }
+      const texts =
+        typeof item === 'string'
+          ? [item]
+          : typeof item?.content === 'string'
+            ? [item.content]
+            : Array.isArray(item?.content)
+              ? item.content.map((part) =>
+                  typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : '',
+                )
+              : []
+      const text = firstUserIdentityText(texts).trim()
+      if (text) return text
     }
   }
-  return extractFirstUserText(body?.messages) || String(body?.prompt || '')
+  return extractFirstUserIdentity(body?.messages) || String(body?.prompt || '')
 }
 
 function applyCodexRebuildBody(body, sessionId, mode) {
@@ -399,7 +410,9 @@ export async function handleCodexProtocol({
     body: converted.body,
     headers: req.headers,
   })
-  const firstUserText = firstUserTextFromCodex(converted.body)
+  // Chat→Responses conversion can surface a session key the raw inbound lacked.
+  if (!logBag.session_id) logBag.session_id = sessionIdForLog(callerSession)
+  const firstUserIdentity = firstUserIdentityFromCodex(converted.body)
   const hop = ops.streamCodexKernel || streamCodexKernel
   const writeCfg = ops.writeCodexKernelConfig || writeCodexKernelConfig
   const ensure = ops.ensureCodexKernel || ensureCodexKernel
@@ -500,22 +513,25 @@ export async function handleCodexProtocol({
         let responseServiceTier = null
         let streamedUsage = null
         const attemptStartedAt = Date.now()
+        const sessionOptions = {
+          tenantId: req.apiKeyRecord?.user_id || '',
+          apiKeyId: req.apiKeyRecord?.id || '',
+          boundSessionId: stickyBound?.sessionId || '',
+          boundVmId: stickyBound?.vmId || '',
+          vmId: vm.id,
+          accountId: vm.id,
+          firstUserIdentity,
+          clientIp: clientIp(req),
+          userAgent: req.headers?.['user-agent'] || '',
+          epoch: `${attemptStartedAt}:${vm.id}:${hops}`,
+        }
+        // passthrough forwards an explicit inbound session verbatim; without
+        // one it still derives the deterministic seed instead of sending null.
         const outboundSessionId =
           sessionMode === 'passthrough' && !req.apiKeyRecord?.user_id
-            ? inboundSession.session_id
-            : resolveOutboundSessionId(callerSession, {
-                tenantId: req.apiKeyRecord?.user_id || '',
-                apiKeyId: req.apiKeyRecord?.id || '',
-                mode: sessionMode,
-                boundSessionId: stickyBound?.sessionId || '',
-                boundVmId: stickyBound?.vmId || '',
-                vmId: vm.id,
-                accountId: vm.id,
-                firstUserText,
-                clientIp: clientIp(req),
-                userAgent: req.headers?.['user-agent'] || '',
-                epoch: `${attemptStartedAt}:${vm.id}:${hops}`,
-              })
+            ? inboundSession.session_id ||
+              resolveOutboundSessionId(callerSession, { ...sessionOptions, mode: 'passthrough', officialClient: true })
+            : resolveOutboundSessionId(callerSession, { ...sessionOptions, mode: sessionMode })
         const session = {
           session_id: outboundSessionId,
           previous_response_id: inboundSession.previous_response_id,

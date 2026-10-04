@@ -24,6 +24,7 @@ import { UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
 import { classifyRequestError, resolveMutedErrorClasses } from './error-class.mjs'
 import { costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { REASONING_EFFORTS, sessionIdForLog } from '../protocol/log-fields.mjs'
 
 /** Persist the token a client actually sent — only for failed ingress auth. */
 export function presentedApiKeyForLog(token) {
@@ -429,6 +430,8 @@ export class RequestLogStore {
       attempt_count: extra.attempt_count ?? null,
       final_state: extra.final_state || null,
       final_account_id: extra.final_account_id || extra.account_id || null,
+      session_id: sessionIdForLog(extra.session_id),
+      reasoning_effort: REASONING_EFFORTS.has(extra.reasoning_effort) ? extra.reasoning_effort : null,
       // sub2api ownership + billing columns
       user_id: extra.user_id ?? null,
       subscription_id: extra.subscription_id ?? null,
