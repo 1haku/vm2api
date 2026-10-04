@@ -1,35 +1,54 @@
 /**
- * Codex slot metadata. Tokens stay in vms/<id>/codex-credentials.json.
+ * Codex credentials keep the legacy layout; v2 accounts store them inside their real guest HOME.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson } from './vm-file.mjs'
 import { isCodexVm } from '../protocol/codex-route.mjs'
 import { buildCodexUsageView, extraToCodexSnapshot } from '../protocol/codex-usage.mjs'
+import { guestAccountForId } from './guest-account.mjs'
+import { chownSlotRuntimeFile, readSlotOwnedFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 
 export { isCodexVm }
 
 export function codexCredentialPath(projectRoot, vmId) {
+  if (guestAccountForId(vmId, projectRoot).contract === 'linux-account-v2') {
+    return path.join(projectRoot, 'vms', vmId, 'cli-home', '.codex', 'credentials.json')
+  }
   return path.join(projectRoot, 'vms', vmId, 'codex-credentials.json')
 }
 
 export function readCodexAccounts(projectRoot, vmId) {
   const file = codexCredentialPath(projectRoot, vmId)
+  const account = guestAccountForId(vmId, projectRoot)
+  const vm = { id: vmId, ...(account.contract === 'linux-account-v2' ? { guest_user: account } : {}) }
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const raw = JSON.parse(readSlotOwnedFile(file, vm))
     return Array.isArray(raw?.accounts) ? raw.accounts : []
-  } catch {
+  } catch (error) {
+    if (error.code === 'guest_ownership_failed') throw error
     return []
   }
 }
 
 export function writeCodexAccounts(projectRoot, vmId, accounts) {
   if (!projectRoot || !vmId) throw new Error('projectRoot and vmId required')
-  atomicWriteJson(
-    codexCredentialPath(projectRoot, vmId),
-    { accounts: Array.isArray(accounts) ? accounts : [] },
-    { mode: 0o600 },
-  )
+  const account = guestAccountForId(vmId, projectRoot)
+  const file = codexCredentialPath(projectRoot, vmId)
+  const document = { accounts: Array.isArray(accounts) ? accounts : [] }
+  if (account.contract === 'linux-account-v2') {
+    const vm = { id: vmId, guest_user: account }
+    try {
+      fs.mkdirSync(path.dirname(file), { mode: 0o750 })
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+    }
+    chownSlotRuntimeFile(path.dirname(file), vm)
+    replaceSlotOwnedFile(file, JSON.stringify(document, null, 2) + '\n', vm)
+    return
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o750 })
+  atomicWriteJson(file, document, { mode: 0o600 })
 }
 
 function firstString(...values) {

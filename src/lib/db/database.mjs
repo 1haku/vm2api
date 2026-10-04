@@ -103,6 +103,7 @@ function reconcileHistorical001ProxySchema(db, checksum) {
 }
 let _db = null
 let _dbPath = null
+const WAL_WAIT = new Int32Array(new SharedArrayBuffer(4))
 
 export function resolveDbPath({ dataDir, dbPath } = {}) {
   if (dbPath) return dbPath
@@ -123,9 +124,25 @@ export function createDatabase({ dataDir, dbPath, migrationsDir } = {}) {
   try {
     fs.chmodSync(file, 0o600)
   } catch {}
-  db.exec('PRAGMA journal_mode = WAL')
-  db.exec('PRAGMA synchronous = NORMAL')
   db.exec('PRAGMA busy_timeout = 5000')
+  // WAL initialization upgrades a read lock; SQLite may bypass its busy handler
+  // to avoid deadlock between simultaneous openers. Retry only that bootstrap race.
+  if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'wal') {
+    const deadline = Date.now() + 5000
+    for (;;) {
+      try {
+        db.exec('PRAGMA journal_mode = WAL')
+        break
+      } catch (error) {
+        if (error.errcode !== 5 || Date.now() >= deadline) {
+          db.close()
+          throw error
+        }
+        Atomics.wait(WAL_WAIT, 0, 0, 25)
+      }
+    }
+  }
+  db.exec('PRAGMA synchronous = NORMAL')
   db.exec('PRAGMA foreign_keys = ON')
   applyMigrations(db, { migrationsDir })
   return db
@@ -178,62 +195,65 @@ export function closeDatabase() {
 
 /**
  * Versioned SQL migrations with checksum verification (sub2api-style).
- * Files: migrations/NNN_name.sql, applied in filename order inside a
- * transaction each. `schema_migrations` records version+checksum; a
- * checksum mismatch on an already-applied migration is a hard error.
+ * One immediate transaction serializes schema inspection and installation
+ * across gateway processes; a failed migration leaves the prior schema intact.
+ * `schema_migrations` records version+checksum; mismatches are hard errors.
  */
 export function applyMigrations(db, { migrationsDir } = {}) {
   const dir = migrationsDir || MIGRATIONS_DIR
-  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+  const ownsTransaction = !db.isTransaction
+  if (ownsTransaction) db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version TEXT PRIMARY KEY,
     name TEXT,
     checksum TEXT,
     applied_at TEXT
   )`)
 
-  const files = fs.existsSync(dir)
-    ? fs
-        .readdirSync(dir)
-        .filter((f) => /^\d+.*\.sql$/.test(f))
-        .sort()
-    : []
+    const files = fs.existsSync(dir)
+      ? fs
+          .readdirSync(dir)
+          .filter((f) => /^\d+.*\.sql$/.test(f))
+          .sort()
+      : []
 
-  const appliedRows = db.prepare('SELECT version, checksum FROM schema_migrations').all()
-  const applied = new Map(appliedRows.map((r) => [r.version, r.checksum]))
-  const historical001Accepted = reconcileHistorical001ProxySchema(db, applied.get('001'))
-  const insert = db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+    const appliedRows = db.prepare('SELECT version, checksum FROM schema_migrations').all()
+    const applied = new Map(appliedRows.map((r) => [r.version, r.checksum]))
+    const historical001Accepted = reconcileHistorical001ProxySchema(db, applied.get('001'))
+    const insert = db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
 
-  const results = []
-  for (const file of files) {
-    const version = file.split('_')[0]
-    const sql = fs.readFileSync(path.join(dir, file), 'utf8')
-    const { canonical: checksum, variants } = migrationChecksums(sql)
-    if (applied.has(version)) {
-      const stored = applied.get(version)
-      const historicalAccepted =
-        version === '001' && historical001Accepted && HISTORICAL_001_PROXY_CHECKSUMS.has(stored)
-      if (!variants.has(stored) && !historicalAccepted) {
-        throw new Error(`migration checksum mismatch for ${file}: applied=${stored} current=${checksum}`)
+    const results = []
+    for (const file of files) {
+      const version = file.split('_')[0]
+      const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+      const { canonical: checksum, variants } = migrationChecksums(sql)
+      if (applied.has(version)) {
+        const stored = applied.get(version)
+        const historicalAccepted =
+          version === '001' && historical001Accepted && HISTORICAL_001_PROXY_CHECKSUMS.has(stored)
+        if (!variants.has(stored) && !historicalAccepted) {
+          throw new Error(`migration checksum mismatch for ${file}: applied=${stored} current=${checksum}`)
+        }
+        if (stored !== checksum) {
+          db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = ?').run(checksum, version)
+        }
+        continue
       }
-      if (stored !== checksum) {
-        db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = ?').run(checksum, version)
-      }
-      continue
-    }
-    db.exec('BEGIN')
-    try {
-      db.exec(sql)
-      insert.run(version, file, checksum, new Date().toISOString())
-      db.exec('COMMIT')
-    } catch (e) {
       try {
-        db.exec('ROLLBACK')
-      } catch {}
-      throw new Error(`migration ${file} failed: ${e.message}`)
+        db.exec(sql)
+        insert.run(version, file, checksum, new Date().toISOString())
+      } catch (e) {
+        throw new Error(`migration ${file} failed: ${e.message}`)
+      }
+      results.push(file)
     }
-    results.push(file)
+    if (ownsTransaction) db.exec('COMMIT')
+    return results
+  } catch (error) {
+    if (ownsTransaction && db.isTransaction) db.exec('ROLLBACK')
+    throw error
   }
-  return results
 }
 
 /** Run fn inside a transaction (nested calls just run inline). */

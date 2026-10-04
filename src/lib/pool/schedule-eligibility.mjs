@@ -8,6 +8,7 @@ import { expiresAtToMs, hasRefreshPresence } from '../oauth/oauth-credentials.mj
 import { rustKernelBusy } from '../transport/rust-kernel-client.mjs'
 import { socksProxyEndpoint } from '../vm/socks-address.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
+import { guestProvisioningReady } from '../vm/guest-contract.mjs'
 
 // Only a dead grant / operator disable should keep the slot out of the pool.
 // Stale access 401 (`authentication_failed_after_refresh`) is not fatal when
@@ -84,6 +85,7 @@ export function slotHasBoundProxy(vm) {
 }
 
 export function evaluateSlotGate(vm) {
+  if (!guestProvisioningReady(vm)) return { ok: false, reason: 'guest_not_slot_ready' }
   if (isCodexVm(vm)) return { ok: false, reason: 'codex_vm' }
   const blocked = proxyBlockedReason(vm?.proxy)
   if (blocked) return { ok: false, reason: blocked }
