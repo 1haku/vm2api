@@ -28,6 +28,7 @@ import {
 } from '../pool/openai-account-runtime.mjs'
 import { CLIENT_POOL_BUSY_MESSAGE } from '../core/errors.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
+import { sessionIdForLog } from './log-fields.mjs'
 import { extractCallerSession, outboundSessionMode, resolveOutboundSessionId } from '../identity/identity-rewrite.mjs'
 import { extractFirstUserText } from '../identity/crs-persona.mjs'
 import { clientIp } from '../pool/sticky-router.mjs'
@@ -391,6 +392,8 @@ export async function handleCodexProtocol({
     body: converted.body,
     headers: req.headers,
   })
+  // Chat→Responses conversion can surface a session key the raw inbound lacked.
+  if (!logBag.session_id) logBag.session_id = sessionIdForLog(callerSession)
   const firstUserText = firstUserTextFromCodex(converted.body)
   const hop = ops.streamCodexKernel || streamCodexKernel
   const writeCfg = ops.writeCodexKernelConfig || writeCodexKernelConfig
