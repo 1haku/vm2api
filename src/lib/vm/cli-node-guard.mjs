@@ -1,7 +1,10 @@
 /**
- * One cli-node per slot: the kernel's `-p` worker. An interactive `claude`
- * in a live panel shell may exist beside it. Anything else is a leak from a
- * closed terminal (cli-node ignores SIGHUP) and is killed.
+ * One kernel cli-node per slot: the process the kernel spawned (it carries
+ * CLAUDE_CODE_KIN_NATIVE_SLOTS). Beside it may run: any `claude` (interactive
+ * or `-p`) in a live panel shell, and host-run init bootstrap / setup-token CLIs
+ * (KIN_OFFICIAL_CC=1 / KIN_SETUP_TOKEN=1) that have their own lifecycle.
+ * Anything else is a leak from a closed terminal (cli-node ignores SIGHUP) and
+ * is killed. A process whose environ cannot be read is left alone.
  */
 import { execDetached } from '../cluster/docker-remote.mjs'
 import { slotContainerName } from '../transport/rust-kernel-supervisor.mjs'
@@ -10,52 +13,30 @@ import { slotHost } from './slot-host.mjs'
 
 export const CLI_NODE_GUARD_INTERVAL_MS = 15_000
 
-/**
- * @param {Array<{ pid: number, worker: boolean, panelToken?: string|null }>} processes
- * @param {string[]} liveTokens panel shells that are still connected
- * @returns {number[]}
- */
-export function selectCliNodePidsToKill(processes, liveTokens = []) {
-  const live = new Set(liveTokens.filter(Boolean))
-  const workers = processes.filter((proc) => proc.worker).sort((a, b) => a.pid - b.pid)
-  const keep = workers[0]?.pid ?? null
-  const kill = []
-  for (const proc of processes) {
-    if (proc.pid === keep) continue
-    if (proc.worker) {
-      kill.push(proc.pid)
-      continue
-    }
-    if (proc.panelToken && live.has(proc.panelToken)) continue
-    kill.push(proc.pid)
-  }
-  return kill
-}
-
-// $0 is "guard"; "$@" are live KIN_PANEL_SHELL tokens.
-const GUARD_SCRIPT = `
+// $0 is "guard"; "$@" are live KIN_PANEL_SHELL tokens. KIN_GUARD_PROC is a test seam.
+export const GUARD_SCRIPT = `
+proc=\${KIN_GUARD_PROC:-/proc}
 keep=
-for d in /proc/[0-9]*; do
-  pid=\${d#/proc/}
+for d in "$proc"/[0-9]*; do
+  pid=\${d##*/}
   cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in
-    *cli-node*' -p '*)
-      if [ -z "$keep" ] || [ "$pid" -lt "$keep" ]; then keep=$pid; fi
-      ;;
-  esac
+  case "$cmd" in *cli-node*) ;; *) continue ;; esac
+  tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -q '^CLAUDE_CODE_KIN_NATIVE_SLOTS=' || continue
+  if [ -z "$keep" ] || [ "$pid" -lt "$keep" ]; then keep=$pid; fi
 done
-for d in /proc/[0-9]*; do
-  pid=\${d#/proc/}
+for d in "$proc"/[0-9]*; do
+  pid=\${d##*/}
   [ "$pid" = "$keep" ] && continue
   cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in
-    *cli-node*) ;;
-    *) continue ;;
-  esac
-  case "$cmd" in
-    *cli-node*' -p '*) kill -KILL "$pid" 2>/dev/null || true; continue ;;
-  esac
-  panel=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null | sed -n 's/^KIN_PANEL_SHELL=//p' | head -n 1)
+  case "$cmd" in *cli-node*) ;; *) continue ;; esac
+  env=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null) || continue
+  [ -n "$env" ] || continue
+  if printf '%s\\n' "$env" | grep -q '^CLAUDE_CODE_KIN_NATIVE_SLOTS='; then
+    kill -KILL "$pid" 2>/dev/null || true
+    continue
+  fi
+  printf '%s\\n' "$env" | grep -qx -e 'KIN_OFFICIAL_CC=1' -e 'KIN_SETUP_TOKEN=1' && continue
+  panel=$(printf '%s\\n' "$env" | sed -n 's/^KIN_PANEL_SHELL=//p' | head -n 1)
   if [ -n "$panel" ]; then
     for token in "$@"; do
       [ "$token" = "$panel" ] && continue 2

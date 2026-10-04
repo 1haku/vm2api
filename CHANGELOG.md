@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.3.104 — 2026-10-04
+
+- 修复 1.3.103 起槽内 cli-node 守护进程把非内核的 `-p` 进程一律 SIGKILL：面板运维终端里的 `claude -p`、官方初装的 hello / `/usage` / 常驻以及 `setup-token` 会被杀（终端里显示 `Killed`）。守护现按进程环境识别：内核 CLI 认 `CLAUDE_CODE_KIN_NATIVE_SLOTS`（只留最早一个），初装带 `KIN_OFFICIAL_CC=1`、`setup-token` 带 `KIN_SETUP_TOKEN=1` 的不动，活跃面板会话里的任意 `claude` 不动，其余泄漏进程照旧清理；读不到环境的进程不再误杀。
+
+已部署机升级：更新 Node 控制面（`src/`、`scripts/`），重启一次 Node。kernel / `cli-node` / `kin-worker` 与 1.3.103 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.103 — 2026-10-04
+
+- 修复 Claude 槽内 cli-node 与宿主 Go Refresher 同时换票：两边锁不互斥，并发刷新会重复使用同一 refresh token，后到的一方拿到 `invalid_grant`；CLI 写回还会丢掉 `kinGeneration`/email/account。kernel 拉起的 cli-node 与面板运维终端现带 `CLAUDE_CODE_KIN_HOST_REFRESH=1`，临期或 401 时只重读宿主写入的凭证，换票只由宿主执行。
+- 官方初装（hello、`/usage`、常驻）与 `setup-token` 改用槽内 `~/.kin/cli-node`，不再 `curl claude.ai/install.sh` 安装官方 Claude Code；这些进程同样带 `CLAUDE_CODE_KIN_HOST_REFRESH=1`。初装常驻与内核 CLI 同一二进制，改用进程环境标记 `KIN_OFFICIAL_CC=1` 识别和清理，不会误杀内核 CLI。缺 cli-node 时初装报错、`setup-token` 返回 `cli_node_missing`；删除 `scripts/repair-official-cc-bins.mjs`。已装的 `~/.local/bin/claude` 不再使用，可手工删除。
+- 重编 `cli-node` 与 `kin-kernel`，重建控制台产物。
+
+已部署机升级：更新 Node 控制面（`src/`、`scripts/`）和 `web/dist`，重启一次 Node；`bin/kin-kernel`、`share/wrap-cli/cli-node`、`share/wrap-cli/kin-kernel.bin` 字节变化，**需要 `wrap-cli/sync`**（逐槽重启 dataplane，不要 `docker rm`）。新 CLI 必须与新 kernel 一起上线。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.102 — 2026-10-04
 
 - 修复 SSH 扩展节点的 SOCKS5 槽在换票提交时启动失败：远端 `egress.json` 字符串先编码为 Buffer，再按字节分块写入 SFTP，避免 `buffer is not a Buffer`；原子替换和 0600 权限不变。
