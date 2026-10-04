@@ -326,6 +326,13 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   return report
 }
 
+/** Auth-link hint for the slot's proxy: `name · host:port`, or bare host:port when unnamed. */
+function slotProxyHint(px = {}, label = null) {
+  if (!px.host) return null
+  const endpoint = `${px.host}${px.port ? ':' + px.port : ''}`
+  return label ? `${label} · ${endpoint}` : endpoint
+}
+
 export function createPanelHandler(ctx) {
   const json = (...args) => ctx.json(...args)
   const hostUnsupported = (res, vm, cap) => {
@@ -2938,7 +2945,7 @@ export function createPanelHandler(ctx) {
               200,
               panel.ok({
                 ...generated,
-                proxy_hint: px.host ? `${px.host}${px.port ? ':' + px.port : ''}` : null,
+                proxy_hint: slotProxyHint(px, proxyPool?.labelOf(px.id)),
               }),
             )
           }
@@ -2954,7 +2961,7 @@ export function createPanelHandler(ctx) {
             200,
             panel.ok({
               ...generated,
-              proxy_hint: px.host ? `${px.host}${px.port ? ':' + px.port : ''}` : null,
+              proxy_hint: slotProxyHint(px, proxyPool?.labelOf(px.id)),
             }),
           )
         } catch (e) {
@@ -3798,7 +3805,7 @@ export function createPanelHandler(ctx) {
         // Forward only the keys the caller actually sent — update() reads
         // presence, not value, to tell "leave alone" from "clear".
         const patch = {}
-        for (const key of ['host', 'port', 'username', 'password']) {
+        for (const key of ['host', 'port', 'username', 'password', 'label']) {
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key]
         }
         const result = proxyPool.update(id, patch)
@@ -3807,6 +3814,9 @@ export function createPanelHandler(ctx) {
           const type = status === 404 ? 'not_found_error' : 'invalid_request_error'
           return json(res, status, { ok: false, error: { type, code: result.error, message: result.error } })
         }
+        // A label is display-only; reloading every bound worker for it would
+        // pull live slots out of scheduling for nothing.
+        if (!result.connection_changed) return json(res, 200, panel.ok({ proxy: result.proxy, workers: [] }))
         // The pool store is only one of three places the credentials live
         // (pool -> vms/<id>.json -> worker.json). Without this the edit looks
         // like it worked while every bound slot keeps dialing the old proxy.
