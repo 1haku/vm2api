@@ -103,6 +103,27 @@ export function gatewayFromSubnet(subnet) {
 export function iptablesPlan({ chain, bridge, subnet, tcpPort, dnsPort }) {
   const tcp = String(tcpPort)
   const dns = String(dnsPort)
+  // REDIRECT delivers bridge traffic to host INPUT. Allow only this proxy's
+  // subnet and helper ports, ahead of host default-reject rules (e.g. Oracle).
+  const inputRules = [
+    [
+      '-i',
+      bridge,
+      '-s',
+      subnet,
+      '-d',
+      subnet,
+      '-p',
+      'tcp',
+      '-m',
+      'multiport',
+      '--dports',
+      `${tcp},${dns}`,
+      '-j',
+      'ACCEPT',
+    ],
+    ['-i', bridge, '-s', subnet, '-d', subnet, '-p', 'udp', '--dport', dns, '-j', 'ACCEPT'],
+  ]
   return {
     add: [
       ['-t', 'nat', '-N', chain],
@@ -113,6 +134,10 @@ export function iptablesPlan({ chain, bridge, subnet, tcpPort, dnsPort }) {
       ['-t', 'nat', '-A', chain, '-p', 'tcp', '--dport', '53', '-j', 'REDIRECT', '--to-ports', dns],
       ['-t', 'nat', '-A', chain, '-p', 'udp', '--dport', '53', '-j', 'REDIRECT', '--to-ports', dns],
       ['-t', 'nat', '-A', chain, '-p', 'tcp', '-j', 'REDIRECT', '--to-ports', tcp],
+      ...inputRules.flatMap((rule) => [
+        ['-t', 'filter', '-C', 'INPUT', ...rule],
+        ['-t', 'filter', '-I', 'INPUT', '1', ...rule],
+      ]),
       ['-t', 'filter', '-C', 'FORWARD', '-i', bridge, '!', '-d', subnet, '-j', 'DROP'],
       ['-t', 'filter', '-I', 'FORWARD', '1', '-i', bridge, '!', '-d', subnet, '-j', 'DROP'],
     ],
@@ -121,6 +146,7 @@ export function iptablesPlan({ chain, bridge, subnet, tcpPort, dnsPort }) {
       ['-t', 'nat', '-F', chain],
       ['-t', 'nat', '-X', chain],
       ['-t', 'filter', '-D', 'FORWARD', '-i', bridge, '!', '-d', subnet, '-j', 'DROP'],
+      ...inputRules.map((rule) => ['-t', 'filter', '-D', 'INPUT', ...rule]),
     ],
   }
 }
