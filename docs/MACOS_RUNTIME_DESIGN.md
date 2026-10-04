@@ -4,7 +4,7 @@
 
 这是主进程与 Claude CLI 对 macOS 专项方案的设计，不是运行证明或支持声明。Linux 阶段已提交为 `9e70947`，见 [Draft PR #232](https://github.com/dofastted/vm2api/pull/232)。macOS 仍关闭；不发布、合并或部署。
 
-当前只有 WSL2/Docker Desktop/Linux x86_64 验证环境，daemon 没有 `/dev/kvm`，没有已核准 Apple 宿主、guest、用途许可记录或完整 Darwin 产品。只有 Go Darwin/amd64 Mach-O 交叉构建，未执行，不能作为 A08 通过。
+初始设计阶段只有 WSL2/Docker Desktop/Linux x86_64 环境，Docker daemon 未观察到 `/dev/kvm`，Go Darwin/amd64 仅交叉构建未执行。后续隔离实验已在 WSL 实际启用 KVM、启动 PureDarwin 并调用真实 CLI/worker，但两者加载失败；详见第10节。这不补齐获核准 Apple 宿主、macOS guest、用途许可或完整 Darwin 产品，也不作为 A08 通过。
 
 保持原 `macos-15`、Darwin/x86_64、`runtime=kvm` 的验收范围。先验证 `docker-qemu` 单一生命周期管理者；`libvirt` 是需要独立 profile 和签收的替代，不同时接管一个实例。Apple Silicon/Virtualization.framework 是独立 provider、架构条目和验收路线，不自动替代 x86，也不退回 Ubuntu。两条路线目前均 blocked。
 
@@ -121,3 +121,31 @@ Claude CLI 在项目外临时目录运行，仅接收 macOS 需求、catalog/pro
 ## 9. 明确风险
 
 受支持的无人值守 OS/首个管理员初始化路径尚未证实；如果自动初始化 gate 不能通过，完整 macOS 仍未交付，不能永久停在人工流程后宣称完成。host guardian 的签名不能弥补被攻陷/不可信宿主；该情况必须依赖实测外部隔离和存储独占证明。GPU/EDID、出口强制与兼容性不能靠模型名称推断，缺能力则相应签收阻塞。
+
+## 10. 隔离 Darwin 实验工具与实际结果
+
+`scripts/darwin-lab.mjs` 是独立的开源 Darwin 实验入口，不是上述生产 macOS provider。它不接面板、槽位、调度、网关或 Docker；只接受固定 `puredarwin-17.4` profile，拒绝 macOS catalog 项，不下载闭源 macOS 镜像。实验工具提交不包含私有 CLI/Rust 源码、构建产品、系统盘或尚未提交的 macOS 准入 registry 改造。
+
+运行条件：Linux Node24、可访问 `/dev/kvm` 的固定操作 UID、非根文件系统的数据盘、已准备好的 Linux QEMU 根目录及官方 PureDarwin17.4压缩包。`L` 是独立实验根目录；压缩包和可选 raw 产品盘必须位于其中。首次 prepare 将标记绑定 canonical root/UID；复制标记或换 UID 不会获得操作权。不要为实验放宽全局设备权限。
+
+```sh
+node scripts/darwin-lab.mjs prepare --lab-root "$L" --variant puredarwin-17.4 --source "$L/images/pd_17_4.vmdk.xz"
+node scripts/darwin-lab.mjs start --lab-root "$L" --id pd1 --variant puredarwin-17.4 --qemu-root "$L/qemu-root" --memory-mib 1024 --cpus 1 --accel kvm --payload-disk "$L/products/native-products.hfs"
+node scripts/darwin-lab.mjs inspect --lab-root "$L" --id pd1 --screendump
+node scripts/darwin-lab.mjs stop --lab-root "$L" --id pd1
+node scripts/darwin-lab.mjs destroy --lab-root "$L" --id pd1
+node scripts/darwin-lab.mjs check-product --variant puredarwin-17.4 --file "$L/products/cli-node-darwin-x64"
+```
+
+没有产品盘时省略 `--payload-disk`。基盘和 raw 产品源盘保持只读，IDE设备经每代独立 qcow2 overlay 写入；不接受任意 QEMU 参数或联网参数。已有 base/instance/screens 目录链接被拒绝。停止/销毁按 boot id、PID启动时间、UID、可执行文件和唯一名称确认归属，PID复用不发送信号；live destroy 与重复 start 明确拒绝。
+
+证据分层：`host` 来自进程与 QMP `query-status`/`query-kvm`；`guest_os` 只证明当前代串口实际输出 Darwin 内核横幅；工具没有认证 guest 执行回执，`product` 保持 `unproven`。`check-product` 仅检查 Mach-O及最低OS部署要求，能排除兼容性，不能证明程序能运行。操作员键盘/VGA执行结果另行记录，不能改写 Slot-ready。
+
+实际使用私有 QEMU10.0.13、WSL KVM完成了8GiB/2CPU和1GiB/1CPU的 PureDarwin17.4真实 root shell启动、uname/id、HFS挂载和目标程序调用。两个真实产品均未运行成功：
+
+| 实际 guest 命令      | 观察结果                                       | Mach-O最低macOS |
+| -------------------- | ---------------------------------------------- | --------------- |
+| `cli-node --version` | dyld未知load command `0x80000034`，Abort trap6 | 13.0.0          |
+| `kin-worker --help`  | 缺 `/usr/lib/libresolv.9.dylib`，Abort trap6   | 12.0.0          |
+
+QMP quit、进程退出、owned destroy及随后 instance_missing均实测通过，源盘哈希不变；实验VM与临时运行资源已清理，镜像/产品保留在私有目录。1GiB shell不是1GiB业务容量，PureDarwin17不是macOS15，失败的原生加载不是A08。现代loader/完整动态依赖、Apple目标/SDK/链接器及受测Darwin Rust产品仍缺；真实headless macOS另需获核准Apple宿主、许可和完整原始验收。不得以本实验降低生产内存门禁、启用macOS创建或宣称P3–P6完成。

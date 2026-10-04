@@ -7,6 +7,7 @@
 - guest 生命周期增加 generation/spec/nonce 与物理 owner/CID fence；拒绝跨实例容器碰撞与文件链接逃逸；删除存储失败不吞错。原生 guest Codex 不回退宿主 kernel，不因单实例停止拆共享桥。启动/重载按真实 native socket 检查，避免重复 start 因缺 Go worker.sock 无端重建健康 guest。
 - 候选构建异步、有界、可取消；CI 增加发行版覆盖验证、Grype 漏洞、Trivy 许可证与 CycloneDX SBOM，仅推已测镜像。真实扫描中 Debian 13 仍有 144 个 High/Critical，禁止发布；库存不等于许可证批准。
 - 控制台新增候选用户名、脱敏系统账号和准备状态，失败保留输入与幂等键；macOS 选项保持禁用，重建 `web/dist`。
+- 新增隔离开源 Darwin QEMU 实验工具 `scripts/darwin-lab.mjs`（prepare/start/inspect/stop/destroy/check-product）：固定 PureDarwin 17.4 源包哈希，基盘和可选 `--payload-disk` 原始产品盘只读，经本实例 qcow2 overlay 使用；默认 KVM、无网络、固定参数。实验标记绑定真实根目录与操作 UID，拒绝复制标记和链接目录逃逸；停止验证 boot id、PID 启动时间、uid、可执行文件和唯一名称。宿主、内核横幅和程序证明分层，不接网关/槽位/面板/调度，macOS 目录项仍拒绝。已在 WSL/KVM 下以 1GiB/1CPU 进入真实 Darwin shell；实际 CLI 因 dyld 未知 load command 0x80000034、worker 因缺 libresolv.9.dylib 启动失败，不声明业务兼容。
 
 未发布/部署。macOS 实机安装、硬件 profile、Darwin 产品、克隆/恢复隔离及完整断代理验收未完成；见 [逐项验收](.trellis/tasks/10-04-macos-construction/research/verification.md)。
 
