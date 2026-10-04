@@ -45,6 +45,7 @@ import {
 import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.mjs'
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
+import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import {
   resolveInferenceEngine,
@@ -385,6 +386,8 @@ export function createHandleProtocol(deps) {
       upstream_model: null,
       first_token_ms: null,
       stop_reason: null,
+      session_id: null,
+      reasoning_effort: null,
     }
     res.on('finish', () => {
       try {
@@ -432,6 +435,8 @@ export function createHandleProtocol(deps) {
     logBag.requested_model = inbound?.model || null
     logBag.stream = isClientStream(inbound, req.headers)
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
+    logBag.session_id = sessionIdForLog(extractCallerSession({ inbound, headers: req.headers }))
+    logBag.reasoning_effort = reasoningEffortOf(inbound)
 
     const fp = fingerprintRequest(req, inbound)
     const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
