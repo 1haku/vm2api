@@ -1,6 +1,7 @@
 import {
   Boxes,
   Cable,
+  ChartColumn,
   Database,
   Download,
   Gauge,
@@ -25,6 +26,7 @@ const ALL_GROUPS: NavGroup[] = [
       { title: '虚拟机', url: '/vm', icon: Server },
       { title: '导入', url: '/import', icon: Download },
       { title: '用量', url: '/usage', icon: Gauge },
+      { title: '统计', url: '/statistics', icon: ChartColumn },
     ],
   },
   {

@@ -126,6 +126,14 @@ const PANEL_ROUTE_SAMPLES = [
   ['POST', '/api/panel/users'],
   ['PATCH', '/api/panel/users/u1'],
   ['DELETE', '/api/panel/users/u1'],
+  ['GET', '/api/panel/usage-logs'],
+  ['GET', '/api/panel/usage-logs/summary'],
+  ['GET', '/api/panel/usage-logs/filter-options'],
+  ['GET', '/api/panel/usage-logs/session-suggestions'],
+  ['GET', '/api/panel/usage-logs/active-sessions'],
+  ['GET', '/api/panel/usage-logs/overview'],
+  ['GET', '/api/panel/statistics'],
+  ['GET', '/api/panel/statistics/leaderboard'],
 ]
 
 test('panel route samples all have server handlers', () => {
