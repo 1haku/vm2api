@@ -325,6 +325,7 @@ export function ProxiesPage() {
               bindLimit={bindLimit}
               probeMin={probeMin}
               dnsPrimary={String(cfg.dns_primary || 'auto')}
+              dnsDisableSvcbHttps={cfg.dns_disable_svcb_https === true}
               followProxyTimezone={cfg.follow_proxy_timezone !== false}
             />
           </aside>
