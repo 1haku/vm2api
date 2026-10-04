@@ -46,12 +46,14 @@ export function ProxyManagePanel({
   bindLimit,
   probeMin,
   dnsPrimary,
+  dnsDisableSvcbHttps,
   followProxyTimezone,
 }: {
   proxies: VmProxySnap[]
   bindLimit: number
   probeMin: number
   dnsPrimary: string
+  dnsDisableSvcbHttps: boolean
   followProxyTimezone: boolean
 }) {
   const refresh = useRefreshProxies()
@@ -81,8 +83,11 @@ export function ProxyManagePanel({
         toast.warning(
           `DNS 已保存，但 ${failed.length} 个出口重载失败：${failed.map((entry) => entry.proxy_id).join('、')}`
         )
-      } else if (patch.dns_primary != null) {
-        toast.success('出口 DNS 已保存，运行中的出口已同步')
+      } else if (
+        patch.dns_primary != null ||
+        patch.dns_disable_svcb_https != null
+      ) {
+        toast.success('出口 DNS 已保存，本机出口已同步')
       } else if (patch.bind_limit != null) {
         toast.success(`每条最多绑 ${String(patch.bind_limit)} 台`)
       } else if (patch.probe_interval_min != null) {
@@ -123,6 +128,9 @@ export function ProxyManagePanel({
   const limitShown = Number(pending?.bind_limit ?? bindLimit)
   const probeShown = Number(pending?.probe_interval_min ?? probeMin)
   const dnsShown = String(pending?.dns_primary ?? dnsPrimary)
+  const dnsDisableShown = Boolean(
+    pending?.dns_disable_svcb_https ?? dnsDisableSvcbHttps
+  )
   const customDnsShown =
     customDnsDraft !== null ||
     !DNS_CHOICES.some((choice) => choice.value === dnsShown)
@@ -294,6 +302,35 @@ export function ProxyManagePanel({
               </Button>
             </form>
           )}
+        </div>
+
+        <div className='flex items-start justify-between gap-3'>
+          <div className='space-y-0.5'>
+            <label
+              htmlFor='proxy-dns-empty-types'
+              className='block text-xs font-medium'
+            >
+              关闭 DNS type 64 / 65
+            </label>
+            <p
+              id='proxy-dns-empty-types-help'
+              className='text-[11px] text-muted-foreground'
+            >
+              通过 DNS 覆写让 SVCB（64）、HTTPS（65）返回空答案；A / AAAA
+              解析不受影响。 仅用于 SOCKS5
+              出口，集群出口在下次启动或重载槽位时生效。
+            </p>
+          </div>
+          <Switch
+            id='proxy-dns-empty-types'
+            checked={dnsDisableShown}
+            disabled={saveConfig.isPending}
+            onCheckedChange={(value) =>
+              saveConfig.mutate({ dns_disable_svcb_https: value })
+            }
+            aria-describedby='proxy-dns-empty-types-help'
+            className='mt-0.5'
+          />
         </div>
 
         <label className='flex cursor-pointer items-start justify-between gap-3'>

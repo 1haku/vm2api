@@ -38,6 +38,7 @@ const DEFAULT_CONFIG = {
   bind_limit: MAX_VMS_PER_PROXY,
   // Transparent-egress DNS tried first; the other built-ins remain as fallback.
   dns_primary: DNS_PRIMARY_AUTO,
+  dns_disable_svcb_https: false,
   ipv6_enabled: false,
 }
 
@@ -653,6 +654,9 @@ export class ProxyPool {
 
   updateConfig(patch = {}) {
     const allowed = [5, 10, 30, 60]
+    if (Object.hasOwn(patch, 'dns_disable_svcb_https') && typeof patch.dns_disable_svcb_https !== 'boolean') {
+      return { ok: false, error: 'invalid_dns_disable_svcb_https' }
+    }
     if (patch.ipv6_enabled != null && typeof patch.ipv6_enabled !== 'boolean') {
       return { ok: false, error: 'invalid_ipv6_enabled' }
     }
@@ -666,6 +670,7 @@ export class ProxyPool {
       }
     }
     if (patch.dns_primary != null) this.state.config.dns_primary = patch.dns_primary
+    if (patch.dns_disable_svcb_https != null) this.state.config.dns_disable_svcb_https = patch.dns_disable_svcb_https
     if (patch.probe_interval_min != null) {
       const n = Number(patch.probe_interval_min)
       if (!allowed.includes(n)) {

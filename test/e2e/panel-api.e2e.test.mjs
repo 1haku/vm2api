@@ -209,6 +209,31 @@ test('proxy disconnect_on_error can be toggled via config', async () => {
   }
 })
 
+test('DNS 64/65 suppression is visible in proxy config and can be toggled', async () => {
+  const gw = await startGateway()
+  try {
+    const initial = await api(gw, 'GET', '/api/panel/proxies/config')
+    assert.equal(initial.status, 200, initial.text)
+    assert.equal((initial.json.data || initial.json).dns_disable_svcb_https, false)
+    for (const enabled of [true, false]) {
+      const put = await api(gw, 'PUT', '/api/panel/proxies/config', {
+        body: { dns_disable_svcb_https: enabled },
+      })
+      assert.equal(put.status, 200, put.text)
+      assert.equal((put.json.data || put.json).dns_disable_svcb_https, enabled)
+      const get = await api(gw, 'GET', '/api/panel/proxies')
+      assert.equal((get.json.data || get.json).config.dns_disable_svcb_https, enabled)
+    }
+    const invalid = await api(gw, 'PUT', '/api/panel/proxies/config', {
+      body: { dns_disable_svcb_https: 'false' },
+    })
+    assert.equal(invalid.status, 400, invalid.text)
+    assert.equal(invalid.json.error.code, 'invalid_dns_disable_svcb_https')
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('generate-auth-url requires bound SOCKS5', async () => {
   const gw = await startGateway()
   try {
