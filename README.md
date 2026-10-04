@@ -329,6 +329,18 @@ After deployment, access:
 
 ---
 
+## 🐞 问题反馈 / Issue Reporting
+
+提交 Issue 前请阅读 [ISSUE_GUIDE.md](ISSUE_GUIDE.md)，按“版本 → 复现路线 → 环境（VPS / 代理）→ VM 与请求日志 → 源码定位（可选）→ 脱敏”收集信息，再用 [Bug 报告表单](https://github.com/dofastted/vm2api/issues/new/choose) 提交。
+
+Before opening an issue, follow [ISSUE_GUIDE.md](ISSUE_GUIDE.md): version, reproduction steps, host/proxy environment, VM and request logs, optional source pointers — and redact all secrets.
+
+<p align="center">
+  <img src="docs/images/issue-flow.svg" alt="vm2api Issue Reporting Roadmap" width="90%" />
+</p>
+
+---
+
 ## 💬 交流与赞助支持 / Community & Sponsorship
 
 开源与持续维护离不开社区大家的支持与反馈。如果您觉得 **vm2api** 为您的业务或学习带来了实质帮助，欢迎扫码加入官方 Telegram 交流群或请作者喝杯咖啡！
