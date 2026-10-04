@@ -76,6 +76,7 @@ import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
   applyCrsIdentityReplace,
   extractCallerSession,
+  extractFirstUserIdentity,
   outboundSessionMode,
   resolveInboundIdentity,
   resolveOutboundSessionId,
@@ -673,6 +674,9 @@ export function createHandleProtocol(deps) {
     const officialClient = isOfficialClaudeClient(fp.client_class)
     const callerSession = extractCallerSession({ inbound, body: ctx.body, headers: req.headers })
     const firstUserText = extractFirstUserText(ctx.body?.messages) || extractFirstUserText(inbound?.messages)
+    // Seed identity skips a leading <system-reminder>; firstUserText stays billing-only.
+    const firstUserIdentity =
+      extractFirstUserIdentity(ctx.body?.messages) || extractFirstUserIdentity(inbound?.messages)
     const clientDiscriminator = sessionContextDiscriminator({
       clientIp: clientIp(req),
       userAgent: req.headers['user-agent'] || '',
@@ -682,7 +686,7 @@ export function createHandleProtocol(deps) {
     const sessionContext = {
       officialClient: officialTraffic,
       clientDiscriminator,
-      firstUserText,
+      firstUserIdentity,
       mode: sessionMode,
       routing: getRouting(),
     }
@@ -1108,6 +1112,7 @@ export function createHandleProtocol(deps) {
             mode: sessionMode,
             clientDiscriminator,
             firstUserText,
+            firstUserIdentity,
             apiKeyId: req.apiKeyRecord?.id ?? '',
             stream: upstreamStream,
             cacheControlLimit: Number(getRouting()?.compatibility?.cache_control_limit) || 4,
