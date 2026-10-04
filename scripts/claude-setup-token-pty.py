@@ -140,6 +140,8 @@ def build_argv() -> list[str]:
         "-e", f"LC_ALL={lang}",
         "-e", "PATH=/home/kincli/.local/bin:/usr/bin:/bin",
         "-e", "CLAUDE_CODE_KIN_HOST_REFRESH=1",
+        # The slot cli-node guard spares host-run setup-token sessions.
+        "-e", "KIN_SETUP_TOKEN=1",
         "-e", "CLAUDE_CODE_USE_BEDROCK=0",
         "-e", "CLAUDE_CODE_USE_VERTEX=0",
         "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0",
