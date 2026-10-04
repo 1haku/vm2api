@@ -207,8 +207,8 @@ test('provider chains for a page come from one request_attempts query, ordered b
 test('filters: model/requested_model, status, attempts, session, debug, time, q', () => {
   const db = freshDb()
   const rows = seed(db, [
-    { model: 'claude-opus-4', requested_model: 'opus-alias', session_id: 's-1' },
-    { status: 500, error_code: 'upstream_error', attempt_count: 3, session_id: 's-2' },
+    { model: 'claude-opus-4', requested_model: 'opus-alias', session_id: 's-1', outbound_session_id: 'out-1' },
+    { status: 500, error_code: 'upstream_error', attempt_count: 3, session_id: 's-2', outbound_session_id: 'out-2' },
     { status: 204, log_mode: 'debug', path: '/v1/chat/completions' },
     { status: 200, error_message: 'needle here', attempt_count: 1 },
   ])
@@ -223,7 +223,12 @@ test('filters: model/requested_model, status, attempts, session, debug, time, q'
   assert.deepEqual(ids({ exclude_status_200: true }), [rows[1].id])
   assert.deepEqual(ids({ exclude_status_200: true, status_code: '204' }), [rows[2].id])
   assert.deepEqual(ids({ min_attempt_count: '2' }), [rows[1].id])
+  // Either the caller's id or the id the gateway sent upstream finds the row.
   assert.deepEqual(ids({ session_id: 's-2' }), [rows[1].id])
+  assert.deepEqual(ids({ session_id: 'out-2' }), [rows[1].id])
+  const [first] = view.listBatch({ session_id: 'out-1' }).logs
+  assert.equal(first.sessionId, 'out-1')
+  assert.equal(first.clientSessionId, 's-1')
   assert.deepEqual(ids({ debug_only: true }), [rows[2].id])
   assert.deepEqual(ids({ endpoint: '/v1/chat/completions' }), [rows[2].id])
   assert.deepEqual(ids({ q: 'needle' }), [rows[3].id])
@@ -264,7 +269,7 @@ test('overview splits today/yesterday-same-time in the requested zone', () => {
     { created_at: '2026-03-09T02:00:00.000Z', total_cost: 1 }, // yesterday 10:00 local
     { created_at: '2026-03-09T06:00:00.000Z', total_cost: 2 }, // yesterday 14:00 local, after same-time
     { created_at: '2026-03-09T17:00:00.000Z', total_cost: 4, status: 500, error_code: 'upstream_error' },
-    { created_at: '2026-03-10T03:59:30.000Z', total_cost: 8, session_id: 's-live' },
+    { created_at: '2026-03-10T03:59:30.000Z', total_cost: 8, session_id: 's-live', outbound_session_id: 'out-live' },
   ])
   const view = new UsageLogsView(db)
   const sh = view.overview({ tz: 'Asia/Shanghai', now })
@@ -281,27 +286,50 @@ test('overview splits today/yesterday-same-time in the requested zone', () => {
   assert.equal(utc.yesterdayRequests, 1)
 })
 
-test('active sessions and session suggestions are owner-scoped and newest first', () => {
+test('active sessions and session suggestions group by outbound session, owner-scoped, newest first', () => {
   const db = freshDb()
   const now = Date.now()
   const iso = (ago) => new Date(now - ago).toISOString()
+  // One client session that the gateway rebuilt into two upstream sessions (abc-1 / abc-1b).
   seed(db, [
-    { created_at: iso(60_000), session_id: 'abc-1', api_key_id: 'k1', status: 500, error_code: 'upstream_error' },
-    { created_at: iso(30_000), session_id: 'abc-1', api_key_id: 'k1', status: 200, input_tokens: 10 },
-    { created_at: iso(20_000), session_id: 'abc-2', api_key_id: 'k2' },
-    { created_at: iso(10 * 60_000), session_id: 'abc-3', api_key_id: 'k1' },
+    {
+      created_at: iso(60_000),
+      session_id: 'client-1',
+      outbound_session_id: 'abc-1',
+      api_key_id: 'k1',
+      status: 500,
+      error_code: 'upstream_error',
+    },
+    {
+      created_at: iso(30_000),
+      session_id: 'client-1',
+      outbound_session_id: 'abc-1',
+      api_key_id: 'k1',
+      status: 200,
+      input_tokens: 10,
+    },
+    { created_at: iso(25_000), session_id: 'client-1', outbound_session_id: 'abc-1b', api_key_id: 'k1' },
+    { created_at: iso(20_000), session_id: 'client-2', outbound_session_id: 'abc-2', api_key_id: 'k2' },
+    { created_at: iso(10 * 60_000), session_id: 'client-3', outbound_session_id: 'abc-3', api_key_id: 'k1' },
+    { created_at: iso(5_000), session_id: 'client-legacy', api_key_id: 'k1' },
   ])
   const view = new UsageLogsView(db)
   const active = view.activeSessions({ owner_user_id: 'u1', now })
-  assert.equal(active.total, 1)
-  assert.equal(active.sessions[0].sessionId, 'abc-1')
-  assert.equal(active.sessions[0].requests, 2)
-  assert.equal(active.sessions[0].lastStatus, 200)
-  assert.equal(active.sessions[0].keyName, 'alice-key')
-  assert.equal(view.activeSessions({ now }).total, 2)
-  assert.deepEqual(view.sessionSuggestions({ q: 'abc', owner_user_id: 'u1' }), ['abc-1', 'abc-3'])
+  assert.equal(active.total, 2)
+  assert.deepEqual(
+    active.sessions.map((s) => [s.sessionId, s.clientSessionId, s.requests]),
+    [
+      ['abc-1b', 'client-1', 1],
+      ['abc-1', 'client-1', 2],
+    ],
+  )
+  assert.equal(active.sessions[1].lastStatus, 200)
+  assert.equal(active.sessions[1].keyName, 'alice-key')
+  assert.equal(view.activeSessions({ now }).total, 3)
+  assert.deepEqual(view.sessionSuggestions({ q: 'abc', owner_user_id: 'u1' }), ['abc-1b', 'abc-1', 'abc-3'])
   assert.deepEqual(view.sessionSuggestions({ q: 'abc-2' }), ['abc-2'])
-  assert.deepEqual(view.sessionSuggestions({ q: 'zzz' }), [])
+  assert.deepEqual(view.sessionSuggestions({ q: 'client' }), [])
+  assert.equal(view.overview({ now }).activeSessions, 3)
 })
 
 test('active sessions never resolve the last row from another tenant sharing the session id', () => {
@@ -310,10 +338,18 @@ test('active sessions never resolve the last row from another tenant sharing the
   const at = new Date(now - 30_000).toISOString()
   // Same client-chosen session id and completion instant; bob's row sorts later by id.
   seed(db, [
-    { created_at: at, session_id: 'shared', api_key_id: 'k1', vm_id: 'vm-a', status: 200 },
     {
       created_at: at,
       session_id: 'shared',
+      outbound_session_id: 'shared',
+      api_key_id: 'k1',
+      vm_id: 'vm-a',
+      status: 200,
+    },
+    {
+      created_at: at,
+      session_id: 'shared',
+      outbound_session_id: 'shared',
       api_key_id: 'k2',
       vm_id: 'vm-b',
       status: 500,
