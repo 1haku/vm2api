@@ -14,8 +14,9 @@ rust=0; go=0; telemetry=0
 case "$main" in
   kin-kernel|*/kin-kernel|kin-kernel.bin|*/kin-kernel.bin) rust=1 ;;
   kin-worker|*/kin-worker) go=1 ;;
-  */ld-linux-*.so.*)
-    # The shipped kernel uses a bundled glibc loader as PID1's executable.
+  */ld-linux-*.so.*|*/qemu-*)
+    # The shipped kernel uses a bundled glibc loader as PID1's executable; on
+    # an ARM64 host binfmt QEMU is PID1's executable and the program is argv[1].
     if tr '\000' '\n' < /proc/1/cmdline | grep -Eq '(^|/)kin-kernel(\.bin)?$'; then rust=1; fi
     if tr '\000' '\n' < /proc/1/cmdline | grep -Eq '(^|/)kin-worker$'; then go=1; fi
     ;;
