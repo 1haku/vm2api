@@ -7,6 +7,7 @@
 import { isOfficialClaudeUa } from '../identity/crs-headers.mjs'
 import { isOfficialClaudeCodeTraffic } from '../identity/crs-persona.mjs'
 import { vmHasClaudeCredential } from '../vm/vm-registry.mjs'
+import { guestProvisioningReady } from '../vm/guest-contract.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
 import { fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions, fromClaudeToResponses } from '../protocol/convert.mjs'
 import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
@@ -573,7 +574,7 @@ export function formatHealthSse(protocol, inbound, snapshot, cfg = DEFAULT_HEALT
 const HARD_UNAVAILABLE = new Set(['stopped', 'dead', 'error', 'disabled'])
 
 export function isHealthProbeTarget(vm) {
-  if (!vm) return false
+  if (!guestProvisioningReady(vm)) return false
   if (vm.schedulable === false) return false
   const status = String(vm.status || '').toLowerCase()
   if (HARD_UNAVAILABLE.has(status)) return false

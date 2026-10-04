@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 新增 Debian 13、Ubuntu 26.04、Fedora 44 候选与 `linux-account-v2`：SQLite 稳定分配账号，入口创建真实 passwd/group 用户并降权；HOME、worker、凭据与 token 路径使用实际 UID/GID。不迁移旧四种镜像或 `/home/kincli`。
+- 创建严格验证 OS/runtime/provider，拒绝未知值、字段冲突及未核准 macOS；区分 `os_ready` 和可调度 `slot_ready`。候选初始化不提前声明 running；幂等重试不重复分配，退休操作不能重新发布。
+- guest 生命周期增加 generation/spec/nonce 与物理 owner/CID fence；拒绝跨实例容器碰撞与文件链接逃逸；删除存储失败不吞错。原生 guest Codex 不回退宿主 kernel，不因单实例停止拆共享桥。启动/重载按真实 native socket 检查，避免重复 start 因缺 Go worker.sock 无端重建健康 guest。
+- 候选构建异步、有界、可取消；CI 增加发行版覆盖验证、Grype 漏洞、Trivy 许可证与 CycloneDX SBOM，仅推已测镜像。真实扫描中 Debian 13 仍有 144 个 High/Critical，禁止发布；库存不等于许可证批准。
+- 控制台新增候选用户名、脱敏系统账号和准备状态，失败保留输入与幂等键；macOS 选项保持禁用，重建 `web/dist`。
+
+未发布/部署。macOS 实机安装、硬件 profile、Darwin 产品、克隆/恢复隔离及完整断代理验收未完成；见 [逐项验收](.trellis/tasks/10-04-macos-construction/research/verification.md)。
+
 ## 1.3.102 — 2026-10-04
 
 - 修复 SSH 扩展节点的 SOCKS5 槽在换票提交时启动失败：远端 `egress.json` 字符串先编码为 Buffer，再按字节分块写入 SFTP，避免 `buffer is not a Buffer`；原子替换和 0600 权限不变。

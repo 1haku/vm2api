@@ -10,6 +10,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { guestAccount } from './guest-account.mjs'
 import { kernelBinPath } from '../transport/rust-kernel-supervisor.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { resolveKernelDataplane } from './slot-engine.mjs'
@@ -334,6 +336,106 @@ function writeCragWrapper(destDir) {
   fs.renameSync(tmp, wrapper)
 }
 
+function materializeGuestPayload(projectRoot, vm, src, { crag = false } = {}) {
+  const account = guestAccount(vm)
+  const home = path.dirname(wrapCliHomeDir(projectRoot, vm.id))
+  const failed = () =>
+    Object.assign(new Error('Guest artifact destination failed its ownership boundary'), {
+      code: 'guest_ownership_failed',
+    })
+  const directory = (name, action) => {
+    let fd
+    try {
+      fd = fs.openSync(name, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
+      const stat = fs.fstatSync(fd)
+      if (![0, account.uid].includes(stat.uid)) throw failed()
+      fs.fchownSync(fd, account.uid, account.gid)
+      return action(`/proc/self/fd/${fd}`)
+    } catch (error) {
+      if (error.code === 'guest_ownership_failed') throw error
+      throw failed()
+    } finally {
+      if (fd != null) fs.closeSync(fd)
+    }
+  }
+  const publish = (dest, name, source, body) => {
+    const target = path.join(dest, name)
+    try {
+      const stat = fs.lstatSync(target)
+      if (!stat.isFile() || stat.nlink !== 1 || ![0, account.uid].includes(stat.uid)) throw failed()
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    const tmp = path.join(dest, `.${name}.${crypto.randomUUID()}.new`)
+    let fd
+    try {
+      if (source) fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
+      else fs.writeFileSync(tmp, body, { mode: 0o755, flag: 'wx' })
+      fd = fs.openSync(tmp, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+      fs.fchownSync(fd, account.uid, account.gid)
+      fs.fchmodSync(fd, 0o755)
+      fs.renameSync(tmp, target)
+    } finally {
+      if (fd != null) fs.closeSync(fd)
+      try {
+        fs.unlinkSync(tmp)
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+  }
+  const tree = (source, dest) => {
+    for (const name of fs.readdirSync(source)) {
+      if (SECRET_NAMES.has(name)) continue
+      const from = path.join(source, name)
+      const stat = fs.lstatSync(from)
+      if (stat.isFile()) publish(dest, name, from)
+      if (stat.isDirectory()) {
+        const to = path.join(dest, name)
+        try {
+          fs.mkdirSync(to, { mode: 0o755 })
+        } catch (error) {
+          if (error.code !== 'EEXIST') throw error
+        }
+        directory(to, (child) => tree(from, child))
+      }
+    }
+  }
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 })
+  directory(home, (ownedHome) => {
+    const kin = path.join(ownedHome, '.kin')
+    try {
+      fs.mkdirSync(kin, { mode: 0o755 })
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+    }
+    directory(kin, (dest) => {
+      for (const name of crag ? [CC_NODE_BIN] : WRAP_CLI_FILES) publish(dest, name, path.join(src, name))
+      publish(dest, WRAP_KERNEL_BIN, crag ? cragKernelPath(projectRoot) : kernelPayloadPath(src, projectRoot))
+      const glibc = path.join(src, WRAP_GLIBC_DIR)
+      if (!crag && isDir(glibc)) {
+        const to = path.join(dest, WRAP_GLIBC_DIR)
+        try {
+          fs.mkdirSync(to, { mode: 0o755 })
+        } catch (error) {
+          if (error.code !== 'EEXIST') throw error
+        }
+        directory(to, (child) => tree(glibc, child))
+      }
+      publish(dest, WRAP_KERNEL_WRAPPER, null, crag ? cragKernelWrapperScript() : wrapKernelWrapperScript())
+    })
+  })
+  return {
+    ok: true,
+    dest: wrapCliHomeDir(projectRoot, vm.id),
+    src,
+    ...(crag ? { dataplane: 'crag' } : {}),
+    glibc_shim: !crag && isDir(path.join(src, WRAP_GLIBC_DIR)),
+    wrapper: true,
+    kernel_bin: true,
+  }
+}
+
 export function describeCragPayload(projectRoot) {
   const chosen = cragKernelPath(projectRoot)
   const info = fileInfo(chosen)
@@ -366,6 +468,7 @@ export function materializeCragKernel(projectRoot, vm, { uid = null, gid = null 
       error: 'cc-node missing (share/wrap-cli/cc-node)',
     }
   }
+  if (vm.guest_user) return materializeGuestPayload(projectRoot, vm, wrapCliTemplateDir(projectRoot), { crag: true })
   const dest = wrapCliHomeDir(projectRoot, vm.id)
   fs.mkdirSync(dest, { recursive: true })
   copyFile(src, path.join(dest, WRAP_KERNEL_BIN))
@@ -440,6 +543,7 @@ export function materializeWrapCli(projectRoot, vm, { uid = null, gid = null } =
   const src = wrapCliTemplateDir(projectRoot)
   const status = inspectWrapCliDir(src)
   if (!status.ok) return status
+  if (vm.guest_user) return materializeGuestPayload(projectRoot, vm, src)
   const dest = wrapCliHomeDir(projectRoot, vm.id)
   fs.mkdirSync(dest, { recursive: true })
   for (const name of WRAP_CLI_FILES) {

@@ -272,7 +272,7 @@ test('slot image tag follows payload bytes only; a VERSION bump keeps the image'
 
   fs.writeFileSync(path.join(root, 'bin/kin-worker'), '#!/bin/sh\n')
   assert.throws(() => slotImageSpec(root, 'ubuntu-24.04'), { code: 'slot_payload_invalid' })
-  assert.throws(() => slotImageSpec(root, 'nope-os'), { code: 'invalid_kernel' })
+  assert.throws(() => slotImageSpec(root, 'nope-os'), { code: 'unknown_os' })
 })
 
 test('tar stream round-trips through system tar with modes intact', async (t) => {
