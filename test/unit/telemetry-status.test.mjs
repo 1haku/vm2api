@@ -38,6 +38,16 @@ for (const [name, argv, expected] of [
     ],
     true,
   ],
+  [
+    'binfmt QEMU on an ARM64 host',
+    [
+      '/usr/local/libexec/vm2api/qemu-x86_64',
+      '/home/kincli/.kin/kin-kernel',
+      '/home/kincli/.kin/kin-kernel',
+      '--gateway-worker',
+    ],
+    true,
+  ],
   ['unrelated executable with a kernel argument', ['/bin/echo', '/home/kincli/.kin/kin-kernel'], false],
 ]) {
   test(`actual shell observation recognizes ${name}`, { skip: process.platform === 'win32' }, async (t) => {

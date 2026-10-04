@@ -34,6 +34,20 @@ def valid_bind_host(value: str) -> str:
     return value
 
 
+def env_has(path: Path, key: str) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return any(line.startswith(f"{key}=") and line[len(key) + 1:].strip() for line in lines)
+
+
+# Bare `docker compose` (including the panel's one-click upgrade helper) reads
+# COMPOSE_FILE from .env; without it the base service would start on ./vms and
+# ./data instead of .local/arm64. The helper mounts VM2API_HOST_ROOT.
+COMPOSE_FILE = "docker-compose.yml:docker-compose.arm64.yml"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=valid_port, default=8787)
@@ -41,7 +55,8 @@ def main() -> int:
     parser.add_argument("--bind-host", type=valid_bind_host, default="127.0.0.1")
     args = parser.parse_args()
 
-    env_path = Path(__file__).resolve().parents[1] / ".env"
+    root = Path(__file__).resolve().parents[1]
+    env_path = root / ".env"
     values = {
         "VM2API_ADMIN_USER": "admin",
         "VM2API_ADMIN_PASSWORD": secrets.token_urlsafe(24),
@@ -50,11 +65,17 @@ def main() -> int:
         "VM2API_CONTAINER_NAME": args.container_name,
         "VM2API_BIND_HOST": args.bind_host,
         "PORT": str(args.port),
+        "COMPOSE_FILE": COMPOSE_FILE,
+        "VM2API_HOST_ROOT": str(root),
     }
     try:
         fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         print("Existing .env preserved. Review it locally before starting this deployment.")
+        missing = [key for key in ("COMPOSE_FILE", "VM2API_HOST_ROOT") if not env_has(env_path, key)]
+        if missing:
+            print(f"Add to .env: COMPOSE_FILE={COMPOSE_FILE} and VM2API_HOST_ROOT={root} "
+                  f"(missing: {', '.join(missing)}).")
         return 0
     except OSError as exc:
         print(f"Could not create .env: {exc}", file=sys.stderr)
