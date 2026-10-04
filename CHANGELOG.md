@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.3.106 — 2026-10-05
+
+- Web「代理 → 管理」新增「关闭 DNS type 64 / 65」开关，配置 `dns_disable_svcb_https` 为布尔值，默认关闭并持久保存。
+- 开启后向 SOCKS5 透明出口下发 DNS 覆写参数 `dns_empty_types: [64, 65]`，SVCB（64）与 HTTPS（65）查询返回 `NOERROR` 空答案，不请求上游；A、AAAA 等其它查询正常转发。关闭后恢复正常查询，UDP / TCP 均支持。
+- 保存后重载本机已绑定出口；集群出口在下次槽位启动或重载时读取新设置。本地直连出口不使用此设置。
+- 重编 `bin/kin-egress`，重建控制台产物，增加配置持久化、API 和 DNS 服务回归测试。
+
+已部署机升级：更新 Node 控制面（`src/`）、`web/dist` 和 `bin/kin-egress`，重启一次 Node。kernel / `cli-node` / `kin-worker` 与 1.3.105 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。DNS 开关变化会重载本机已绑定出口；集群节点需更新出口镜像后，在下次槽位启动 / 重载时生效。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.105 — 2026-10-05
 
 - 面板 `/logs` 重写为滚动日志（虚拟滚动、分组筛选、详情抽屉、供应商链、费用明细、活跃 Session），新增 `/statistics` 统计页（今日 / 7 天 / 30 天 / 本月，按用户 / 密钥 / 模型 / 槽位聚合与排行榜）（#239）。新接口 `/api/panel/usage-logs*`、`/api/panel/statistics*` 只读；`user` 角色只看本人数据，统计维度仅 `key` / `model`。迁移 `027` 给 `usage_logs` 加可空列 `session_id`、`reasoning_effort`，此前的历史行不参与会话筛选。
