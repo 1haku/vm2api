@@ -9,14 +9,7 @@
  */
 
 import { getDb } from '../database.mjs'
-import {
-  collectErrors,
-  enrichLogRow,
-  excludeErrorClassSql,
-  ignoredErrorSqlList,
-  ingressAuthSql,
-  slaOkErrorSqlList,
-} from '../../admin/error-class.mjs'
+import { collectErrors, enrichLogRow, excludeErrorClassSql, ingressAuthSql } from '../../admin/error-class.mjs'
 import {
   calculateCost,
   emptyCostBucket,
@@ -26,14 +19,7 @@ import {
 } from '../../admin/pricing.mjs'
 import { cacheHitStats } from '../../admin/cache-metrics.mjs'
 import { extraWindowSince, WINDOW_5H_MS, WINDOW_7D_MS } from '../../pool/quota-window.mjs'
-
-const IGNORED_CODES_SQL = ignoredErrorSqlList()
-const SLA_OK_CODES_SQL = slaOkErrorSqlList()
-const ERROR_PRED = `(status >= 400 OR (error_code IS NOT NULL AND error_code != '' AND error_code NOT IN (${IGNORED_CODES_SQL})))`
-const SUCCESS_PRED = `(status < 400 AND (error_code IS NULL OR error_code = '' OR error_code IN (${IGNORED_CODES_SQL})))`
-const SLA_OK_PRED = `(status = 429 OR (error_code IS NOT NULL AND error_code != '' AND error_code IN (${SLA_OK_CODES_SQL})))`
-const SLA_SUCCESS_PRED = `(${SUCCESS_PRED} OR ${SLA_OK_PRED})`
-const SLA_ERROR_PRED = `(${ERROR_PRED} AND NOT (${SLA_OK_PRED}))`
+import { ERROR_PRED, SUCCESS_PRED, SLA_ERROR_PRED, SLA_SUCCESS_PRED, ownerPred } from './usage-log-preds.mjs'
 
 const SUMMARY_COLUMNS = [
   'id',
@@ -86,6 +72,8 @@ const SUMMARY_COLUMNS = [
   'service_tier',
   'speed',
   'long_context',
+  'session_id',
+  'reasoning_effort',
 ]
 
 function toRow(rec) {
@@ -180,15 +168,6 @@ function bucketEventsSince(rows = [], sinceMs) {
       total_cost: Number(row.total_cost || 0),
     })),
   )
-}
-
-function ownerPred(ownerUserId) {
-  const id = String(ownerUserId || '').trim()
-  if (!id) return { sql: '', params: [] }
-  return {
-    sql: `(user_id = ? OR IFNULL(api_key_id, '') IN (SELECT id FROM api_keys WHERE user_id = ? AND deleted_at IS NULL) OR IFNULL(vm_id, '') IN (SELECT id FROM vms WHERE owner_user_id = ?))`,
-    params: [id, id, id],
-  }
 }
 
 function filterCond({ since = null, until = null, vmId = null, accountId = null } = {}) {
