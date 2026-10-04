@@ -101,6 +101,9 @@ test('super can schedule VMs but cannot touch credentials or delete', () => {
 })
 
 test('admin is unrestricted', () => {
+  assert.equal(authorizePanelRoute('PUT', '/api/panel/proxies/config', 'admin').ok, true)
+  for (const role of ['user', 'super'])
+    assert.equal(authorizePanelRoute('PUT', '/api/panel/proxies/config', role).ok, false)
   assert.equal(authorizePanelRoute('DELETE', '/api/panel/vms/vm-01', 'admin').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/users', 'admin').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/import', 'admin').ok, true)

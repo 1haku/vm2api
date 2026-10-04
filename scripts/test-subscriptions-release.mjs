@@ -40,6 +40,7 @@ const unit = [
   'sticky-router',
   'log-fields',
   'proxy-pool-update',
+  'proxy-pool-bind',
   'panel-api-proxy',
   'official-cc-bootstrap',
 ]
