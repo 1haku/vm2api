@@ -5,6 +5,8 @@
 - 修复无调用方会话 ID 时，首条 user 第一块是逐字固定的 `<system-reminder>`（日期、工作目录）会让同一天同一目录的不同会话共用一个粘滞槽和同一个出站 session（#236）。粘滞指纹与出站 session 种子现取首条 user 中第一个不是纯 `<system-reminder>` 的文本块；全是 reminder 时仍取第一块。后续块照旧不参与，同一会话逐轮增长不会新开槽。计费 / persona 使用的首条文本不变。
 - Codex `outbound_session: passthrough` 且入站没有会话 ID 时，不再发 `null`，改用同一套确定性种子派生出站 session。
 - 升级后以 reminder 开头、又没有会话 ID 的在途会话会重新绑定一次槽位。
+- 修复 API Key 页「复制」在 HTTP（非 HTTPS、非 localhost）访问的部署上提示「复制失败」：浏览器只在安全上下文提供 `navigator.clipboard`。复制现先用剪贴板 API，不可用或被拒时改用选区复制（弹层内也可用）；仍被浏览器拦截时打开密钥弹层，在弹层里再点「复制」，再失败则选中密钥提示按 Ctrl+C。
+- 代理池支持代理名称（#235）；重建控制台产物。
 
 ## 1.3.104 — 2026-10-04
 
