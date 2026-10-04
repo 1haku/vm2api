@@ -39,7 +39,10 @@ import {
   type ExportWindow,
 } from './export-dialog'
 import { UsageLogsFilters } from './filters/usage-logs-filters'
-import { LogDetailSheet, type DetailState } from './log-detail/log-detail-sheet'
+import {
+  LogDetailDialog,
+  type DetailState,
+} from './log-detail/log-detail-dialog'
 import { LogsFullscreen } from './logs-fullscreen'
 import {
   LOGS_QUERY_KEY,
@@ -388,7 +391,7 @@ export function LogsPage() {
           />
         </div>
       </div>
-      <LogDetailSheet state={detail} onClose={() => setDetail(null)} />
+      <LogDetailDialog state={detail} onClose={() => setDetail(null)} />
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}

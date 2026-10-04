@@ -38,7 +38,6 @@ import {
   isSuccessStatus,
   resolveModelAuditDisplay,
 } from '../log-display'
-import { DebugRecordSection } from './debug-record-section'
 
 function SectionTitle({
   icon: Icon,
@@ -291,14 +290,17 @@ export function SummaryTab({
         </div>
       ) : null}
 
-      {row.sessionId || row.reasoningEffort || row.requestId ? (
+      {row.sessionId ||
+      row.clientSessionId ||
+      row.reasoningEffort ||
+      row.requestId ? (
         <div className='space-y-2'>
           <h4 className='text-sm font-semibold'>会话信息</h4>
           <div className='divide-y rounded-lg border bg-card'>
             {row.sessionId ? (
               <div className='flex items-center gap-2 p-4'>
                 <span className='shrink-0 text-xs text-muted-foreground'>
-                  Session ID
+                  出站 Session
                 </span>
                 <Link
                   to='/logs'
@@ -306,6 +308,20 @@ export function SummaryTab({
                   className='min-w-0 truncate font-mono text-xs underline-offset-2 hover:underline'
                 >
                   {row.sessionId}
+                </Link>
+              </div>
+            ) : null}
+            {row.clientSessionId && row.clientSessionId !== row.sessionId ? (
+              <div className='flex items-center gap-2 p-4'>
+                <span className='shrink-0 text-xs text-muted-foreground'>
+                  客户端 Session
+                </span>
+                <Link
+                  to='/logs'
+                  search={{ sessionId: row.clientSessionId }}
+                  className='min-w-0 truncate font-mono text-xs text-muted-foreground underline-offset-2 hover:underline'
+                >
+                  {row.clientSessionId}
                 </Link>
               </div>
             ) : null}
@@ -602,8 +618,6 @@ export function SummaryTab({
           </div>
         </div>
       ) : null}
-
-      {row.requestId ? <DebugRecordSection requestId={row.requestId} /> : null}
     </div>
   )
 }
