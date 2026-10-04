@@ -234,6 +234,7 @@ export function prepareOutboundAttempt({
   userAgent = '',
   apiKeyId = '',
   firstUserText = '',
+  firstUserIdentity = '',
   authScheme,
   credentialMode,
 } = {}) {
@@ -253,7 +254,7 @@ export function prepareOutboundAttempt({
     clientIp,
     userAgent: userAgent || reqHeaders?.['user-agent'] || '',
     apiKeyId,
-    firstUserText,
+    firstUserIdentity,
   }
   const sessionId =
     String(sessionIdOverride || '').trim() ||
@@ -334,6 +335,7 @@ export function prepareOutboundEnvelope({
   userAgent = '',
   apiKeyId = '',
   firstUserText = '',
+  firstUserIdentity = '',
   authScheme,
   credentialMode,
   want1m,
@@ -364,6 +366,7 @@ export function prepareOutboundEnvelope({
     userAgent,
     apiKeyId,
     firstUserText,
+    firstUserIdentity,
     authScheme,
     credentialMode,
   })
