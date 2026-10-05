@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- 修复 Claude VM 席位（`session_slots`）按在飞请求数计数：同一会话的并发请求共用一个席位，占用数改为不同席位数；VM 已满时，已占席位的会话的新并发请求仍可进入，新会话照旧等待（`session_slots_full`）。实际并发仍受 `max_concurrency` 限制。席位在该席位最后一个请求结束后释放。
+- `/api/panel/vms` 的 Claude 行新增 `seats_used` / `seats_max` / `queue_depth`，来自调度器实时席位簿与等待队列；`session_active` 仍是保留到 `session_idle_min` 的会话窗口计数，两者分开展示。VM 列表与详情卡的「在飞」不再用 `session_active` 兜底。
+- 新增面板 SSE `GET /api/panel/pool/stream`（需面板登录；`user` 只收到自己可见的 VM）：席位占用/释放、入队/出队后约 250ms 推送 `event: seats` 快照，15s 保活。VM 列表页订阅后即时更新席位与排队数；断线期间仍按 5s 轮询，5s 后自动重连。
+- 重建控制台产物。
+
+已部署机升级：更新 Node 控制面（`src/`）与 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` / `kin-egress` 不变，**不需要 `wrap-cli/sync`**，不需要重启槽容器。
+
 ## 1.3.108 — 2026-10-05
 
 - 修复长会话续聊回放网页搜索历史时偶发直接返回 400 `Invalid encrypted_content in search_result block`：这条 400 本应把搜索历史转成纯文本后在同槽修复重试一次，但长转录上游要 3–4 分钟才回 400，已超过 120 秒总重试期限，修复跳被丢弃。修复跳现不受已用尽的总期限拦截（等座最多 30 秒，仍只修复一次）。
