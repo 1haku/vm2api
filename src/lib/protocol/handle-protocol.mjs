@@ -591,7 +591,7 @@ export function createHandleProtocol(deps) {
             },
           },
           projectRoot: cfg.paths.project,
-          logMode: logCtx.mode,
+          captureOutbound: logCtx.capture_outbound === true,
           ...codexSticky,
         })
       }
@@ -607,7 +607,7 @@ export function createHandleProtocol(deps) {
         writeSSEHeaders,
         routing,
         projectRoot: cfg.paths.project,
-        logMode: logCtx.mode,
+        captureOutbound: logCtx.capture_outbound === true,
         ...codexSticky,
       })
     }
@@ -1044,7 +1044,7 @@ export function createHandleProtocol(deps) {
             }
             preserveCacheBreakpoints = true
             cacheTtl = requestedCacheTtl
-            if (logCtx.mode === 'debug') logBag.outbound_body = hopBody
+            if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
             // 0注入 hides CLI billing + env and the standing Node left in the leftover.
             // 官方提示词 must show real usage.
@@ -1134,7 +1134,7 @@ export function createHandleProtocol(deps) {
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
           })
-          if (logCtx.mode === 'debug') logBag.outbound_body = prepared.body
+          if (logCtx.capture_outbound) logBag.outbound_body = prepared.body
           logBag.outbound_headers = redactHeaders(prepared.headers || {})
           logBag.outbound_summary = summarizeBody(prepared.body)
           logBag.cache_continuity = describeCacheContinuity({
