@@ -9,6 +9,23 @@ import { isAnthropicServerTool } from './web-search.mjs'
 export const DEFAULT_CACHE_TTL = '1h'
 export const CACHE_TTL_HEADER = 'x-kin-cache-ttl'
 
+/** Only provider cache locations count; tool schemas and metadata may quote these fields. */
+export function hasPromptCacheControl(body) {
+  if (!body || typeof body !== 'object') return false
+  const marked = (node) => {
+    if (node?.type === 'thinking' || node?.type === 'redacted_thinking') return false
+    const control = node?.cache_control
+    return control?.type === 'ephemeral' && (control.ttl == null || control.ttl === '5m' || control.ttl === '1h')
+  }
+  if (marked(body)) return true
+  if (Array.isArray(body.tools) && body.tools.some(marked)) return true
+  if (Array.isArray(body.system) && body.system.some(marked)) return true
+  return (
+    Array.isArray(body.messages) &&
+    body.messages.some((message) => Array.isArray(message?.content) && message.content.some(marked))
+  )
+}
+
 export function normalizeCacheTtl(value) {
   const raw = String(value ?? '')
     .trim()
