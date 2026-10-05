@@ -347,7 +347,7 @@ export async function handleCodexProtocol({
   stickyRouter = null,
   sessions = null,
   body = null,
-  logMode = 'normal',
+  captureOutbound = false,
 }) {
   const codex = normalizeCodexRouting(routing.codex)
   const allowed = isCodexProtocolAllowed(protocol, { codex })
@@ -531,7 +531,7 @@ export async function handleCodexProtocol({
         logBag.outbound_session_id = sessionIdForLog(outboundSessionId)
         const outboundBody = applyCodexRebuildBody({ ...converted.body, stream: true }, outboundSessionId, sessionMode)
         const outboundHeaders = codexKernelHeaders(req.headers, outboundBody, session)
-        if (logMode === 'debug') logBag.outbound_body = outboundBody
+        if (captureOutbound) logBag.outbound_body = outboundBody
         logBag.outbound_headers = redactHeaders(outboundHeaders)
         const result = await runCodexKernelHop({
           hop,

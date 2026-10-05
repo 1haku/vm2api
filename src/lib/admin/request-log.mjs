@@ -399,6 +399,10 @@ export class RequestLogStore {
       ip: safeIp(req),
       user_agent: String(req.headers?.['user-agent'] || '').slice(0, 512),
       headers: mode === 'debug' ? redactHeaders(req.headers) : null,
+      // Outbound bodies carry the gateway's rewrite (persona / overlay) and are
+      // readable by the owning tenant; only the operator's configured mode may
+      // enable them, never the caller's x-kin-debug / x-kin-log header.
+      capture_outbound: this.mode === 'debug',
     }
   }
 
@@ -547,9 +551,10 @@ export class RequestLogStore {
         cache_prefix: extra.cache_prefix || null,
         cache_continuity: extra.cache_continuity || null,
         classifier: extra.classifier || null,
-        outbound_headers: extra.outbound_headers != null ? redactHeaders(extra.outbound_headers) : null,
+        outbound_headers:
+          ctx.capture_outbound && extra.outbound_headers != null ? redactHeaders(extra.outbound_headers) : null,
         outbound_body:
-          !extra.classifier && extra.outbound_body != null
+          ctx.capture_outbound && !extra.classifier && extra.outbound_body != null
             ? clampBody(extra.outbound_body, this.maxDebugBodyChars)
             : null,
         response: ctx.response ? debugResponse(ctx.response) : null,
