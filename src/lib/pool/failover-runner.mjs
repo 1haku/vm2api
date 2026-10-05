@@ -20,6 +20,9 @@ import { resolveOfficialCcInference } from '../vm/slot-engine.mjs'
 import { AttemptCoordinator } from './unit-decision.mjs'
 import { SOFT_COOLDOWN_REASONS } from './pool-scheduler.mjs'
 
+// Seat wait for the one-shot repair hop when the rejected hop already spent the deadline.
+const REPAIR_HOP_WAIT_MS = 30_000
+
 const DEFAULTS = {
   max_account_switches: 10,
   max_total_attempts: 12,
@@ -559,6 +562,10 @@ export class FailoverRunner {
     let lastResult = null
     let lastPolicy = null
     let repaired = false
+    // The repaired body is the known fix and has not been sent yet; a slow
+    // rejected hop (a 400 can take minutes on a long transcript) must not
+    // turn it into the client's error. Bounded: repair is one-shot.
+    let repairPending = false
     let requestBody = clone(canonicalBody)
     // A unit that just failed replayably waits behind every other free seat.
     let avoid = null
@@ -568,7 +575,7 @@ export class FailoverRunner {
       if (signal?.aborted || isClientCancelledResult(lastResult)) {
         return { ...clientCancelledResult(lastResult || {}), via: 'pool-failover', ...attribution() }
       }
-      if (Date.now() >= deadline) {
+      if (!repairPending && Date.now() >= deadline) {
         return preferLastResult(
           lastResult,
           lastPolicy,
@@ -592,7 +599,7 @@ export class FailoverRunner {
           excluded,
           spilled,
           signal,
-          deadline,
+          deadline: repairPending ? Math.max(deadline, Date.now() + REPAIR_HOP_WAIT_MS) : deadline,
           pinVmId,
           familyVmId,
           deviceVmId: currentDeviceVmId,
@@ -644,6 +651,7 @@ export class FailoverRunner {
         const exhausted = selectionFailure(selected, { excluded, lastPolicy, lastResult, hops: budget.hops })
         return preferLastResult(lastResult, lastPolicy, exhausted, attribution())
       }
+      repairPending = false
       snapshotPins()
       lastSelected = selected
       pinnedSlot = selected.slotIndex ?? null
@@ -785,6 +793,7 @@ export class FailoverRunner {
         }
         if (policy.action === 'repair-and-retry' && !repaired && !result?.committed) {
           repaired = true
+          repairPending = true
           requestBody = repairAnthropicRequest(requestBody, policy)
           continue
         }

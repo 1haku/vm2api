@@ -492,6 +492,57 @@ test('signature error is repaired once on the same account when enabled', async 
   assert.equal(calls, 2)
 })
 
+test('search history repair still runs when the rejected hop outlived the deadline', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const runner = new FailoverRunner({ scheduler, config: { total_retry_deadline_ms: 20 } })
+  const bodies = []
+  const result = await runner.run({
+    requestId: 'req-search-slow-400',
+    canonicalBody: {
+      model: 'claude-opus-test',
+      messages: [
+        { role: 'user', content: 'find it' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: { query: 'mac mini' } },
+            {
+              type: 'web_search_tool_result',
+              tool_use_id: 'srvtoolu_1',
+              content: [{ type: 'web_search_result', title: 'T', url: 'https://a.example', encrypted_content: 'AAAA' }],
+            },
+            { type: 'text', text: 'found' },
+          ],
+        },
+        { role: 'user', content: 'go on' },
+      ],
+    },
+    model: 'claude-opus-test',
+    callAttempt: async ({ body }) => {
+      bodies.push(body)
+      if (bodies.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        return {
+          ok: false,
+          status: 400,
+          terminalState: 'rejected',
+          body: {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              message: 'messages.1.content.0: Invalid `encrypted_content` in `search_result` block',
+            },
+          },
+        }
+      }
+      return success('repaired')
+    },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(bodies.length, 2)
+  assert.equal(JSON.stringify(bodies[1]).includes('encrypted_content'), false)
+})
+
 test('signature 400 is not repaired when signature_repair is off', async () => {
   const scheduler = new Scheduler([{ ...candidate(1), vm: { family: 'codex', platform: 'openai' } }])
   const runner = new FailoverRunner({ scheduler })
