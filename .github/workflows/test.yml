@@ -1,4 +1,4 @@
-# PR/main gate: Node + both Go modules + prebuilt linux amd64 ELFs + web.
+# PR/main gate: Node + Go + prebuilt amd64 ELFs + web + native ARM64 deployment.
 name: ci
 
 on:
@@ -32,6 +32,35 @@ jobs:
         run: |
           find src scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check
       - run: npm run test:unit
+      - name: ARM64 host preparation and rollback tests
+        run: python3 -m unittest discover -s test/deploy -v
+
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: prepare pinned x86 QEMU handler
+        run: |
+          python3 deploy/prepare-arm64.py
+          python3 deploy/prepare-arm64.py --check
+          python3 deploy/prepare-arm64.py
+      - name: verify real kernel rollback on the disposable runner
+        run: python3 test/deploy/smoke_binfmt_restore.py
+      - name: validate ARM64 Compose configuration
+        run: |
+          python3 deploy/init-arm64-env.py --port 18787 --container-name vm2api-arm64-ci
+          docker compose -f docker-compose.yml -f docker-compose.arm64.yml config --quiet
+      - name: build native control plane
+        run: docker build --progress=plain --platform linux/arm64 -f deploy/Dockerfile.arm64-control -t vm2api-arm64-control:ci .
+      - name: verify native runtime and emulated payloads
+        run: python3 test/deploy/smoke_arm64_image.py vm2api-arm64-control:ci
+      - name: build and verify a different checkout VERSION
+        run: |
+          trap 'git restore -- VERSION' EXIT
+          python3 -c 'from pathlib import Path; p = Path("VERSION"); p.write_text(p.read_text().strip() + "-arm64-build-check\n")'
+          docker build --progress=plain --platform linux/arm64 -f deploy/Dockerfile.arm64-control -t vm2api-arm64-control:ci-version .
+          python3 test/deploy/smoke_arm64_image.py vm2api-arm64-control:ci-version
 
   worker:
     runs-on: ubuntu-latest

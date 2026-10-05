@@ -130,6 +130,7 @@ def build_argv() -> list[str]:
     tz = os.environ.get("TZ", "UTC")
     lang = os.environ.get("LANG", "en_US.UTF-8")
     home = os.environ["KIN_GUEST_HOME"]
+    cli = os.environ["KIN_CLI_BIN"]
     return [
         "docker", "exec", "-it",
         "-u", f"{uid}:{gid}",
@@ -139,6 +140,9 @@ def build_argv() -> list[str]:
         "-e", f"LANG={lang}",
         "-e", f"LC_ALL={lang}",
         "-e", f"PATH={home}/.local/bin:/usr/bin:/bin",
+        "-e", "CLAUDE_CODE_KIN_HOST_REFRESH=1",
+        # The slot cli-node guard spares host-run setup-token sessions.
+        "-e", "KIN_SETUP_TOKEN=1",
         "-e", "CLAUDE_CODE_USE_BEDROCK=0",
         "-e", "CLAUDE_CODE_USE_VERTEX=0",
         "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0",
@@ -153,7 +157,7 @@ def build_argv() -> list[str]:
         "-e", "LINES=40",
         "-w", home,
         container,
-        f"{home}/.local/bin/claude",
+        cli,
         "setup-token",
     ]
 

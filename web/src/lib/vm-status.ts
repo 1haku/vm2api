@@ -747,3 +747,19 @@ export function proxyHostLabel(
   }
   return proxy.id || '—'
 }
+
+/** 带代理名称的地址：`名称 · host:port`；没起名就退回 proxyHostLabel()。 */
+export function proxyNamedLabel(
+  proxy:
+    | {
+        host?: string
+        port?: number | string
+        id?: string
+        label?: string | null
+      }
+    | undefined
+): string {
+  const host = proxyHostLabel(proxy)
+  const name = proxy?.label?.trim()
+  return name && host !== '—' ? `${name} · ${host}` : host
+}

@@ -1,5 +1,6 @@
 import {
   Box,
+  ChartColumn,
   Database,
   Download,
   KeyRound,
@@ -30,6 +31,7 @@ export type ViewId =
   | 'keys'
   | 'api'
   | 'logs'
+  | 'statistics'
   | 'database'
   | 'settings'
   | 'users'
@@ -49,6 +51,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   keys: '密钥',
   api: 'API',
   logs: '日志',
+  statistics: '统计',
   database: '数据库',
   settings: '设置',
   users: '用户',
@@ -72,6 +75,7 @@ export const NAV_ITEMS: {
   { id: 'system', url: '/system', icon: MessageSquareText },
   { id: 'keys', url: '/keys', icon: KeyRound },
   { id: 'logs', url: '/logs', icon: ScrollText },
+  { id: 'statistics', url: '/statistics', icon: ChartColumn },
   { id: 'database', url: '/database', icon: Database },
   { id: 'settings', url: '/settings/sticky', icon: Settings },
   { id: 'wrap', url: '/wrap', icon: Puzzle },

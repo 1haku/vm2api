@@ -45,6 +45,7 @@ import {
 import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.mjs'
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
+import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import {
   resolveInferenceEngine,
@@ -75,9 +76,11 @@ import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
   applyCrsIdentityReplace,
   extractCallerSession,
+  extractFirstUserIdentity,
   outboundSessionMode,
   resolveInboundIdentity,
   resolveOutboundSessionId,
+  sessionIdFromOutboundBody,
   sessionContextDiscriminator,
 } from '../identity/identity-rewrite.mjs'
 import {
@@ -358,6 +361,8 @@ export function createHandleProtocol(deps) {
   async function handleProtocol(req, res, protocol, pathName) {
     const logCtx = requestLog.start(req, { protocol, pathName })
     res._kinRequestId = logCtx.request_id
+    // Registers its own 'finish' listener first so status/headers are final when finish() runs.
+    requestLog.tapResponse?.(logCtx, res)
     const logBag = {
       protocol,
       model: null,
@@ -385,6 +390,9 @@ export function createHandleProtocol(deps) {
       upstream_model: null,
       first_token_ms: null,
       stop_reason: null,
+      session_id: null,
+      reasoning_effort: null,
+      outbound_session_id: null,
     }
     res.on('finish', () => {
       try {
@@ -432,6 +440,8 @@ export function createHandleProtocol(deps) {
     logBag.requested_model = inbound?.model || null
     logBag.stream = isClientStream(inbound, req.headers)
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
+    logBag.session_id = sessionIdForLog(extractCallerSession({ inbound, headers: req.headers }))
+    logBag.reasoning_effort = reasoningEffortOf(inbound)
 
     const fp = fingerprintRequest(req, inbound)
     const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
@@ -581,6 +591,7 @@ export function createHandleProtocol(deps) {
             },
           },
           projectRoot: cfg.paths.project,
+          captureOutbound: logCtx.capture_outbound === true,
           ...codexSticky,
         })
       }
@@ -596,6 +607,7 @@ export function createHandleProtocol(deps) {
         writeSSEHeaders,
         routing,
         projectRoot: cfg.paths.project,
+        captureOutbound: logCtx.capture_outbound === true,
         ...codexSticky,
       })
     }
@@ -668,6 +680,9 @@ export function createHandleProtocol(deps) {
     const officialClient = isOfficialClaudeClient(fp.client_class)
     const callerSession = extractCallerSession({ inbound, body: ctx.body, headers: req.headers })
     const firstUserText = extractFirstUserText(ctx.body?.messages) || extractFirstUserText(inbound?.messages)
+    // Seed identity skips a leading <system-reminder>; firstUserText stays billing-only.
+    const firstUserIdentity =
+      extractFirstUserIdentity(ctx.body?.messages) || extractFirstUserIdentity(inbound?.messages)
     const clientDiscriminator = sessionContextDiscriminator({
       clientIp: clientIp(req),
       userAgent: req.headers['user-agent'] || '',
@@ -677,7 +692,7 @@ export function createHandleProtocol(deps) {
     const sessionContext = {
       officialClient: officialTraffic,
       clientDiscriminator,
-      firstUserText,
+      firstUserIdentity,
       mode: sessionMode,
       routing: getRouting(),
     }
@@ -848,6 +863,8 @@ export function createHandleProtocol(deps) {
           } catch {}
         }
       }
+      // The api backend forwards the converted body untouched: its session is the outbound one.
+      logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(ctx.body) || logBag.session_id)
       logBag.account_id = result?.accountId || null
       logBag.final_account_id = result?.accountId || null
       logBag.upstream_status = result?.status ?? null
@@ -1027,7 +1044,7 @@ export function createHandleProtocol(deps) {
             }
             preserveCacheBreakpoints = true
             cacheTtl = requestedCacheTtl
-            if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
+            if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
             // 0注入 hides CLI billing + env and the standing Node left in the leftover.
             // 官方提示词 must show real usage.
@@ -1059,6 +1076,7 @@ export function createHandleProtocol(deps) {
               requestId: logCtx.request_id,
             })
             noteCachePrefix(selected, attemptSessionId, hopBody)
+            logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(hopBody) || attemptSessionId)
             return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext } }
           }
 
@@ -1103,6 +1121,7 @@ export function createHandleProtocol(deps) {
             mode: sessionMode,
             clientDiscriminator,
             firstUserText,
+            firstUserIdentity,
             apiKeyId: req.apiKeyRecord?.id ?? '',
             stream: upstreamStream,
             cacheControlLimit: Number(getRouting()?.compatibility?.cache_control_limit) || 4,
@@ -1115,7 +1134,7 @@ export function createHandleProtocol(deps) {
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
           })
-          if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = prepared.body
+          if (logCtx.capture_outbound) logBag.outbound_body = prepared.body
           logBag.outbound_headers = redactHeaders(prepared.headers || {})
           logBag.outbound_summary = summarizeBody(prepared.body)
           logBag.cache_continuity = describeCacheContinuity({
@@ -1129,6 +1148,7 @@ export function createHandleProtocol(deps) {
             requestId: logCtx.request_id,
           })
           noteCachePrefix(selected, attemptSessionId, prepared.body)
+          logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(prepared.body) || attemptSessionId)
           return { body: prepared.body, meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId } }
         },
         callAttempt: async ({ candidate, body, attemptMeta, deliveryMode: attemptDelivery, signal, onCommit }) => {
