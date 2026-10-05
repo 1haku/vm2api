@@ -16,7 +16,7 @@ import {
   accountStatus,
   accountUsable,
   poolStatus,
-  proxyHostLabel,
+  proxyNamedLabel,
   restrictionCopy,
   restrictionUntilOf,
   scheduleStateLabel,
@@ -348,7 +348,9 @@ export function VmStatusBoard(props: Props) {
           </div>
           <div className='mt-3 divide-y'>
             <Field label='代理' compact>
-              <span className='font-mono text-xs'>{proxyHostLabel(proxy)}</span>
+              <span className='font-mono text-xs'>
+                {proxyNamedLabel(proxy)}
+              </span>
             </Field>
             <Field label='并发 / RPM' compact>
               <div className='flex items-center gap-1'>

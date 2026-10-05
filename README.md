@@ -5,9 +5,8 @@
 ### 完全隔离的虚拟机级 AI 订阅转 API 生产网关
 **Next-Generation Fully Isolated VM-Level AI Subscription-to-API Gateway**
 
-[![Release](https://img.shields.io/badge/Release-v1.3.102-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
+[![Release](https://img.shields.io/badge/Release-v1.3.105-blue.svg?style=for-the-badge&logo=github)](https://github.com/dofastted/vm2api/releases)
 [![License](https://img.shields.io/badge/License-Noncommercial-amber.svg?style=for-the-badge)](LICENSE)
-[![Telegram](https://img.shields.io/badge/Telegram-@VM2API-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/VM2API)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Clean%20Verified-00C853?style=for-the-badge&logo=shield)](docs/benchmarks/README.md)
 [![Cluster](https://img.shields.io/badge/Cluster-Multi--VPS%20Ready-7928CA?style=for-the-badge&logo=docker)](docs/DEPLOY.md)
 
@@ -167,6 +166,8 @@ curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install
 # 以后更新
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
 ```
+
+ARM64（aarch64）主机用同一条命令，脚本自动选择 `-arm64` 控制面镜像并准备 QEMU；实验性支持，见 [docs/ARM64.md](docs/ARM64.md)。
 
 ### 2. 手动 Docker Compose 启动
 
@@ -329,24 +330,25 @@ After deployment, access:
 
 ---
 
+## 🐞 问题反馈 / Issue Reporting
+
+提交 Issue 前请阅读 [ISSUE_GUIDE.md](ISSUE_GUIDE.md)，按“版本 → 复现路线 → 环境（VPS / 代理）→ VM 与请求日志 → 源码定位（可选）→ 脱敏”收集信息，再用 [Bug 报告表单](https://github.com/dofastted/vm2api/issues/new/choose) 提交。
+
+Before opening an issue, follow [ISSUE_GUIDE.md](ISSUE_GUIDE.md): version, reproduction steps, host/proxy environment, VM and request logs, optional source pointers — and redact all secrets.
+
+<p align="center">
+  <img src="docs/images/issue-flow.svg" alt="vm2api Issue Reporting Roadmap" width="90%" />
+</p>
+
+---
+
 ## 💬 交流与赞助支持 / Community & Sponsorship
 
-开源与持续维护离不开社区大家的支持与反馈。如果您觉得 **vm2api** 为您的业务或学习带来了实质帮助，欢迎扫码加入官方 Telegram 交流群或请作者喝杯咖啡！
+开源与持续维护离不开社区大家的支持与反馈。如果您觉得 **vm2api** 为您的业务或学习带来了实质帮助， 交流群或请作者喝杯咖啡！
 
 <div align="center">
   <table style="border-collapse: separate; border-spacing: 20px; background: transparent;">
     <tr>
-      <td align="center" width="320" style="padding: 24px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,0.25);">
-        <img src="docs/images/tg-vm2api.jpg" alt="Telegram @VM2API" width="220" style="border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); border: 2px solid rgba(44,165,224,0.3);" />
-        <br/><br/>
-        <b style="font-size: 16px;">💬 官方 Telegram 交流群</b>
-        <br/>
-        <span style="color: #888; font-size: 13px;">实时讨论 · 体验交流 · 版本一手推送</span>
-        <br/><br/>
-        <a href="https://t.me/VM2API" target="_blank">
-          <img src="https://img.shields.io/badge/Telegram-@VM2API-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" />
-        </a>
-      </td>
       <td align="center" width="320" style="padding: 24px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,0.25);">
         <img src="docs/images/support-wechat.png" alt="微信赞助收款码" width="220" style="border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); border: 2px solid rgba(7,193,96,0.3);" />
         <br/><br/>

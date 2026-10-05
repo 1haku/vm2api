@@ -42,6 +42,8 @@ export function panelShellLaunch(cliBin) {
     // session there and expose the nested account file at the home path.
     'export HOME="${HOME:?guest HOME is unset}"',
     'export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"',
+    // Same credentials.json as the host Refresher; a second refresher here would spend the shared RT.
+    'export CLAUDE_CODE_KIN_HOST_REFRESH=1',
     'mkdir -p "$CLAUDE_CONFIG_DIR"',
     'if [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ] && [ ! -e "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then ln -s credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || true; fi',
     'if [ ! -e "$HOME/.claude.json" ] && [ -f "$CLAUDE_CONFIG_DIR/.claude.json" ]; then ln -s .claude/.claude.json "$HOME/.claude.json" 2>/dev/null || true; fi',
