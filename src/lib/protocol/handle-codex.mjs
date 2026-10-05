@@ -29,6 +29,7 @@ import {
 import { CLIENT_POOL_BUSY_MESSAGE } from '../core/errors.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
 import { sessionIdForLog } from './log-fields.mjs'
+import { redactHeaders } from '../admin/request-log.mjs'
 import {
   extractCallerSession,
   extractFirstUserIdentity,
@@ -346,6 +347,7 @@ export async function handleCodexProtocol({
   stickyRouter = null,
   sessions = null,
   body = null,
+  logMode = 'normal',
 }) {
   const codex = normalizeCodexRouting(routing.codex)
   const allowed = isCodexProtocolAllowed(protocol, { codex })
@@ -526,7 +528,11 @@ export async function handleCodexProtocol({
           session_id: outboundSessionId,
           previous_response_id: inboundSession.previous_response_id,
         }
+        logBag.outbound_session_id = sessionIdForLog(outboundSessionId)
         const outboundBody = applyCodexRebuildBody({ ...converted.body, stream: true }, outboundSessionId, sessionMode)
+        const outboundHeaders = codexKernelHeaders(req.headers, outboundBody, session)
+        if (logMode === 'debug') logBag.outbound_body = outboundBody
+        logBag.outbound_headers = redactHeaders(outboundHeaders)
         const result = await runCodexKernelHop({
           hop,
           args: {
@@ -535,7 +541,7 @@ export async function handleCodexProtocol({
             reqHeaders: req.headers,
             envelope: {
               body: outboundBody,
-              headers: codexKernelHeaders(req.headers, outboundBody, session),
+              headers: outboundHeaders,
               stream: true,
               session,
             },

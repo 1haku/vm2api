@@ -90,8 +90,13 @@ export type UsageLogRow = {
   userName: string | null
   keyId: string | null
   keyName: string | null
-  /** 调用方会话：Claude Code `metadata.user_id` / `x-claude-code-session-id` 等。 */
+  /**
+   * 实际出站（发给上游）的会话 id。默认 `rebuild` 模式下网关按账号/绑定代次
+   * 重新铸造，与客户端会话不同；027 之前及 029 之前的历史行为 null。
+   */
   sessionId: string | null
+  /** 客户端请求带来的会话：Claude Code `metadata.user_id` / `x-claude-code-session-id` 等。 */
+  clientSessionId: string | null
   /** 最终服务的账号展示名（`final_account_id` 优先）。 */
   providerName: string | null
   accountId: string | null
@@ -189,7 +194,7 @@ export type UsageLogFilters = {
   vmId?: string
   /** (`account_id`) */
   accountId?: string
-  /** (`session_id`) 精确匹配。 */
+  /** (`session_id`) 精确匹配出站或客户端会话 id 任一。 */
   sessionId?: string
   /** (`model`) 匹配 model 或 requested_model。 */
   model?: string
@@ -255,12 +260,14 @@ export type UsageLogFilterOptions = {
   statusCodes: number[]
 }
 
-/** `GET /api/panel/usage-logs/session-suggestions?q=&limit=` 的 `data`：会话 id 前缀匹配，最新优先。 */
+/** `GET /api/panel/usage-logs/session-suggestions?q=&limit=` 的 `data`：出站会话 id 前缀匹配，最新优先。 */
 export type UsageLogSessionSuggestions = string[]
 
-/** 近 N 分钟内有请求的会话（vm2api 只在请求完成时落库，没有「进行中」态）。 */
+/** 近 N 分钟内有请求的出站会话（vm2api 只在请求完成时落库，没有「进行中」态）。 */
 export type ActiveSession = {
   sessionId: string
+  /** 该出站会话最近一行对应的客户端会话 id。 */
+  clientSessionId: string | null
   userName: string | null
   keyName: string | null
   providerName: string | null

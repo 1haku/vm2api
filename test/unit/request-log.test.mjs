@@ -835,17 +835,93 @@ test('exportRows + csv/jsonl keep presented key and ip', () => {
   assert.match(jsonl, /sk-export-plain/)
 })
 
-test('finish persists caller session (capped) and only known reasoning efforts', () => {
+test('finish persists caller and outbound sessions (capped) and only known reasoning efforts', () => {
   const store = tmpStore('normal')
   const write = (extra) => {
     const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
     store.finish(ctx, { status: 200, ...extra })
     return store.repo.getByRequestId(ctx.request_id)
   }
-  const kept = write({ session_id: `  ${'s'.repeat(250)}  `, reasoning_effort: 'xhigh' })
+  const kept = write({
+    session_id: `  ${'s'.repeat(250)}  `,
+    outbound_session_id: '11111111-2222-4333-8444-555555555555',
+    reasoning_effort: 'xhigh',
+  })
   assert.equal(kept.session_id, 's'.repeat(200))
+  assert.equal(kept.outbound_session_id, '11111111-2222-4333-8444-555555555555')
   assert.equal(kept.reasoning_effort, 'xhigh')
-  const dropped = write({ session_id: '   ', reasoning_effort: 'turbo' })
+  const dropped = write({ session_id: '   ', outbound_session_id: '', reasoning_effort: 'turbo' })
   assert.equal(dropped.session_id, null)
+  assert.equal(dropped.outbound_session_id, null)
   assert.equal(dropped.reasoning_effort, null)
+})
+
+/** Minimal ServerResponse double: write/end/finish/getHeaders like node:http. */
+function fakeRes() {
+  const listeners = []
+  const res = {
+    statusCode: 200,
+    headers: {},
+    setHeader(k, v) {
+      this.headers[String(k).toLowerCase()] = v
+    },
+    getHeaders() {
+      return { ...this.headers }
+    },
+    write() {
+      return true
+    },
+    end() {
+      for (const fn of listeners.splice(0)) fn()
+    },
+    once(event, fn) {
+      if (event === 'finish') listeners.push(fn)
+    },
+  }
+  return res
+}
+
+test('debug mode records the exact client response; normal mode leaves res untouched', () => {
+  const store = new RequestLogStore({
+    dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'kin-rlog-')),
+    mode: 'debug',
+    maxDebugBodyChars: 64,
+  })
+  const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
+  const res = fakeRes()
+  store.tapResponse(ctx, res)
+  res.setHeader('content-type', 'text/event-stream')
+  res.setHeader('set-cookie', 'panel=secret')
+  res.write('event: message_start\ndata: {"a":1}\n\n')
+  res.write(Buffer.from('data: {"type":"content_block_delta","delta":{"text":"hello"}}\n\n'))
+  res.end('data: [DONE]\n\n')
+  store.finish(ctx, { status: 200 })
+  const rec = store.getDebug(ctx.request_id)
+  assert.equal(rec.response.status, 200)
+  assert.equal(rec.response.headers['content-type'], 'text/event-stream')
+  assert.equal(rec.response.headers['set-cookie'], '***REDACTED***')
+  assert.equal(rec.response.truncated, true)
+  assert.equal(rec.response.body.length, 64)
+  assert.ok(rec.response.body.startsWith('event: message_start'))
+  assert.ok(rec.response.bytes > 64)
+
+  const normal = tmpStore('normal')
+  const nctx = normal.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
+  const plain = fakeRes()
+  const write = plain.write
+  normal.tapResponse(nctx, plain)
+  assert.equal(plain.write, write)
+  assert.equal(nctx.response, undefined)
+})
+
+test('debug response body masks credentials that fit inside the capture window', () => {
+  const store = tmpStore('debug')
+  const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
+  const res = fakeRes()
+  store.tapResponse(ctx, res)
+  res.end('{"echo":"sk-ant-oat01-ABCDEFGH12345678"}')
+  store.finish(ctx, { status: 200 })
+  const body = store.getDebug(ctx.request_id).response.body
+  assert.doesNotMatch(body, /ABCDEFGH12345678/)
+  assert.match(body, /REDACTED/)
 })
