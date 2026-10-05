@@ -168,6 +168,8 @@ curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install
 curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
 ```
 
+ARM64（aarch64）主机用同一条命令，脚本自动选择 `-arm64` 控制面镜像并准备 QEMU；实验性支持，见 [docs/ARM64.md](docs/ARM64.md)。
+
 ### 2. 手动 Docker Compose 启动
 
 ```bash
