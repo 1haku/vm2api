@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, isApiError } from '@/lib/api'
@@ -37,9 +37,6 @@ import {
   VM_REGIONS,
   VM_TEMPLATES,
   VM_WEIGHT_OPTIONS,
-  kernelCreateBlock,
-  kernelOptionLabel,
-  kernelSelectable,
 } from '@/features/vm/create-options'
 import { KernelFeatTags } from '@/features/vm/kernel-feat-tags'
 import { preflightChecksFromError } from '@/features/vm/placement'
@@ -103,8 +100,6 @@ export function CreateVmFields({
   const qc = useQueryClient()
   const [template, setTemplate] = useState<string>(DEFAULT_TEMPLATE.id)
   const [name, setName] = useState('')
-  const [username, setUsername] = useState('')
-  const operation = useRef<{ body: string; key: string } | null>(null)
   const [kernel, setKernel] = useState<string>(DEFAULT_TEMPLATE.kernel)
   const [after, setAfter] = useState<string>(
     defaultAfter || DEFAULT_TEMPLATE.after
@@ -123,9 +118,6 @@ export function CreateVmFields({
   const typedName = name.trim()
   const placement = usePlacement(kernel)
   const remoteGpt = !!placement.nodeId && platform === 'openai'
-  const kernelBlock = kernelCreateBlock(kernel, !!placement.nodeId)
-  const guestAccountCandidate =
-    KERNELS.find((item) => item.id === kernel)?.support === 'candidate'
 
   /** 切模板：回填内核/区域/时区/语言/并发/权重与「之后」，对齐 `applyVmTemplate()`。 */
   function applyTemplate(id: string) {
@@ -143,41 +135,15 @@ export function CreateVmFields({
 
   const create = useMutation({
     mutationFn: async () => {
-      // 陈旧状态里若还停在不可用系统（含 macOS），这里再拦一次，不发到 Linux 创建接口。
-      const blocked = kernelCreateBlock(kernel, !!placement.nodeId)
-      if (blocked) throw new Error(blocked)
       // 自由文本名称：纯非 ASCII（如「测试槽」）会被清洗成空串 —— 那就不发 id，让后端自动编号。
       const id = typedName ? vmIdOf(typedName) || undefined : undefined
       const nodeId = placement.nodeId
       const data = await api<CreateVmResponse>('/api/panel/vms/create', {
         method: 'POST',
-        headers: {
-          'Idempotency-Key': (() => {
-            const desired = JSON.stringify({
-              typedName,
-              kernel,
-              username,
-              tz,
-              locale,
-              region,
-              conc,
-              weight,
-              after,
-              platform,
-              nodeId,
-            })
-            if (operation.current?.body !== desired)
-              operation.current = { body: desired, key: crypto.randomUUID() }
-            return operation.current.key
-          })(),
-        },
         body: JSON.stringify({
           id,
           ...(typedName ? { name: typedName } : {}),
           kernel,
-          ...(guestAccountCandidate && username.trim()
-            ? { username: username.trim() }
-            : {}),
           timezone: tz.trim(),
           locale,
           // 「自动」是纯 UI 哨兵值，不发给后端（对齐 index.html 的 `region || undefined`）。
@@ -206,8 +172,6 @@ export function CreateVmFields({
         toast.success(created.id ? `已创建 ${created.id}` : '已创建')
       }
       setName('')
-      setUsername('')
-      operation.current = null
       await Promise.all([
         qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
         qc.invalidateQueries({ queryKey: vmsListQueryOptions().queryKey }),
@@ -283,57 +247,22 @@ export function CreateVmFields({
       </div>
 
       <div className='space-y-1'>
-        <Label>客体系统</Label>
-        <Select
-          value={kernel}
-          onValueChange={(next) => {
-            const picked = KERNELS.find((item) => item.id === next)
-            if (!kernelSelectable(picked)) return
-            setKernel(next)
-          }}
-        >
-          <SelectTrigger aria-label='客体系统'>
+        <Label>内核</Label>
+        <Select value={kernel} onValueChange={setKernel}>
+          <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {KERNELS.map((k) => (
-              <SelectItem
-                key={k.id}
-                value={k.id}
-                disabled={!kernelSelectable(k)}
-                title={k.unavailableReason}
-              >
-                {kernelOptionLabel(k)}
-                {k.unavailableReason ? ` — ${k.unavailableReason}` : ''}
+              <SelectItem key={k.id} value={k.id}>
+                {k.name} · {k.size}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         <KernelFeatTags kernel={kernel} className='flex flex-wrap gap-1 pt-1' />
-        {kernelBlock ? (
-          <p className='text-xs text-[color:var(--status-bad)]'>
-            {kernelBlock}
-          </p>
-        ) : null}
       </div>
 
-      {guestAccountCandidate ? (
-        <div className='space-y-1'>
-          <Label htmlFor='guest-username'>系统用户名</Label>
-          <Input
-            id='guest-username'
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            maxLength={24}
-            autoComplete='off'
-            aria-describedby='guest-username-hint'
-            placeholder='留空由控制面分配'
-          />
-          <p id='guest-username-hint' className='text-sm text-muted-foreground'>
-            3–24 位小写字母、数字或下划线，以字母开头。创建后账号身份保持不变。
-          </p>
-        </div>
-      ) : null}
       <PlacementField
         placement={placement}
         kernel={kernel}
@@ -445,14 +374,8 @@ export function CreateVmFields({
 
       <div className='flex items-center justify-end gap-2 pt-1'>
         {create.error ? (
-          <p
-            role='alert'
-            className='text-sm break-words text-(--color-status-bad)'
-          >
+          <p className='me-auto text-xs text-[color:var(--status-bad)]'>
             {importErrorMessage(create.error)}
-            {isApiError(create.error) && create.error.code
-              ? ` (${create.error.code})`
-              : ''}
           </p>
         ) : null}
         {onCancel ? (
@@ -466,8 +389,7 @@ export function CreateVmFields({
             create.isPending ||
             !validTimezone(tz) ||
             placement.blocked ||
-            remoteGpt ||
-            !!kernelBlock
+            remoteGpt
           }
           loading={create.isPending}
         >

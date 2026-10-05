@@ -19,7 +19,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { guestAccountForId } from '../vm/guest-account.mjs'
+
 import {
   parseVmIndex,
   containerName,
@@ -45,7 +45,7 @@ import { applyOfficialFingerprintToVm, readOfficialCcIdentity } from '../identit
 import { writeSlotSeedFiles, inferProjectRootFromCliHome } from '../vm/slot-seed.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import { atomicWriteJson, listVmRecordFiles } from '../vm/vm-file.mjs'
-import { normalizeOfficialCcInference, resolveOfficialCcInference } from '../vm/slot-engine.mjs'
+import { CONTAINER_CLI_NODE_BIN, normalizeOfficialCcInference, resolveOfficialCcInference } from '../vm/slot-engine.mjs'
 import { getVm } from '../vm/vm-registry.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 
@@ -202,14 +202,13 @@ function officialCcMarkedPidsScript(action) {
 }
 
 /** Kill leftover CLI. Do not call after a successful resident hello. */
-export function stopOfficialCcLeftovers(vmId, projectRoot) {
-  const account = guestAccountForId(vmId, projectRoot)
+export function stopOfficialCcLeftovers(vmId) {
   return sh(
     [
       'docker',
       'exec',
       '-u',
-      `${account.uid}:${account.gid}`,
+      '0',
       containerName(vmId),
       'sh',
       '-c',
@@ -264,7 +263,7 @@ export function stopOfficialCcResident(vmId, projectRoot) {
     stopHostPidFile(officialCcPidPath(projectRoot, vmId, 'resident'))
     stopHostPidFile(officialCcPidPath(projectRoot, vmId, 'bridge'))
   }
-  return stopOfficialCcLeftovers(vmId, projectRoot)
+  return stopOfficialCcLeftovers(vmId)
 }
 
 export function inspectOfficialCcResident(vmId) {
@@ -293,8 +292,8 @@ export function persistSlotRuntimeMemory(projectRoot, vmId, memory) {
   }
 }
 
-export function restoreSlotMemoryAfterOfficialCc(vmId, idleMemory, { keepCli = false, projectRoot } = {}) {
-  if (!keepCli) stopOfficialCcLeftovers(vmId, projectRoot)
+export function restoreSlotMemoryAfterOfficialCc(vmId, idleMemory, { keepCli = false } = {}) {
+  if (!keepCli) stopOfficialCcLeftovers(vmId)
   return applyContainerMemory(vmId, idleMemory || slotIdleMemory())
 }
 
@@ -309,8 +308,7 @@ export function startOfficialCcResidentProcess({ vmId, projectRoot, uid, gid, ti
       KIN_CONTAINER: containerName(vmId),
       KIN_UID: String(uid),
       KIN_GID: String(gid),
-      KIN_GUEST_HOME: guestAccountForId(vmId, projectRoot).home,
-      KIN_CLI_BIN: officialCcGuestCli(vmId, projectRoot),
+      KIN_CLI_BIN: CONTAINER_CLI_NODE_BIN,
       TZ: timezone || 'UTC',
       LANG: locale || 'en_US.UTF-8',
       LC_ALL: locale || 'en_US.UTF-8',
@@ -389,7 +387,7 @@ export async function restoreOfficialCcResident(
   try {
     vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
   } catch {}
-  const { uid, gid } = officialCcUidGid(vm)
+  const { uid, gid } = officialCcUidGid(vmId)
   const started = await startResident({
     vmId,
     projectRoot,
@@ -484,11 +482,6 @@ function scriptsDir() {
 
 export function officialCcHome(projectRoot, vmId) {
   return path.join(projectRoot, 'vms', vmId, 'cli-home')
-}
-
-/** Slot cli-node as the guest sees it. */
-export function officialCcGuestCli(vmId, projectRoot) {
-  return `${guestAccountForId(vmId, projectRoot).home}/.kin/cli-node`
 }
 
 /** Slot cli-node on the host; wrap-cli sync installs it under the slot home. */
@@ -759,23 +752,21 @@ export function buildOfficialCcDockerArgs({
   vmId,
   uid,
   gid,
-  projectRoot,
   timezone = 'UTC',
   locale = 'en_US.UTF-8',
   bridgeUrl,
   prompt = DEFAULT_PLAN_PROMPT,
 }) {
   const text = String(prompt || '').trim() || DEFAULT_PLAN_PROMPT
-  const home = guestAccountForId(vmId, projectRoot).home
   const slash = isOfficialCcSlashPrompt(text)
   return [
     'exec',
     '-u',
     `${uid}:${gid}`,
     '-e',
-    `HOME=${home}`,
+    'HOME=/home/kincli',
     '-e',
-    `TMPDIR=${home}/.cache/tmp`,
+    'TMPDIR=/home/kincli/.cache/tmp',
     '-e',
     `TZ=${timezone}`,
     '-e',
@@ -783,7 +774,7 @@ export function buildOfficialCcDockerArgs({
     '-e',
     `LC_ALL=${locale}`,
     '-e',
-    `PATH=${home}/.local/bin:/usr/bin:/bin`,
+    'PATH=/home/kincli/.local/bin:/usr/bin:/bin',
     '-e',
     'CLAUDE_CODE_KIN_HOST_REFRESH=1',
     '-e',
@@ -807,9 +798,9 @@ export function buildOfficialCcDockerArgs({
     '-e',
     'CI=1',
     '-w',
-    home,
+    '/home/kincli',
     containerName(vmId),
-    officialCcGuestCli(vmId, projectRoot),
+    CONTAINER_CLI_NODE_BIN,
     ...(slash
       ? [text, '--print', '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose']
       : ['-p', text, '--permission-mode', 'bypassPermissions', '--output-format', 'json']),
@@ -820,7 +811,6 @@ export async function runOfficialCcTurn({
   vmId,
   uid,
   gid,
-  projectRoot,
   timezone,
   locale,
   bridgeUrl,
@@ -837,7 +827,6 @@ export async function runOfficialCcTurn({
       vmId,
       uid,
       gid,
-      projectRoot,
       timezone,
       locale,
       bridgeUrl,
@@ -1042,7 +1031,7 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
   if (!fs.existsSync(vmPath)) return { ok: false, error: 'vm not found' }
   let vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
   const homeDir = officialCcHome(projectRoot, vmId)
-  const { uid, gid } = officialCcUidGid(vm)
+  const { uid, gid } = officialCcUidGid(vmId)
   const startedAt = new Date().toISOString()
   if (!canOfficialCc(credentialModeOfVm(vm))) {
     return { ok: false, error: 'official Claude Code init requires full OAuth' }
@@ -1178,7 +1167,6 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       vmId,
       uid,
       gid,
-      projectRoot,
       timezone,
       locale,
       prompt,
@@ -1188,7 +1176,7 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
     })
     helloOk = !!hello.ok
     const turn = ({ prompt: text, outFile, errFile }) =>
-      runTurn({ vmId, projectRoot, uid, gid, timezone, locale, prompt: text, outFile, errFile, timeoutMs })
+      runTurn({ vmId, uid, gid, timezone, locale, prompt: text, outFile, errFile, timeoutMs })
     writeOfficialCcStatus(homeDir, {
       status: 'running',
       vm_id: vmId,
@@ -1361,7 +1349,7 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
     }
   } finally {
     if (!(keepResident && helloOk)) {
-      const restored = restoreSlotMemoryAfterOfficialCc(vmId, idleMemory, { projectRoot })
+      const restored = restoreSlotMemoryAfterOfficialCc(vmId, idleMemory)
       try {
         const prev = readOfficialCcStatus(homeDir) || {}
         writeOfficialCcStatus(homeDir, {

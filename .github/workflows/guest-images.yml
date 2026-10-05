@@ -1,7 +1,4 @@
 # Guest OS layers change independently of application releases.
-# Candidate distros are appended. A green docker build does not mark support.
-# This workflow publishes Linux userland only. It does not publish Apple
-# system disks, recovery images, or macOS launchers.
 name: guest-images
 
 on:
@@ -9,8 +6,6 @@ on:
     branches: [main]
     paths:
       - 'docker/kin-os/**'
-      - 'scripts/kin-os-smoke.mjs'
-      - 'scripts/check-guest-scan.mjs'
       - '.github/workflows/guest-images.yml'
   workflow_dispatch:
 
@@ -25,7 +20,7 @@ permissions:
 jobs:
   guest:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -38,15 +33,6 @@ jobs:
             image: arch:latest
           - directory: fedora-41
             image: fedora:41
-          - directory: debian-13
-            context: docker/kin-os
-            image: debian:13
-          - directory: ubuntu-26.04
-            context: docker/kin-os
-            image: ubuntu:26.04
-          - directory: fedora-44
-            context: docker/kin-os
-            image: fedora:44
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
@@ -61,101 +47,12 @@ jobs:
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           IMAGE: ${{ matrix.image }}
         run: echo "tag=ghcr.io/${REPOSITORY_OWNER,,}/kin-os-${IMAGE}" >> "$GITHUB_OUTPUT"
-      - name: build guest image locally
+      - name: build and push guest image
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context || format('docker/kin-os/{0}', matrix.directory) }}
-          file: docker/kin-os/${{ matrix.directory }}/Dockerfile
+          context: docker/kin-os/${{ matrix.directory }}
           platforms: linux/amd64
-          load: true
-          push: false
-          provenance: false
-          sbom: false
+          push: true
           tags: ${{ steps.meta.outputs.tag }}
           cache-from: type=gha,scope=kin-os-${{ matrix.directory }}
           cache-to: type=gha,scope=kin-os-${{ matrix.directory }},mode=max
-      - name: smoke repository product
-        id: smoke
-        env:
-          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          OS_ID: ${{ matrix.directory }}
-        run: node scripts/kin-os-smoke.mjs --image "$IMAGE_TAG" --os "$OS_ID" > "$RUNNER_TEMP/kin-os-smoke.json"
-      - name: scan vendor vulnerabilities
-        id: vulnerabilities
-        env:
-          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          docker run --rm \
-            --mount type=bind,source=/var/run/docker.sock,destination=/var/run/docker.sock \
-            --mount type=bind,source="$RUNNER_TEMP",destination=/reports \
-            anchore/grype@sha256:5c88961f4130e830542d441c7ed6c78baa28e799163abac53d2be4923fb5ab7d \
-            "docker:$IMAGE_TAG" --output json --file /reports/guest-vulnerabilities.json
-      - name: inventory guest licenses
-        if: always() && steps.smoke.outcome == 'success'
-        env:
-          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          docker run --rm \
-            --mount type=bind,source=/var/run/docker.sock,destination=/var/run/docker.sock \
-            --mount type=bind,source="$RUNNER_TEMP",destination=/reports \
-            aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
-            image --image-src docker --timeout 10m --scanners license --license-full \
-            --format json --output /reports/guest-licenses.json "$IMAGE_TAG"
-          docker run --rm \
-            --mount type=bind,source=/var/run/docker.sock,destination=/var/run/docker.sock \
-            --mount type=bind,source="$RUNNER_TEMP",destination=/reports \
-            aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
-            image --image-src docker --timeout 10m --scanners license --license-full \
-            --format cyclonedx --output /reports/guest-sbom.json "$IMAGE_TAG"
-      - name: reject vulnerabilities and unverified coverage
-        if: always() && steps.smoke.outcome == 'success'
-        env:
-          OS_ID: ${{ matrix.directory }}
-        run: |
-          node scripts/check-guest-scan.mjs --os "$OS_ID" \
-            --vulnerabilities "$RUNNER_TEMP/guest-vulnerabilities.json" \
-            --licenses "$RUNNER_TEMP/guest-licenses.json"
-      - name: retain guest evidence
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: guest-evidence-${{ matrix.directory }}
-          path: |
-            ${{ runner.temp }}/kin-os-smoke.json
-            ${{ runner.temp }}/guest-vulnerabilities.json
-            ${{ runner.temp }}/guest-licenses.json
-            ${{ runner.temp }}/guest-sbom.json
-          if-no-files-found: warn
-      - name: record image digest
-        env:
-          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          DIRECTORY: ${{ matrix.directory }}
-        run: |
-          node --input-type=module <<'EOF'
-          import fs from 'node:fs'
-          const smoke = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/kin-os-smoke.json', 'utf8'))
-          const dockerfile = fs.readFileSync('docker/kin-os/' + process.env.DIRECTORY + '/Dockerfile', 'utf8')
-          const pin = (dockerfile.match(/^FROM\s+\S+@(sha256:[0-9a-f]{64})/im) || [])[1] || 'unpinned'
-          const summary = [
-            'image=' + process.env.IMAGE_TAG,
-            'id=' + (smoke.imageId || ''),
-            'base_digest=' + pin,
-            'label_base_digest=' + (smoke.baseDigest || ''),
-            'catalog_support=unchanged',
-          ]
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n')
-          if (pin !== 'unpinned' && smoke.baseDigest !== pin) {
-            console.error(JSON.stringify({
-              ok: false,
-              code: 'base_digest_mismatch',
-              dockerfile: pin,
-              label: smoke.baseDigest,
-              action: 'Rebuild from the pinned Dockerfile. Do not publish an image whose base digest label differs.',
-            }))
-            process.exit(1)
-          }
-          EOF
-      - name: publish tested guest image
-        env:
-          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: docker push "$IMAGE_TAG"

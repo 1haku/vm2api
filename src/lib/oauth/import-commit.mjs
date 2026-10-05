@@ -218,7 +218,7 @@ export function createImportCommit(ctx) {
       writeWorkerCredentialFile(workerExec.homeDir, importedCredential)
     } catch {}
     try {
-      const ids = officialCcUidGid(existing)
+      const ids = officialCcUidGid(vmId)
       materializeOfficialClaudeCredentials(workerExec.homeDir, ids)
     } catch {}
     const mode = importedCredential.mode || credentialModeFromOauth(oauth)

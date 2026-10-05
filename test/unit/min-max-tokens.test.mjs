@@ -8,44 +8,6 @@ test('raises small max_tokens to the default floor', () => {
   assert.equal(applyMinMaxTokens({ max_tokens: 16 }, { enabled: true, value: 128 }).max_tokens, 128)
 })
 
-test('cache replays retain their minimal output cap without mutating the cached prefix', () => {
-  for (const max_tokens of [1, 16, 64]) {
-    const body = {
-      model: 'claude-haiku-4-5',
-      max_tokens,
-      system: [{ type: 'text', text: 'Pinned prefix', cache_control: { type: 'ephemeral', ttl: '1h' } }],
-      messages: [{ role: 'user', content: 'Continue' }],
-    }
-    const before = structuredClone(body)
-    assert.equal(applyMinMaxTokens(body, { value: 512 }), body)
-    assert.deepEqual(body, before)
-    assert.equal(prepareCliHopBody(body, { cacheTtl: '1h' }).max_tokens, max_tokens)
-  }
-})
-
-test('cache replays keep enabled thinking and use budget plus one for an illegal output cap', () => {
-  const body = {
-    max_tokens: 1,
-    thinking: { type: 'enabled', budget_tokens: 2048 },
-    cache_control: { type: 'ephemeral' },
-  }
-  const out = applyMinMaxTokens(body, {})
-  assert.equal(out.max_tokens, 2049)
-  assert.deepEqual(out.thinking, body.thinking)
-  assert.equal(body.max_tokens, 1)
-  const legal = { ...body, max_tokens: 2049 }
-  assert.equal(applyMinMaxTokens(legal, {}), legal)
-})
-
-test('unrelated or invalid cache fields do not disable the normal output floor', () => {
-  for (const extra of [
-    { metadata: { cache_control: { type: 'ephemeral' } } },
-    { cache_control: { type: 'ephemeral', ttl: 'bogus' } },
-    { messages: [{ role: 'assistant', content: [{ type: 'thinking', cache_control: { type: 'ephemeral' } }] }] },
-  ])
-    assert.equal(applyMinMaxTokens({ max_tokens: 1, ...extra }, {}).max_tokens, 128)
-})
-
 test('keeps values at or above the floor and leaves missing max_tokens alone', () => {
   const body = { max_tokens: 200 }
   assert.equal(applyMinMaxTokens(body, {}), body)

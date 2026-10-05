@@ -16,7 +16,7 @@ function writeVm(root, id, patch = {}) {
     name: id,
     status: 'running',
     schedulable: true,
-    kernel: 'ubuntu-24.04',
+    kernel: 'unikernel-min',
     timezone: 'America/Los_Angeles',
     locale: 'en_US.UTF-8',
     seed_policy: { reject_client_settings: true },

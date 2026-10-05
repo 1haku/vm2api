@@ -9,8 +9,8 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { containerName } from '../vm/vm-runtime.mjs'
 import { AUTH_SCHEME_BEARER } from './auth-scheme.mjs'
-import { officialCcUidGid, officialCcHome, officialCcHostCli, officialCcGuestCli } from './official-cc-bootstrap.mjs'
-import { guestAccount, guestAccountForId } from '../vm/guest-account.mjs'
+import { officialCcUidGid, officialCcHome, officialCcHostCli } from './official-cc-bootstrap.mjs'
+import { CONTAINER_CLI_NODE_BIN } from '../vm/slot-engine.mjs'
 
 export const SETUP_TOKEN_SESSION_TTL_MS = 30 * 60 * 1000
 export const SETUP_TOKEN_SOURCE = 'claude-setup-token'
@@ -184,12 +184,10 @@ export async function stopClaudeSetupTokenSession(projectRoot, vmId) {
       'docker',
       [
         'exec',
-        '-u',
-        `${guestAccountForId(vmId, projectRoot).uid}:${guestAccountForId(vmId, projectRoot).gid}`,
         containerName(vmId),
         'sh',
         '-lc',
-        `pkill -f '${officialCcGuestCli(vmId, projectRoot)} setup-token' >/dev/null 2>&1 || true`,
+        `pkill -f '${CONTAINER_CLI_NODE_BIN} setup-token' >/dev/null 2>&1 || true`,
       ],
       {
         stdio: 'ignore',
@@ -269,7 +267,7 @@ export async function startClaudeSetupTokenSession({ vm, projectRoot, force = fa
   const sessionId = crypto.randomBytes(16).toString('hex')
   const createdAt = Date.now()
   const expiresAt = createdAt + SETUP_TOKEN_SESSION_TTL_MS
-  const ids = officialCcUidGid(vm)
+  const ids = officialCcUidGid(vmId)
   const ptyScript = path.join(scriptsDir(), 'claude-setup-token-pty.py')
   const child = spawn('python3', [ptyScript], {
     env: {
@@ -282,8 +280,7 @@ export async function startClaudeSetupTokenSession({ vm, projectRoot, force = fa
       KIN_CONTAINER: containerName(vmId),
       KIN_UID: String(ids.uid),
       KIN_GID: String(ids.gid),
-      KIN_GUEST_HOME: guestAccount(vm).home,
-      KIN_CLI_BIN: officialCcGuestCli(vmId, projectRoot),
+      KIN_CLI_BIN: CONTAINER_CLI_NODE_BIN,
       KIN_SESSION_DIR: dir,
       KIN_SESSION_ID: sessionId,
       KIN_VM_ID: vmId,

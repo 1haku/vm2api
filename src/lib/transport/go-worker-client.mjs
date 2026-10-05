@@ -14,7 +14,6 @@ import {
   hasRefreshPresence,
   needsRefresh,
   readWorkerCredentialFile,
-  readSlotOwnedFile,
   REFRESH_SKEW_MS,
   writeWorkerCredentialFile,
 } from '../oauth/oauth-credentials.mjs'
@@ -67,9 +66,8 @@ function readInternalToken(exec) {
   const { tokenPath } = workerPaths(exec)
   if (!tokenPath) return ''
   try {
-    return readSlotOwnedFile(tokenPath, exec.vm).trim()
-  } catch (error) {
-    if (error.code === 'guest_ownership_failed') throw error
+    return fs.readFileSync(tokenPath, 'utf8').trim()
+  } catch {
     return ''
   }
 }

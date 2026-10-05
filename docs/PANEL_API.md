@@ -63,11 +63,11 @@
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
 | POST | `/vms/:id/activate` | 标 active |
 | POST | `/vms/:id/reset` | 销毁容器与家目录，再按原槽位重建（保留 ID/代理/种子；凭证清空） |
-| POST | `/vms/:id/reset-fingerprint` | v2 拒绝 `guest_identity_immutable`；不轮换已分配的 OS 身份 |
+| POST | `/vms/:id/reset-fingerprint` | |
 | POST | `/vms/:id/allocate-proxy` | 从池分配 SOCKS5 |
 | POST | `/vms/:id/update-claude-code` | 410，`claude_cli_removed` |
 | DELETE | `/vms/:id` | 不能删 active；只解绑本槽代理 |
-| POST | `/vms/create` | 严格 OS/runtime 契约；候选镜像真实系统账号；可带 `Idempotency-Key` |
+| POST | `/vms/create` | 种子 VM + Claude Code home |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
 | POST | `/vms/fleet-update` | 全槽 roll / 采集 |
@@ -85,45 +85,6 @@
 `schedule_level` 是当前有效调度等级，范围 1–10；`schedule_level_mode` 为 `manual` 或 `auto`。`PATCH {"schedule_level": 1..10}` 写入手动等级，`null` 或 `"auto"` 清除手动值。自动模式按 Claude 7D 重置剩余时间滚动分档：不足 24h 为 7，之后每 24h 降一级，144h 及以上或无有效重置时间为 1。`weight` 仍是同等级候选的平滑 WRR 比例，与调度等级无关。
 
 `GET /vms/:id` 的 `kernel.rust_health` 来自 wrap `/internal/health`：`reachable`（进程在且 `ready_slots>=1`）、`process_up`、`provider`（cli-hop 为 `local_cli`）、`ready_slots`、`cli_pid`、`worker_version`。Go hop 没有 slot 字段。`reachable=false` 且 `process_up=true` 表示 kernel 在、CLI 槽未就绪。
-
-### 新 Linux 客体契约
-
-旧 `kernel` 请求、四种原镜像、数值 UID/GID 和 `/home/kincli` 保持 legacy layout；不迁移旧账号、不主动重建旧容器。Debian 13、Ubuntu 26.04、Fedora 44 是 `linux-account-v2` 候选，不代表已经通过发布、许可或真实推理验收。
-
-```json
-{
-  "id": "vm-canary-alpha",
-  "guest_os": { "id": "fedora-44", "arch": "x86_64" },
-  "runtime": { "type": "docker", "provider": "docker-linux" },
-  "username": "guest_alpha",
-  "platform": "anthropic",
-  "start": false,
-  "auto_allocate_proxy": false
-}
-```
-
-- `guest_os.id` 与兼容字段 `kernel` 同时提供时必须一致。OS 不借用凭据 `platform/family/kind`；OAuth `device_id/session_id` 不由 OS 身份重新生成。
-- 用户名可省略，由分配器生成；HOME 固定派生为 `/home/<username>`，不接受任意 HOME。UID/GID、hostname、UUID、MAC、machine-id 在 SQLite 事务中分配，重试不旋转。保留的 UUID/MAC 不是已经写入固件或 Docker 网卡的证据。
-- `Idempotency-Key` 同规范返回原 VM、`reused:true`，不重新 seed、绑定代理或启动；不同规范返回 409 `idempotency_conflict`。成功删除保留退休 reservation，旧键不能复活被删 VM。
-- 创建仍返回持久化结果；启动失败可能是 HTTP 200 + `data.start_error`，不能仅凭 200 判断就绪。`GET /vms/:id` 返回脱敏 `guest_os`、`guest_user`、`provisioning`。候选刚发布为 `stopped/planned`，请求 `start` 不等于物理运行。
-- public `provisioning` 包含 operation、generation、spec hash、stage、error 和 probe 时间；nonce 仅用于内部 fence，不公开。迟到结果必须匹配 operation/generation/spec/nonce 才可回写。`os_ready` 不等于 `slot_ready`；无凭据的真实运行客体不可调度。
-- public projection 不返回 private identity、引导秘密、密码、token 或磁盘路径。凭据/运行 token 0600，由对应 guest UID/GID 持有；private identity 由 controller 持有，0600。
-- v2 生命周期按 owner scope 与固定 CID 操作。停止/销毁不影响其他实例、共享出口桥或宿主 Codex kernel。reset 保留账号、hostname 和 machine-id；清 HOME/凭据后重建。存储清理失败必须返回错误，不能假装删除成功。
-
-| 条件 | HTTP / code | 保留与重试 |
-| --- | --- | --- |
-| 未知 OS / runtime、OS 字段冲突 | 400 `unknown_os` / `unknown_runtime` / `os_fields_conflict` | 验证在落盘前；修正请求 |
-| 用户名非法或账号冲突 | 400/409 `guest_user_conflict` | 不覆盖已有账号；修正请求 |
-| 旧镜像请求 v2 账号 | 409 `guest_account_unsupported` | 不迁移 legacy |
-| 未核准 macOS 宿主与用途 | 409 `macos_license_review_required` | 不下载/启动；外部审核前禁止重试 |
-| 未支持的远端候选 | 409 `remote_unsupported` | 不回退本机 Docker |
-| 幂等规范变化或退休旧键 | 409 `idempotency_conflict` | 保留原 reservation；使用明确的新操作 |
-| foreign 同名容器 | start/stop 500，DELETE 409 `guest_runtime_owner_conflict` | 保留 foreign CID、HOME、记录；处理 scope 冲突 |
-| v2 指纹重置 | 409 `guest_identity_immutable` | 不改变稳定身份 |
-| 删除存储清理失败 | 500 `guest_storage_cleanup_failed` | 保留尚存在的记录；只恢复本次 retirement token |
-| 旧 generation / nonce 的迟到结果 | `guest_probe_stale` | 不覆盖新记录、不操作新容器 |
-
-macOS 14/15 仅显示不可用能力，尚无受测 provider、账号初始化或 Darwin 产品；拒绝路径不是 macOS 安装验收。当前阶段与真实证据见 [施工验收记录](../.trellis/tasks/10-04-macos-construction/research/verification.md)。
 
 ### 虚拟机代理字段
 

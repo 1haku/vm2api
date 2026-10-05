@@ -16,53 +16,6 @@ test('haiku max_tokens=1 needs a claude-cli UA, like sub2api isClaudeCodeClient'
   assert.equal(detectWarmupIntercept({ ...body, model: 'claude-sonnet-5' }, CC), null)
 })
 
-test('pi-warm-cache Haiku replay reaches upstream even with the Claude CLI UA and tools', () => {
-  const body = {
-    model: 'claude-haiku-4-5',
-    max_tokens: 1,
-    tools: [{ name: 'Read', input_schema: { type: 'object' } }],
-    system: [{ type: 'text', text: 'Session instructions', cache_control: { type: 'ephemeral' } }],
-    messages: [user(text('Continue the task'))],
-  }
-  assert.equal(detectWarmupIntercept(body, CC), null)
-})
-
-test('cache-marked omp warm turns and historical side-call text are never mocked', () => {
-  for (const prompt of [
-    'Respond with only: OK',
-    'Warmup',
-    'Please write a 5-10 word title for the following conversation: x',
-    '[SUGGESTION MODE: go]',
-  ]) {
-    const body = {
-      model: 'claude-sonnet-5',
-      system: [{ type: 'text', text: 'Pinned session prefix', cache_control: { type: 'ephemeral', ttl: '1h' } }],
-      messages: [user(text(prompt))],
-    }
-    assert.equal(detectWarmupIntercept(body, CC), null, prompt)
-  }
-})
-
-test('cache markers at each supported location exempt Haiku replay, but malformed markers do not', () => {
-  const base = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [user(text('Continue'))] }
-  const control = { type: 'ephemeral', ttl: '5m' }
-  for (const extra of [
-    { cache_control: control },
-    { tools: [{ name: 'Read', cache_control: control }] },
-    { system: [{ type: 'text', text: 'Prefix', cache_control: control }] },
-    { messages: [user([{ type: 'text', text: 'Continue', cache_control: control }])] },
-  ])
-    assert.equal(detectWarmupIntercept({ ...base, ...extra }, CC), null)
-  for (const cache_control of [null, {}, { type: 'other' }, { type: 'ephemeral', ttl: 'bogus' }]) {
-    assert.equal(detectWarmupIntercept({ ...base, cache_control }, CC), 'haiku_ping')
-  }
-  assert.equal(detectWarmupIntercept({ ...base, metadata: { cache_control: control } }, CC), 'haiku_ping')
-  assert.equal(
-    detectWarmupIntercept({ ...base, system: [{ type: 'thinking', cache_control: control }] }, CC),
-    'haiku_ping',
-  )
-})
-
 test('suggestion mode on the last message', () => {
   const body = {
     messages: [user(text('hi')), { role: 'assistant', content: text('x') }, user(text('[SUGGESTION MODE: go]'))],

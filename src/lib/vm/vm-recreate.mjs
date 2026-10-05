@@ -14,7 +14,6 @@ import { stampVmKind } from './vm-kind.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { listVms } from './vm-registry.mjs'
 import { slotHost } from './slot-host.mjs'
-import { guestAccount, findGuestAllocation } from './guest-account.mjs'
 import {
   applyGeneratedFingerprint,
   generateWorkstationFingerprint,
@@ -97,43 +96,19 @@ export function buildRecreatedVmRecord(prev, generated) {
     ...(prev.persona_preset ? { persona_preset: prev.persona_preset } : {}),
     ...(prev.node_id ? { node_id: prev.node_id } : {}),
   }
-  if (prev.guest_user) {
-    next.owner_user_id = prev.owner_user_id || null
-    next.origin = prev.origin || 'platform'
-    next.guest_os = { ...prev.guest_os }
-    next.guest_user = guestAccount(prev)
-    next.runtime = { type: prev.runtime.type, provider: prev.runtime.provider }
-    next.provisioning = { ...prev.provisioning, state: 'planned', error_code: null, retryable: false }
-    delete next.provisioning.verified_generation
-  }
   stampVmKind(next, prev)
   return next
 }
 
 export function recreateVmFiles(projectRoot, prev) {
   if (!projectRoot || !prev?.id) throw new Error('projectRoot and vm id required')
-  const allocation = prev.guest_user ? findGuestAllocation(projectRoot, prev.provisioning?.operation_id) : null
-  if (
-    prev.guest_user &&
-    (!allocation || allocation.vm_id !== prev.id || allocation.spec_hash !== prev.provisioning?.spec_hash)
-  ) {
-    throw new Error('Guest reset has no matching persistent identity reservation')
-  }
   wipeSlotHome(projectRoot, prev.id)
   const generated = generateWorkstationFingerprint(prev, {
     taken: takenFingerprintKeys(listVms(projectRoot), { exceptId: prev.id }),
   })
-  if (allocation) {
-    generated.hostname = allocation.hostname
-    generated.guest_machine_id = allocation.machine_id
-  }
   const vm = buildRecreatedVmRecord(prev, generated)
-  if (allocation) fs.mkdirSync(path.join(projectRoot, 'vms', prev.id), { recursive: true, mode: 0o700 })
-  if (allocation) atomicWriteJson(path.join(projectRoot, 'vms', prev.id, 'identity.json'), allocation, { mode: 0o600 })
   const vmPath = path.join(projectRoot, 'vms', `${prev.id}.json`)
   atomicWriteJson(vmPath, vm, { mode: 0o600 })
-  if (vm.provisioning)
-    atomicWriteJson(path.join(projectRoot, 'vms', vm.id, 'provisioning.json'), vm.provisioning, { mode: 0o600 })
   writeGuestMachineIdFile(projectRoot, vm.id, vm.fingerprint.guest_machine_id)
   seedFreshCliHome(projectRoot, vm)
   return { vm, vmPath }

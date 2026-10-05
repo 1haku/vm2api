@@ -6,12 +6,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyMinMaxTokens } from '../../src/lib/protocol/min-max-tokens.mjs'
-import { prepareCliHopBody } from '../../src/lib/protocol/outbound-attempt.mjs'
 
 const cli = fileURLToPath(new URL('../../share/wrap-cli/cli-node', import.meta.url))
 
-async function runTurn(t, stopReason, apiError = false, httpError = null, request = null) {
+async function runTurn(t, stopReason, apiError = false, httpError = null) {
   const home = mkdtempSync(path.join(os.tmpdir(), 'cli-hop-limit-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const events = [
@@ -29,7 +27,7 @@ async function runTurn(t, stopReason, apiError = false, httpError = null, reques
       },
     },
     { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: request ? 'OK' : '1 2 3 4 5' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '1 2 3 4 5' } },
     { type: 'content_block_stop', index: 0 },
     ...(apiError
       ? [{ type: 'error', error: { type: 'api_error', message: 'upstream fixture failure' } }]
@@ -37,7 +35,7 @@ async function runTurn(t, stopReason, apiError = false, httpError = null, reques
           {
             type: 'message_delta',
             delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: request ? 1 : 128 },
+            usage: { output_tokens: 128 },
           },
           { type: 'message_stop' },
         ]),
@@ -134,7 +132,7 @@ async function runTurn(t, stopReason, apiError = false, httpError = null, reques
               type: 'kin_job_start',
               job_id: 'limit-job',
               slot_id: frame.slot_id,
-              request: request || {
+              request: {
                 model: 'claude-opus-5-5',
                 max_tokens: 128,
                 stream: true,
@@ -153,39 +151,6 @@ async function runTurn(t, stopReason, apiError = false, httpError = null, reques
     requests,
     events: frames.filter((frame) => frame.type === 'kin_stream_event').map((frame) => frame.event),
   }
-}
-
-for (const max_tokens of [1, 16]) {
-  test(`native CLI sends cache replay with max_tokens=${max_tokens} and returns real cache usage`, {
-    timeout: 20000,
-  }, async (t) => {
-    const request = prepareCliHopBody(
-      applyMinMaxTokens(
-        {
-          model: 'claude-haiku-4-5',
-          max_tokens,
-          system: [
-            { type: 'text', text: 'Pinned session instructions', cache_control: { type: 'ephemeral', ttl: '1h' } },
-          ],
-          messages: [{ role: 'user', content: [{ type: 'text', text: 'Respond with only: OK' }] }],
-        },
-        {},
-      ),
-      { cacheTtl: '1h' },
-    )
-    const result = await runTurn(t, 'max_tokens', false, null, request)
-    assert.equal(result.terminal.type, 'kin_job_done')
-    assert.equal(result.requests.length, 1)
-    assert.equal(result.requests[0].max_tokens, max_tokens)
-    // Native CLI omits disabled thinking on wire; both forms keep Haiku out of reasoning mode.
-    assert.ok(result.requests[0].thinking == null || result.requests[0].thinking.type === 'disabled')
-    assert.equal(result.requests[0].messages.at(-1).content.at(-1).cache_control?.ttl, '1h')
-    const usage = result.events.find((event) => event.type === 'message_start').message.usage
-    assert.equal(usage.cache_read_input_tokens, 7)
-    assert.equal(usage.cache_creation_input_tokens, 3)
-    assert.equal(result.events.find((event) => event.type === 'message_delta').delta.stop_reason, 'max_tokens')
-    assert.equal(result.events.find((event) => event.type === 'message_delta').usage.output_tokens, 1)
-  })
 }
 
 for (const stopReason of ['max_tokens', 'end_turn']) {

@@ -2,12 +2,10 @@
  * Port of sub2api detectInterceptType / sendMockIntercept*
  * (backend/internal/handler/gateway_handler.go). Answered before any account
  * is selected, so these never take a seat, a sticky pin, quota, or an
- * upstream call. Cache-marked requests must reach upstream to refresh their
- * prefix; requests with tools also skip title / suggestion interception.
+ * upstream call. One addition: requests with tools are never intercepted.
  */
 import crypto from 'node:crypto'
 import { isOfficialClaudeUa } from '../identity/official-claude-ua.mjs'
-import { hasPromptCacheControl } from './cache-ttl.mjs'
 
 const TITLE_PROMPT = 'Please write a 5-10 word title for the following conversation:'
 // Real CLI text starts with "Analyze"; sub2api matches without the first letter.
@@ -63,9 +61,6 @@ function typedParse(body) {
  */
 export function detectWarmupIntercept(body = {}, { userAgent = '' } = {}) {
   if (!body || typeof body !== 'object') return null
-  // pi-warm-cache replays real payloads and may use the same UA/cap as a probe.
-  // A mock success cannot keep that payload's provider cache alive.
-  if (hasPromptCacheControl(body)) return null
   const model = String(body.model || '')
   if (isOfficialClaudeUa(userAgent) && Number(body.max_tokens) === 1 && model.toLowerCase().includes('haiku')) {
     return 'haiku_ping'

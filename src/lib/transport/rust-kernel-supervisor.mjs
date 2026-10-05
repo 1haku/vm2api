@@ -30,10 +30,8 @@ import {
   slotUidGidFromHomeDir,
   chownSlotRuntimeFile,
   replaceSlotOwnedFile,
-  readSlotOwnedFile,
 } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
-import { guestBins } from '../vm/guest-account.mjs'
 
 const starts = new Map()
 
@@ -43,6 +41,7 @@ function slotRunner(exec, run) {
   if (!env) return run
   return (args, opts = {}) => run(args, { ...opts, env })
 }
+const CONTAINER_KERNEL_BIN = '/home/kincli/.kin/kin-kernel'
 const CONTAINER_KERNEL_CONFIG = '/run/kin/kernel.json'
 export const CONTAINER_CLAUDE_BIN = CONTAINER_CLI_NODE_BIN
 
@@ -206,7 +205,7 @@ async function kernelProcessAlive(container, runDockerExec) {
       container,
       'sh',
       '-c',
-      'pgrep -f "[k]in-kernel(\\.bin)? --gateway-worker" >/dev/null || pidof kin-kernel >/dev/null',
+      'pgrep -f /home/kincli/.kin/kin-kernel.bin >/dev/null || pgrep -f /home/kincli/.kin/kin-kernel >/dev/null || pidof kin-kernel >/dev/null',
     ],
     { timeoutMs: 1500 },
   )
@@ -416,9 +415,7 @@ export async function recycleWrapIfIdle(
 }
 
 async function containerKernelIsPid1(container, runDockerExec) {
-  const info = await runDockerExec(['inspect', '--format', '{{.Path}} {{json .Config.Cmd}}', container], {
-    timeoutMs: 3000,
-  })
+  const info = await runDockerExec(['inspect', '--format', '{{.Path}}', container], { timeoutMs: 3000 })
   return /kin-kernel/.test(String(info?.stdout || ''))
 }
 
@@ -484,17 +481,13 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec, force 
     : await runDockerExec(
         [
           'exec',
-          '-u',
-          host.execUser(exec.vm),
-          '-e',
-          `HOME=${guestBins(exec.vm).home}`,
           '-d',
           '-e',
           'KIN_SUBMIT_WAIT_MS=30000',
           '-e',
           'KIN_SLOT_MAX_LIFETIME_SECS=604800',
           container,
-          guestBins(exec.vm).kernel,
+          CONTAINER_KERNEL_BIN,
           '--gateway-worker',
           '--config',
           CONTAINER_KERNEL_CONFIG,
@@ -566,17 +559,13 @@ export function writeKernelConfig(
   const credentialPath = path.join(homeDir, '.claude', 'credentials.json')
   let previous = {}
   try {
-    previous = JSON.parse(readSlotOwnedFile(configPath, vm))
-  } catch (error) {
-    if (error.code === 'guest_ownership_failed') throw error
-  }
+    previous = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch {}
   let secret = String(token || '').trim()
   if (!secret) {
     try {
-      secret = readSlotOwnedFile(tokenPath, vm).trim()
-    } catch (error) {
-      if (error.code === 'guest_ownership_failed') throw error
-    }
+      secret = fs.readFileSync(tokenPath, 'utf8').trim()
+    } catch {}
   }
   if (!secret) secret = String(previous.internal_token || '').trim()
   if (secret) replaceSlotOwnedFile(tokenPath, secret + '\n', vm)
@@ -593,7 +582,7 @@ export function writeKernelConfig(
   const config = {
     vm_id: vm.id,
     socket_path: '/run/kin/kernel.sock',
-    credential_path: guestBins(record).credentials,
+    credential_path: '/home/kincli/.claude/credentials.json',
     proxy_url: '',
     proxy_required: false,
     internal_token: secret,

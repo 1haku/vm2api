@@ -4,7 +4,6 @@
  */
 import path from 'node:path'
 import { callGoWorker, streamGoWorker, workerHealth, workerPaths } from './go-worker-client.mjs'
-import { guestAccount } from '../vm/guest-account.mjs'
 
 export function codexKernelPaths(exec = {}) {
   const base = workerPaths(exec)
@@ -14,12 +13,7 @@ export function codexKernelPaths(exec = {}) {
     socketPath: exec.vm?.runtime?.codex_kernel_socket || (runDir ? path.join(runDir, 'codex-kernel.sock') : null),
     tokenPath: base.tokenPath,
     configPath: runDir ? path.join(runDir, 'codex-kernel.json') : null,
-    credentialPath:
-      exec.homeDir && guestAccount(exec.vm).contract === 'linux-account-v2'
-        ? path.join(exec.homeDir, '.codex', 'credentials.json')
-        : runDir
-          ? path.join(path.dirname(runDir), 'codex-credentials.json')
-          : null,
+    credentialPath: runDir ? path.join(path.dirname(runDir), 'codex-credentials.json') : null,
   }
 }
 
