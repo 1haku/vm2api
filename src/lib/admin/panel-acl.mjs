@@ -88,6 +88,7 @@ export function panelIdentity(req) {
 const USER_EXACT_GET = new Set([
   '/api/panel/me',
   '/api/panel/vms',
+  '/api/panel/pool/stream',
   '/api/panel/proxies',
   '/api/panel/proxies/config',
   '/api/panel/api-keys',
@@ -230,6 +231,7 @@ export function authorizePanelRoute(method, path, role) {
     (p === '/api/panel/dashboard' ||
       p === '/api/panel/usage' ||
       p === '/api/panel/vms' ||
+      p === '/api/panel/pool/stream' ||
       p === '/api/panel/cluster/nodes' ||
       p === '/api/panel/cluster/local' ||
       isRequestLogPath(p) ||
