@@ -74,6 +74,7 @@ const SUMMARY_COLUMNS = [
   'speed',
   'long_context',
   'session_id',
+  'outbound_session_id',
   'reasoning_effort',
 ]
 

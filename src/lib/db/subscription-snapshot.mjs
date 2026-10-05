@@ -22,9 +22,14 @@ export function subscriptionSnapshot(db) {
       .prepare(`SELECT * FROM ${table}`)
       .all()
       .map((row) => {
-        // 027/028 only add nullable fields. Missing pre-upgrade fields and new NULLs are equivalent.
+        // 027/028/029 add nullable fields. Missing pre-upgrade fields and new NULLs are equivalent.
         if (table === 'usage_logs')
-          return { ...row, session_id: row.session_id ?? null, reasoning_effort: row.reasoning_effort ?? null }
+          return {
+            ...row,
+            session_id: row.session_id ?? null,
+            reasoning_effort: row.reasoning_effort ?? null,
+            outbound_session_id: row.outbound_session_id ?? null,
+          }
         if (table === 'proxies') return { ...row, label: row.label ?? null }
         return row
       })

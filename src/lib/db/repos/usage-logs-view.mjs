@@ -152,7 +152,9 @@ export function toUsageLogRow(row, names, chain = []) {
     userName: row.user_id ? (names.users.get(row.user_id) ?? null) : null,
     keyId: row.api_key_id ?? null,
     keyName: row.api_key_id ? (names.keys.get(row.api_key_id) ?? null) : null,
-    sessionId: row.session_id ?? null,
+    sessionId: row.outbound_session_id ?? null,
+    /** What the caller sent; differs from sessionId whenever the gateway rebuilt it. */
+    clientSessionId: row.session_id ?? null,
     providerName: accountId ? (names.accounts.get(accountId) ?? accountId) : null,
     accountId,
     vmId: row.vm_id ?? null,
@@ -203,6 +205,24 @@ export function toUsageLogRow(row, names, chain = []) {
     specialSettings: specialSettings(row),
     providerChain: chain,
   }
+}
+
+const ATTEMPT_CLOCK_SLACK_MS = 1000
+
+/**
+ * request_id can come from the client's `x-request-id`, so an id can be reused
+ * across requests (and tenants) once one side's rows are purged. Only attach
+ * attempts that started inside this row's own request lifetime:
+ * [created_at - duration_ms, created_at], created_at being completion time.
+ */
+function attemptWithinRow(attempt, row) {
+  const started = Date.parse(attempt.started_at)
+  const finished = Date.parse(row.created_at)
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) return false
+  if (started > finished + ATTEMPT_CLOCK_SLACK_MS) return false
+  const duration = Number(row.duration_ms)
+  if (row.duration_ms == null || !Number.isFinite(duration)) return true
+  return started >= finished - duration - ATTEMPT_CLOCK_SLACK_MS
 }
 
 function toProviderChainItem(r, names) {
@@ -266,7 +286,11 @@ function buildFilter(filters, defaultMuted) {
   eq('user_id', filters.user_id)
   eq('api_key_id', filters.key_id)
   eq('vm_id', filters.vm_id)
-  eq('session_id', filters.session_id)
+  if (filters.session_id) {
+    // Either side of the mapping finds the conversation.
+    where.push('(outbound_session_id = ? OR session_id = ?)')
+    params.push(String(filters.session_id), String(filters.session_id))
+  }
   eq('path', filters.endpoint)
   eq('protocol', filters.protocol)
   if (filters.account_id) {
@@ -421,10 +445,14 @@ export class UsageLogsView {
     const chains = new Map()
     for (const a of attempts) {
       const list = chains.get(a.request_id) || []
-      list.push(toProviderChainItem(a, names))
+      list.push(a)
       chains.set(a.request_id, list)
     }
-    return rows.map((row) => toUsageLogRow(row, names, (row.request_id && chains.get(row.request_id)) || []))
+    return rows.map((row) => {
+      const own = (row.request_id && chains.get(row.request_id)) || []
+      const chain = own.filter((a) => attemptWithinRow(a, row)).map((a) => toProviderChainItem(a, names))
+      return toUsageLogRow(row, names, chain)
+    })
   }
 
   /**
@@ -567,13 +595,13 @@ export class UsageLogsView {
     }
   }
 
-  /** Session ids starting with `q`, most recently used first (index range scan on session_id). */
+  /** Outbound session ids starting with `q`, most recently used first (index range scan). */
   sessionSuggestions({ q = '', limit = 20, owner_user_id = null } = {}) {
     const n = clampInt(limit, 1, 50, 20)
     const own = ownerPred(owner_user_id)
     const prefix = String(q || '').trim()
     if (prefix) {
-      const where = ['session_id >= ?', 'session_id < ?']
+      const where = ['outbound_session_id >= ?', 'outbound_session_id < ?']
       const params = [prefix, `${prefix}\uffff`]
       if (own.sql) {
         where.push(own.sql)
@@ -581,26 +609,26 @@ export class UsageLogsView {
       }
       return this.db
         .prepare(
-          `SELECT session_id FROM usage_logs WHERE ${where.join(' AND ')} GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT ?`,
+          `SELECT outbound_session_id AS sid FROM usage_logs WHERE ${where.join(' AND ')} GROUP BY outbound_session_id ORDER BY MAX(created_at) DESC LIMIT ?`,
         )
         .all(...params, n)
-        .map((r) => r.session_id)
+        .map((r) => r.sid)
     }
-    const where = ['session_id IS NOT NULL']
+    const where = ['outbound_session_id IS NOT NULL']
     if (own.sql) where.push(own.sql)
     return this.db
       .prepare(
-        `SELECT session_id FROM (SELECT session_id, created_at FROM usage_logs WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ${RECENT_SCAN}) GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT ?`,
+        `SELECT sid FROM (SELECT outbound_session_id AS sid, created_at FROM usage_logs WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ${RECENT_SCAN}) GROUP BY sid ORDER BY MAX(created_at) DESC LIMIT ?`,
       )
       .all(...own.params, n)
-      .map((r) => r.session_id)
+      .map((r) => r.sid)
   }
 
-  /** Sessions with a completed request in the last `minutes`; last-row fields via SQLite's bare-column MAX(). */
+  /** Outbound sessions with a completed request in the last `minutes`. */
   activeSessions({ minutes = 5, limit = 50, owner_user_id = null, now = Date.now() } = {}) {
     const mins = clampInt(minutes, 1, 1440, 5)
     const n = clampInt(limit, 1, 200, 50)
-    const where = ['created_at >= ?', 'session_id IS NOT NULL']
+    const where = ['created_at >= ?', 'outbound_session_id IS NOT NULL']
     const params = [new Date(now - mins * 60_000).toISOString()]
     const own = ownerPred(owner_user_id)
     if (own.sql) {
@@ -608,34 +636,36 @@ export class UsageLogsView {
       params.push(...own.params)
     }
     const cond = `WHERE ${where.join(' AND ')}`
-    const total = this.db.prepare(`SELECT COUNT(DISTINCT session_id) AS n FROM usage_logs ${cond}`).get(...params).n
+    const total = this.db
+      .prepare(`SELECT COUNT(DISTINCT outbound_session_id) AS n FROM usage_logs ${cond}`)
+      .get(...params).n
     // Aggregate first, then pull the newest row per session by id; SQLite's
     // bare-column-with-MAX shortcut is undefined once MIN() is also present.
     const rows = this.db
       .prepare(`
       WITH s AS (
-        SELECT session_id,
+        SELECT outbound_session_id AS sid,
                MAX(created_at) AS last_at,
                MIN(created_at) AS first_at,
                COUNT(*) AS requests,
                SUM(IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) + IFNULL(cache_read_tokens, 0) + IFNULL(cache_creation_tokens, 0)) AS tokens,
                COALESCE(SUM(total_cost), 0) AS cost
         FROM usage_logs ${cond}
-        GROUP BY session_id
+        GROUP BY outbound_session_id
         ORDER BY last_at DESC
         LIMIT ?
       )
-      SELECT s.*, l.user_id, l.api_key_id, l.vm_id, l.model, l.status, l.duration_ms,
+      SELECT s.*, l.session_id AS client_session_id, l.user_id, l.api_key_id, l.vm_id, l.model, l.status, l.duration_ms,
              COALESCE(l.final_account_id, l.account_id) AS account
       FROM s
       JOIN usage_logs l ON l.id = (
         SELECT id FROM usage_logs
-        WHERE session_id = s.session_id AND created_at = s.last_at
+        WHERE outbound_session_id = s.sid AND created_at = s.last_at${own.sql ? ` AND ${own.sql}` : ''}
         ORDER BY id DESC LIMIT 1
       )
       ORDER BY s.last_at DESC
     `)
-      .all(...params, n)
+      .all(...params, n, ...own.params)
     const names = lookupNames(this.db, {
       userIds: rows.map((r) => r.user_id),
       keyIds: rows.map((r) => r.api_key_id),
@@ -646,7 +676,8 @@ export class UsageLogsView {
       minutes: mins,
       total: num(total),
       sessions: rows.map((r) => ({
-        sessionId: r.session_id,
+        sessionId: r.sid,
+        clientSessionId: r.client_session_id ?? null,
         userName: r.user_id ? (names.users.get(r.user_id) ?? null) : null,
         keyName: r.api_key_id ? (names.keys.get(r.api_key_id) ?? null) : null,
         providerName: r.account ? (names.accounts.get(r.account) ?? r.account) : null,
@@ -688,7 +719,7 @@ export class UsageLogsView {
                COALESCE(SUM(total_cost), 0) AS cost,
                COALESCE(SUM(actual_cost), 0) AS actual_cost,
                AVG(duration_ms) AS avg_duration_ms,
-               COUNT(DISTINCT session_id) AS sessions
+               COUNT(DISTINCT outbound_session_id) AS sessions
         FROM usage_logs WHERE ${where.join(' AND ')}
       `)
         .get(...params)

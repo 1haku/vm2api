@@ -34,7 +34,7 @@ import { RelativeTime } from './relative-time'
 const ROW_HEIGHT = 52
 const SCROLL_TOP_THRESHOLD = 500
 
-export type DetailTab = 'summary' | 'logic-trace' | 'performance'
+export type DetailTab = 'summary' | 'logic-trace' | 'performance' | 'raw'
 
 export type OpenDetail = (
   row: UsageLogRow,
@@ -123,7 +123,7 @@ function LogRow({
 
   return (
     <>
-      <div className='min-w-[56px] flex-[0.6] truncate pl-3 font-mono text-xs'>
+      <div className='min-w-[56px] flex-[0.6] truncate pr-1.5 pl-3 font-mono text-xs'>
         <RelativeTime date={row.createdAt} fallback='-' />
       </div>
       {hidden('user') ? null : (
@@ -155,10 +155,16 @@ function LogRow({
                   {row.sessionId}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side='bottom' className='max-w-[500px]'>
+              <TooltipContent side='bottom' className='max-w-[500px] space-y-1'>
                 <span className='block font-mono text-xs break-all'>
-                  {row.sessionId}
+                  出站 {row.sessionId}
                 </span>
+                {row.clientSessionId &&
+                row.clientSessionId !== row.sessionId ? (
+                  <span className='block font-mono text-xs break-all opacity-70'>
+                    客户端 {row.clientSessionId}
+                  </span>
+                ) : null}
               </TooltipContent>
             </Tooltip>
           ) : (
@@ -313,7 +319,7 @@ function LogRow({
           </Tooltip>
         </div>
       )}
-      <div className='min-w-[70px] flex-[0.7] truncate pr-3'>
+      <div className='min-w-[70px] flex-[0.7] truncate pr-3 pl-1.5'>
         <Button
           type='button'
           variant='ghost'
@@ -445,9 +451,12 @@ export function VirtualizedLogsTable({
       )}
       <div className='overflow-x-auto'>
         <div className='min-w-[900px]'>
-          <div className='sticky top-0 z-10 border-b bg-muted/30'>
+          {/* Same scrollbar gutter as the body below so flex columns resolve to the same widths. */}
+          <div className='sticky top-0 z-10 [scrollbar-gutter:stable] overflow-y-hidden border-b bg-muted/30'>
             <div className='flex h-8 items-center text-[11px] font-medium tracking-wide text-muted-foreground/80'>
-              <HeadCell className='min-w-[56px] flex-[0.6] pl-3'>时间</HeadCell>
+              <HeadCell className='min-w-[56px] flex-[0.6] pr-1.5 pl-3'>
+                时间
+              </HeadCell>
               {isHidden('user') ? null : (
                 <HeadCell className='min-w-[50px] flex-[0.8]'>用户</HeadCell>
               )}
@@ -455,8 +464,11 @@ export function VirtualizedLogsTable({
                 <HeadCell className='min-w-[50px] flex-[0.6]'>密钥</HeadCell>
               )}
               {isHidden('sessionId') ? null : (
-                <HeadCell className='min-w-[80px] flex-[0.8]'>
-                  Session ID
+                <HeadCell
+                  className='min-w-[80px] flex-[0.8]'
+                  title='实际发往上游的会话 id'
+                >
+                  出站 Session
                 </HeadCell>
               )}
               {isHidden('ip') ? null : (
@@ -494,12 +506,17 @@ export function VirtualizedLogsTable({
                   性能
                 </HeadCell>
               )}
-              <HeadCell className='min-w-[70px] flex-[0.7] pr-3'>状态</HeadCell>
+              <HeadCell className='min-w-[70px] flex-[0.7] pr-3 pl-1.5'>
+                状态
+              </HeadCell>
             </div>
           </div>
           <div
             ref={parentRef}
-            className={cn('h-[600px] overflow-auto', bodyClassName)}
+            className={cn(
+              'h-[600px] [scrollbar-gutter:stable] overflow-auto',
+              bodyClassName
+            )}
             onScroll={handleScroll}
           >
             <div
@@ -534,11 +551,27 @@ export function VirtualizedLogsTable({
                   <div
                     key={row.id}
                     style={style}
+                    role='button'
+                    tabIndex={0}
                     className={cn(
-                      'flex items-center border-b border-border/40 text-sm transition-colors hover:bg-accent/50',
+                      'flex cursor-pointer items-center border-b border-border/40 text-sm transition-colors outline-none hover:bg-accent/50 focus-visible:bg-accent/50',
                       isNonBillingEndpoint(row.endpoint) &&
                         'bg-muted/30 text-muted-foreground dark:bg-muted/15'
                     )}
+                    onClick={(event) => {
+                      // Cells with their own action (copy, chain popover, redirect) keep it;
+                      // clicks bubbling from portaled popovers are outside the row DOM.
+                      const target = event.target as HTMLElement
+                      if (!event.currentTarget.contains(target)) return
+                      if (target.closest('button, a')) return
+                      onOpenDetail(row)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      onOpenDetail(row)
+                    }}
                   >
                     <LogRow
                       row={row}

@@ -60,6 +60,13 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /plans/)
   db.prepare('UPDATE custom_subscription_plans SET group_rpm_limit=0 WHERE group_id=9').run()
   assert.equal(db.prepare("SELECT session_id FROM usage_logs WHERE id='history'").get().session_id, null)
+  assert.equal(
+    db.prepare("SELECT outbound_session_id FROM usage_logs WHERE id='history'").get().outbound_session_id,
+    null,
+  )
+  db.prepare("UPDATE usage_logs SET outbound_session_id='outbound-changed' WHERE id='history'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+  db.prepare("UPDATE usage_logs SET outbound_session_id=NULL WHERE id='history'").run()
   assert.equal(db.prepare("SELECT label FROM proxies WHERE id='proxy'").get().label, null)
   db.prepare("UPDATE proxies SET label='changed' WHERE id='proxy'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /proxies/)
@@ -80,7 +87,7 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   assert.equal(repo.plans()[0].daily_limit_usd, 45)
 })
 
-test('fresh install applies upstream 027/028 alongside the independent custom migration namespace', (t) => {
+test('fresh install applies upstream 027/028/029 alongside the independent custom migration namespace', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-migrations-'))
   const db = createDatabase({ dataDir: dir })
   t.after(() => {
@@ -93,14 +100,18 @@ test('fresh install applies upstream 027/028 alongside the independent custom mi
   )
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='028'").get().name, '028_proxy_label.sql')
   assert.equal(
+    db.prepare("SELECT name FROM schema_migrations WHERE version='029'").get().name,
+    '029_usage_logs_outbound_session.sql',
+  )
+  assert.equal(
     db.prepare("SELECT name FROM custom_schema_migrations WHERE version='001'").get().name,
     '001_subscriptions.sql',
   )
   const upstream = path.join(dir, 'upstream')
   fs.mkdirSync(upstream)
-  fs.writeFileSync(path.join(upstream, '029_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
+  fs.writeFileSync(path.join(upstream, '030_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
   applyMigrations(db, { migrationsDir: upstream })
-  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='029'").get().name, '029_future.sql')
+  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='030'").get().name, '030_future.sql')
 })
 
 test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions', (t) => {

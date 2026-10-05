@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.3.107 — 2026-10-05
+
+- 面板 `/logs`：详情改为居中弹窗（概览 / 决策链 / 性能 / 原始数据），整行可点击或键盘 Enter / Space 打开，全屏模式下也能打开；修复表头与数据行错位（#247）。
+- 日志记录实际发给上游的出站 Session：迁移 `029` 给 `usage_logs` 加可空列 `outbound_session_id` 及索引；Session 列改为「出站 Session」，客户端会话另列为 `clientSessionId`，按会话筛选匹配两者任一，活跃会话与概览按出站会话统计。此前的历史行出站 Session 为空（#247）。
+- Debug 模式额外记录回给客户端的状态码、响应头（脱敏）与响应体（脱敏、按 `KIN_REQUEST_LOG_DEBUG_CHARS` 截断）；出站请求体 / 请求头仅在管理员配置 Debug 模式时保存，调用方的 `x-kin-debug` / `x-kin-log` 请求头不能开启出站采集；Codex 路径补存出站请求体 / 请求头（#247、#250）。
+- 日志的供应商决策链与活跃会话只取调用方自己的数据（#240）。
+- 重建控制台产物。
+- 实验性 ARM64 控制面（#243，@SmileYangzy）：Node、Python、Docker CLI、Go worker / egress 原生 ARM64，slot 仍为 `linux/amd64` 经 QEMU 运行；`deploy/prepare-arm64.py` 事务式准备固定版本的 `qemu-x86_64` binfmt handler；`docker-compose.arm64.yml` / `deploy/Dockerfile.arm64-control` 支持源码构建。桥接槽位到本机 egress 的 REDIRECT 流量补限定 bridge / 子网 / helper 端口的 INPUT 放行规则。
+- 发布分架构：控制面镜像新增单架构 `vX.Y.Z-amd64` / `vX.Y.Z-arm64`，`vX.Y.Z` / `latest` 改为包含两者的多架构清单；Release 新增 `kin-worker-linux-arm64`、`kin-egress-linux-arm64`。无后缀附件仍为 linux amd64，名称不变。
+- 版本参数可带 `-amd64` / `-arm64`（及 `-x86_64` / `-aarch64`）后缀：一键脚本与面板一键更新都剥离后缀取版本号，与宿主架构不符时拒绝。ARM64 上写入 `VM2API_IMAGE_TAG=vX.Y.Z-arm64`；amd64 仍写不带后缀的 tag。
+- `install.sh` 按 `uname -m` 识别架构，ARM64 自动下载并执行 QEMU 准备，旧版本无 ARM64 发布时直接报错；`status` 显示架构与镜像 tag。安装时 `.env` 补 `VM2API_HOST_ROOT`（只填空），`--dir` 非默认目录的面板一键更新也能挂到正确宿主目录。ARM64 源码安装与 `deploy/init-arm64-env.py` 写入 `COMPOSE_FILE`，面板一键更新在 ARM64 源码安装缺该项时拒绝执行。
+- QEMU 下 slot 进程的 `/proc/<pid>/exe` 是模拟器：终止数据面进程与 PID 1 拓扑判断改按 `argv[1]` 识别，ARM64 主机上 kernel 重启不再残留旧 cli-node / kernel。
+
+已部署 x86 机升级：更新 Node 控制面（`src/`）、`web/dist` 与部署脚本，重启一次 Node；迁移 `029` 只加列，启动时自动执行。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.106 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.106 — 2026-10-05
 
