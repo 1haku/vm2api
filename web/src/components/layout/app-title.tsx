@@ -48,9 +48,6 @@ export function AppTitle({ version }: { version?: string }) {
         </div>
         <div className='mt-3 flex items-center gap-1 group-data-[collapsible=icon]:hidden'>
           <VersionChip version={version?.replace(/^v/i, '')} />
-          <span className='rounded bg-primary/8 px-1.5 py-0.5 text-[10px] text-primary'>
-            订阅定制版
-          </span>
           <a
             href={REPO_URL}
             target='_blank'
