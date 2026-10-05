@@ -144,7 +144,7 @@ function redactHeaders(headers = {}) {
   const out = {}
   for (const [k, v] of Object.entries(headers)) {
     const key = String(k).toLowerCase()
-    if (key === 'authorization' || key === 'x-api-key' || key === 'cookie') {
+    if (key === 'authorization' || key === 'x-api-key' || key === 'cookie' || key === 'set-cookie') {
       out[key] = '***REDACTED***'
     } else if (key === 'x-panel-token') {
       out[key] = '***REDACTED***'
@@ -281,6 +281,25 @@ function clampBody(obj, maxChars = 200_000) {
   return { _truncated: true, _chars: raw.length, preview: raw.slice(0, maxChars) }
 }
 
+/**
+ * Client-facing response as stored in a debug record. The body stays raw text
+ * (SSE frames or JSON) so the panel can show exactly what went out; only
+ * credential-shaped substrings are masked.
+ */
+function debugResponse(captured) {
+  let body = captured.body || ''
+  try {
+    body = JSON.parse(redactSecrets(body))
+  } catch {}
+  return {
+    status: captured.status ?? null,
+    headers: captured.headers || null,
+    body,
+    bytes: captured.bytes || 0,
+    truncated: !!captured.truncated,
+  }
+}
+
 export function resolveLogMode(envMode, req) {
   const hdr = String(req?.headers?.['x-kin-log'] || '')
     .trim()
@@ -384,6 +403,52 @@ export class RequestLogStore {
   }
 
   /**
+   * Debug mode only: mirror what the client actually received (status,
+   * headers, body bytes up to maxDebugBodyChars) onto `ctx.response` so
+   * finish() can store it next to the inbound/outbound bodies. Normal mode
+   * never wraps the response.
+   */
+  tapResponse(ctx, res) {
+    if (!ctx || ctx.mode !== 'debug' || !res || ctx.response) return
+    const limit = Math.max(0, this.maxDebugBodyChars)
+    const captured = { status: null, headers: null, body: '', bytes: 0, truncated: false }
+    ctx.response = captured
+    const decoder = new TextDecoder()
+    const take = (chunk, encoding) => {
+      if (chunk == null || typeof chunk === 'function') return
+      const buf =
+        typeof chunk === 'string' ? Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8') : chunk
+      if (!(buf instanceof Uint8Array)) return
+      captured.bytes += buf.byteLength
+      if (captured.truncated) return
+      const room = limit - captured.body.length
+      const text = decoder.decode(buf, { stream: true })
+      if (text.length <= room) {
+        captured.body += text
+        return
+      }
+      captured.body += text.slice(0, Math.max(0, room))
+      captured.truncated = true
+    }
+    const write = res.write
+    const end = res.end
+    res.write = function tappedWrite(chunk, encoding, cb) {
+      take(chunk, encoding)
+      return write.call(this, chunk, encoding, cb)
+    }
+    res.end = function tappedEnd(chunk, encoding, cb) {
+      take(chunk, encoding)
+      return end.call(this, chunk, encoding, cb)
+    }
+    res.once('finish', () => {
+      captured.status = res.statusCode || null
+      try {
+        captured.headers = redactHeaders(res.getHeaders?.() || {})
+      } catch {}
+    })
+  }
+
+  /**
    * Write normal summary always (unless off).
    * Write debug full record when mode===debug.
    */
@@ -430,6 +495,7 @@ export class RequestLogStore {
       final_state: extra.final_state || null,
       final_account_id: extra.final_account_id || extra.account_id || null,
       session_id: sessionIdForLog(extra.session_id),
+      outbound_session_id: sessionIdForLog(extra.outbound_session_id),
       reasoning_effort: REASONING_EFFORTS.has(extra.reasoning_effort) ? extra.reasoning_effort : null,
       // sub2api ownership + billing columns
       user_id: extra.user_id ?? null,
@@ -486,6 +552,7 @@ export class RequestLogStore {
           !extra.classifier && extra.outbound_body != null
             ? clampBody(extra.outbound_body, this.maxDebugBodyChars)
             : null,
+        response: ctx.response ? debugResponse(ctx.response) : null,
       }
       try {
         this.repo.insertDebug(summary.request_id || summary.id, summary.ts, debugRec)
