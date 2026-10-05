@@ -59,6 +59,8 @@ v4 新增 `002_subscription_namespace.sql`，原已发布的 001 完全不变。
 
 ## 当前部署与回滚
 
+容器启动仅在没有槽位记录、活跃指针和已有数据库的首次安装中创建 `vm-01`。已有有效活跃槽位时保留文件原样；指针缺失或指向已删除槽位时，从现存有效槽位恢复指针，不补建默认槽位。已有安装的槽位文件全部丢失或活跃指针 JSON 损坏时中止启动，要求恢复配置，避免把数据损坏误判成首次安装。这项修复不修改数据库迁移。
+
 服务器目录 `/home/yibocho/vm2api`，服务端口 8787。先提交通过验证的改动，执行 `node scripts/package-subscriptions-release.mjs`，从干净提交打包源码、测试、依赖锁、前端产物、Go 源码及上游二进制资产。把包解压至新的 `releases/subscriptions-*` 目录，将随包 `.revision` 文件的内容保存为 `CUSTOM_REVISION`，再从该目录运行 `sh deploy/subscriptions-release.sh`。不打包 `.env`、账号凭据或运行数据。
 
 脚本先完成镜像构建和 Linux 环境的订阅、权限、终端回归测试，再把数据库一致性快照、配置、Compose 文件与旧镜像标识保存到 `backups/<UTC时间>`。数据库副本内容校验通过后停止 vm2api，通过容器另存切换前准确的 DB/WAL/SHM 至 `stopped-data`，然后只重建 vm2api 服务。发布后检查健康接口、文件清单、迁移状态，并进一步验证角色权限和页面。当前槽位没有上游凭据时，不能把本地或模拟测试当作真实模型调用验收。

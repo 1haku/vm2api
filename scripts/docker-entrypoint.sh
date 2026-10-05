@@ -15,20 +15,8 @@ if [ -d /opt/vm2api/image-config ]; then
   done
 fi
 
-if [ ! -f "$ROOT/vms/active.json" ]; then
-  printf '%s\n' '{ "active_vm": "vm-01" }' > "$ROOT/vms/active.json"
-fi
-if [ ! -f "$ROOT/vms/vm-01.json" ]; then
-  cat > "$ROOT/vms/vm-01.json" <<'EOF'
-{
-  "id": "vm-01",
-  "name": "vm-01",
-  "status": "stopped",
-  "schedulable": false,
-  "policy": { "maxConcurrency": 2 }
-}
-EOF
-fi
+# Only bootstrap a genuinely new inventory. Deleted slots must stay deleted.
+node /opt/vm2api/scripts/initialize-slot-inventory.mjs "$ROOT"
 
 ensure_bin() {
   name="$1"

@@ -10,6 +10,7 @@ const unit = [
   'custom-migrations',
   'panel-acl',
   'slot-shell-rc',
+  'slot-inventory-startup',
   'cli-node-guard',
   'oauth-identity',
   'oauth-credentials',
