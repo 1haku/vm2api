@@ -1,0 +1,21 @@
+CREATE TABLE guest_accounts (
+  project TEXT NOT NULL,
+  vm_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  spec_hash TEXT NOT NULL,
+  username TEXT NOT NULL,
+  uid INTEGER NOT NULL,
+  hostname TEXT NOT NULL,
+  uuid TEXT NOT NULL,
+  mac TEXT NOT NULL,
+  machine_id TEXT NOT NULL,
+  raw TEXT NOT NULL,
+  PRIMARY KEY (project, vm_id),
+  UNIQUE (project, operation_id),
+  UNIQUE (project, username),
+  UNIQUE (project, uid),
+  UNIQUE (project, hostname),
+  UNIQUE (project, uuid),
+  UNIQUE (project, mac),
+  UNIQUE (project, machine_id)
+);

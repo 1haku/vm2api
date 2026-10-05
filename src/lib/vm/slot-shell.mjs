@@ -40,14 +40,14 @@ export function panelShellLaunch(cliBin) {
     // Official CLI reads ~/.claude/.credentials.json and, unless CLAUDE_CONFIG_DIR
     // is set, ~/.claude.json. Slot tokens already live in .claude; point the
     // session there and expose the nested account file at the home path.
-    'export HOME="${HOME:-/home/kincli}"',
+    'export HOME="${HOME:?guest HOME is unset}"',
     'export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"',
     // Same credentials.json as the host Refresher; a second refresher here would spend the shared RT.
     'export CLAUDE_CODE_KIN_HOST_REFRESH=1',
     'mkdir -p "$CLAUDE_CONFIG_DIR"',
     'if [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ] && [ ! -e "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then ln -s credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || true; fi',
     'if [ ! -e "$HOME/.claude.json" ] && [ -f "$CLAUDE_CONFIG_DIR/.claude.json" ]; then ln -s .claude/.claude.json "$HOME/.claude.json" 2>/dev/null || true; fi',
-    `claude() { export HOME="\${HOME:-/home/kincli}"; export CLAUDE_CONFIG_DIR="\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}"; if [ -x ${q} ]; then ${q} "$@"; else echo "cli-node 不在 ${q}" >&2; return 127; fi; }`,
+    `claude() { export HOME="\${HOME:?guest HOME is unset}"; export CLAUDE_CONFIG_DIR="\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}"; if [ -x ${q} ]; then ${q} "$@"; else echo "cli-node 不在 ${q}" >&2; return 127; fi; }`,
     'rm -f "$KIN_PANEL_RCFILE"',
   ].join('\n')
   return {

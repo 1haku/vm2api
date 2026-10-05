@@ -10,6 +10,7 @@ import { initVmDbSync, stopVmWatch, syncVmFile, removeVmFromDb, reconcileVms } f
 import { setVmWriteHook, atomicWriteJson } from '../../src/lib/vm/vm-file.mjs'
 import { persistOauthToVm } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { setVmSchedulable, setActiveVm } from '../../src/lib/vm/vm-registry.mjs'
+import { allocateGuestAccount, retireGuestAllocation } from '../../src/lib/vm/guest-account.mjs'
 
 let project
 
@@ -130,6 +131,29 @@ test('reconcile rebuilds missing vm file from DB (restore pull-up)', () => {
   assert.equal(back.claude.has_access, true)
   assert.equal(back.claude.has_refresh, true)
   assert.equal(back.claude.email, vm.claude.email)
+})
+
+test('a retained database mirror cannot resurrect a deleted guest reservation', () => {
+  const allocation = allocateGuestAccount(project, 'vm-retired', {
+    operationId: 'retired-operation',
+    specHash: 'retired-spec',
+  })
+  const vm = seedVmFile('vm-retired', {
+    guest_user: {
+      contract: allocation.contract,
+      username: allocation.username,
+      uid: allocation.uid,
+      gid: allocation.gid,
+      home: allocation.home,
+    },
+    provisioning: { operation_id: allocation.operation_id },
+  })
+  initVmDbSync(project, { watch: false })
+  retireGuestAllocation(project, vm)
+  fs.unlinkSync(path.join(project, 'vms', 'vm-retired.json'))
+  reconcileVms(project)
+  assert.equal(fs.existsSync(path.join(project, 'vms', 'vm-retired.json')), false)
+  assert.equal(new VmsRepo(getDb()).get('vm-retired').id, 'vm-retired')
 })
 
 test('removeVmFromDb drops the row', () => {

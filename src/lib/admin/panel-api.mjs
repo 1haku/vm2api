@@ -7,6 +7,7 @@
  */
 
 import { readSlotProcessStatus } from '../vm/slot-process-status.mjs'
+import { publicGuestMetadata, publicGuestFingerprint } from '../vm/guest-contract.mjs'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -1720,8 +1721,8 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     cache_read_tokens: acc?.cache_read_tokens || 0,
     cache_creation_tokens: acc?.cache_creation_tokens || 0,
     near_limit: (u5 != null && u5 >= safety) || (u7 != null && u7 >= weeklySafety),
-    fingerprint: v.fingerprint || null,
-    runtime: v.runtime || null,
+    fingerprint: publicGuestFingerprint(v),
+    ...publicGuestMetadata(v),
     ip: v.ip || v.runtime?.ip || null,
     pid: v.pid || v.runtime?.pid || null,
     container: v.container || v.runtime?.container || null,

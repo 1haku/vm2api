@@ -27,7 +27,7 @@ import {
   portsForProxy,
   proxyKey,
 } from '../vm/egress.mjs'
-import { OS_CATALOG } from '../vm/os-catalog.mjs'
+import { OS_CATALOG, resolveGuestSpec, assertGuestCreatable } from '../vm/os-catalog.mjs'
 import { REMOTE_KERNEL_ENTRY, resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
@@ -420,7 +420,7 @@ async function prepare(vm, projectRoot, routing) {
   if (resolveKernelDataplane(vm, routing || {}) === 'crag') {
     return { fail: { ok: false, code: 'remote_unsupported', error: 'crag 数据面暂不支持集群节点' } }
   }
-  vm.kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
+  vm.kernel = assertGuestCreatable(resolveGuestSpec(vm), { remote: true }).kernel
   vm.timezone = normalizeTimezone(vm.timezone)
   vm.locale = vm.locale || STANDARD_LOCALE
   const nodeId = vmNodeId(vm)

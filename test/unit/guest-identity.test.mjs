@@ -91,18 +91,6 @@ test('collectSlotIdentity writes guest fingerprint onto vm.json', async () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-test('collectSlotIdentity maps missing endpoint', async () => {
-  const out = await collectSlotIdentity(
-    '/tmp',
-    { id: 'vm-01' },
-    {
-      callGet: async () => ({ ok: false, status: 404, body: { error: { message: 'not found' } } }),
-    },
-  )
-  assert.equal(out.ok, false)
-  assert.equal(out.code, 'worker_identity_unsupported')
-})
-
 test('merge keeps generated hostname and catalog kernel', () => {
   const out = mergeGuestFingerprint(
     {

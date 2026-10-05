@@ -25,6 +25,17 @@ import {
 import { inspectWrapCliDir, materializeWrapCli, wrapCliHomeDir } from './wrap-cli-runtime.mjs'
 import { boundProxyUrl, isLocalEgressProxy } from './egress.mjs'
 import { slotHost } from './slot-host.mjs'
+import {
+  beginGuestProvisioning,
+  advanceGuestProvisioning,
+  cancelGuestProvisioning,
+  guestProvisioningToken,
+  finishGuestStop,
+} from './provisioning.mjs'
+import { collectSlotIdentity } from './guest-identity.mjs'
+import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
+import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
+import { readCodexAccounts } from './codex-slot.mjs'
 
 export { runtimeKind }
 
@@ -48,28 +59,48 @@ export function startSlot(vm, projectRoot, opts = {}) {
 }
 
 export async function startSlotReady(vm, projectRoot, opts = {}) {
-  if (isCodexVm(vm)) {
-    if (!slotHost(vm).supports('codex')) return unsupportedOnHost('codex')
-    const boot = await startSlot(vm, projectRoot, opts)
-    const kernel = await ensureSlotInferenceRuntime(vm, projectRoot, opts)
-    if (!kernel.ok) return kernel
-    return { ok: true, engine: 'codex', docker: boot, kernel }
+  if (isCodexVm(vm) && !slotHost(vm).supports('codex')) return unsupportedOnHost('codex')
+  let token
+  try {
+    token = await beginGuestProvisioning(vm, projectRoot)
+  } catch (error) {
+    return { ok: false, code: error.code || 'guest_provisioning_invalid', error: error.message }
   }
-  const boot = await startSlot(vm, projectRoot, opts)
-  if (!boot?.ok) return boot
-  return attachInferenceRuntime(boot, vm, projectRoot, opts)
+  let boot
+  try {
+    boot = await startSlot(vm, projectRoot, opts)
+    if (!boot?.ok) {
+      await advanceGuestProvisioning(vm, projectRoot, token, opts.signal?.aborted ? 'cancelled' : 'failed', {
+        errorCode: boot?.code || 'runtime_start_failed',
+      })
+      return boot
+    }
+    return await attachInferenceRuntime(boot, vm, projectRoot, { ...opts, guestToken: token })
+  } catch (error) {
+    await advanceGuestProvisioning(vm, projectRoot, token, opts.signal?.aborted ? 'cancelled' : 'failed', {
+      errorCode: error.code || 'runtime_start_failed',
+    })
+    return { ok: false, code: error.code || 'runtime_start_failed', error: error.message }
+  }
 }
 
-export async function stopSlot(vm) {
-  if (isCodexVm(vm)) stopCodexKernel(vm.id)
+export async function stopSlot(vm, projectRoot) {
+  await cancelGuestProvisioning(vm, projectRoot)
+  if (isCodexVm(vm) && !vm.guest_user) stopCodexKernel(vm.id)
   if (runtimeKind(vm) === RUNTIME_KVM) return kvmRefuse('stop')
-  return slotHost(vm).stop(vm)
+  const halt = await slotHost(vm).stop(vm, projectRoot)
+  if (halt?.ok && projectRoot) {
+    const saved = await finishGuestStop(vm, projectRoot, guestProvisioningToken(vm))
+    if (!saved.ok) return saved
+  }
+  return halt
 }
 
 /** Destroy the slot container. Used only by explicit reset / delete. */
-export async function destroySlot(vm) {
+export async function destroySlot(vm, projectRoot) {
+  await cancelGuestProvisioning(vm, projectRoot)
   if (runtimeKind(vm) === RUNTIME_KVM) return kvmRefuse('destroy')
-  return slotHost(vm).destroy(vm)
+  return slotHost(vm).destroy(vm, projectRoot)
 }
 
 /** Reload guest worker so a new bind-mounted / virtiofs binary is picked up. Never docker rm. */
@@ -79,10 +110,28 @@ export async function reloadSlot(vm, projectRoot, opts = {}) {
 }
 
 export async function reloadSlotReady(vm, projectRoot, opts = {}) {
-  const boot = await reloadSlot(vm, projectRoot, opts)
-  if (!boot?.ok) return boot
-  persistVmRuntime(projectRoot, vm.id, boot.runtime)
-  return attachInferenceRuntime(boot, vm, projectRoot, opts)
+  let token
+  try {
+    token = await beginGuestProvisioning(vm, projectRoot)
+  } catch (error) {
+    return { ok: false, code: error.code || 'guest_provisioning_invalid', error: error.message }
+  }
+  try {
+    const boot = await reloadSlot(vm, projectRoot, opts)
+    if (!boot?.ok) {
+      await advanceGuestProvisioning(vm, projectRoot, token, opts.signal?.aborted ? 'cancelled' : 'failed', {
+        errorCode: boot?.code || 'runtime_reload_failed',
+      })
+      return boot
+    }
+    if (!token) persistVmRuntime(projectRoot, vm.id, boot.runtime)
+    return await attachInferenceRuntime(boot, vm, projectRoot, { ...opts, guestToken: token })
+  } catch (error) {
+    await advanceGuestProvisioning(vm, projectRoot, token, opts.signal?.aborted ? 'cancelled' : 'failed', {
+      errorCode: error.code || 'runtime_reload_failed',
+    })
+    return { ok: false, code: error.code || 'runtime_reload_failed', error: error.message }
+  }
 }
 
 /**
@@ -110,6 +159,8 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   const routing = opts.routing || {}
   const eager = routing?.inference?.eager_start !== false
   if (isCodexVm(vm)) {
+    if (vm.guest_user && readCodexAccounts(projectRoot, vm.id).length === 0)
+      return { ok: true, skipped: true, reason: 'no_credential', engine: 'codex' }
     if (!eager) return { ok: true, skipped: true, reason: 'eager_start_off', engine: 'codex' }
     const write = opts.ops?.writeCodexKernelConfig || writeCodexKernelConfig
     const start = opts.ops?.ensureCodexKernel || ensureCodexKernel
@@ -181,15 +232,73 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   return { ok: true, engine: 'rust', rust }
 }
 
-async function attachInferenceRuntime(boot, vm, projectRoot, opts = {}) {
-  const rust = await ensureSlotInferenceRuntime(vm, projectRoot, opts)
-  const engine = resolveInferenceEngine(vm, opts.routing || {})
-  if (vm.runtime && typeof vm.runtime === 'object') vm.runtime.worker = engine
-  return {
-    ...boot,
-    rust,
-    rust_ok: rust?.ok !== false || rust?.skipped === true,
+async function cancelOwnedGuestBoot(boot, vm, projectRoot, opts) {
+  const token = opts.guestToken
+  const cancelled = await advanceGuestProvisioning(vm, projectRoot, token, 'cancelled')
+  if (cancelled?.ok && ['created', 'started'].includes(boot.action)) {
+    const halt = await slotHost(vm).stop(vm, projectRoot)
+    if (halt?.ok) await finishGuestStop(vm, projectRoot, guestProvisioningToken(vm))
   }
+  return { ok: false, code: 'cancelled', error: 'Guest operation was cancelled' }
+}
+
+async function attachInferenceRuntime(boot, vm, projectRoot, opts = {}) {
+  const token = opts.guestToken
+  if (token && opts.signal?.aborted) return cancelOwnedGuestBoot(boot, vm, projectRoot, opts)
+  if (token) {
+    const current = await advanceGuestProvisioning(vm, projectRoot, token, 'provisioning_user', {
+      runtime: boot.runtime,
+    })
+    if (!current.ok) return current
+    const identity = await collectSlotIdentity(projectRoot, vm, { timeoutMs: opts.timeoutMs || 5000 })
+    if (opts.signal?.aborted) return cancelOwnedGuestBoot(boot, vm, projectRoot, opts)
+    if (!identity.ok) {
+      await advanceGuestProvisioning(vm, projectRoot, token, 'failed', {
+        errorCode: identity.code || 'guest_identity_mismatch',
+      })
+      return identity
+    }
+    const os = await advanceGuestProvisioning(vm, projectRoot, token, 'os_ready')
+    if (!os.ok) return os
+  }
+  const rust = await ensureSlotInferenceRuntime(vm, projectRoot, opts)
+  const codex = isCodexVm(vm)
+  const engine = codex ? 'codex' : resolveInferenceEngine(vm, opts.routing || {})
+  if (vm.runtime && typeof vm.runtime === 'object') vm.runtime.worker = engine
+  if (token && opts.signal?.aborted) return cancelOwnedGuestBoot(boot, vm, projectRoot, opts)
+  if (token && !rust?.skipped && rust?.ok) {
+    const verifying = await advanceGuestProvisioning(vm, projectRoot, token, 'verifying_worker')
+    if (!verifying.ok) return verifying
+    const health = await (codex ? codexKernelHealth : rustKernelHealth)(slotExec(projectRoot, vm), {
+      timeoutMs: opts.timeoutMs || 5000,
+    })
+    if (opts.signal?.aborted) return cancelOwnedGuestBoot(boot, vm, projectRoot, opts)
+    const ready =
+      health?.ok === true &&
+      (codex
+        ? health.engine === 'codex' && health.accounts > 0 && health.proxy_ok === true
+        : health.engine === 'rust' &&
+          health.provider === 'local_cli' &&
+          health.healthy === true &&
+          health.cli_pid > 0 &&
+          health.ready_slots > 0)
+    const verified = await advanceGuestProvisioning(vm, projectRoot, token, ready ? 'slot_ready' : 'failed', {
+      errorCode: ready ? null : 'guest_worker_not_ready',
+    })
+    if (!verified.ok) return verified
+    if (!ready)
+      return {
+        ok: false,
+        code: 'guest_worker_not_ready',
+        error: 'Native guest worker did not satisfy the readiness contract',
+      }
+  }
+  if (token && rust?.ok === false) {
+    await advanceGuestProvisioning(vm, projectRoot, token, 'failed', { errorCode: rust.code || 'guest_worker_failed' })
+    return rust
+  }
+  if (codex) return { ok: true, engine: 'codex', docker: boot, kernel: rust, runtime: vm.runtime }
+  return { ...boot, runtime: vm.runtime, rust, rust_ok: rust?.ok !== false || rust?.skipped === true }
 }
 
 export function slotExec(projectRoot, vm) {
@@ -263,7 +372,7 @@ export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeo
   const name = containerName(vm.id)
   const existing = inspect(name)
   const needsKernelMount = engine === 'rust' && !!existing && !hasKernelMount(name) && !wrapUsesSlotKernel(wrap)
-  const boot = needsKernelMount ? start(vm, projectRoot, { recreate: true }) : reload(vm, projectRoot)
+  const boot = await (needsKernelMount ? start(vm, projectRoot, { recreate: true }) : reload(vm, projectRoot))
   if (!boot?.ok) {
     return {
       ok: false,
@@ -280,7 +389,7 @@ export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeo
   const rust = await startRust(exec, { timeoutMs })
   if (!rust?.ok) {
     const code = rust?.reason === 'health_timeout' ? 'kernel_health_timeout' : 'kernel_start_failed'
-    const rollback = reload(vm, projectRoot)
+    const rollback = await reload(vm, projectRoot)
     return {
       ok: false,
       code,

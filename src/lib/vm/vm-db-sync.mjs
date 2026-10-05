@@ -22,6 +22,7 @@ import path from 'node:path'
 import { isDbOpen, getDb } from '../db/database.mjs'
 import { VmsRepo } from '../db/repos/vms-repo.mjs'
 import { setVmWriteHook, atomicWriteJson, isVmRecordFile } from './vm-file.mjs'
+import { findGuestAllocation, GUEST_ACCOUNT_V2 } from './guest-account.mjs'
 
 let _repo = null
 let _watcher = null
@@ -103,6 +104,10 @@ export function reconcileVms(projectRoot) {
   // DB rows without files → rebuild files (restore / disaster pull-up)
   for (const row of r.list()) {
     if (seen.has(row.id) || !row.vm) continue
+    if (row.vm.guest_user?.contract === GUEST_ACCOUNT_V2) {
+      const operationId = row.vm.provisioning?.operation_id
+      if (!operationId || findGuestAllocation(projectRoot, operationId)?.retired) continue
+    }
     try {
       fs.mkdirSync(dir, { recursive: true })
       const file = path.join(dir, `${row.id}.json`)

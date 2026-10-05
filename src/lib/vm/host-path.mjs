@@ -10,8 +10,8 @@
  *
  * Resolution order:
  *   1. `VM2API_HOST_ROOT` / `KIN_HOST_ROOT` — explicit host path of KIN_PROJECT_ROOT.
- *   2. `docker inspect <self>` mounts — exact per-mount `Source`; also correct for
- *      named volumes (`/var/lib/docker/volumes/<vol>/_data`).
+ *   2. `docker inspect <self>` mounts — per-mount sources; named volumes must
+ *      use volume-subpath mounts rather than exposing daemon filesystem paths.
  *   3. identity — native (non-container) deploy, host path == container path.
  */
 import { execFileSync } from 'node:child_process'
@@ -57,7 +57,11 @@ export function parseMounts(raw) {
     const destination = String(m?.Destination || '').trim()
     const source = String(m?.Source || '').trim()
     if (!destination.startsWith('/') || !source.startsWith('/')) continue
-    out.push({ destination: path.resolve(destination), source: path.resolve(source) })
+    out.push({
+      destination: path.resolve(destination),
+      source: path.resolve(source),
+      ...(m.Type === 'volume' && m.Name ? { volume: String(m.Name) } : {}),
+    })
   }
   return out
 }
@@ -137,6 +141,20 @@ export function hostMapEntries({ projectRoot, env = process.env, dockerJson, soc
 /** Container path → host path for the given project root. */
 export function toHostPath(p, { projectRoot, env, dockerJson, sockPath } = {}) {
   return mapHostPath(p, hostMapEntries({ projectRoot, env, dockerJson, sockPath }))
+}
+
+/** Named-volume subpaths remain in the daemon namespace, including on Docker Desktop. */
+export function dockerMountArgs(p, destination, { readonly = false, volumeSubpath = true, ...options } = {}) {
+  const absolute = path.resolve(p)
+  const mount = hostMapEntries(options).find((entry) => isInside(absolute, entry.destination))
+  if (volumeSubpath && mount?.volume) {
+    const relative = path.relative(mount.destination, absolute)
+    return [
+      '--mount',
+      `type=volume,source=${mount.volume},destination=${destination},volume-nocopy${relative ? `,volume-subpath=${relative}` : ''}${readonly ? ',readonly' : ''}`,
+    ]
+  }
+  return ['-v', `${toHostPath(p, options)}:${destination}${readonly ? ':ro' : ''}`]
 }
 
 export function resetHostPathCache() {

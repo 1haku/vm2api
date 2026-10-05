@@ -19,16 +19,17 @@ def main() -> int:
         return 2
     tz = os.environ.get("TZ", "UTC")
     lang = os.environ.get("LANG", "en_US.UTF-8")
+    home = os.environ["KIN_GUEST_HOME"]
     cli = os.environ["KIN_CLI_BIN"]
     argv = [
         "docker", "exec", "-it",
         "-u", f"{uid}:{gid}",
-        "-e", "HOME=/home/kincli",
-        "-e", "TMPDIR=/home/kincli/.cache/tmp",
+        "-e", f"HOME={home}",
+        "-e", f"TMPDIR={home}/.cache/tmp",
         "-e", f"TZ={tz}",
         "-e", f"LANG={lang}",
         "-e", f"LC_ALL={lang}",
-        "-e", "PATH=/home/kincli/.local/bin:/usr/bin:/bin",
+        "-e", f"PATH={home}/.local/bin:/usr/bin:/bin",
         # The host Go Refresher is the only RT writer; the marker lets the host
         # find this process apart from the kernel's CLI on the same binary.
         "-e", "CLAUDE_CODE_KIN_HOST_REFRESH=1",
@@ -41,7 +42,7 @@ def main() -> int:
         "-e", "ANTHROPIC_BASE_URL=",
         "-e", "ANTHROPIC_API_KEY=",
         "-e", "ANTHROPIC_AUTH_TOKEN=",
-        "-w", "/home/kincli",
+        "-w", home,
         container,
         cli,
     ]
