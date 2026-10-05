@@ -5,6 +5,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
+import { createDatabase } from '../../src/lib/db/database.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/crs-persona.mjs'
 import { sessionIdFromOutboundBody } from '../../src/lib/identity/identity-rewrite.mjs'
@@ -386,6 +387,7 @@ function companionHaikuBody(sessionId, deviceId = 'device-probe') {
 
 function protocolHarness({ body, stickyRouter, failoverRunner, apiKeyRecord = null, headers = {} }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-protocol-seat-'))
+  const db = createDatabase({ dataDir: root })
   const routingFile = path.join(root, 'routing.json')
   fs.writeFileSync(routingFile, JSON.stringify({ compatibility: { persona_preset: 'zero' } }))
   const response = fakeResponse()
@@ -415,12 +417,15 @@ function protocolHarness({ body, stickyRouter, failoverRunner, apiKeyRecord = nu
     stickyRouter,
     accountQuota: {},
     apiKeyStore: {
+      repo: { db },
       acquire: () => {
         apiKeyCalls.acquire += 1
-        return { ok: true }
-      },
-      release: () => {
-        apiKeyCalls.release += 1
+        return {
+          ok: true,
+          release: () => {
+            apiKeyCalls.release += 1
+          },
+        }
       },
     },
     apiScheduler: {},
@@ -440,7 +445,7 @@ function protocolHarness({ body, stickyRouter, failoverRunner, apiKeyRecord = nu
     once() {},
     off() {},
   }
-  return { root, handler, req, response, stats, apiKeyCalls, authCalls }
+  return { root, db, handler, req, response, stats, apiKeyCalls, authCalls }
 }
 
 test('companion Haiku probe clears session sticky and skips session seat', async () => {
@@ -491,6 +496,7 @@ test('companion Haiku probe clears session sticky and skips session seat', async
     assert.equal(runOpts.deviceKey, 'dev2:probe-device')
     assert.equal(harness.response.status, 503)
   } finally {
+    harness.db.close()
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
 })
@@ -527,6 +533,7 @@ test('ordinary Haiku with tools keeps session sticky and session seat', async ()
     assert.equal(runOpts.skipSessionSeat, false)
     assert.equal(runOpts.deviceKey, 'dev2:normal-device')
   } finally {
+    harness.db.close()
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
 })
@@ -553,6 +560,7 @@ async function captureRunOpts({ body, stickyRouter, apiKeyRecord, headers }) {
   try {
     await harness.handler.handleProtocol(harness.req, harness.response, 'anthropic.messages', '/v1/messages')
   } finally {
+    harness.db.close()
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
   return runOpts
