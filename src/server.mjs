@@ -831,6 +831,7 @@ cliNodeGuard = createCliNodeGuard({
 
 const handlePanel = createPanelHandler({
   json,
+  writeSSEHeaders,
   readBody,
   readRawBody,
   requireAuth,
