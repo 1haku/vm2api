@@ -52,6 +52,7 @@ import { destroyVmRuntime, officialCcUidGid, reloadSlotWorker, startVmRuntime, s
 import { ensureProxyEgress, inspectEgressProcess, stopEgressProcess } from './egress.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { stopCodexKernel } from '../transport/codex-kernel-supervisor.mjs'
+import { guestAccount, guestBins } from './guest-account.mjs'
 
 const noop = async () => ({ skipped: true })
 
@@ -65,14 +66,19 @@ const LOCAL_HOST = Object.freeze({
   dockerEnv: () => undefined,
   dockerApi: () => localDocker(),
   execUser: (vm) => {
-    const { uid, gid } = officialCcUidGid(vm?.id)
+    const { uid, gid } = officialCcUidGid(vm)
     return `${uid}:${gid}`
   },
   start: (vm, projectRoot, opts) => startVmRuntime(vm, projectRoot, opts),
   reload: (vm, projectRoot, opts) => reloadSlotWorker(vm, projectRoot, opts),
-  stop: (vm) => stopVmRuntime(vm),
-  destroy: (vm) => destroyVmRuntime(vm),
+  stop: (vm, projectRoot) => stopVmRuntime(vm, projectRoot),
+  destroy: (vm, projectRoot) => destroyVmRuntime(vm, projectRoot),
   setProxyEgressEnabled: async (vm, projectRoot, enabled) => {
+    if (guestAccount(vm).contract === 'linux-account-v2') {
+      // A shared bridge belongs to the proxy, not to this guest's policy lease.
+      if (!enabled) return stopVmRuntime(vm, projectRoot)
+      return startVmRuntime(vm, projectRoot, { recreate: false })
+    }
     if (isCodexVm(vm)) {
       if (enabled) return { ok: true }
       const child = stopCodexKernel(vm.id)
@@ -134,5 +140,8 @@ function nodeHost(nodeId) {
 
 export function slotHost(vm) {
   const nodeId = vmNodeId(vm)
-  return nodeId ? nodeHost(nodeId) : LOCAL_HOST
+  if (nodeId) return nodeHost(nodeId)
+  if (guestAccount(vm).contract === 'legacy') return LOCAL_HOST
+  const bins = guestBins(vm)
+  return { ...LOCAL_HOST, bins: { cli: bins.cliNode, cc: bins.ccNode } }
 }

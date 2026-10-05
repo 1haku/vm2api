@@ -9,6 +9,9 @@ import path from 'node:path'
 import { boundProxyUrl, isLocalEgressProxy, localEgressProxyUrl } from '../vm/egress.mjs'
 import { assertProxyAllowed } from '../vm/proxy-policy.mjs'
 import { codexKernelHealth, codexKernelPaths } from './codex-kernel-client.mjs'
+import { guestAccount, guestBins } from '../vm/guest-account.mjs'
+import { codexCredentialPath } from '../vm/codex-slot.mjs'
+import { replaceSlotOwnedFile, readSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 
 const starts = new Map()
 
@@ -48,25 +51,30 @@ export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxy
   const socketPath = path.join(runDir, 'codex-kernel.sock')
   const configPath = path.join(runDir, 'codex-kernel.json')
   const tokenPath = path.join(runDir, 'internal.token')
-  const credentialPath = path.join(projectRoot, 'vms', vm.id, 'codex-credentials.json')
+  const account = guestAccount(vm)
+  const v2 = account.contract === 'linux-account-v2'
+  const credentialPath = codexCredentialPath(projectRoot, vm.id)
   let secret = String(token || '').trim()
   if (!secret) {
     try {
-      secret = fs.readFileSync(tokenPath, 'utf8').trim()
-    } catch {}
+      secret = readSlotOwnedFile(tokenPath, vm).trim()
+    } catch (error) {
+      if (error.code === 'guest_ownership_failed') throw error
+    }
   }
   if (!secret) secret = crypto.randomBytes(24).toString('hex')
-  fs.writeFileSync(tokenPath, secret + '\n', { mode: 0o600 })
+  if (v2) replaceSlotOwnedFile(tokenPath, secret + '\n', vm)
+  else fs.writeFileSync(tokenPath, secret + '\n', { mode: 0o600 })
   const local = isLocalEgressProxy(vm?.proxy)
-  const proxy = local ? localEgressProxyUrl() : String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
-  // A configured deployment proxy is this slot's exit: fail closed instead of going direct.
-  const required = local ? !!proxy : proxyRequired == null ? !!proxy : !!proxyRequired
+  const proxy = v2 ? '' : local ? localEgressProxyUrl() : String(proxyUrl || boundProxyUrl(vm?.proxy) || '').trim()
+  // V2 exits through its fail-closed Docker bridge, not a host-loopback proxy.
+  const required = v2 ? false : local ? !!proxy : proxyRequired == null ? !!proxy : !!proxyRequired
   const deviceId = String(vm.device_id || vm.fingerprint?.device_id || vm.id).trim() || vm.id
   const config = {
     vm_id: vm.id,
     device_id: deviceId,
-    socket_path: socketPath,
-    credential_path: credentialPath,
+    socket_path: v2 ? '/run/kin/codex-kernel.sock' : socketPath,
+    credential_path: v2 ? `${guestBins(vm).home}/.codex/credentials.json` : credentialPath,
     proxy_url: proxy,
     proxy_required: required,
     internal_token: secret,
@@ -76,7 +84,8 @@ export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxy
     max_request_bytes: 32 * 1024 * 1024,
     test_endpoints: process.env.KIN_CODEX_TEST_ENDPOINTS === '1',
   }
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
+  if (v2) replaceSlotOwnedFile(configPath, JSON.stringify(config, null, 2) + '\n', vm)
+  else fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
   return { runDir, socketPath, configPath, credentialPath, tokenPath }
 }
 
@@ -87,6 +96,9 @@ export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
   if (!paths.configPath) return { ok: false, reason: 'config_missing' }
   const live = await waitForHealth(exec, Math.min(800, Math.max(200, Number(timeoutMs) || 800)))
   if (live.ok) return { ok: true, reused: true, health: live.health }
+  // V2's native kernel is container PID 1; never fall back to a control-plane process.
+  if (guestAccount(exec.vm).contract === 'linux-account-v2')
+    return { ok: false, reason: 'guest_codex_kernel_not_running', health: live.health }
   const current = starts.get(exec.vmId)
   if (current && !current.killed) return waitForHealth(exec, timeoutMs)
   try {

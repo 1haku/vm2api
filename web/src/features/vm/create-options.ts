@@ -1,33 +1,16 @@
-export const KERNELS = [
-  {
-    id: 'ubuntu-24.04',
-    name: 'Ubuntu 24.04',
-    base: 'kin-os/ubuntu:24.04',
-    size: '标准机',
-    feats: ['LTS', 'apt', 'cli-hop wrap/crag', 'host-net'],
-  },
-  {
-    id: 'debian-12',
-    name: 'Debian 12',
-    base: 'kin-os/debian:12',
-    size: '标准机',
-    feats: ['glibc', 'apt', 'cli-hop wrap/crag', 'host-net'],
-  },
-  {
-    id: 'archlinux',
-    name: 'Arch Linux',
-    base: 'kin-os/arch:latest',
-    size: '标准机',
-    feats: ['rolling', 'pacman', 'cli-hop wrap/crag', 'host-net'],
-  },
-  {
-    id: 'fedora-41',
-    name: 'Fedora 41',
-    base: 'kin-os/fedora:41',
-    size: '标准机',
-    feats: ['dnf', 'glibc', 'cli-hop wrap/crag', 'host-net'],
-  },
-]
+export type KernelCapability = 'linux' | 'macos' | 'unknown'
+export type KernelSupport =
+  'supported' | 'candidate' | 'unavailable' | 'unknown'
+
+/** 候选发行版不等同于已通过部署认证。 */
+export const CANDIDATE_SMOKE_NOTE = '候选发行版，部署未认证'
+
+/**
+ * macOS 只作为 x86_64 KVM 候选展示。未满足宿主、许可、初始化和 Darwin 产物前不可创建。
+ * 不提供 Windows，也不提供 Apple Silicon。
+ */
+export const MACOS_KVM_UNAVAILABLE =
+  '需要已授权的 KVM 宿主、已审核的许可、完成的系统初始化，以及 Darwin 槽位产物'
 
 export type KernelProfile = {
   id: string
@@ -35,14 +18,207 @@ export type KernelProfile = {
   base: string
   size: string
   feats: string[]
+  capability: KernelCapability
+  support: KernelSupport
+  /** 目录已收录且允许发到集群节点。候选在收录前必须保持 false。 */
+  remoteSupported: boolean
+  arch?: string
+  unavailableReason?: string
 }
+
+function linuxProfile(
+  profile: Omit<
+    KernelProfile,
+    'capability' | 'support' | 'remoteSupported' | 'arch'
+  > & { support?: 'supported' | 'candidate' }
+): KernelProfile {
+  const support = profile.support || 'supported'
+  return {
+    ...profile,
+    capability: 'linux',
+    support,
+    remoteSupported: support === 'supported',
+    arch: 'x86_64',
+  }
+}
+
+export const KERNELS: KernelProfile[] = [
+  linuxProfile({
+    id: 'ubuntu-24.04',
+    name: 'Ubuntu 24.04',
+    base: 'kin-os/ubuntu:24.04',
+    size: '标准机',
+    feats: ['LTS', 'apt', 'cli-hop wrap/crag', 'host-net'],
+  }),
+  linuxProfile({
+    id: 'debian-12',
+    name: 'Debian 12',
+    base: 'kin-os/debian:12',
+    size: '标准机',
+    feats: ['glibc', 'apt', 'cli-hop wrap/crag', 'host-net'],
+  }),
+  linuxProfile({
+    id: 'archlinux',
+    name: 'Arch Linux',
+    base: 'kin-os/arch:latest',
+    size: '标准机',
+    feats: ['rolling', 'pacman', 'cli-hop wrap/crag', 'host-net'],
+  }),
+  linuxProfile({
+    id: 'fedora-41',
+    name: 'Fedora 41',
+    base: 'kin-os/fedora:41',
+    size: '标准机',
+    feats: ['dnf', 'glibc', 'cli-hop wrap/crag', 'host-net'],
+  }),
+  linuxProfile({
+    id: 'debian-13',
+    name: 'Debian 13',
+    base: '',
+    size: '候选',
+    support: 'candidate',
+    feats: [CANDIDATE_SMOKE_NOTE],
+  }),
+  linuxProfile({
+    id: 'ubuntu-26.04',
+    name: 'Ubuntu 26.04',
+    base: '',
+    size: '候选',
+    support: 'candidate',
+    feats: [CANDIDATE_SMOKE_NOTE],
+  }),
+  linuxProfile({
+    id: 'fedora-44',
+    name: 'Fedora 44',
+    base: '',
+    size: '候选',
+    support: 'candidate',
+    feats: [CANDIDATE_SMOKE_NOTE],
+  }),
+  {
+    id: 'macos-15',
+    name: 'macOS 15',
+    base: '',
+    size: 'x86_64',
+    feats: [],
+    capability: 'macos',
+    support: 'unavailable',
+    remoteSupported: false,
+    arch: 'x86_64',
+    unavailableReason: MACOS_KVM_UNAVAILABLE,
+  },
+  {
+    id: 'macos-14',
+    name: 'macOS 14',
+    base: '',
+    size: 'x86_64',
+    feats: [],
+    capability: 'macos',
+    support: 'unavailable',
+    remoteSupported: false,
+    arch: 'x86_64',
+    unavailableReason: MACOS_KVM_UNAVAILABLE,
+  },
+]
 
 export function kernelProfile(id?: string | null): KernelProfile | null {
   const k = String(id || '').trim()
   const known = KERNELS.find((x) => x.id === k)
   if (known) return known
   if (!k) return null
-  return { id: k, name: k, base: '', size: '', feats: ['自定义内核'] }
+  return {
+    id: k,
+    name: k,
+    base: '',
+    size: '',
+    feats: [],
+    capability: 'unknown',
+    support: 'unknown',
+    remoteSupported: false,
+    unavailableReason: '未登记的客体系统，不能当作已支持的 Linux',
+  }
+}
+
+/** 只有已支持系统和本机候选能被选中。不可用项留在列表里，但提交不接受。 */
+export function kernelSelectable(profile: KernelProfile | null | undefined) {
+  return profile?.support === 'supported' || profile?.support === 'candidate'
+}
+
+export function kernelOptionLabel(profile: KernelProfile) {
+  return profile.size ? `${profile.name} · ${profile.size}` : profile.name
+}
+
+/**
+ * 创建提交前的客体系统拦截。返回可展示的原因；`null` 表示可以提交。
+ * 远端候选保持拦截，直到目录明确收录（`remoteSupported`）。
+ */
+export function kernelCreateBlock(
+  id: string | null | undefined,
+  remote: boolean
+): string | null {
+  const profile = kernelProfile(id)
+  if (!profile) return '请选择客体系统'
+  if (!kernelSelectable(profile) || profile.capability === 'macos') {
+    return profile.unavailableReason || '该客体系统当前不可创建'
+  }
+  if (remote && !profile.remoteSupported) {
+    return '远端节点暂不接受该候选客体系统。请改在本机创建，或改用已支持的 Ubuntu 24.04、Debian 12、Arch、Fedora 41。'
+  }
+  return null
+}
+
+/** 准备状态。未知值不能显示成就绪。 */
+export const PROVISION_STATES = [
+  'planned',
+  'admitted',
+  'image_ready',
+  'needs_setup',
+  'provisioning_os',
+  'os_ready',
+  'verifying_hardware',
+  'provisioning_worker',
+  'slot_ready',
+  'failed',
+  'cancelled',
+  'stopping',
+  'stopped',
+  'draining',
+] as const
+
+export type ProvisionState = (typeof PROVISION_STATES)[number]
+
+const PROVISION_STATE_LABEL: Record<ProvisionState, string> = {
+  planned: '已计划',
+  admitted: '已准入',
+  image_ready: '镜像就绪',
+  needs_setup: '待完成系统初始化',
+  provisioning_os: '正在准备客体系统',
+  os_ready: '客体系统就绪',
+  verifying_hardware: '正在核对硬件',
+  provisioning_worker: '正在准备推理工件',
+  slot_ready: '推理槽就绪',
+  failed: '失败',
+  cancelled: '已取消',
+  stopping: '正在停止',
+  stopped: '已停止',
+  draining: '正在排空',
+}
+
+export function provisionStateView(state: unknown): {
+  label: string
+  known: boolean
+  hint?: string
+} {
+  const raw = String(state ?? '').trim()
+  if (!raw) return { label: '', known: false }
+  if ((PROVISION_STATES as readonly string[]).includes(raw)) {
+    return {
+      label: PROVISION_STATE_LABEL[raw as ProvisionState],
+      known: true,
+      hint: raw === 'os_ready' ? '客体系统已就绪，推理槽尚未就绪' : undefined,
+    }
+  }
+  return { label: `未知 / ${raw}`, known: false }
 }
 
 /** 创建槽位的模板预设，与 index.html `VM_TEMPLATES` 一致。 */

@@ -129,16 +129,17 @@ def build_argv() -> list[str]:
     gid = os.environ["KIN_GID"]
     tz = os.environ.get("TZ", "UTC")
     lang = os.environ.get("LANG", "en_US.UTF-8")
+    home = os.environ["KIN_GUEST_HOME"]
     cli = os.environ["KIN_CLI_BIN"]
     return [
         "docker", "exec", "-it",
         "-u", f"{uid}:{gid}",
-        "-e", "HOME=/home/kincli",
-        "-e", "TMPDIR=/home/kincli/.cache/tmp",
+        "-e", f"HOME={home}",
+        "-e", f"TMPDIR={home}/.cache/tmp",
         "-e", f"TZ={tz}",
         "-e", f"LANG={lang}",
         "-e", f"LC_ALL={lang}",
-        "-e", "PATH=/home/kincli/.local/bin:/usr/bin:/bin",
+        "-e", f"PATH={home}/.local/bin:/usr/bin:/bin",
         "-e", "CLAUDE_CODE_KIN_HOST_REFRESH=1",
         # The slot cli-node guard spares host-run setup-token sessions.
         "-e", "KIN_SETUP_TOKEN=1",
@@ -154,7 +155,7 @@ def build_argv() -> list[str]:
         "-e", "TERM=xterm-256color",
         "-e", "COLUMNS=220",
         "-e", "LINES=40",
-        "-w", "/home/kincli",
+        "-w", home,
         container,
         cli,
         "setup-token",
