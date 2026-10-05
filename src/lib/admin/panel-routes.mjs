@@ -208,7 +208,7 @@ import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
 import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
-import { publicNotifyConfig, publicRoutingNotify } from './notify.mjs'
+import { mergeNotifyConfig, publicNotifyConfig, publicRoutingNotify, sendNotifyTest } from './notify.mjs'
 import { UsageLogsView } from '../db/repos/usage-logs-view.mjs'
 import {
   StatisticsRepo,
