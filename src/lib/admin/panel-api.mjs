@@ -1719,6 +1719,10 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     sessions,
     session_active: sessions.active,
     session_max: sessions.max,
+    // Live seat book from PoolScheduler; session_active above is the idle-retained window count.
+    seats_used: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.seats_used) || 0,
+    seats_max: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
+    queue_depth: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.queue_depth) || 0,
     inflight: acc?.inflight ?? 0,
     requests: acc?.requests ?? v.stats?.requests ?? 0,
     tokens_in: acc?.tokens_in ?? 0,
