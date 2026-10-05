@@ -481,6 +481,29 @@ test('debug mode stores full redacted body', () => {
   assert.deepEqual(dbg[0].hop_meta.params.dropped, ['max_tokens'])
 })
 
+test('outbound bodies are stored only when the operator configured debug, not via caller headers', () => {
+  const outbound = { body: { system: 'gateway persona overlay' }, headers: { 'x-app': 'cli' } }
+  const record = (store, headers) => {
+    const ctx = store.start({ method: 'POST', headers, socket: {} }, { pathName: '/v1/messages' })
+    store.finish(ctx, {
+      status: 200,
+      inbound_body: { model: 'm' },
+      outbound_body: outbound.body,
+      outbound_headers: outbound.headers,
+    })
+    return store.getDebug(ctx.request_id)
+  }
+  for (const headers of [{ 'x-kin-debug': '1' }, { 'x-kin-log': 'debug' }]) {
+    const forced = record(tmpStore('normal'), headers)
+    assert.deepEqual(forced.inbound_body, { model: 'm' })
+    assert.equal(forced.outbound_body, null)
+    assert.equal(forced.outbound_headers, null)
+  }
+  const operator = record(tmpStore('debug'), {})
+  assert.deepEqual(operator.outbound_body, outbound.body)
+  assert.deepEqual(operator.outbound_headers, outbound.headers)
+})
+
 test('off mode writes nothing', () => {
   const store = tmpStore('off')
   const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
