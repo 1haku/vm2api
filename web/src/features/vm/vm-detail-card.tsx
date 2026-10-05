@@ -43,7 +43,6 @@ import {
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
 import { restrictionTitle } from '@/features/vm/clear-restriction'
-import { kernelProfile, provisionStateView } from '@/features/vm/create-options'
 import { Field } from '@/features/vm/detail-section-primitives'
 import { NodeChip } from '@/features/vm/node-chip'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
@@ -73,58 +72,6 @@ function Section({
   )
 }
 
-function credentialFamilyText(vm: Vm) {
-  const family = String(vm.family || '').trim()
-  const platform = String(vm.platform || '').trim()
-  if (family === 'codex' || platform === 'openai') return 'Codex'
-  if (family === 'claude' || platform === 'anthropic') return 'Claude'
-  return family || platform || '-'
-}
-
-/** 顶层 guest_os 对象。采集器写在 runtime.guest_os 的展示名字符串不拿来冒充。 */
-function guestOsText(vm: Vm) {
-  const os = vm.guest_os
-  if (!os || typeof os !== 'object') return null
-  const id = String(os.id || '').trim()
-  const arch = String(os.arch || '').trim()
-  if (!id && !arch) return null
-  const profile = id ? kernelProfile(id) : null
-  const name = profile && profile.support !== 'unknown' ? profile.name : id
-  return [name, arch].filter(Boolean).join(' · ')
-}
-
-function guestAccountText(vm: Vm) {
-  const user = vm.guest_user
-  if (!user || typeof user !== 'object') return null
-  const username = String(user.username || '').trim()
-  if (!username) return null
-  const parts = [username]
-  if (user.uid != null || user.gid != null) {
-    parts.push(`uid ${user.uid ?? '-'} · gid ${user.gid ?? '-'}`)
-  }
-  const home = String(user.home || '').trim()
-  if (home) parts.push(home)
-  return parts.join(' · ')
-}
-
-function providerText(vm: Vm) {
-  const provider = String(vm.runtime?.provider || '').trim()
-  const type = String(vm.runtime?.type || '').trim()
-  if (provider && type) return `${provider} · ${type}`
-  return provider || type || null
-}
-
-/** 旧槽没有这些字段时不插区块，原有详情保持不变。 */
-function hasGuestCapability(vm: Vm) {
-  return !!(
-    guestOsText(vm) ||
-    guestAccountText(vm) ||
-    String(vm.provisioning?.state || '').trim() ||
-    vm.provisioning?.error_code ||
-    String(vm.runtime?.provider || '').trim()
-  )
-}
-
 function CardBody({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
   const actions = useVmActions()
   const today = vmTodayStats(vm, accounts)
@@ -135,13 +82,6 @@ function CardBody({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
   const blocked = refreshBlockedReason(vm)
   const restricted = restrictionTitle(vm)
   const inflight = Number(vm.inflight) || Number(vm.session_active) || 0
-  const guestOs = guestOsText(vm)
-  const guestAccount = guestAccountText(vm)
-  const provider = providerText(vm)
-  const provision = String(vm.provisioning?.state || '').trim()
-    ? provisionStateView(vm.provisioning?.state)
-    : null
-  const provisionError = String(vm.provisioning?.error_code || '').trim()
   return (
     <>
       <div className='flex flex-wrap items-center gap-1.5'>
@@ -251,57 +191,6 @@ function CardBody({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
             <Field label='代理' compact>
               <ProxyChip vm={vm} compact />
             </Field>
-            {hasGuestCapability(vm) ? (
-              <>
-                <Field label='客体系统' compact>
-                  <span className='text-xs'>{guestOs || '-'}</span>
-                </Field>
-                <Field label='凭证家族' compact>
-                  <span className='text-xs'>{credentialFamilyText(vm)}</span>
-                </Field>
-                {provider ? (
-                  <Field label='运行后端' compact>
-                    <span className='text-xs'>{provider}</span>
-                  </Field>
-                ) : null}
-                {guestAccount ? (
-                  <Field label='系统账号' compact>
-                    <span className='text-xs'>{guestAccount}</span>
-                  </Field>
-                ) : null}
-                {provision ? (
-                  <Field label='准备状态' compact>
-                    <span
-                      className={
-                        vm.provisioning?.state === 'failed'
-                          ? 'text-xs text-[color:var(--status-bad)]'
-                          : 'text-xs'
-                      }
-                    >
-                      {provision.label}
-                    </span>
-                    {provision.hint ? (
-                      <span className='mt-0.5 block text-[11px] text-muted-foreground'>
-                        {provision.hint}
-                      </span>
-                    ) : null}
-                    {provisionError ? (
-                      <span className='mt-0.5 block text-[11px] text-muted-foreground'>
-                        {provisionError}
-                        {vm.provisioning?.retryable ? ' · 可重试' : ''}
-                        {vm.provisioning?.generation != null
-                          ? ` · 第 ${vm.provisioning.generation} 代`
-                          : ''}
-                      </span>
-                    ) : vm.provisioning?.generation != null ? (
-                      <span className='mt-0.5 block text-[11px] text-muted-foreground'>
-                        第 {vm.provisioning.generation} 代
-                      </span>
-                    ) : null}
-                  </Field>
-                ) : null}
-              </>
-            ) : null}
           </div>
         </Section>
       </div>

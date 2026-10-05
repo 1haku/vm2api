@@ -13,8 +13,6 @@ import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm } from '../identity/official-fingerprint.mjs'
 import { isHostKernel } from '../identity/workstation-profile.mjs'
 import { isGeneratedHostname } from '../identity/workstation-fingerprint.mjs'
-import { guestProvisioningToken, writeGuestRecord } from './provisioning.mjs'
-import { publicGuestFingerprint } from './guest-contract.mjs'
 
 export const GUEST_IDENTITY_SCHEMA = '1'
 
@@ -95,15 +93,8 @@ export function mergeGuestFingerprint(prev = {}, guest = {}) {
 
 export async function collectSlotIdentity(projectRoot, vm, { callGet = readGuestIdentity, timeoutMs = 5000 } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
-  const vmPath = path.join(projectRoot, 'vms', `${vm.id}.json`)
-  let snapshot
-  try {
-    snapshot = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-  } catch {
-    return { ok: false, id: vm.id, error: 'vm.json unreadable' }
-  }
-  const token = guestProvisioningToken(snapshot)
-  const res = await callGet(slotExec(projectRoot, snapshot), '/internal/identity', { timeoutMs })
+  const exec = slotExec(projectRoot, vm)
+  const res = await callGet(exec, '/internal/identity', { timeoutMs })
   if (!res?.ok) {
     const message = res?.body?.error?.message || res?.body?.error || `identity status ${res?.status || 0}`
     return {
@@ -114,35 +105,29 @@ export async function collectSlotIdentity(projectRoot, vm, { callGet = readGuest
     }
   }
   const guest = res.body?.identity && typeof res.body.identity === 'object' ? res.body.identity : res.body
-  if (token && !guest?.observed_account)
-    return { ok: false, id: vm.id, code: 'guest_identity_mismatch', error: 'Guest account readback is missing' }
-  const changed = await writeGuestRecord(projectRoot, vm, token, (current) => {
-    const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
-    applyOfficialFingerprintToVm(vmPath, homeDir)
-    const official = JSON.parse(fs.readFileSync(vmPath, 'utf8')).fingerprint
-    current.fingerprint = mergeGuestFingerprint(official || current.fingerprint, {
-      ...guest,
-      runtime_kind: guest.runtime_kind || runtimeKind(current),
-    })
-    current.runtime = {
-      ...(current.runtime || {}),
-      type: runtimeKind(current),
-      guest_hostname: current.fingerprint.guest_hostname || current.fingerprint.hostname,
-      guest_os: current.fingerprint.os_pretty,
-      guest_kernel: current.fingerprint.guest_kernel_release || current.fingerprint.kernel_release,
-      identity_collected_at: current.fingerprint.collected_at,
-    }
-    if (token) {
-      current.guest_user.verified_at = guest.collected_at
-      atomicWriteJson(path.join(projectRoot, 'vms', vm.id, 'identity.observed.json'), guest, { mode: 0o600 })
-    }
-  })
-  if (!changed.ok) return changed
-  return {
-    ok: true,
-    id: vm.id,
-    fingerprint: publicGuestFingerprint(changed.vm),
-    runtime_kind: changed.vm.runtime.type,
-    ...(token ? { observed_account: guest.observed_account } : {}),
+  const vmPath = exec.vmPath
+  let current
+  try {
+    current = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+  } catch {
+    return { ok: false, id: vm.id, error: 'vm.json unreadable' }
   }
+  if (!guest.runtime_kind) guest.runtime_kind = runtimeKind(current)
+  current.fingerprint = mergeGuestFingerprint(current.fingerprint, guest)
+  current.runtime = {
+    ...(current.runtime || {}),
+    type: runtimeKind(current),
+    guest_hostname: current.fingerprint.guest_hostname || current.fingerprint.hostname,
+    guest_os: current.fingerprint.os_pretty,
+    guest_kernel: current.fingerprint.guest_kernel_release || current.fingerprint.kernel_release,
+    identity_collected_at: current.fingerprint.collected_at,
+  }
+  current.updated_at = new Date().toISOString()
+  atomicWriteJson(vmPath, current, { mode: 0o600 })
+  const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
+  applyOfficialFingerprintToVm(vmPath, homeDir)
+  try {
+    current = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+  } catch {}
+  return { ok: true, id: vm.id, fingerprint: current.fingerprint, runtime_kind: current.runtime.type }
 }

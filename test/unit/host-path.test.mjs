@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import {
   buildHostMap,
   discoverSelfMounts,
-  dockerMountArgs,
   mapHostPath,
   parseMounts,
   resetHostPathCache,
@@ -73,38 +72,4 @@ test('explicit host root env overrides discovery', () => {
   })
   resetHostPathCache()
   assert.equal(mapped, '/data/vm2api/vms/vm-03/run')
-})
-
-test('v2 sibling mounts keep nested named-volume files inside the daemon namespace', () => {
-  resetHostPathCache()
-  const options = {
-    projectRoot: PROJECT,
-    sockPath: '/etc/hostname',
-    dockerJson: () =>
-      JSON.stringify([
-        { Type: 'bind', Source: '/srv/project', Destination: PROJECT },
-        {
-          Type: 'volume',
-          Name: 'guest-vms',
-          Source: '/var/lib/docker/volumes/guest-vms/_data',
-          Destination: `${PROJECT}/vms`,
-        },
-      ]),
-  }
-  assert.deepEqual(
-    dockerMountArgs(`${PROJECT}/vms/vm-alpha/machine-id`, '/etc/machine-id', { ...options, readonly: true }),
-    [
-      '--mount',
-      'type=volume,source=guest-vms,destination=/etc/machine-id,volume-nocopy,volume-subpath=vm-alpha/machine-id,readonly',
-    ],
-  )
-  assert.deepEqual(
-    dockerMountArgs(`${PROJECT}/bin/kin-kernel`, '/usr/local/bin/kin-kernel', { ...options, readonly: true }),
-    ['-v', '/srv/project/bin/kin-kernel:/usr/local/bin/kin-kernel:ro'],
-  )
-  assert.deepEqual(dockerMountArgs(`${PROJECT}/vms/vm-alpha/run`, '/run/kin', { ...options, volumeSubpath: false }), [
-    '-v',
-    '/var/lib/docker/volumes/guest-vms/_data/vm-alpha/run:/run/kin',
-  ])
-  resetHostPathCache()
 })

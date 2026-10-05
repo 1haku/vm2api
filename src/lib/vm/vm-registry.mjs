@@ -6,7 +6,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson, listVmRecordFiles } from './vm-file.mjs'
-import { guestProvisioningReady, publicGuestMetadata, publicGuestFingerprint } from './guest-contract.mjs'
 import {
   hasAccessPresence,
   hasCredentialPresence,
@@ -110,7 +109,7 @@ export function summarizeVm(vm, projectRoot = null) {
     proxy: vm.proxy ? { ...vm.proxy, password: vm.proxy.password ? '***' : (vm.proxy.password ?? null) } : null,
     claude_code_version: vm.claude_code_version || null,
     stats: vm.stats || {},
-    fingerprint: publicGuestFingerprint(vm),
+    fingerprint: vm.fingerprint || null,
     schedulable: vm.schedulable !== false,
     schedule_manual: vm.schedule_manual === true,
     schedule_disabled_reason: vm.schedule_disabled_reason || null,
@@ -121,7 +120,7 @@ export function summarizeVm(vm, projectRoot = null) {
     proxy_id: vm.proxy?.id || null,
     proxy_cli_enabled: !!vm.proxy_cli_enabled,
     created_at: vm.created_at || null,
-    ...publicGuestMetadata(vm),
+    runtime: vm.runtime || null,
     ip: vm.runtime?.ip || null,
     pid: vm.runtime?.pid || null,
     container: vm.runtime?.container || null,
@@ -361,7 +360,7 @@ export function vmHasClaudeCredential(vm) {
  * Empty inventory slots (no Claude token) stay out of the pool.
  */
 export function isVmScheduleReady(vm, { allowMissingCredential = false } = {}) {
-  if (!guestProvisioningReady(vm)) return false
+  if (!vm) return false
   if (vm.schedulable === false && !isLeftoverQuotaScheduleOff(vm)) return false
   if (!allowMissingCredential && !vmHasClaudeCredential(vm)) return false
   const status = String(vm.status || '').toLowerCase()

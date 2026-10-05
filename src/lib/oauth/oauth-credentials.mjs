@@ -10,9 +10,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
-import { guestAccount, guestAccountForHomeDir } from '../vm/guest-account.mjs'
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
 import {
   credentialModeFromOauth,
@@ -136,14 +134,6 @@ export function ensureOfficialCredentialLink(homeDir, { uid, gid } = {}) {
   const workerFile = path.join(claudeDir, 'credentials.json')
   const officialFile = path.join(claudeDir, '.credentials.json')
   if (!homeDir || !fs.existsSync(workerFile)) return { wrote: false, error: 'worker credentials.json missing' }
-  const account = homeDir ? guestAccountForHomeDir(homeDir) : null
-  if (account?.contract === 'linux-account-v2') {
-    return withCredentialDirectory(homeDir, (directory) => {
-      readOwnedAt(directory, 'credentials.json')
-      linkOwnedCredential(directory, account)
-      return { wrote: true, path: officialFile, linked: true }
-    })
-  }
   fs.mkdirSync(claudeDir, { recursive: true })
   try {
     const st = fs.lstatSync(officialFile)
@@ -172,14 +162,9 @@ export function ensureOfficialCredentialLink(homeDir, { uid, gid } = {}) {
 export function readWorkerCredentialFile(homeDir) {
   const file = slotWorkerCredentialPath(homeDir)
   if (!file) return null
-  const account = guestAccountForHomeDir(homeDir)
   try {
     if (!fs.existsSync(file)) return null
-    const doc = JSON.parse(
-      account?.contract === 'linux-account-v2'
-        ? withCredentialDirectory(homeDir, (directory) => readOwnedAt(directory, 'credentials.json'))
-        : fs.readFileSync(file, 'utf8'),
-    )
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'))
     const api = doc?.anthropicApiKey && typeof doc.anthropicApiKey === 'object' ? doc.anthropicApiKey : null
     const apiKey = api?.apiKey || api?.api_key || ''
     if (apiKey || isApiKeyMode(doc?.type)) {
@@ -234,141 +219,33 @@ export function readWorkerCredentialFile(homeDir) {
       }),
       _token_version: oauth.kinGeneration || oauth.kin_generation || null,
     }
-  } catch (error) {
-    if (account?.contract === 'linux-account-v2' && error.code !== 'ENOENT') throw ownershipError()
+  } catch {
     return null
   }
 }
 const SLOT_CLAUDE_FILES = ['credentials.json', 'credentials.json.lock', '.credentials.json']
 
-function ownershipError() {
-  return Object.assign(new Error('Guest-owned file or directory failed its ownership boundary'), {
-    code: 'guest_ownership_failed',
-  })
+function slotIndexFromText(value) {
+  const s = String(value || '')
+  const m = s.match(/^vm-(\d+)$/i) || s.match(/^0*(\d+)$/)
+  return m ? Number(m[1]) : null
 }
 
-function withOwnedDirectory(directory, action) {
-  if (process.platform !== 'linux') throw ownershipError()
-  let fd
-  try {
-    fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
-  } catch (error) {
-    if (error.code === 'ENOENT') throw error
-    throw ownershipError()
-  }
-  try {
-    return action(`/proc/self/fd/${fd}`, fd)
-  } finally {
-    fs.closeSync(fd)
-  }
-}
-
-function withCredentialDirectory(homeDir, action) {
-  return withOwnedDirectory(homeDir, (home, homeFd) => {
-    try {
-      fs.mkdirSync(path.join(home, '.claude'), { mode: 0o700 })
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw ownershipError()
-    }
-    return withOwnedDirectory(path.join(home, '.claude'), (directory, directoryFd) =>
-      action(directory, directoryFd, homeFd),
-    )
-  })
-}
-
-function readOwnedAt(directory, name) {
-  let fd
-  try {
-    fd = fs.openSync(
-      path.join(directory, name),
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    )
-    const stat = fs.fstatSync(fd)
-    if (!stat.isFile() || stat.size > 65536) throw ownershipError()
-    const buffer = Buffer.allocUnsafe(stat.size + 1)
-    let offset = 0
-    while (offset < buffer.length) {
-      const bytes = fs.readSync(fd, buffer, offset, buffer.length - offset, offset)
-      if (!bytes) break
-      offset += bytes
-    }
-    if (offset > stat.size) throw ownershipError()
-    return buffer.toString('utf8', 0, offset)
-  } catch (error) {
-    if (error.code === 'ENOENT') throw error
-    throw ownershipError()
-  } finally {
-    if (fd != null) fs.closeSync(fd)
-  }
-}
-
-export function readSlotOwnedFile(filePath, vm) {
-  if (guestAccount(vm).contract !== 'linux-account-v2') return fs.readFileSync(filePath, 'utf8')
-  return withOwnedDirectory(path.dirname(filePath), (directory) => readOwnedAt(directory, path.basename(filePath)))
-}
-
-function writeOwnedAt(directory, name, body, account, mode = 0o600) {
-  const temp = path.join(directory, `.${name}.${crypto.randomUUID()}.tmp`)
-  let fd
-  try {
-    try {
-      if (fs.lstatSync(path.join(directory, name)).isSymbolicLink()) throw ownershipError()
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    fd = fs.openSync(
-      temp,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      0o600,
-    )
-    fs.writeFileSync(fd, body)
-    fs.fchownSync(fd, account.uid, account.gid)
-    fs.fchmodSync(fd, mode)
-    const stat = fs.fstatSync(fd)
-    if (stat.uid !== account.uid || stat.gid !== account.gid) throw ownershipError()
-    fs.renameSync(temp, path.join(directory, name))
-  } catch {
-    throw ownershipError()
-  } finally {
-    if (fd != null) fs.closeSync(fd)
-    try {
-      fs.unlinkSync(temp)
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw ownershipError()
-    }
-  }
-}
-
-/** Legacy numeric ownership remains; v2 uses its reserved guest account. */
+/** Container --user. Non-numeric ids share index 1, matching socksUidFor. */
 export function slotRuntimeOwner(vm) {
-  const { uid, gid } = guestAccount(vm)
-  return { uid, gid }
+  const n = slotIndexFromText(vm?.id) || slotIndexFromText(vm?.name) || 1
+  const base = Number(process.env.KIN_VM_UID_BASE || 10000)
+  const gid = Number(process.env.KIN_VM_GID || 987)
+  return {
+    uid: (Number.isFinite(base) ? base : 10000) + n,
+    gid: Number.isFinite(gid) ? gid : 987,
+  }
 }
 
-/** Legacy ownership is best-effort; v2 publication must acquire its reserved guest owner. */
+/** Best-effort. Non-root tests cannot chown; the write must still publish. */
 export function chownSlotRuntimeFile(filePath, vm) {
   if (!filePath || !vm?.id) return false
   const { uid, gid } = slotRuntimeOwner(vm)
-  if (guestAccount(vm).contract === 'linux-account-v2') {
-    return withOwnedDirectory(path.dirname(filePath), (directory) => {
-      let fd
-      try {
-        fd = fs.openSync(
-          path.join(directory, path.basename(filePath)),
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-        )
-        const stat = fs.fstatSync(fd)
-        if (!stat.isFile() && !stat.isDirectory()) throw ownershipError()
-        if (stat.uid === uid && stat.gid === gid) return false
-        fs.fchownSync(fd, uid, gid)
-        return true
-      } catch {
-        throw ownershipError()
-      } finally {
-        if (fd != null) fs.closeSync(fd)
-      }
-    })
-  }
   try {
     const st = fs.statSync(filePath)
     if (st.uid === uid && st.gid === gid) return false
@@ -385,11 +262,6 @@ export function chownSlotRuntimeFile(filePath, vm) {
  * (container PID 1) gets EACCES and docker --restart loops.
  */
 export function replaceSlotOwnedFile(filePath, body, vm) {
-  const account = guestAccount(vm)
-  if (account.contract === 'linux-account-v2')
-    return withOwnedDirectory(path.dirname(filePath), (directory) =>
-      writeOwnedAt(directory, path.basename(filePath), body, account),
-    )
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   try {
     fs.writeFileSync(tempPath, body, { mode: 0o600 })
@@ -404,38 +276,15 @@ export function replaceSlotOwnedFile(filePath, body, vm) {
 }
 
 export function slotUidGidFromHomeDir(homeDir) {
-  const account = guestAccountForHomeDir(homeDir)
-  return account ? { uid: account.uid, gid: account.gid } : null
+  const id = String(homeDir || '')
+    .replace(/\\/g, '/')
+    .match(/\/([^/]+)\/cli-home\/?$/i)?.[1]
+  if (!id) return null
+  return slotRuntimeOwner({ id })
 }
 
 export function ensureSlotClaudeOwnership(homeDir, uid = null, gid = null) {
   if (!homeDir) return
-  const account = guestAccountForHomeDir(homeDir)
-  if (account?.contract === 'linux-account-v2') {
-    return withCredentialDirectory(homeDir, (directory, directoryFd, homeFd) => {
-      for (const name of SLOT_CLAUDE_FILES) {
-        const file = path.join(directory, name)
-        let fd
-        try {
-          const stat = fs.lstatSync(file)
-          if (stat.isSymbolicLink()) {
-            if (name !== '.credentials.json' || fs.readlinkSync(file) !== 'credentials.json') throw ownershipError()
-            fs.lchownSync(file, account.uid, account.gid)
-            continue
-          }
-          fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK)
-          if (!fs.fstatSync(fd).isFile()) throw ownershipError()
-          fs.fchownSync(fd, account.uid, account.gid)
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw ownershipError()
-        } finally {
-          if (fd != null) fs.closeSync(fd)
-        }
-      }
-      fs.fchownSync(directoryFd, account.uid, account.gid)
-      fs.fchownSync(homeFd, account.uid, account.gid)
-    })
-  }
   let u = uid
   let g = gid
   if (u == null || g == null) {
@@ -458,9 +307,6 @@ export function ensureSlotClaudeOwnership(homeDir, uid = null, gid = null) {
 function chownSlotCredentialFile(homeDir, file) {
   ensureSlotClaudeOwnership(homeDir)
   if (!file) return
-  const account = guestAccountForHomeDir(homeDir)
-  if (account?.contract === 'linux-account-v2')
-    return chownSlotRuntimeFile(file, { id: path.basename(path.dirname(homeDir)), guest_user: account })
   const parsed = slotUidGidFromHomeDir(homeDir)
   if (!parsed) return
   try {
@@ -475,40 +321,6 @@ function sealSlotCredentialFile(file) {
   } catch {}
 }
 
-function linkOwnedCredential(directory, account) {
-  const file = path.join(directory, '.credentials.json')
-  try {
-    fs.unlinkSync(file)
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw ownershipError()
-  }
-  fs.symlinkSync('credentials.json', file)
-  fs.lchownSync(file, account.uid, account.gid)
-}
-
-function publishSlotCredential(homeDir, document) {
-  const file = slotWorkerCredentialPath(homeDir)
-  const account = guestAccountForHomeDir(homeDir)
-  if (account?.contract === 'linux-account-v2') {
-    ensureSlotClaudeOwnership(homeDir)
-    return withCredentialDirectory(homeDir, (directory) => {
-      writeOwnedAt(directory, 'credentials.json', JSON.stringify(document, null, 2) + '\n', account, 0o444)
-      linkOwnedCredential(directory, account)
-      return file
-    })
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
-  ensureSlotClaudeOwnership(homeDir)
-  try {
-    if (fs.existsSync(file)) fs.chmodSync(file, 0o600)
-  } catch {}
-  atomicWriteJson(file, document, { mode: 0o600 })
-  chownSlotCredentialFile(homeDir, file)
-  sealSlotCredentialFile(file)
-  ensureOfficialCredentialLink(homeDir)
-  return file
-}
-
 /** Write slot credentials.json for imports and worker-owned credential updates. */
 
 export function writeWorkerCredentialFile(homeDir, cred) {
@@ -519,11 +331,27 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   if (mode === 'apikey') {
     const apiKey = String(cred.api_key || cred.apiKey || cred.access_token || cred.accessToken || '').trim()
     if (!apiKey) return null
-    return publishSlotCredential(homeDir, {
-      type: 'apikey',
-      authScheme,
-      anthropicApiKey: { apiKey, baseUrl: cred.base_url || cred.baseUrl || 'https://api.anthropic.com' },
-    })
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+    ensureSlotClaudeOwnership(homeDir)
+    try {
+      if (fs.existsSync(file)) fs.chmodSync(file, 0o600)
+    } catch {}
+    atomicWriteJson(
+      file,
+      {
+        type: 'apikey',
+        authScheme,
+        anthropicApiKey: {
+          apiKey,
+          baseUrl: cred.base_url || cred.baseUrl || 'https://api.anthropic.com',
+        },
+      },
+      { mode: 0o600 },
+    )
+    chownSlotCredentialFile(homeDir, file)
+    sealSlotCredentialFile(file)
+    ensureOfficialCredentialLink(homeDir)
+    return file
   }
   const n = normalizeOauth(cred)
   if (!n.access_token && !n.refresh_token) return null
@@ -541,10 +369,9 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   const expiresAtMs = expiresAtToMs(n.expires_at) || null
   let previousType = null
   try {
-    previousType = normalizeSubscriptionType(readWorkerCredentialFile(homeDir)?.subscription_type)
-  } catch (error) {
-    if (error.code === 'guest_ownership_failed') throw error
-  }
+    const prev = JSON.parse(fs.readFileSync(file, 'utf8'))
+    previousType = normalizeSubscriptionType(prev?.claudeAiOauth?.subscriptionType)
+  } catch {}
   const subscriptionType =
     normalizeSubscriptionType(cred.subscription_type || cred.subscriptionType) ||
     normalizeSubscriptionType(cred.account_tier) ||
@@ -561,7 +388,16 @@ export function writeWorkerCredentialFile(homeDir, cred) {
   if (isAnySetupTokenMode(mode)) oauth.type = mode
 
   if (subscriptionType) oauth.subscriptionType = subscriptionType
-  return publishSlotCredential(homeDir, { type: mode, authScheme, claudeAiOauth: oauth })
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  ensureSlotClaudeOwnership(homeDir)
+  try {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o600)
+  } catch {}
+  atomicWriteJson(file, { type: mode, authScheme, claudeAiOauth: oauth }, { mode: 0o600 })
+  chownSlotCredentialFile(homeDir, file)
+  sealSlotCredentialFile(file)
+  ensureOfficialCredentialLink(homeDir)
+  return file
 }
 
 /**
@@ -571,16 +407,10 @@ export function writeWorkerCredentialFile(homeDir, cred) {
 export function ensureSlotSubscriptionType(homeDir, accountTier = null) {
   const file = slotWorkerCredentialPath(homeDir)
   if (!file || !fs.existsSync(file)) return { wrote: false, reason: 'missing' }
-  const account = guestAccountForHomeDir(homeDir)
   let doc
   try {
-    doc = JSON.parse(
-      account?.contract === 'linux-account-v2'
-        ? withCredentialDirectory(homeDir, (directory) => readOwnedAt(directory, 'credentials.json'))
-        : fs.readFileSync(file, 'utf8'),
-    )
-  } catch (error) {
-    if (error.code === 'guest_ownership_failed') throw error
+    doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
     return { wrote: false, reason: 'unreadable' }
   }
   const oauth = doc?.claudeAiOauth
@@ -596,10 +426,6 @@ export function ensureSlotSubscriptionType(homeDir, accountTier = null) {
 
   const tier = identified || 'pro'
   oauth.subscriptionType = tier
-  if (account?.contract === 'linux-account-v2') {
-    publishSlotCredential(homeDir, doc)
-    return { wrote: true, subscriptionType: tier }
-  }
   try {
     fs.chmodSync(file, 0o600)
   } catch {}

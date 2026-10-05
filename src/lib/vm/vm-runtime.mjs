@@ -14,35 +14,20 @@ import { runtimeKind } from './runtime-kind.mjs'
 import { buildWorkerTelemetry } from './worker-telemetry.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference } from './slot-engine.mjs'
-import {
-  ensureSlotClaudeOwnership,
-  chownSlotRuntimeFile,
-  replaceSlotOwnedFile,
-  readSlotOwnedFile,
-} from '../oauth/oauth-credentials.mjs'
+import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { boundProxyUrl, ensureProxyEgress, isLocalEgressProxy, slotNetworkForVm } from './egress.mjs'
 import { socksProxyEndpoint } from './socks-address.mjs'
 import { assertProxyAllowed } from './proxy-policy.mjs'
-import { dockerMountArgs, toHostPath } from './host-path.mjs'
+import { toHostPath } from './host-path.mjs'
 import { fileURLToPath } from 'node:url'
-import {
-  OS_ORDER,
-  imageForKernel,
-  buildDirForKernel,
-  osForId,
-  resolveGuestSpec,
-  assertGuestCreatable,
-} from './os-catalog.mjs'
-import { guestAccount, guestAccountForId, guestBins, withGuestAccountLock } from './guest-account.mjs'
-import { isCodexVm } from './vm-kind.mjs'
-import { codexKernelBinPath, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
-import { runKinOsBuild } from '../../../docker/kin-os/build.mjs'
-import { guestOperationCurrent } from './provisioning.mjs'
+import { OS_CATALOG, OS_ORDER, imageForKernel, buildDirForKernel } from './os-catalog.mjs'
 
 export const RUNTIME = 'docker'
 const WORKER_BIN = process.env.KIN_WORKER_BIN || '/opt/kin-gateway/bin/kin-worker'
+const GID = String(process.env.KIN_VM_GID || 987)
+const UID_BASE = Number(process.env.KIN_VM_UID_BASE || 10000)
 // The resident native host and an official CLI probe can exceed 500 MiB together.
 export const SLOT_MEMORY = process.env.KIN_VM_MEMORY || '1g'
 const MEM = SLOT_MEMORY
@@ -62,17 +47,18 @@ export function timezoneForIndex(i) {
   return US_TIMEZONES[(Number(i) - 1) % US_TIMEZONES.length]
 }
 
-/** Async acquisition shares the standalone builder's pinned-platform/account checks. */
-export async function ensureSlotImage(kernel, { run, projectRoot, signal } = {}) {
+/** Pull the guest image, falling back to the in-repo Dockerfile when the registry is unreachable. */
+export function ensureSlotImage(kernel, { run = sh, projectRoot } = {}) {
   const image = imageForKernel(kernel)
-  const root =
-    projectRoot && fs.existsSync(path.join(projectRoot, 'docker', 'kin-os'))
-      ? path.join(projectRoot, 'docker', 'kin-os')
-      : path.join(MODULE_ROOT, 'docker', 'kin-os')
-  const result = await runKinOsBuild(['--pull', kernel], { root, signal, silent: true, ...(run ? { spawn: run } : {}) })
-  return result.code === 0
-    ? { ok: true, image }
-    : { ok: false, code: signal?.aborted ? 'cancelled' : 'guest_image_failed', error: result.stderr.slice(0, 1000) }
+  if (run(['docker', 'image', 'inspect', image], { timeout: 10_000 }).ok) return { ok: true, action: 'present', image }
+  if (run(['docker', 'pull', image], { timeout: 300_000 }).ok) return { ok: true, action: 'pulled', image }
+  const dir = path.join(projectRoot || MODULE_ROOT, 'docker', 'kin-os', buildDirForKernel(kernel))
+  if (!fs.existsSync(path.join(dir, 'Dockerfile'))) {
+    return { ok: false, error: `guest image ${image} not available and no build context at ${dir}` }
+  }
+  const built = run(['docker', 'build', '-t', image, dir], { timeout: 900_000 })
+  if (!built.ok) return { ok: false, error: built.stderr || `docker build ${image} failed` }
+  return { ok: true, action: 'built', image }
 }
 
 export function parseVmIndex(value) {
@@ -118,9 +104,9 @@ export function containerName(vmId) {
   return `kin-${String(vmId || '').replace(/^vm-/, '')}`
 }
 
-export function officialCcUidGid(vmOrId, projectRoot) {
-  const { uid, gid } = typeof vmOrId === 'object' ? guestAccount(vmOrId) : guestAccountForId(vmOrId, projectRoot)
-  return { uid, gid }
+export function officialCcUidGid(vmId) {
+  const n = parseVmIndex(vmId) || 1
+  return { uid: UID_BASE + n, gid: Number(process.env.KIN_VM_GID || GID) }
 }
 
 export function displayName(vmId) {
@@ -132,14 +118,11 @@ export function inspectContainer(name) {
     'docker',
     'inspect',
     '--format',
-    '{{.State.Running}}|{{.State.Pid}}|{{.HostConfig.NetworkMode}}|{{.State.StartedAt}}|{{.Config.Image}}|{{.Config.Hostname}}|{{.Id}}|{{index .Config.Labels "kin.vm.owner"}}',
+    '{{.State.Running}}|{{.State.Pid}}|{{.HostConfig.NetworkMode}}|{{.State.StartedAt}}|{{.Config.Image}}|{{.Config.Hostname}}',
     name,
   ])
-  if (!r.ok) {
-    if (/No such (object|container)/i.test(r.stderr || '')) return null
-    throw Object.assign(new Error('Container inspection failed'), { code: 'runtime_inspect_failed' })
-  }
-  const [running, pid, networkMode, startedAt, image, hostname, id, owner] = r.stdout.split('|')
+  if (!r.ok) return null
+  const [running, pid, networkMode, startedAt, image, hostname] = r.stdout.split('|')
   return {
     name,
     running: running === 'true',
@@ -149,40 +132,7 @@ export function inspectContainer(name) {
     startedAt: startedAt || null,
     image: image || null,
     hostname: hostname || null,
-    id: id || null,
-    owner: owner || null,
   }
-}
-
-function guestRuntimeOwner(vm, projectRoot) {
-  if (guestAccount(vm).contract !== 'linux-account-v2') return null
-  if (!projectRoot) throw new Error('Guest lifecycle requires its project root')
-  return crypto
-    .createHash('sha256')
-    .update(toHostPath(path.join(projectRoot, 'vms', vm.id), { projectRoot }))
-    .digest('hex')
-}
-
-function refuseForeignGuest(vm, projectRoot, info) {
-  const owner = guestRuntimeOwner(vm, projectRoot)
-  return owner && info && info.owner !== owner
-    ? {
-        ok: false,
-        code: 'guest_runtime_owner_conflict',
-        error: 'Container belongs to a different guest resource scope',
-      }
-    : null
-}
-
-function withGuestRuntimeLease(vm, projectRoot, action, { active = true } = {}) {
-  if (guestAccount(vm).contract !== 'linux-account-v2') return action()
-  // Physical commands and generation changes share one writer fence across gateways.
-  return withGuestAccountLock(projectRoot, vm.id, (allocation) => {
-    if ((active && allocation.retired) || !guestOperationCurrent(vm, projectRoot, { active })) {
-      return { ok: false, code: 'guest_probe_stale', error: 'Guest operation changed before its runtime command' }
-    }
-    return action()
-  })
 }
 
 export function containerHasKernelMount(name) {
@@ -197,7 +147,8 @@ function vmWantsOuterSocks(vm) {
 }
 
 export function socksUidFor(vm) {
-  return String(guestAccount(vm).uid)
+  const n = parseVmIndex(vm?.id) || parseVmIndex(vm?.name) || 1
+  return String(UID_BASE + n)
 }
 
 export function ensureOuterSocks(vm) {
@@ -212,15 +163,18 @@ export function ensureOuterSocks(vm) {
 }
 
 function runtimeUser(vm) {
-  const { uid, gid } = guestAccount(vm)
-  return `${uid}:${gid}`
+  return `${socksUidFor(vm)}:${GID}`
+}
+
+function runtimeUidNum(vm) {
+  return Number(runtimeUser(vm).split(':')[0])
 }
 
 function runtimePatch(vm, info, extra = {}) {
-  const meta = resolveGuestSpec(vm).os
+  const kernel = vm.kernel || 'ubuntu-24.04'
+  const meta = OS_CATALOG[kernel] || OS_CATALOG['ubuntu-24.04']
   vm.runtime = {
-    type: runtimeKind(vm),
-    ...(vm.runtime?.provider ? { provider: vm.runtime.provider } : {}),
+    type: runtimeKind(vm) === 'kvm' ? 'kvm' : RUNTIME,
     container: info?.name || containerName(vm.id),
     pid: info?.pid || null,
     ip: info?.ip || PUBLIC_IP,
@@ -327,48 +281,35 @@ export function syncWorkerTelemetry(vm, projectRoot) {
   return { wrote: true, enabled: doc.telemetry.enabled === true }
 }
 
-/** Rewrite native worker configuration and restart its owned container. */
+/**
+ * Rewrite worker.json from the current vm proxy and bounce the process.
+ * Never docker rm — killing a live worker mid-refresh can invalidate the grant.
+ */
 export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
   const paths = workerPaths(projectRoot, vm.id)
-  const name = containerName(vm.id)
-  const initial = inspectContainer(name)
-  const conflict = refuseForeignGuest(vm, projectRoot, initial)
-  if (conflict) return conflict
-  const native = guestAccount(vm).contract === 'linux-account-v2'
-  const socket = native
-    ? isCodexVm(vm)
-      ? path.join(paths.runDir, 'codex-kernel.sock')
-      : paths.kernelSocket
-    : paths.socket
-  // A standalone controller must not open a second writer while this lease is held.
-  if (!initial || (initial.running && !fs.existsSync(socket))) {
-    return startVmRuntime(vm, projectRoot, { recreate: !!initial, routing })
-  }
-  return withGuestRuntimeLease(vm, projectRoot, () => {
-    const existing = inspectContainer(name)
-    const changed = refuseForeignGuest(vm, projectRoot, existing)
-    if (changed) return changed
-    if (!existing) return { ok: false, code: 'guest_probe_stale', error: 'Guest runtime changed before reload' }
-    let worker
-    try {
-      if (!isLocalEgressProxy(vm.proxy) && vm.proxy_required !== false && !workerProxyUrl(vm))
-        throw new Error('slot SOCKS5 proxy is required')
-      worker = writeWorkerFiles(vm, projectRoot, { routing })
-      if (guestAccount(vm).contract === 'linux-account-v2' && isCodexVm(vm)) writeCodexKernelConfig(projectRoot, vm)
-    } catch (error) {
-      if (error.code === 'guest_ownership_failed') return { ok: false, code: error.code, error: error.message }
-      if (!fs.existsSync(paths.config) || !fs.existsSync(paths.token)) {
-        return { ok: false, error: String(error.message || error) }
-      }
-      worker = paths
+  let worker
+  try {
+    if (!isLocalEgressProxy(vm.proxy) && vm.proxy_required !== false && !workerProxyUrl(vm))
+      throw new Error('slot SOCKS5 proxy is required')
+    worker = writeWorkerFiles(vm, projectRoot, { routing })
+  } catch (error) {
+    if (!fs.existsSync(paths.config) || !fs.existsSync(paths.token)) {
+      return { ok: false, error: String(error.message || error) }
     }
-    const cmd = existing.running ? ['docker', 'restart', existing.id || name] : ['docker', 'start', existing.id || name]
-    const r = sh(cmd, { timeout: 60_000 })
-    if (!r.ok) return { ok: false, error: r.stderr || `${cmd.join(' ')} failed` }
-    runtimePatch(vm, inspectContainer(name), workerRuntimeExtra(worker))
-    return { ok: true, action: existing.running ? 'reloaded' : 'started', runtime: vm.runtime }
-  })
+    worker = paths
+  }
+  const name = containerName(vm.id)
+  const existing = inspectContainer(name)
+  if (!existing) return startVmRuntime(vm, projectRoot, { recreate: false, routing })
+  if (existing.running && !fs.existsSync(paths.socket)) {
+    return startVmRuntime(vm, projectRoot, { recreate: true, routing })
+  }
+  const cmd = existing.running ? ['docker', 'restart', name] : ['docker', 'start', name]
+  const r = sh(cmd, { timeout: 60_000 })
+  if (!r.ok) return { ok: false, error: r.stderr || `${cmd.join(' ')} failed` }
+  runtimePatch(vm, inspectContainer(name), workerRuntimeExtra(worker))
+  return { ok: true, action: existing.running ? 'reloaded' : 'started', runtime: vm.runtime }
 }
 
 function readProjectRouting(projectRoot) {
@@ -378,14 +319,13 @@ function readProjectRouting(projectRoot) {
 export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {}) {
   assertProxyAllowed(vm.proxy)
   const paths = workerPaths(projectRoot, vm.id)
-  const { uid, gid } = guestAccount(vm)
+  const uid = runtimeUidNum(vm)
+  const gid = Number(GID)
   fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o700 })
   let token = ''
   try {
-    token = readSlotOwnedFile(paths.token, vm).trim()
-  } catch (error) {
-    if (error.code === 'guest_ownership_failed') throw error
-  }
+    token = fs.readFileSync(paths.token, 'utf8').trim()
+  } catch {}
   if (!token) token = crypto.randomBytes(32).toString('hex')
   replaceSlotOwnedFile(paths.token, token + '\n', vm)
   const onEgress =
@@ -398,7 +338,7 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
   const workerConfig = {
     vm_id: vm.id,
     socket_path: '/run/kin/worker.sock',
-    credential_path: guestBins(vm).credentials,
+    credential_path: '/home/kincli/.claude/credentials.json',
     proxy_url: proxyUrl,
     proxy_required: onEgress || local ? false : vm.proxy_required !== false,
     internal_token: token,
@@ -451,35 +391,18 @@ export function shouldReplaceSlotContainer({ existing, recreate = false, network
   return !!(wrongNet || wrongImg)
 }
 
-export async function startVmRuntime(vm, projectRoot, { recreate = false, routing, signal } = {}) {
-  if (signal?.aborted) return { ok: false, code: 'cancelled', error: 'Guest operation was cancelled' }
-  let spec
-  let account
-  try {
-    spec = assertGuestCreatable(resolveGuestSpec(vm), { remote: !!vm.node_id })
-    account = guestAccount(vm)
-    if (account.contract === 'linux-account-v2' && isCodexVm(vm) && !codexKernelBinPath()) {
-      return { ok: false, code: 'kernel_binary_missing', error: 'Native Codex guest kernel is missing' }
-    }
-  } catch (error) {
-    return { ok: false, code: error.code, error: error.message }
-  }
-  if (spec.os.accountContract === 'linux-account-v2' && account.contract !== 'linux-account-v2') {
-    return { ok: false, code: 'guest_user_conflict', error: 'Candidate image requires a persisted v2 guest account' }
-  }
-  if (!guestOperationCurrent(vm, projectRoot))
-    return { ok: false, code: 'guest_probe_stale', error: 'Guest operation changed before start' }
+export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = {}) {
   const name = containerName(vm.id)
   const slotName = displayName(vm.id)
   const host = String(vm.fingerprint?.hostname || '').trim() || slotName
-  const kernel = spec.kernel
+  const kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
   vm.kernel = kernel
   vm.timezone = normalizeTimezone(vm.timezone)
   vm.locale = vm.locale || STANDARD_LOCALE
   const image = imageForKernel(kernel)
   const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
   fs.mkdirSync(home, { recursive: true })
-  ensureSlotClaudeOwnership(home, account.uid, account.gid)
+  ensureSlotClaudeOwnership(home, runtimeUidNum(vm), Number(GID))
   const proxy = ensureOuterSocks(vm)
   if (!proxy.ok) return proxy
   const eg = ensureProxyEgress(projectRoot, vm.proxy)
@@ -487,16 +410,8 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   if (!eg.network && !eg.name) return { ok: false, error: 'egress network missing; refusing host fallback' }
 
   let existing = inspectContainer(name)
-  const conflict = refuseForeignGuest(vm, projectRoot, existing)
-  if (conflict) return conflict
   const paths = workerPaths(projectRoot, vm.id)
-  const socket =
-    account.contract === 'linux-account-v2'
-      ? isCodexVm(vm)
-        ? path.join(paths.runDir, 'codex-kernel.sock')
-        : paths.kernelSocket
-      : paths.socket
-  const replace = recreate || (existing?.running && !fs.existsSync(socket))
+  const replace = recreate || (existing?.running && !fs.existsSync(paths.socket))
   // Node restart / 开机 must not bounce a live slot with a healthy worker.
   if (existing?.running && !replace) {
     runtimePatch(vm, existing, {
@@ -507,12 +422,8 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     return { ok: true, action: 'already-running', runtime: vm.runtime }
   }
   try {
-    const materialized = materializeWrapCli(projectRoot, vm, { uid: account.uid, gid: account.gid })
-    if (account.contract === 'linux-account-v2' && !materialized.ok) return materialized
-  } catch (error) {
-    if (account.contract === 'linux-account-v2')
-      return { ok: false, code: error.code || 'guest_artifact_failed', error: 'Guest artifacts could not be published' }
-  }
+    materializeWrapCli(projectRoot, vm, { uid: runtimeUidNum(vm), gid: Number(GID) })
+  } catch {}
   const wrapKernel = path.join(home, '.kin', 'kin-kernel')
   const kernelBin = kernelBinPath()
   const mountKernel = !!kernelBin && fs.existsSync(kernelBin)
@@ -523,17 +434,15 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   let worker
   try {
     worker = writeWorkerFiles(vm, projectRoot, { transparent: true, routing })
-    if (account.contract === 'linux-account-v2' && isCodexVm(vm)) writeCodexKernelConfig(projectRoot, vm)
   } catch (error) {
     return { ok: false, error: String(error.message || error) }
   }
   try {
-    fs.chownSync(home, account.uid, account.gid)
+    fs.chownSync(home, runtimeUidNum(vm), Number(GID))
   } catch {}
 
   if (shouldReplaceSlotContainer({ existing, recreate: replace, network: slotNetworkForVm(vm), image })) {
-    const removed = withGuestRuntimeLease(vm, projectRoot, () => sh(['docker', 'rm', '-f', existing.id || name]))
-    if (!removed.ok) return removed
+    sh(['docker', 'rm', '-f', name])
     existing = null
   }
   if (existing?.running) {
@@ -541,19 +450,14 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     return { ok: true, action: 'already-running', runtime: vm.runtime }
   }
   if (existing) {
-    return withGuestRuntimeLease(vm, projectRoot, () => {
-      const r = sh(['docker', 'start', existing.id || name])
-      if (!r.ok) return { ok: false, error: r.stderr || 'docker start failed' }
-      runtimePatch(vm, inspectContainer(name), workerRuntimeExtra(worker))
-      return { ok: true, action: 'started', runtime: vm.runtime }
-    })
+    const r = sh(['docker', 'start', name])
+    if (!r.ok) return { ok: false, error: r.stderr || 'docker start failed' }
+    runtimePatch(vm, inspectContainer(name), workerRuntimeExtra(worker))
+    return { ok: true, action: 'started', runtime: vm.runtime }
   }
 
-  const img = await ensureSlotImage(kernel, { projectRoot, signal })
+  const img = ensureSlotImage(kernel, { projectRoot })
   if (!img.ok) return img
-  if (signal?.aborted) return { ok: false, code: 'cancelled', error: 'Guest operation was cancelled' }
-  if (!guestOperationCurrent(vm, projectRoot))
-    return { ok: false, code: 'guest_probe_stale', error: 'Guest operation changed while preparing the image' }
 
   try {
     fs.rmSync(worker.socket, { force: true })
@@ -562,11 +466,15 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     fs.rmSync(worker.kernelSocket, { force: true })
   } catch {}
   const machineIdFile = ensureGuestMachineIdFile(projectRoot, vm)
-  const mountOptions = { projectRoot, volumeSubpath: account.contract === 'linux-account-v2' }
-  const mount = (source, destination, readonly = false) =>
-    dockerMountArgs(source, destination, { ...mountOptions, readonly })
+  // Slots are created by the host engine: every -v source must be a host path.
+  const hostOf = (p) => toHostPath(p, { projectRoot })
   const machineMounts = machineIdFile
-    ? [...mount(machineIdFile, '/etc/machine-id', true), ...mount(machineIdFile, '/var/lib/dbus/machine-id', true)]
+    ? [
+        '-v',
+        `${hostOf(machineIdFile)}:/etc/machine-id:ro`,
+        '-v',
+        `${hostOf(machineIdFile)}:/var/lib/dbus/machine-id:ro`,
+      ]
     : []
   const netName = slotNetworkForVm(vm)
   if (!netName || netName === 'host' || netName === 'bridge') {
@@ -590,26 +498,8 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     MEM,
     '--pids-limit',
     '256',
-    ...(account.contract === 'linux-account-v2'
-      ? [
-          '--cap-add',
-          'CHOWN',
-          '--cap-add',
-          'SETUID',
-          '--cap-add',
-          'SETGID',
-          '--tmpfs',
-          '/run/kin-account:rw,nosuid,noexec,mode=0700',
-          '-e',
-          `KIN_GUEST_USERNAME=${account.username}`,
-          '-e',
-          `KIN_GUEST_UID=${account.uid}`,
-          '-e',
-          `KIN_GUEST_GID=${account.gid}`,
-          '-e',
-          `KIN_GUEST_HOME=${account.home}`,
-        ]
-      : ['--user', runtimeUser(vm)]),
+    '--user',
+    runtimeUser(vm),
     '--read-only',
     '--tmpfs',
     '/tmp:rw,noexec,nosuid,size=32m',
@@ -625,25 +515,17 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     `kin.vm.name=${slotName}`,
     '--label',
     `kin.vm.os=${kernel}`,
-    ...(account.contract === 'linux-account-v2'
-      ? ['--label', `kin.vm.owner=${guestRuntimeOwner(vm, projectRoot)}`]
-      : []),
-    ...mount(home, account.home),
-    ...mount(worker.runDir, '/run/kin'),
-    ...(fs.existsSync(WORKER_BIN) ? mount(WORKER_BIN, '/usr/local/bin/kin-worker', true) : []),
-    ...(mountKernel ? mount(kernelBin, '/usr/local/bin/kin-kernel', true) : []),
+    '-v',
+    `${hostOf(home)}:/home/kincli`,
+    '-v',
+    `${hostOf(worker.runDir)}:/run/kin`,
+    ...(fs.existsSync(WORKER_BIN) ? ['-v', `${hostOf(WORKER_BIN)}:/usr/local/bin/kin-worker:ro`] : []),
+    ...(mountKernel ? ['-v', `${hostOf(kernelBin)}:/usr/local/bin/kin-kernel:ro`] : []),
     ...machineMounts,
-    ...(account.contract === 'linux-account-v2' && isCodexVm(vm)
-      ? mount(codexKernelBinPath(), '/usr/local/bin/kin-codex-kernel', true)
-      : []),
     '-e',
-    `HOME=${account.home}`,
+    'HOME=/home/kincli',
     '-e',
-    `USER=${account.username}`,
-    '-e',
-    `LOGNAME=${account.username}`,
-    '-e',
-    `CLAUDE_CONFIG_DIR=${account.home}/.claude`,
+    'CLAUDE_CONFIG_DIR=/home/kincli/.claude',
     '-e',
     `TZ=${vm.timezone}`,
     '-e',
@@ -661,87 +543,63 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     '--dns-opt',
     'use-vc',
     '-w',
-    account.home,
+    '/home/kincli',
     image,
-    ...(account.contract === 'linux-account-v2' && isCodexVm(vm)
-      ? ['/usr/local/bin/kin-codex-kernel', '/run/kin/codex-kernel.json']
-      : [
-          fs.existsSync(wrapKernel) ? guestBins(vm).kernel : '/usr/local/bin/kin-kernel',
-          '--gateway-worker',
-          '--config',
-          '/run/kin/kernel.json',
-        ]),
+    fs.existsSync(wrapKernel) ? '/home/kincli/.kin/kin-kernel' : '/usr/local/bin/kin-kernel',
+    '--gateway-worker',
+    '--config',
+    '/run/kin/kernel.json',
   ]
 
-  return withGuestRuntimeLease(vm, projectRoot, () => {
-    const r = sh(args, { timeout: 90_000 })
-    if (!r.ok) return { ok: false, error: r.stderr || r.stdout || 'docker run failed' }
-    runtimePatch(vm, inspectContainer(name), {
-      container_id: r.stdout,
-      ...workerRuntimeExtra(worker),
-    })
-    if (fs.existsSync(WORKER_BIN)) {
-      sh(['docker', 'exec', '-d', name, '/usr/local/bin/kin-worker', 'telemetry', '--config', '/run/kin/worker.json'], {
-        timeout: 8_000,
-      })
-    }
-    return { ok: true, action: 'created', runtime: vm.runtime }
+  const r = sh(args, { timeout: 90_000 })
+  if (!r.ok) return { ok: false, error: r.stderr || r.stdout || 'docker run failed' }
+  runtimePatch(vm, inspectContainer(name), {
+    container_id: r.stdout,
+    ...workerRuntimeExtra(worker),
   })
+  if (fs.existsSync(WORKER_BIN)) {
+    sh(['docker', 'exec', '-d', name, '/usr/local/bin/kin-worker', 'telemetry', '--config', '/run/kin/worker.json'], {
+      timeout: 8_000,
+    })
+  }
+  return { ok: true, action: 'created', runtime: vm.runtime }
 }
 
 /** Explicit factory reset / delete only. Never call from Node deploy. */
-export function destroyVmRuntime(vm, projectRoot) {
+export function destroyVmRuntime(vm) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
-  return withGuestRuntimeLease(
-    vm,
-    projectRoot,
-    () => {
-      const name = containerName(vm.id)
-      const info = inspectContainer(name)
-      const conflict = refuseForeignGuest(vm, projectRoot, info)
-      if (conflict) return conflict
-      if (!info) {
-        if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true, removed: true }
-        return { ok: true, action: 'absent', runtime: vm.runtime || null }
-      }
-      const r = sh(['docker', 'rm', '-f', info.id || name], { timeout: 60_000 })
-      if (!r.ok && inspectContainer(name)) {
-        return { ok: false, error: r.stderr || 'docker rm failed' }
-      }
-      if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true, removed: true }
-      return { ok: true, action: 'removed', runtime: vm.runtime || null }
-    },
-    { active: false },
-  )
+  const name = containerName(vm.id)
+  const info = inspectContainer(name)
+  if (!info) {
+    if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true, removed: true }
+    return { ok: true, action: 'absent', runtime: vm.runtime || null }
+  }
+  const r = sh(['docker', 'rm', '-f', name], { timeout: 60_000 })
+  if (!r.ok && inspectContainer(name)) {
+    return { ok: false, error: r.stderr || 'docker rm failed' }
+  }
+  if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true, removed: true }
+  return { ok: true, action: 'removed', runtime: vm.runtime || null }
 }
 
-export function stopVmRuntime(vm, projectRoot) {
-  return withGuestRuntimeLease(
-    vm,
-    projectRoot,
-    () => {
-      const name = containerName(vm.id)
-      const info = inspectContainer(name)
-      const conflict = refuseForeignGuest(vm, projectRoot, info)
-      if (conflict) return conflict
-      if (!info) {
-        if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true }
-        return { ok: true, action: 'absent', runtime: vm.runtime || null }
-      }
-      if (!info.running) {
-        runtimePatch(vm, info)
-        vm.runtime.stopped = true
-        return { ok: true, action: 'already-stopped', runtime: vm.runtime }
-      }
-      const r = sh(['docker', 'stop', '-t', '3', info.id || name])
-      if (!r.ok) return { ok: false, error: r.stderr || 'docker stop failed' }
-      runtimePatch(vm, inspectContainer(name))
-      vm.runtime.stopped = true
-      vm.runtime.pid = null
-      return { ok: true, action: 'stopped', runtime: vm.runtime }
-    },
-    { active: false },
-  )
+export function stopVmRuntime(vm) {
+  const name = containerName(vm.id)
+  const info = inspectContainer(name)
+  if (!info) {
+    if (vm.runtime) vm.runtime = { ...vm.runtime, pid: null, ip: null, stopped: true }
+    return { ok: true, action: 'absent', runtime: vm.runtime || null }
+  }
+  if (!info.running) {
+    runtimePatch(vm, info)
+    vm.runtime.stopped = true
+    return { ok: true, action: 'already-stopped', runtime: vm.runtime }
+  }
+  const r = sh(['docker', 'stop', '-t', '3', name])
+  if (!r.ok) return { ok: false, error: r.stderr || 'docker stop failed' }
+  runtimePatch(vm, inspectContainer(name))
+  vm.runtime.stopped = true
+  vm.runtime.pid = null
+  return { ok: true, action: 'stopped', runtime: vm.runtime }
 }
 
 export function listRuntimeVms() {

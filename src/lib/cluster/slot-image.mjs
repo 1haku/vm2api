@@ -14,7 +14,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
-import { imageForKernel, resolveGuestSpec, assertGuestCreatable } from '../vm/os-catalog.mjs'
+import { OS_CATALOG, imageForKernel } from '../vm/os-catalog.mjs'
 import { EGRESS_BIN } from '../vm/egress.mjs'
 import {
   describeKernelPayload,
@@ -120,7 +120,7 @@ export function slotDockerfile(baseImage) {
  * slot binaries alone must not orphan every node's image and stop its slots.
  */
 export function slotImageSpec(projectRoot, kernel) {
-  assertGuestCreatable(resolveGuestSpec({ kernel }), { remote: true })
+  if (!OS_CATALOG[kernel]) throw new ClusterError(400, 'invalid_kernel', `未知系统：${kernel}`)
   const base = imageForKernel(kernel)
   const files = slotPayload(projectRoot)
   const hash = crypto.createHash('sha256')

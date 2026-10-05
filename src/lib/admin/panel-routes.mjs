@@ -4,20 +4,6 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
-import { resolveGuestSpec, assertGuestCreatable } from '../vm/os-catalog.mjs'
-import {
-  allocateGuestAccount,
-  findGuestAllocation,
-  guestAccount,
-  validateGuestUsername,
-  withGuestAccountLock,
-  withLegacyGuestUidLock,
-  retireGuestAllocation,
-  resumeGuestAllocation,
-} from '../vm/guest-account.mjs'
-import { guestProvisioningToken, writeGuestRecord } from '../vm/provisioning.mjs'
-import { guestProvisioningReady } from '../vm/guest-contract.mjs'
 import {
   verifyPanelLogin,
   createPanelSession,
@@ -270,35 +256,6 @@ function statsParams(req, u, dimensionKey) {
   if (!dimension) return { error: `invalid ${dimensionKey}: ${rawDim}` }
   if (isUser && !USER_ROLE_DIMENSIONS.includes(dimension)) return { error: `${dimensionKey} not allowed: ${dimension}` }
   return { range, dimension, tz: u.searchParams.get('tz') || 'UTC', owner_user_id: logsOwner(req, u) }
-}
-
-async function runRequestLifecycle(req, res, operation) {
-  const controller = new AbortController()
-  const abort = () => controller.abort()
-  const close = () => {
-    if (!res.writableEnded) abort()
-  }
-  req.once?.('aborted', abort)
-  res.once?.('close', close)
-  if (req.aborted) abort()
-  try {
-    return await operation(controller.signal)
-  } finally {
-    req.removeListener?.('aborted', abort)
-    res.removeListener?.('close', close)
-  }
-}
-
-async function persistStartedSlot(projectRoot, vm, { enable = false } = {}) {
-  return writeGuestRecord(projectRoot, vm, guestProvisioningToken(vm), (current) => {
-    current.status = 'running'
-    current.runtime = { ...current.runtime, ...vm.runtime }
-    if (enable) {
-      const credential = vmHasClaudeCredential(current)
-      current.schedulable = credential && guestProvisioningReady(current)
-      current.schedule_disabled_reason = current.schedulable ? null : credential ? 'guest_not_ready' : 'no_credential'
-    }
-  })
 }
 
 async function commitImportedCodexVm({ cfg, vmPath, existing, account, catalogClientVersion = 'auto' }) {
@@ -2240,65 +2197,30 @@ export function createPanelHandler(ctx) {
         }
         const vm = getVm(cfg.paths.project, id)
         if (denyIfUserCannotDeleteVm(req, res, vm, json)) return true
-        let retirement
         try {
           if (vm) {
-            retirement = retireGuestAllocation(cfg.paths.project, vm)
-            const gone = await destroySlot(vm, cfg.paths.project)
-            // Failed physical cleanup must retain the account and control-plane record.
-            if (!gone.ok) {
-              resumeGuestAllocation(cfg.paths.project, vm, retirement)
+            const gone = await destroySlot(vm)
+            // A node slot that could not be removed keeps running there with the account's credential.
+            if (!gone.ok && slotHost(vm).kind === 'node') {
               return json(res, 409, {
                 ok: false,
-                error: {
-                  code: gone.code || 'guest_destroy_failed',
-                  message: 'Guest could not be destroyed; its record was retained',
-                },
+                error: { code: gone.code || 'remote_destroy_failed', message: gone.error || 'remote destroy failed' },
               })
             }
           }
-        } catch (error) {
-          resumeGuestAllocation(cfg.paths.project, vm, retirement)
-          return json(res, 500, {
-            ok: false,
-            error: {
-              code: error.code || 'guest_destroy_failed',
-              message: 'Guest could not be destroyed; its record was retained',
-            },
-          })
-        }
-        try {
-          const cleanup = () => {
-            removeVmFromDb(id)
-            fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
-            fs.unlinkSync(vmPath)
-          }
-          if (retirement)
-            withGuestAccountLock(cfg.paths.project, id, (allocation) => {
-              if (allocation.retired !== retirement)
-                throw Object.assign(new Error('Guest cleanup lease changed'), { code: 'guest_probe_stale' })
-              cleanup()
-            })
-          else cleanup()
-        } catch (error) {
-          if (retirement) {
-            const retained = fs.existsSync(vmPath)
-            if (retained) resumeGuestAllocation(cfg.paths.project, vm, retirement)
-            return json(res, 500, {
-              ok: false,
-              error: {
-                code: 'guest_storage_cleanup_failed',
-                message: retained
-                  ? 'Guest storage cleanup failed; its record was retained'
-                  : 'Guest cleanup failed; its operation remains retired',
-              },
-            })
-          }
-          throw error
-        }
-        // Detach this VM only after cleanup; other slots may share the proxy.
+        } catch {}
+        // detach this VM only — do not unbind other slots sharing the SOCKS5
         try {
           proxyPool.unbindVm(id)
+        } catch {}
+        // remove cli-home
+        try {
+          fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
+        } catch {}
+        fs.unlinkSync(vmPath)
+        // drop the DB credential mirror row too
+        try {
+          removeVmFromDb(id)
         } catch {}
         // optional chat side files
         try {
@@ -2313,23 +2235,14 @@ export function createPanelHandler(ctx) {
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
         if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         await readBody(req, 32 * 1024).catch(() => ({}))
-        return await withVmLock(`${vmPath}:reset`, async () => {
+        return await withVmLock(vmPath, async () => {
           if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
           const prev = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-          let retirement
-          let gone
-          let vm
-          try {
-            retirement = retireGuestAllocation(cfg.paths.project, prev)
-            gone = await destroySlot(prev, cfg.paths.project)
-            if (!gone.ok) {
-              return json(res, 500, { ok: false, error: { message: gone.error || 'destroy failed', code: gone.code } })
-            }
-            const recreate = () => recreateVmFiles(cfg.paths.project, JSON.parse(fs.readFileSync(vmPath, 'utf8'))).vm
-            vm = retirement ? withGuestAccountLock(cfg.paths.project, id, recreate) : recreate()
-          } finally {
-            resumeGuestAllocation(cfg.paths.project, prev, retirement)
+          const gone = await destroySlot(prev)
+          if (!gone.ok) {
+            return json(res, 500, { ok: false, error: { message: gone.error || 'destroy failed', code: gone.code } })
           }
+          const { vm } = recreateVmFiles(cfg.paths.project, prev)
           try {
             invalidateLiveCredentialCache()
           } catch {}
@@ -2344,35 +2257,10 @@ export function createPanelHandler(ctx) {
             } catch {}
           }
           if (!hasBoundExit(vm.proxy)) {
-            const stopped = () => {
-              const current = getVm(cfg.paths.project, id)
-              const expected = guestProvisioningToken(vm)
-              const actual = guestProvisioningToken(current)
-              if (
-                !current ||
-                ['operation_id', 'generation', 'spec_hash', 'nonce'].some((key) => expected?.[key] !== actual?.[key])
-              ) {
-                throw Object.assign(new Error('Guest operation changed during reset'), {
-                  code: 'guest_probe_stale',
-                  status: 409,
-                })
-              }
-              current.status = 'stopped'
-              current.schedulable = false
-              current.schedule_disabled_reason = 'slot SOCKS5 proxy is required'
-              atomicWriteJson(vmPath, current, { mode: 0o600 })
-              vm = current
-            }
-            if (guestAccount(vm).contract === 'linux-account-v2')
-              withGuestAccountLock(cfg.paths.project, id, (allocation) => {
-                if (allocation.retired)
-                  throw Object.assign(new Error('Guest operation was retired during reset'), {
-                    code: 'guest_probe_stale',
-                    status: 409,
-                  })
-                stopped()
-              })
-            else stopped()
+            vm.status = 'stopped'
+            vm.schedulable = false
+            vm.schedule_disabled_reason = 'slot SOCKS5 proxy is required'
+            atomicWriteJson(vmPath, vm, { mode: 0o600 })
             return json(res, 409, {
               ok: false,
               error: { code: 'proxy_required', message: 'No healthy SOCKS5 is available for this VM' },
@@ -2380,15 +2268,13 @@ export function createPanelHandler(ctx) {
               destroyed: gone.action,
             })
           }
-          const boot = await runRequestLifecycle(req, res, (signal) =>
-            startSlotReady(vm, cfg.paths.project, { recreate: true, routing: ctx.routingConfig, signal }),
-          )
+          const boot = await startSlotReady(vm, cfg.paths.project, { recreate: true, routing: ctx.routingConfig })
           if (!boot.ok) {
             vm.status = 'stopped'
             vm.schedulable = false
             vm.schedule_disabled_reason = boot.error || 'runtime start failed'
             vm.updated_at = new Date().toISOString()
-            if (!guestProvisioningToken(vm)) atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            atomicWriteJson(vmPath, vm, { mode: 0o600 })
             if (gone.action !== 'absent') {
               return json(res, 500, {
                 ok: false,
@@ -2408,9 +2294,11 @@ export function createPanelHandler(ctx) {
               }),
             )
           }
-          const savedStatus = await persistStartedSlot(cfg.paths.project, vm)
-          if (!savedStatus.ok)
-            return json(res, 409, { ok: false, error: { code: savedStatus.code, message: savedStatus.error } })
+          vm.status = 'running'
+          vm.schedulable = false
+          vm.schedule_disabled_reason = 'no_credential'
+          vm.updated_at = new Date().toISOString()
+          atomicWriteJson(vmPath, vm, { mode: 0o600 })
           return json(
             res,
             200,
@@ -2432,15 +2320,6 @@ export function createPanelHandler(ctx) {
           return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         let vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        if (vm.guest_user) {
-          return json(res, 409, {
-            ok: false,
-            error: {
-              code: 'guest_identity_immutable',
-              message: 'Guest account identity is reserved; reset preserves it',
-            },
-          })
-        }
         const generated = generateWorkstationFingerprint(
           { id: vm.id, kernel: vm.kernel },
           { taken: takenFingerprintKeys(listVms(cfg.paths.project), { exceptId: id }) },
@@ -2637,97 +2516,15 @@ export function createPanelHandler(ctx) {
         ])
         const idx = nextNumericIndex([...existing, ...historic])
         const rawId = body.id || 'vm-' + padVm(idx)
-        let id = String(rawId).replace(/[^a-zA-Z0-9_-]/g, '')
+        const id = String(rawId).replace(/[^a-zA-Z0-9_-]/g, '')
         if (!isValidVmId(id)) return json(res, 400, { ok: false, error: { message: 'invalid id' } })
-        let guestSpec
-        const ident = panelIdentity(req)
-        const username = body.guest_user?.username ?? body.username
-        const clientOperation = req.headers?.['idempotency-key'] ?? body.operation_id
-        let operationId
-        let specHash
-        let reservation
-        try {
-          guestSpec = assertGuestCreatable(resolveGuestSpec(body, { defaultKernel: kernelForIndex(idx) }), {
-            remote: !!body.node_id,
-          })
-          if (guestSpec.v2 && guestSpec.os.accountContract !== 'linux-account-v2') {
-            return json(res, 409, {
-              ok: false,
-              error: {
-                code: 'guest_account_unsupported',
-                message:
-                  'This legacy image has no v2 account provisioner; use its legacy kernel contract or a candidate account image',
-              },
-            })
-          }
-          if (username != null) validateGuestUsername(username)
-          if (username != null && !guestSpec.v2) {
-            return json(res, 409, {
-              ok: false,
-              error: {
-                code: 'guest_account_unsupported',
-                message: 'Legacy images do not provision requested guest usernames',
-              },
-            })
-          }
-          if (
-            clientOperation != null &&
-            (typeof clientOperation !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(clientOperation))
-          ) {
-            return json(res, 400, {
-              ok: false,
-              error: { code: 'idempotency_conflict', message: 'Invalid guest operation key' },
-            })
-          }
-          const canonical = (value) =>
-            Array.isArray(value)
-              ? value.map(canonical)
-              : value && typeof value === 'object'
-                ? Object.fromEntries(
-                    Object.keys(value)
-                      .sort()
-                      .map((key) => [key, canonical(value[key])]),
-                  )
-                : value
-          const { operation_id: _operation, ...desired } = body
-          specHash = crypto
-            .createHash('sha256')
-            .update(JSON.stringify(canonical({ desired, guest_os: guestSpec.guest_os, runtime: guestSpec.runtime })))
-            .digest('hex')
-          operationId =
-            clientOperation == null
-              ? crypto.randomUUID()
-              : crypto
-                  .createHash('sha256')
-                  .update(JSON.stringify([ident.role, req.panelUserId || 'platform-admin', clientOperation]))
-                  .digest('hex')
-          reservation =
-            guestSpec.v2 && clientOperation != null ? findGuestAllocation(cfg.paths.project, operationId) : null
-          if (reservation?.retired)
-            return json(res, 409, {
-              ok: false,
-              error: { code: 'idempotency_conflict', message: 'Guest operation has been retired' },
-            })
-          if (reservation && reservation.spec_hash !== specHash) {
-            return json(res, 409, {
-              ok: false,
-              error: { code: 'idempotency_conflict', message: 'Guest operation specification changed' },
-            })
-          }
-          if (reservation) id = reservation.vm_id
-        } catch (error) {
-          return json(res, error.status || 400, { ok: false, error: { code: error.code, message: error.message } })
-        }
         const vmsDir = path.join(cfg.paths.project, 'vms')
-        // Persist only after OS, runtime, placement and ownership validation.
+        fs.mkdirSync(vmsDir, { recursive: true })
         const vmPath = path.join(vmsDir, id + '.json')
         if (fs.existsSync(vmPath)) {
-          if (reservation) {
-            const saved = getVm(cfg.paths.project, id)
-            return json(res, 200, panel.ok({ vm: panel.publicVmBootView(summarizeVm(saved)), reused: true }))
-          }
           return json(res, 409, { ok: false, error: { message: 'vm id exists' } })
         }
+        const ident = panelIdentity(req)
         if (ident.role === 'user') {
           const ownerId = normalizeOwnerId(req.panelUserId)
           const quota = clampVmCreateQuota(panelUsers.getById(ownerId)?.vm_create_quota, 0)
@@ -2740,7 +2537,7 @@ export function createPanelHandler(ctx) {
           }
         }
         const startNow = body.start !== false && body.status !== 'stopped'
-        const wantKernel = guestSpec.kernel
+        const wantKernel = body.kernel && OS_CATALOG[body.kernel] ? body.kernel : kernelForIndex(idx)
         const nodeId = body.node_id ? String(body.node_id) : null
         if (nodeId) {
           if (ident.role !== 'admin') {
@@ -2777,28 +2574,10 @@ export function createPanelHandler(ctx) {
             })
           }
         }
-        let allocation
-        if (guestSpec.v2) {
-          try {
-            allocation = allocateGuestAccount(cfg.paths.project, id, {
-              username,
-              operationId,
-              specHash,
-              legacyUids: existing.filter((vm) => !vm.guest_user).map((vm) => guestAccount(vm).uid),
-            })
-          } catch (error) {
-            return json(res, error.status || 400, { ok: false, error: { code: error.code, message: error.message } })
-          }
-        }
-        fs.mkdirSync(vmsDir, { recursive: true })
         const generated = generateWorkstationFingerprint(
           { id, kernel: wantKernel, timezone: body.timezone, locale: STANDARD_LOCALE },
           { taken: takenFingerprintKeys(existing) },
         )
-        if (allocation) {
-          generated.hostname = allocation.hostname
-          generated.guest_machine_id = allocation.machine_id
-        }
         const vm = {
           id,
           name: body.name || padVm(idx),
@@ -2836,26 +2615,7 @@ export function createPanelHandler(ctx) {
           proxy_cli_enabled: body.proxy_cli_enabled === true,
           proxy_required: false,
           seed_policy: standardSeedPolicy(),
-          runtime: guestSpec.v2 ? guestSpec.runtime : { type: guestSpec.runtime.type },
-          ...(guestSpec.v2
-            ? {
-                // Publication precedes physical boot; requested start is not observed runtime state.
-                status: 'stopped',
-                guest_os: guestSpec.guest_os,
-                guest_user: guestAccount({ guest_user: allocation }),
-                provisioning: {
-                  controller_version: 1,
-                  operation_id: operationId,
-                  generation: 1,
-                  state: 'planned',
-                  spec_hash: specHash,
-                  nonce: crypto.randomBytes(16).toString('hex'),
-                  stage_started_at: new Date().toISOString(),
-                  error_code: null,
-                  retryable: false,
-                },
-              }
-            : {}),
+          runtime: { type: body.runtime_type === 'kvm' ? 'kvm' : 'docker' },
         }
         if (ident.role === 'user') {
           vm.owner_user_id = normalizeOwnerId(req.panelUserId)
@@ -2866,42 +2626,7 @@ export function createPanelHandler(ctx) {
         }
         if (nodeId) vm.node_id = nodeId
         stampVmKind(vm, body)
-        let reused = null
-        const publish = (currentAllocation) => {
-          if (currentAllocation?.retired)
-            throw Object.assign(new Error('Guest operation has been retired'), {
-              code: 'idempotency_conflict',
-              status: 409,
-            })
-          if (fs.existsSync(vmPath)) {
-            const current = getVm(cfg.paths.project, id)
-            if (
-              !allocation ||
-              current.provisioning?.operation_id !== operationId ||
-              current.provisioning?.spec_hash !== specHash
-            ) {
-              throw Object.assign(new Error('VM identity is already reserved'), {
-                code: 'idempotency_conflict',
-                status: 409,
-              })
-            }
-            reused = current
-            return
-          }
-          if (allocation) {
-            fs.mkdirSync(path.join(vmsDir, id), { recursive: true, mode: 0o700 })
-            atomicWriteJson(path.join(vmsDir, id, 'identity.json'), allocation, { mode: 0o600 })
-            atomicWriteJson(path.join(vmsDir, id, 'provisioning.json'), vm.provisioning, { mode: 0o600 })
-          }
-          atomicWriteJson(vmPath, vm, { mode: 0o600 })
-        }
-        try {
-          if (allocation) withGuestAccountLock(cfg.paths.project, id, publish)
-          else withLegacyGuestUidLock(cfg.paths.project, vm, publish)
-        } catch (error) {
-          return json(res, error.status || 400, { ok: false, error: { code: error.code, message: error.message } })
-        }
-        if (reused) return json(res, 200, panel.ok({ vm: panel.publicVmBootView(summarizeVm(reused)), reused: true }))
+        atomicWriteJson(vmPath, vm, { mode: 0o600 })
         writeGuestMachineIdFile(cfg.paths.project, id, generated.guest_machine_id)
         try {
           seedFreshCliHome(cfg.paths.project, vm)
@@ -2929,9 +2654,7 @@ export function createPanelHandler(ctx) {
         }
         let startError = null
         if (startNow && hasExit(vm)) {
-          const boot = await runRequestLifecycle(req, res, (signal) =>
-            startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig, signal }),
-          )
+          const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
           if (!boot.ok) {
             // Slot JSON is already on disk. 500 here makes the console treat
             // create as a no-op, so the new row never refetches into the list.
@@ -2939,11 +2662,12 @@ export function createPanelHandler(ctx) {
             vm.schedulable = false
             vm.schedule_disabled_reason = boot.error || 'runtime start failed'
             vm.updated_at = new Date().toISOString()
-            if (!guestProvisioningToken(vm)) atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            atomicWriteJson(vmPath, vm, { mode: 0o600 })
             startError = boot.error || 'runtime start failed'
           } else {
-            const savedStatus = await persistStartedSlot(cfg.paths.project, vm)
-            if (!savedStatus.ok) startError = savedStatus.error
+            vm.status = 'running'
+            vm.updated_at = new Date().toISOString()
+            atomicWriteJson(vmPath, vm, { mode: 0o600 })
           }
         } else if (startNow) {
           vm.status = 'stopped'
@@ -2976,17 +2700,18 @@ export function createPanelHandler(ctx) {
         }
         bindVmProxy(cfg.paths.project, id, bound)
         vm = getVm(cfg.paths.project, id) || vm
-        const boot = await runRequestLifecycle(req, res, (signal) =>
-          startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig, signal }),
-        )
-        if (!boot.ok)
-          return json(res, 500, {
-            ok: false,
-            error: { code: boot.code, message: boot.error || 'runtime start failed' },
-          })
-        const savedStatus = await persistStartedSlot(cfg.paths.project, vm, { enable: true })
-        if (!savedStatus.ok)
-          return json(res, 409, { ok: false, error: { code: savedStatus.code, message: savedStatus.error } })
+        const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
+        if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
+        vm.status = 'running'
+        if (vmHasClaudeCredential(vm)) {
+          vm.schedulable = true
+          vm.schedule_disabled_reason = null
+        } else {
+          vm.schedulable = false
+          vm.schedule_disabled_reason = 'no_credential'
+        }
+        vm.updated_at = new Date().toISOString()
+        atomicWriteJson(vmPath, vm, { mode: 0o600 })
         return json(
           res,
           200,
@@ -3005,9 +2730,13 @@ export function createPanelHandler(ctx) {
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
         if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        const halt = await stopSlot(vm, cfg.paths.project)
-        if (!halt.ok)
-          return json(res, 500, { ok: false, error: { code: halt.code, message: halt.error || 'runtime stop failed' } })
+        const halt = await stopSlot(vm)
+        if (!halt.ok) return json(res, 500, { ok: false, error: { message: halt.error || 'runtime stop failed' } })
+        vm.status = 'stopped'
+        vm.schedulable = false
+        vm.schedule_disabled_reason = 'stopped'
+        vm.updated_at = new Date().toISOString()
+        atomicWriteJson(vmPath, vm, { mode: 0o600 })
         return json(
           res,
           200,

@@ -57,53 +57,6 @@ export type VmProxySnap = {
 
 export type InferenceEngine = 'auto' | 'go' | 'rust'
 
-/** v2 客体系统。与凭证 `family`（claude/codex）不是同一字段。 */
-export type GuestOsRef = {
-  id?: string | null
-  arch?: string | null
-}
-
-/** 已创建的客体账号。不含密码或引导密钥。 */
-export type GuestUserRef = {
-  username?: string | null
-  home?: string | null
-  uid?: number | null
-  gid?: number | null
-}
-
-/**
- * 槽位运行时。在原有松散字段上补 `provider` / `type`，不替换成另一套对象。
- * `guest_os` 这里仍是采集器写入的展示名字符串，和顶层 `Vm.guest_os` 对象不同。
- */
-export type VmRuntime = {
-  type?: string | null
-  provider?: string | null
-  guest_os?: string | null
-  guest_hostname?: string | null
-  guest_kernel?: string | null
-  identity_collected_at?: string | null
-  ip?: string | null
-  pid?: number | null
-  container?: string | null
-  kernel_socket?: string | null
-  [key: string]: unknown
-}
-
-/**
- * 准备进度的公开字段。`operation_id` 只作关联，界面不展示控制面秘密。
- * 状态以服务端原值为准；未知值不能当成 slot_ready。
- */
-export type VmProvisioning = {
-  operation_id?: string | null
-  state?: string | null
-  generation?: number | null
-  error_code?: string | null
-  retryable?: boolean | null
-  spec_hash?: string | null
-  stage_started_at?: string | null
-  last_probe_at?: string | null
-}
-
 export type VmKernelHealth = {
   reachable?: boolean
   process_up?: boolean
@@ -263,10 +216,6 @@ export type Vm = {
   dataplane?: 'wrap' | 'cc' | 'crag' | null
   resolved_dataplane?: 'wrap' | 'cc' | 'crag' | null
   kernel?: string
-  /** 客体系统身份。缺省表示旧槽，界面保持原有展示。 */
-  guest_os?: GuestOsRef | null
-  /** 客体里实际创建的账号。密码永不出现。 */
-  guest_user?: GuestUserRef | null
   region?: string
   /** 槽位环境时区（容器 `TZ` + persona `# Environment`）。 */
   timezone?: string | null
@@ -335,8 +284,7 @@ export type Vm = {
   /** 最近一次刷票失败的原因。与 `last_probe.error` 是两条独立的失效来源。 */
   refresh_error?: string
   extra_usage?: unknown
-  runtime?: VmRuntime
-  provisioning?: VmProvisioning | null
+  runtime?: Record<string, unknown>
   fingerprint?: Record<string, unknown>
   worker_credential?: Record<string, unknown>
   seed_policy?: Record<string, unknown>
