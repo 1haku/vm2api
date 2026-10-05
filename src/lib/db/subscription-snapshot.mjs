@@ -52,7 +52,28 @@ export function subscriptionSnapshot(db) {
           'SELECT id AS group_id,daily_limit_usd,weekly_limit_usd,default_validity_days,subscription_concurrency FROM groups WHERE subscription_enabled=1',
         )
         .all()
-  state.plans = { count: plans.length, hash: digest(plans) }
+  state.plans = {
+    count: plans.length,
+    hash: digest(
+      plans.map((row) => ({
+        ...row,
+        group_rpm_limit: row.group_rpm_limit ?? 0,
+        user_rpm_limit: row.user_rpm_limit ?? 0,
+      })),
+    ),
+  }
+  const userLimits = exists(db, 'custom_user_request_limits')
+    ? db.prepare('SELECT * FROM custom_user_request_limits').all()
+    : db
+        .prepare(
+          "SELECT id AS user_id,CASE WHEN role='admin' THEN 0 ELSE concurrency END AS concurrency,0 AS rpm_limit FROM users",
+        )
+        .all()
+  state.user_limits = { count: userLimits.length, hash: digest(userLimits) }
+  const rpmEvents = exists(db, 'custom_request_rpm_events')
+    ? db.prepare('SELECT * FROM custom_request_rpm_events').all()
+    : []
+  state.rpm_events = { count: rpmEvents.length, hash: digest(rpmEvents) }
   return state
 }
 
@@ -74,9 +95,13 @@ export function verifySubscriptionSchema(db) {
     'custom_subscription_reservations',
     'custom_subscription_ledger',
     'custom_response_owners',
+    'custom_user_request_limits',
+    'custom_request_rpm_events',
   ]) {
     if (!exists(db, name)) throw new Error(`Missing subscription table: ${name}`)
   }
   if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='002'").get())
     throw new Error('Custom migration 002 missing')
+  if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='003'").get())
+    throw new Error('Custom migration 003 missing')
 }

@@ -53,13 +53,11 @@ describe('panel session storage', () => {
   it('ignores a legacy API origin for login and authenticated requests', async () => {
     const values = installBrowser('localhost')
     values.set(LS_BASE, 'https://old-server.invalid')
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ token: 'test-token', user: 'admin' }), {
-          status: 200,
-        })
-      )
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ token: 'test-token', user: 'admin' }), {
+        status: 200,
+      })
+    )
     vi.stubGlobal('fetch', fetchMock)
 
     await loginRequest({ username: 'admin', password: 'test-password' })

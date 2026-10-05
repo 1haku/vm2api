@@ -719,6 +719,7 @@ function requireAuth(req, res) {
   }
   const gate = apiKeyStore.canAccept(managed.record)
   if (!gate.ok) {
+    if (gate.status === 429) res.setHeader('Retry-After', String(gate.retry_after || 1))
     const type =
       gate.status === 429
         ? gate.code.includes('quota')

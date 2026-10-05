@@ -3,6 +3,10 @@ import { spawnSync } from 'node:child_process'
 
 const unit = [
   'subscriptions',
+  'request-limits',
+  'request-limits-stream',
+  'api-keys',
+  'panel-users',
   'custom-migrations',
   'panel-acl',
   'slot-shell-rc',
@@ -52,6 +56,9 @@ const e2e = [
   'health',
   'credential-rotation',
   'statistics-ownership',
+  'request-limits',
+  'api-keys',
+  'panel-users',
 ]
 const result = spawnSync(
   process.execPath,

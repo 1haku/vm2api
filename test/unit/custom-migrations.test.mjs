@@ -11,6 +11,7 @@ import {
   verifySubscriptionSchema,
 } from '../../src/lib/db/subscription-snapshot.mjs'
 import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs'
+import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 
 test('v3 data migrates without changing ownership, amounts, limits or history; tampering with same row count is detected', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-content-'))
@@ -22,6 +23,10 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   const now = new Date().toISOString()
   db.prepare(
     "INSERT INTO users(id,email,username,password_hash,role,status) VALUES('a','a@example.test','a','unused','user','active')",
+  ).run()
+  db.prepare("UPDATE users SET concurrency=7 WHERE id='a'").run()
+  db.prepare(
+    "INSERT INTO users(id,email,username,password_hash,role,concurrency) VALUES('admin','admin@example.test','admin','unused','admin',5)",
   ).run()
   db.prepare("INSERT INTO vms(id,name,vm_json) VALUES('slot','slot','{}')").run()
   db.prepare(
@@ -45,6 +50,15 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   db = createDatabase({ dataDir: dir })
   verifySubscriptionSchema(db)
   assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  const limits = new RequestLimitsRepo(db)
+  assert.deepEqual({ ...limits.userLimits({ id: 'a' }) }, { concurrency: 7, rpm_limit: 0 })
+  assert.deepEqual({ ...limits.userLimits({ id: 'admin' }) }, { concurrency: 0, rpm_limit: 0 })
+  db.prepare("UPDATE custom_user_request_limits SET rpm_limit=99 WHERE user_id='a'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /user_limits/)
+  db.prepare("UPDATE custom_user_request_limits SET rpm_limit=0 WHERE user_id='a'").run()
+  db.prepare('UPDATE custom_subscription_plans SET group_rpm_limit=60 WHERE group_id=9').run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /plans/)
+  db.prepare('UPDATE custom_subscription_plans SET group_rpm_limit=0 WHERE group_id=9').run()
   assert.equal(db.prepare("SELECT session_id FROM usage_logs WHERE id='history'").get().session_id, null)
   assert.equal(db.prepare("SELECT label FROM proxies WHERE id='proxy'").get().label, null)
   db.prepare("UPDATE proxies SET label='changed' WHERE id='proxy'").run()
@@ -107,7 +121,7 @@ test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions
     db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
     '027_usage_logs_session_effort.sql',
   )
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 2)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 3)
   assert.equal(db.prepare('SELECT action FROM custom_subscription_events').get().action, 'sentinel')
 })
 

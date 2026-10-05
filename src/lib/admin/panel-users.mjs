@@ -6,7 +6,8 @@
  */
 
 import crypto from 'node:crypto'
-import { resolveStoreDb } from '../db/database.mjs'
+import { resolveStoreDb, withTransaction } from '../db/database.mjs'
+import { RequestLimitsRepo, requestLimit } from '../db/repos/request-limits-repo.mjs'
 import { UsersRepo } from '../db/repos/users-repo.mjs'
 import { clampVmCreateQuota } from './resource-owner.mjs'
 
@@ -110,6 +111,8 @@ export function publicUserView(rec) {
     role: rec.role,
     enabled: rec.enabled !== false,
     vm_create_quota: clampVmCreateQuota(rec.vm_create_quota, 0),
+    concurrency: rec.concurrency ?? (rec.role === 'admin' ? 0 : 5),
+    rpm_limit: rec.rpm_limit ?? 0,
     created_at: rec.created_at,
     updated_at: rec.updated_at,
     last_login_at: rec.last_login_at || null,
@@ -128,15 +131,19 @@ export class PanelUserStore {
   }
 
   list() {
-    return this.repo.list().map(publicUserView)
+    return this.repo.list().map((rec) => publicUserView(this.withLimits(rec)))
+  }
+
+  withLimits(rec) {
+    return rec ? { ...rec, ...new RequestLimitsRepo(this.db).userLimits(rec) } : null
   }
 
   getById(id) {
-    return this.repo.getById(id)
+    return this.withLimits(this.repo.getById(id))
   }
 
   getByUsername(username) {
-    return this.repo.getByUsername(username)
+    return this.withLimits(this.repo.getByUsername(username))
   }
 
   countEnabledAdmins() {
@@ -157,10 +164,12 @@ export class PanelUserStore {
     if (!verifyPassword(password, rec.password_hash)) return null
     const next = { ...rec, last_login_at: nowIso(), updated_at: rec.updated_at }
     this.repo.update(next)
-    return publicUserView(next)
+    return publicUserView(this.withLimits(next))
   }
 
-  create({ username, password, role = 'user', enabled = true, vm_create_quota = 0 } = {}) {
+  create({ username, password, role = 'user', enabled = true, vm_create_quota = 0, concurrency, rpm_limit } = {}) {
+    if (concurrency !== undefined) requestLimit(concurrency, '用户总并发', 128)
+    if (rpm_limit !== undefined) requestLimit(rpm_limit, '用户总 RPM')
     const name = assertUsername(username)
     if (this.repo.getByUsername(name)) {
       const err = new Error('用户名已存在')
@@ -178,7 +187,14 @@ export class PanelUserStore {
       updated_at: nowIso(),
       last_login_at: null,
     }
-    return this.repo.insert(rec)
+    return withTransaction(this.db, () => {
+      const saved = this.repo.insert(rec)
+      new RequestLimitsRepo(this.db).saveUser(saved, {
+        concurrency: concurrency ?? (role === 'admin' ? 0 : 5),
+        rpm_limit: rpm_limit ?? 0,
+      })
+      return this.withLimits(saved)
+    })
   }
 
   update(id, patch = {}, { actorId = null } = {}) {
@@ -220,7 +236,10 @@ export class PanelUserStore {
     }
 
     next.updated_at = nowIso()
-    return this.repo.update(next)
+    return withTransaction(this.db, () => {
+      new RequestLimitsRepo(this.db).saveUser(next, patch)
+      return this.withLimits(this.repo.update(next))
+    })
   }
 
   remove(id, { actorId = null } = {}) {

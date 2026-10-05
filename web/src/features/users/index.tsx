@@ -202,6 +202,10 @@ export function UsersPage() {
                           (当前)
                         </span>
                       ) : null}
+                      <p className='mt-1 text-xs font-normal text-muted-foreground'>
+                        并发 {u.concurrency || '不限'} · RPM{' '}
+                        {u.rpm_limit || '不限'}
+                      </p>
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -384,6 +388,8 @@ function CreateUserDialog({
   const [confirm, setConfirm] = useState('')
   const [role, setRole] = useState<PanelRole>('user')
   const [quota, setQuota] = useState(0)
+  const [concurrency, setConcurrency] = useState(5)
+  const [rpm, setRpm] = useState(0)
   const [enabled, setEnabled] = useState(true)
   const pwErr = passwordError(password, confirm)
 
@@ -393,6 +399,8 @@ function CreateUserDialog({
     setConfirm('')
     setRole('user')
     setQuota(0)
+    setConcurrency(5)
+    setRpm(0)
     setEnabled(true)
   }
 
@@ -406,6 +414,8 @@ function CreateUserDialog({
           role,
           enabled,
           vm_create_quota: quota,
+          concurrency,
+          rpm_limit: rpm,
         }),
       }),
     onSuccess: async () => {
@@ -425,7 +435,7 @@ function CreateUserDialog({
         onOpenChange(next)
       }}
     >
-      <DialogContent>
+      <DialogContent className='max-h-[90svh] overflow-y-auto'>
         <form
           className='space-y-4'
           onSubmit={(e) => {
@@ -462,6 +472,12 @@ function CreateUserDialog({
             quota={quota}
             setQuota={setQuota}
           />
+          <RequestLimitFields
+            concurrency={concurrency}
+            rpm={rpm}
+            setConcurrency={setConcurrency}
+            setRpm={setRpm}
+          />
           <DialogFooter>
             <Button
               type='submit'
@@ -497,7 +513,7 @@ function EditUserDialog({
   // Keyed by user id so the draft resets whenever a different row opens.
   return (
     <Dialog open={!!user} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent>
+      <DialogContent className='max-h-[90svh] overflow-y-auto'>
         {user ? (
           <EditUserForm
             key={user.id}
@@ -526,12 +542,20 @@ function EditUserForm({
   const [role, setRole] = useState<PanelRole>(user.role)
   const [enabled, setEnabled] = useState(user.enabled !== false)
   const [quota, setQuota] = useState(user.vm_create_quota ?? 0)
+  const [concurrency, setConcurrency] = useState(user.concurrency ?? 5)
+  const [rpm, setRpm] = useState(user.rpm_limit ?? 0)
 
   const patch = useMutation({
     mutationFn: () =>
       api(`/api/panel/users/${encodeURIComponent(user.id)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ role, enabled, vm_create_quota: quota }),
+        body: JSON.stringify({
+          role,
+          enabled,
+          vm_create_quota: quota,
+          concurrency,
+          rpm_limit: rpm,
+        }),
       }),
     onSuccess: async () => {
       toast.success('已更新')
@@ -560,6 +584,12 @@ function EditUserForm({
         quota={quota}
         setQuota={setQuota}
         lockSelf={isSelf}
+      />
+      <RequestLimitFields
+        concurrency={concurrency}
+        rpm={rpm}
+        setConcurrency={setConcurrency}
+        setRpm={setRpm}
       />
       <DialogFooter>
         <Button
@@ -806,5 +836,51 @@ function RoleFields({
         </p>
       ) : null}
     </>
+  )
+}
+
+function RequestLimitFields({
+  concurrency,
+  rpm,
+  setConcurrency,
+  setRpm,
+}: {
+  concurrency: number
+  rpm: number
+  setConcurrency: (n: number) => void
+  setRpm: (n: number) => void
+}) {
+  return (
+    <div className='space-y-2'>
+      <div className='grid grid-cols-2 gap-3'>
+        <Field id='user-concurrency' label='用户总并发'>
+          <Input
+            id='user-concurrency'
+            type='number'
+            required
+            min={0}
+            max={128}
+            step={1}
+            value={concurrency}
+            onChange={(e) => setConcurrency(Number(e.target.value))}
+          />
+        </Field>
+        <Field id='user-rpm' label='用户总 RPM'>
+          <Input
+            id='user-rpm'
+            type='number'
+            required
+            min={0}
+            max={1000000}
+            step={1}
+            value={rpm}
+            onChange={(e) => setRpm(Number(e.target.value))}
+          />
+        </Field>
+      </div>
+      <p className='text-xs leading-5 text-muted-foreground'>
+        合并该用户所有订阅和密钥计算。RPM 按最近 60 秒计数，0 表示不限。
+      </p>
+    </div>
   )
 }

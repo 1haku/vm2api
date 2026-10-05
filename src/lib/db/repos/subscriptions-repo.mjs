@@ -1,3 +1,4 @@
+import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
 import { calculateCost, shanghaiDayStartIso } from '../../admin/pricing.mjs'
@@ -29,7 +30,7 @@ export class SubscriptionsRepo {
   group(id) {
     return this.db
       .prepare(
-        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
+        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
       )
       .get(id)
   }
@@ -37,7 +38,7 @@ export class SubscriptionsRepo {
   plans() {
     return this.db
       .prepare(
-        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
+        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
       )
       .all()
       .map((g) => ({
@@ -74,6 +75,14 @@ export class SubscriptionsRepo {
       number(input.subscription_concurrency, old?.subscription_concurrency ?? 2, 1, 100),
       number(input.rate_multiplier, old?.rate_multiplier ?? 1, 0, 100),
     ]
+    const groupRpm = requestLimit(
+      input.group_rpm_limit === undefined ? (old?.group_rpm_limit ?? 0) : input.group_rpm_limit,
+      '分组总 RPM',
+    )
+    const userRpm = requestLimit(
+      input.user_rpm_limit === undefined ? (old?.user_rpm_limit ?? 0) : input.user_rpm_limit,
+      '分组内每人 RPM',
+    )
     const slots = input.vm_ids ?? (id ? this.plans().find((g) => g.id === id)?.vm_ids : [])
     if (
       !Array.isArray(slots) ||
@@ -113,6 +122,9 @@ export class SubscriptionsRepo {
           'INSERT INTO custom_subscription_plans(group_id,daily_limit_usd,weekly_limit_usd,default_validity_days,subscription_concurrency) VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET daily_limit_usd=excluded.daily_limit_usd,weekly_limit_usd=excluded.weekly_limit_usd,default_validity_days=excluded.default_validity_days,subscription_concurrency=excluded.subscription_concurrency',
         )
         .run(groupId, ...values.slice(4, 8))
+      this.db
+        .prepare('UPDATE custom_subscription_plans SET group_rpm_limit=?,user_rpm_limit=? WHERE group_id=?')
+        .run(groupRpm, userRpm, groupId)
       this.db.prepare('DELETE FROM custom_subscription_slots WHERE group_id=?').run(groupId)
       for (const vmId of new Set(slots))
         this.db.prepare('INSERT INTO custom_subscription_slots(group_id,vm_id) VALUES(?,?)').run(groupId, vmId)
@@ -246,7 +258,7 @@ export class SubscriptionsRepo {
   list(userId) {
     const rows = this.db
       .prepare(
-        `SELECT s.*,g.name AS plan_name,g.platform,g.status AS plan_status,p.daily_limit_usd,p.weekly_limit_usd,p.subscription_concurrency,g.rate_multiplier,u.username FROM custom_user_subscriptions s JOIN groups g ON g.id=s.group_id JOIN custom_subscription_plans p ON p.group_id=g.id JOIN users u ON u.id=s.user_id ${userId ? 'WHERE s.user_id=?' : ''} ORDER BY s.created_at DESC`,
+        `SELECT s.*,g.name AS plan_name,g.platform,g.status AS plan_status,p.daily_limit_usd,p.weekly_limit_usd,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,g.rate_multiplier,u.username FROM custom_user_subscriptions s JOIN groups g ON g.id=s.group_id JOIN custom_subscription_plans p ON p.group_id=g.id JOIN users u ON u.id=s.user_id ${userId ? 'WHERE s.user_id=?' : ''} ORDER BY s.created_at DESC`,
       )
       .all(...(userId ? [userId] : []))
     return rows.map((s) => ({

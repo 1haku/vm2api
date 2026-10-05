@@ -21,6 +21,7 @@ import { ApiKeysRepo } from '../db/repos/api-keys-repo.mjs'
 import { maybeEncrypt, maybeDecrypt } from '../db/secure.mjs'
 import { calculateCost, normalizeUsage } from './pricing.mjs'
 import { UsersRepo } from '../db/repos/users-repo.mjs'
+import { RequestLimitsRepo } from '../db/repos/request-limits-repo.mjs'
 
 const KEY_PREFIX = 'sk-vm-'
 const HASH_MARKER = 'hmac:'
@@ -126,6 +127,9 @@ export class ApiKeyStore {
     this.inflight = new Map() // id → count
     this.rpmBuckets = new Map() // id → number[] timestamps ms
     this.users = new UsersRepo(this.db)
+    this.userInflight = new Map()
+    this.claims = new Map()
+    this.requestLimits = new RequestLimitsRepo(this.db)
   }
 
   /** sub2api: an api key of a disabled/deleted user must not authenticate. */
@@ -148,6 +152,7 @@ export class ApiKeyStore {
     this.db = db
     this.repo = new ApiKeysRepo(db)
     this.users = new UsersRepo(db)
+    this.requestLimits = new RequestLimitsRepo(db)
   }
 
   list({ reveal = false } = {}) {
@@ -317,7 +322,7 @@ export class ApiKeyStore {
   remove(id) {
     const removed = this.repo.remove(id)
     if (!removed) return false
-    this.inflight.delete(id)
+    // Active claims belong to their original caller until their own request releases them.
     this.rpmBuckets.delete(id)
     return true
   }
@@ -395,6 +400,10 @@ export class ApiKeyStore {
           ok: false,
           code: 'api_key_rate_limit',
           message: `API key rate limit exceeded (${rec.rpm}/min)`,
+          retry_after: Math.max(
+            1,
+            Math.ceil(((this.rpmBuckets.get(rec.id)?.[n - rec.rpm] ?? now) + 60000 - now) / 1000),
+          ),
           status: 429,
           detail: { rpm: rec.rpm, current: n },
         }
@@ -410,53 +419,56 @@ export class ApiKeyStore {
         detail: { inflight, max: rec.max_concurrency },
       }
     }
-    // sub2api user-level cap: sum of inflight across all of the owner's keys.
-    // The operator (admin) is never capped: its traffic is the platform's own.
     if (rec.user_id) {
-      const owner = (() => {
-        try {
-          return this.users.getById(rec.user_id)
-        } catch {
-          return null
+      const limits = this.requestLimits.userLimits(this.users.getById(rec.user_id))
+      const current = this.userInflight.get(rec.user_id) || 0
+      if (limits.concurrency > 0 && current >= limits.concurrency)
+        return {
+          ok: false,
+          status: 429,
+          code: 'user_concurrency_limit',
+          message: '用户总并发已满，请等待进行中的请求结束',
+          retry_after: 1,
+          detail: { inflight: current, max: limits.concurrency },
         }
-      })()
-      const cap = owner?.role === 'admin' ? 0 : Number(owner?.concurrency) || 0
-      if (cap > 0) {
-        let total = 0
-        for (const k of this.repo.list()) {
-          if (k.user_id === rec.user_id) total += this.inflight.get(k.id) || 0
-        }
-        if (total >= cap) {
-          return {
-            ok: false,
-            code: 'user_concurrency_limit',
-            message: `User concurrency limit (${cap})`,
-            status: 429,
-            detail: { inflight: total, max: cap },
-          }
-        }
-      }
     }
     return { ok: true }
   }
 
-  acquire(rec, now = Date.now()) {
+  acquire(rec, now = Date.now(), requestId = crypto.randomUUID()) {
     const gate = this.canAccept(rec, now)
     if (!gate.ok) return gate
-    const id = rec.id
-    this.inflight.set(id, (this.inflight.get(id) || 0) + 1)
-    const arr = this.rpmBuckets.get(id) || []
+    const shared = this.requestLimits.consume(rec, now, requestId)
+    if (!shared.ok) return shared
+    const claim = { keyId: rec.id, userId: rec.user_id || null }
+    this.claims.set(requestId, claim)
+    this.inflight.set(rec.id, (this.inflight.get(rec.id) || 0) + 1)
+    if (claim.userId) this.userInflight.set(claim.userId, (this.userInflight.get(claim.userId) || 0) + 1)
+    const arr = this.rpmBuckets.get(rec.id) || []
     arr.push(now)
-    this.rpmBuckets.set(id, arr)
-    return { ok: true }
+    this.rpmBuckets.set(rec.id, arr)
+    return { ok: true, release: () => this.releaseClaim(requestId) }
+  }
+
+  releaseClaim(id) {
+    const claim = this.claims.get(id)
+    if (!claim) return
+    this.claims.delete(id)
+    for (const [map, key] of [
+      [this.inflight, claim.keyId],
+      [this.userInflight, claim.userId],
+    ]) {
+      if (!key) continue
+      const n = (map.get(key) || 0) - 1
+      if (n <= 0) map.delete(key)
+      else map.set(key, n)
+    }
   }
 
   release(recOrId) {
-    const id = typeof recOrId === 'string' ? recOrId : recOrId?.id
-    if (!id) return
-    const n = (this.inflight.get(id) || 0) - 1
-    if (n <= 0) this.inflight.delete(id)
-    else this.inflight.set(id, n)
+    const key = typeof recOrId === 'string' ? recOrId : recOrId?.id
+    const claim = [...this.claims].find(([, value]) => value.keyId === key)
+    if (claim) this.releaseClaim(claim[0])
   }
 
   recordUsage(recOrId, usage = {}, { model = null, rateMultiplier = 1 } = {}) {

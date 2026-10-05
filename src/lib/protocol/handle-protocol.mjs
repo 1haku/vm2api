@@ -3,6 +3,7 @@
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
  */
 import crypto from 'node:crypto'
+import { withTransaction } from '../db/database.mjs'
 import { applyIntercept } from '../core/intercept.mjs'
 import { detectDistill, distillBlockError } from '../core/distill-detect.mjs'
 import {
@@ -450,18 +451,31 @@ export function createHandleProtocol(deps) {
 
     try {
       if (req.apiKeyRecord && apiKeyStore?.repo?.db) {
-        req.subscriptionAdmission = new SubscriptionsRepo(apiKeyStore.repo.db).reserve(
-          req.apiKeyRecord,
-          logCtx.request_id,
-          inbound,
-        )
-        if (req.subscriptionAdmission && resolveInferenceBackend(req) === 'api')
-          throw Object.assign(new Error('订阅只允许访问已分配槽位'), { status: 403, code: 'subscription_scope' })
+        withTransaction(apiKeyStore.repo.db, () => {
+          req.subscriptionAdmission = new SubscriptionsRepo(apiKeyStore.repo.db).reserve(
+            req.apiKeyRecord,
+            logCtx.request_id,
+            inbound,
+          )
+          if (req.subscriptionAdmission && resolveInferenceBackend(req) === 'api')
+            throw Object.assign(new Error('订阅只允许访问已分配槽位'), { status: 403, code: 'subscription_scope' })
+          const gate = apiKeyStore.acquire(req.apiKeyRecord, Date.now(), logCtx.request_id)
+          if (!gate.ok) throw Object.assign(new Error(gate.message), gate)
+          req.releaseManagedKey = gate.release
+        })
       }
     } catch (error) {
+      req.releaseManagedKey?.()
+      delete req.releaseManagedKey
+      req.subscriptionAdmission = null
+      if (error.status === 429) res.setHeader('Retry-After', String(error.retry_after || 1))
       logBag.error_code = error.code || 'subscription_invalid'
       return json(res, error.status || 400, {
-        error: { type: 'permission_error', code: logBag.error_code, message: error.message },
+        error: {
+          type: error.status === 429 ? 'rate_limit_error' : 'permission_error',
+          code: logBag.error_code,
+          message: error.message,
+        },
       })
     }
 
@@ -821,23 +835,6 @@ export function createHandleProtocol(deps) {
 
     if (inferenceBackend === 'api') {
       const managedKey = req.apiKeyRecord || null
-      if (managedKey) {
-        const gate = apiKeyStore.acquire(managedKey)
-        if (!gate.ok) {
-          stats.errors++
-          return json(
-            res,
-            gate.status,
-            makeError({
-              type: gate.status === 429 ? ErrorType.RATE_LIMIT : ErrorType.PERMISSION,
-              code: gate.code,
-              message: gate.message,
-              status: gate.status,
-              details: gate.detail || undefined,
-            }).body,
-          )
-        }
-      }
       const clientAbort = bindClientAbort(req, res)
       const clientStream = isClientStream(inbound, req.headers)
       const requestedDelivery = String(
@@ -880,11 +877,6 @@ export function createHandleProtocol(deps) {
         })
       } finally {
         clientAbort.settle()
-        if (managedKey) {
-          try {
-            apiKeyStore.release(managedKey)
-          } catch {}
-        }
       }
       logBag.account_id = result?.accountId || null
       logBag.final_account_id = result?.accountId || null
@@ -932,24 +924,6 @@ export function createHandleProtocol(deps) {
     )
     const streamIdleTimeoutMs = Number(cfg.limits.stream_idle_timeout_ms || 180_000)
     const managedKey = req.apiKeyRecord || null
-    if (managedKey) {
-      const gate = apiKeyStore.acquire(managedKey)
-      if (!gate.ok) {
-        stats.errors++
-        return json(
-          res,
-          gate.status,
-          makeError({
-            type: gate.status === 429 ? ErrorType.RATE_LIMIT : ErrorType.PERMISSION,
-            code: gate.code,
-            message: gate.message,
-            status: gate.status,
-            details: gate.detail || undefined,
-          }).body,
-        )
-      }
-    }
-
     const clientAbort = bindClientAbort(req, res)
 
     const clientStream = isClientStream(inbound, req.headers)
@@ -1267,11 +1241,6 @@ export function createHandleProtocol(deps) {
       })
     } finally {
       clientAbort.settle()
-      if (managedKey) {
-        try {
-          apiKeyStore.release(managedKey)
-        } catch {}
-      }
     }
 
     result = acceptAssistantHop(result)
@@ -1391,8 +1360,13 @@ export function createHandleProtocol(deps) {
     try {
       return await handleProtocolInner(req, res, protocol, pathName)
     } finally {
-      req.finalizeSubscriptionUsage?.()
-      delete req.finalizeSubscriptionUsage
+      try {
+        req.finalizeSubscriptionUsage?.()
+      } finally {
+        req.releaseManagedKey?.()
+        delete req.releaseManagedKey
+        delete req.finalizeSubscriptionUsage
+      }
     }
   }
   return { handleProtocol, mapProtocolClientError, applyDistillGuard, streamAndAssembleClaudeMessage }

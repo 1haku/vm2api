@@ -42,6 +42,8 @@ export type Plan = {
   weekly_limit_usd: number
   default_validity_days: number
   subscription_concurrency: number
+  group_rpm_limit: number
+  user_rpm_limit: number
   rate_multiplier: number
 }
 export type Subscription = {
@@ -82,6 +84,8 @@ const emptyPlan = {
   weekly_limit_usd: 100,
   default_validity_days: 30,
   subscription_concurrency: 2,
+  group_rpm_limit: 0,
+  user_rpm_limit: 0,
   rate_multiplier: 1,
 }
 
@@ -520,6 +524,10 @@ export function SubscriptionsPage() {
                 </span>
                 <span>{p.members} 位有效用户</span>
                 <span>每人 {p.subscription_concurrency} 路并发</span>
+                <span>
+                  分组总 RPM：{p.group_rpm_limit || '不限'} · 每人 RPM：
+                  {p.user_rpm_limit || '不限'}
+                </span>
               </div>
               <div className='mb-4 flex flex-wrap gap-2'>
                 {p.vm_ids.map((id) => (
@@ -714,6 +722,8 @@ export function SubscriptionsPage() {
                   ['weekly_limit_usd', '每人每周额度（USD，0 不限）'],
                   ['default_validity_days', '默认有效天数'],
                   ['subscription_concurrency', '每人最大并发'],
+                  ['group_rpm_limit', '分组总 RPM（0 不限）'],
+                  ['user_rpm_limit', '分组内每人 RPM（0 不限）'],
                   ['rate_multiplier', '额度倍率'],
                 ] as const
               ).map(([k, l]) => (
@@ -742,7 +752,9 @@ export function SubscriptionsPage() {
               ))}
             </div>
             <p className='text-xs text-muted-foreground'>
-              每日额度于北京时间 00:00 重置，每周从分配时间起每 7
+              分组总 RPM 由所有用户共享，每人 RPM
+              合并该用户在本分组的所有密钥；按最近 60 秒计数，0
+              表示不限。每日额度于北京时间 00:00 重置，每周从分配时间起每 7
               天重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
             </p>
             <Button

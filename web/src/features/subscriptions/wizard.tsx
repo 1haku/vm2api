@@ -54,6 +54,8 @@ export function SubscriptionWizard({
     weekly_limit_usd: 100,
     default_validity_days: 30,
     subscription_concurrency: 2,
+    group_rpm_limit: 0,
+    user_rpm_limit: 0,
     rate_multiplier: 1,
   })
   const plans = useQuery({
@@ -255,6 +257,8 @@ export function SubscriptionWizard({
                         ['daily_limit_usd', '每人每日额度（USD）'],
                         ['weekly_limit_usd', '每人每周额度（USD）'],
                         ['subscription_concurrency', '每人并发上限'],
+                        ['group_rpm_limit', '分组总 RPM（0 不限）'],
+                        ['user_rpm_limit', '分组内每人 RPM（0 不限）'],
                       ] as const
                     ).map(([k, label]) => (
                       <label key={k} className='grid gap-2 text-sm'>
@@ -264,7 +268,7 @@ export function SubscriptionWizard({
                           type='number'
                           min={k === 'subscription_concurrency' ? 1 : 0}
                           max={k === 'subscription_concurrency' ? 100 : 1000000}
-                          step={k === 'subscription_concurrency' ? 1 : 0.01}
+                          step={k.includes('usd') ? 0.01 : 1}
                           value={draft[k]}
                           onChange={(e) =>
                             setDraft({ ...draft, [k]: Number(e.target.value) })
@@ -425,7 +429,9 @@ export function SubscriptionWizard({
                 </dd>
                 <dt>每人并发 / 有效期</dt>
                 <dd>
-                  {plan.subscription_concurrency} 路 / {days} 天
+                  {plan.subscription_concurrency} 路 / {days} 天 · 分组总 RPM{' '}
+                  {plan.group_rpm_limit || '不限'} / 每人 RPM{' '}
+                  {plan.user_rpm_limit || '不限'}
                 </dd>
                 <dt>接收用户</dt>
                 <dd className='break-all'>

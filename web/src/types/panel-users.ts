@@ -6,6 +6,8 @@ export type PanelUser = {
   role: PanelRole
   enabled: boolean
   vm_create_quota?: number
+  concurrency?: number
+  rpm_limit?: number
   created_at?: string
   last_login_at?: string
 }
