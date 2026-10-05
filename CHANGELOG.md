@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.108 — 2026-10-05
+
+- 修复长会话续聊回放网页搜索历史时偶发直接返回 400 `Invalid encrypted_content in search_result block`：这条 400 本应把搜索历史转成纯文本后在同槽修复重试一次，但长转录上游要 3–4 分钟才回 400，已超过 120 秒总重试期限，修复跳被丢弃。修复跳现不受已用尽的总期限拦截（等座最多 30 秒，仍只修复一次）。
+- 出站请求体 / 请求头只在「设置 → 日志」的 Debug 模式下保存；请求头 `x-kin-debug` / `x-kin-log` 触发的单次 debug 只保存入站请求体与响应，不再保存含网关改写（persona / overlay）的出站请求体，避免租户读到（#250）。
+
+已部署 x86 机升级：只更新 Node 控制面（`src/`）与 `web/dist`，重启一次 Node；无迁移。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.107 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.107 — 2026-10-05
 
 - 面板 `/logs`：详情改为居中弹窗（概览 / 决策链 / 性能 / 原始数据），整行可点击或键盘 Enter / Space 打开，全屏模式下也能打开；修复表头与数据行错位（#247）。
