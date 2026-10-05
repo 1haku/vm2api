@@ -259,6 +259,8 @@ async function killWrapDataplane(container, runDockerExec) {
   // Match /proc/pid/exe, not pkill -f. The docker exec shell's own argv
   // contains these paths, so pkill -f signals that shell and can return
   // before the running cli-node dies. The old inode then keeps serving.
+  // Under binfmt QEMU (ARM64 host, amd64 slot) exe is the emulator and the
+  // real program is argv[1] (P flag), so identify the process by that.
   await runDockerExec(
     [
       'exec',
@@ -268,6 +270,7 @@ async function killWrapDataplane(container, runDockerExec) {
       [
         'for d in /proc/[0-9]*; do',
         '  exe=$(readlink "$d/exe" 2>/dev/null || true)',
+        '  case "$exe" in */qemu-*) exe=$(tr "\\000" "\\n" < "$d/cmdline" 2>/dev/null | sed -n 2p) ;; esac',
         '  case "$exe" in',
         '    */.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*|/opt/kin/cli-node*|/opt/kin/kin-kernel*|/opt/kin/glibc239/ld-linux*)',
         '      kill -KILL "${d#/proc/}" 2>/dev/null || true',
