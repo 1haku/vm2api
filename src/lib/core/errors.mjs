@@ -107,8 +107,8 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
 export const CLIENT_POOL_BUSY_MESSAGE = '号池负载过高，稍后再试'
 export const CLIENT_POOL_UNAVAILABLE_MESSAGE = '号池当前没有可用账号'
 
-/** Every eligible seat stayed busy until the bounded wait ran out. */
-const POOL_OVERLOADED_CODES = new Set(['pool_overloaded', 'pool_wait_queue_full'])
+/** Every eligible seat stayed busy until the bounded wait ran out, or the pool queue was full. */
+const POOL_OVERLOADED_CODES = new Set(['pool_overloaded', 'pool_wait_queue_full', 'pool_queue_timeout'])
 /** Nothing eligible to wait for: configuration, quota, credentials, or model gates. */
 const POOL_UNAVAILABLE_CODES = new Set([
   'account_pool_exhausted',
@@ -130,7 +130,7 @@ export function isUsagePolicyErrorMessage(message = '') {
   return USAGE_POLICY_MESSAGE.test(String(message || ''))
 }
 
-/** `overloaded` (real capacity, 429), `unavailable` (nothing eligible, 503), or null. */
+/** `overloaded` (real capacity, 529), `unavailable` (nothing eligible, 503), or null. */
 export function poolErrorKind(code, message = '') {
   const key = String(code || '').trim()
   if (POOL_OVERLOADED_CODES.has(key)) return 'overloaded'
@@ -139,14 +139,21 @@ export function poolErrorKind(code, message = '') {
   return null
 }
 
+/** Anthropic's own capacity status: clients back off and retry instead of treating it as a quota hit. */
+export const POOL_OVERLOADED_STATUS = 529
+
 function poolClientError(kind) {
   if (kind === 'overloaded') {
-    return makeError({
-      type: ErrorType.RATE_LIMIT,
-      code: ErrorCode.POOL_OVERLOADED,
-      message: CLIENT_POOL_BUSY_MESSAGE,
-      status: 429,
-    })
+    return {
+      ...makeError({
+        type: ErrorType.OVERLOADED,
+        code: ErrorCode.POOL_OVERLOADED,
+        message: CLIENT_POOL_BUSY_MESSAGE,
+        status: POOL_OVERLOADED_STATUS,
+      }),
+      // Every 529 carries a Retry-After; the caller raises it to the planner estimate.
+      retryAfterSec: 1,
+    }
   }
   return makeError({
     type: ErrorType.OVERLOADED,

@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- 修复 Claude VM 席位（`session_slots`）按在飞请求数计数：同一会话的并发请求共用一个席位，占用数改为不同席位数；VM 已满时，已占席位的会话的新并发请求仍可进入，新会话照旧等待（`session_slots_full`）。实际并发仍受 `max_concurrency` 限制。席位在该席位最后一个请求结束后释放。
-- `/api/panel/vms` 的 Claude 行新增 `seats_used` / `seats_max` / `queue_depth`，来自调度器实时席位簿与等待队列；`session_active` 仍是保留到 `session_idle_min` 的会话窗口计数，两者分开展示。VM 列表与详情卡的「在飞」不再用 `session_active` 兜底。
+- Claude 号池新增预调度（席位规划）：席位按入站 device 计（device id → metadata `session_id` → `cache_control: ephemeral` 内容哈希 → IP + UA + system + 首轮内容哈希，API key 不参与；一次性短探测不占席位）。同一 device 的并发请求共用一个席位、共享 VM 并发，在 VM 内按到达顺序等待，不拆到两台 VM。席位数沿用 `session_slots`（VM 覆盖 → 全局，上限 20）；最后一个请求结束后保留 `pool.seat_grace_ms`（默认 30 秒）；开新席位要求 5h/7d 余量 ≥ (已占 + 1) × `pool.seat_budget_reserve_pct`（默认 2%）。新 device 先回粘性 VM，否则按策略 `balanced`（占用率最低）或 `fill`（已占最多未满）开席位，同级比余量；都满时进全局 FIFO，新到请求不插队。诊断 pin 照旧绕过。跨 VM 换号时旧席位立即释放并在新 VM 开席位、更新设备绑定。
+- `routing.pool`：`strategy` 只保留 `balanced` / `fill`，旧值（WRR / 轮询 / LRU / fill-first）读出为 `balanced`；新增 `queue_max`（默认 50，1–999，计入全部 Claude 排队请求：全局队列、各 VM 席位 / 并发队列、冷却 / RPM 等待；满了立即拒绝不入队）、`seat_grace_ms`（0–120000）、`seat_budget_reserve_pct`（小数，0–0.5）；删除 `max_waiters_per_account`。设置保存热生效，不再重建调度器。
+- 号池排队超时 / 排队已满 / 等待用完由 429 `rate_limit_error` 改为 **529 `overloaded_error`**（code 仍为 `pool_overloaded`，新增内部原因 `pool_queue_timeout`），总带 `retry-after`（≥ 1 秒，优先取席位宽限到期）。SLA 统计照旧不计为失败；通知日报新增 529 计数。Codex/GPT 槽不变。
+- 删除 Claude 会话窗口：档位与 VM 配额覆盖的 `max_sessions` / `session_idle_min` 及其准入判断移除（旧值读入时忽略），可用性不再出现「会话已满」。Codex 的 `max_sessions` 不变。
+- `/api/panel/vms` 的 Claude 行改为 `seats_used` / `seats_max` / `seats_grace` / `queue_depth` / `conc_waiting`，不再带 `sessions` / `session_active` / `session_max`（Codex 行保留）；响应新增 `pool_queue: { global_queue_depth, queue_max }`。SSE `event: seats` 载荷改为 `{ seats, global_queue_depth, queue_max, ts }`，去掉 `holds`。
 - 新增面板 SSE `GET /api/panel/pool/stream`（需面板登录；`user` 只收到自己可见的 VM）：席位占用/释放、入队/出队后约 250ms 推送 `event: seats` 快照，15s 保活。VM 列表页订阅后即时更新席位与排队数；断线期间仍按 5s 轮询，5s 后自动重连。
 - 重建控制台产物。
 

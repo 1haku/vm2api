@@ -73,20 +73,24 @@ function poolError(code, message, details = {}) {
   }
 }
 
-/** Real capacity exhaustion: every eligible seat stayed busy until the wait ran out. */
+/**
+ * Real capacity exhaustion: every eligible seat stayed busy until the wait ran
+ * out, or the pool queue was full. Anthropic's 529 `overloaded_error`, always
+ * with a Retry-After: the planner's earliest seat release, else the soonest
+ * known wake (cooldown / RPM / window reset), floored at 1s.
+ */
 export function poolOverloadedError(details = {}) {
-  const soonest = Number(details.soonest_available_ms)
+  const retryMs = Number(details.retry_after_ms ?? details.soonest_available_ms)
   return {
     ok: false,
-    status: 429,
+    status: 529,
     via: 'pool-failover',
     terminalState: 'exhausted',
-    // Only a known wake time (cooldown / RPM / window reset) is a trustworthy Retry-After.
-    retryAfterSec: Number.isFinite(soonest) && soonest > 0 ? Math.ceil(soonest / 1000) : null,
+    retryAfterSec: Number.isFinite(retryMs) && retryMs > 0 ? Math.max(1, Math.ceil(retryMs / 1000)) : 1,
     body: {
       type: 'error',
       error: {
-        type: 'rate_limit_error',
+        type: 'overloaded_error',
         code: 'pool_overloaded',
         message: CLIENT_POOL_BUSY_MESSAGE,
         details,
@@ -95,7 +99,7 @@ export function poolOverloadedError(details = {}) {
   }
 }
 
-const CAPACITY_SELECTION_REASONS = new Set(['all_accounts_busy', 'pool_wait_queue_full'])
+const CAPACITY_SELECTION_REASONS = new Set(['all_accounts_busy', 'pool_wait_queue_full', 'pool_queue_timeout'])
 
 function fableRequiresMaxError(details = {}) {
   return {
@@ -309,6 +313,7 @@ function selectionFailure(selected, { excluded, lastPolicy, lastResult, hops }) 
     reason,
     wait_ms: selected?.waitMs ?? selected?.wait_ms ?? 0,
     soonest_available_ms: selected?.soonest_available_ms ?? null,
+    retry_after_ms: selected?.retry_after_ms ?? null,
     wait_reasons: selected?.wait_reasons || [],
     eligible: selected?.eligible ?? 0,
     available: selected?.available ?? 0,
@@ -372,6 +377,10 @@ export class FailoverRunner {
     this.sessionTails = new Map()
   }
 
+  reloadConfig(config = {}) {
+    this.config = { ...DEFAULTS, ...(config || {}) }
+  }
+
   noteUnitHealth(selected, policy, result) {
     const circuit = this.scheduler?.unitCircuit
     if (!circuit || !selected?.accountId) return
@@ -383,12 +392,11 @@ export class FailoverRunner {
   /**
    * An empty or cancelled hop leaves the outbound session behind: the next
    * hop on this VM opens a new one. No seat is penalized and no CLI restarts;
-   * Node seat indexes are not kernel native slots.
+   * planner seat indexes are not kernel native slots.
    */
   retireOutboundSession(selected, bindKeys) {
     if (!selected?.vmId) return
     for (const key of bindKeys || []) {
-      this.scheduler.dropSessionSlot?.(selected.vmId, key)
       const bound = this.stickyRouter?.resolve?.(key)
       if (bound?.accountId !== selected.accountId) continue
       this.stickyRouter?.bind?.(
@@ -469,7 +477,7 @@ export class FailoverRunner {
     model,
     stickyKey = null,
     stickyKeys = null,
-    windowKey = undefined,
+    seatKey = null,
     stickyDeviceId = null,
     stream = false,
     deliveryMode = null,
@@ -514,6 +522,8 @@ export class FailoverRunner {
       return !now || now.accountId !== base.accountId || (now.generation || 0) !== (base.generation || 0)
     }
     let freshSlot = false
+    // The seat moved VMs on failover: device affinity follows it.
+    let seatMovedTo = null
     let outboundSessionId = ''
     let outboundSessionAccountId = ''
     let currentDeviceVmId = null
@@ -550,7 +560,11 @@ export class FailoverRunner {
         this.stickyRouter.bind?.(familyKey, { accountId: account.accountId, vmId: account.vmId }, { countHit: false })
         pinBaseline.set(familyKey, this.stickyRouter.resolve?.(familyKey) || null)
       }
-      if (deviceKey && account.vmId && (!currentDeviceVmId || currentDeviceVmId === account.vmId)) {
+      if (
+        deviceKey &&
+        account.vmId &&
+        (!currentDeviceVmId || currentDeviceVmId === account.vmId || seatMovedTo === account.vmId)
+      ) {
         const devicePayload = { accountId: account.accountId, vmId: account.vmId }
         if (this.stickyRouter.bindDeviceAffinity) {
           this.stickyRouter.bindDeviceAffinity(deviceKey, devicePayload, { countHit: false })
@@ -595,7 +609,7 @@ export class FailoverRunner {
           model,
           stickyKey,
           stickyKeys: bindKeys,
-          windowKey,
+          seatKey,
           excluded,
           spilled,
           signal,
@@ -621,7 +635,11 @@ export class FailoverRunner {
           return preferLastResult(
             lastResult,
             lastPolicy,
-            poolOverloadedError({ reason: 'pool_wait_queue_full', attempt_count: budget.hops }),
+            poolOverloadedError({
+              reason: 'pool_wait_queue_full',
+              attempt_count: budget.hops,
+              retry_after_ms: error.retryAfterMs ?? null,
+            }),
             attribution(),
           )
         }
@@ -655,6 +673,7 @@ export class FailoverRunner {
       snapshotPins()
       lastSelected = selected
       pinnedSlot = selected.slotIndex ?? null
+      if (selected.seatMoved) seatMovedTo = selected.vmId
       bindAll({ accountId: selected.accountId, vmId: selected.vmId, slotIndex: pinnedSlot }, { countHit: false })
       const attemptStarted = Date.now()
       this.attemptsRepo?.begin?.({

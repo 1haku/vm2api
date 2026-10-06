@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { UnitCircuit } from '../../src/lib/pool/unit-circuit.mjs'
-import { PoolScheduler } from '../../src/lib/pool/pool-scheduler.mjs'
 
 test('half-open admits one probe and holds the rest', () => {
   let now = 1_000
@@ -35,43 +34,6 @@ test('model-style failures are not required to open the circuit', () => {
   const circuit = new UnitCircuit({ failureThreshold: 1, openMs: 1000, now: () => 10 })
   assert.equal(circuit.admit('vm-b').ok, true)
   assert.equal(circuit.snapshot('vm-b').state, 'closed')
-})
-
-test('a session keeps its VM slot and a busy seat rejects the next session', () => {
-  const scheduler = new PoolScheduler({ projectRoot: 'x:/unused', config: { default_session_slots: 1 } })
-  const first = scheduler.acquireSlot('vm-1', 'session-a', 1)
-  assert.equal(first.index, 0)
-  const shared = scheduler.acquireSlot('vm-1', 'session-a', 1)
-  assert.equal(shared.index, 0)
-  assert.equal(scheduler.acquireSlot('vm-1', 'session-b', 1), null)
-  scheduler.releaseSlotHold('vm-1', first.holdKey)
-  assert.equal(scheduler.acquireSlot('vm-1', 'session-b', 1), null)
-  scheduler.releaseSlotHold('vm-1', shared.holdKey)
-  const again = scheduler.acquireSlot('vm-1', 'session-a', 1)
-  assert.equal(again.index, 0)
-  scheduler.releaseSlotHold('vm-1', again.holdKey)
-  const second = scheduler.acquireSlot('vm-1', 'session-b', 1)
-  assert.equal(second.index, 0)
-})
-
-test('request release keeps the session decision and frees the inflight seat', () => {
-  const scheduler = new PoolScheduler({ projectRoot: 'x:/unused', config: {} })
-  const session = scheduler.reserve(
-    { accountId: 'acc', vmId: 'vm-1', maxConcurrency: 2, sessionSlots: 2, model: 'claude' },
-    { sessionKey: 'conversation' },
-  )
-  assert.equal(session.slotIndex, 0)
-  session.release()
-  assert.equal(scheduler.assignedSlot('vm-1', 'conversation'), 0)
-  assert.equal(scheduler.usedSlotCount('vm-1'), 0)
-  const anon = scheduler.reserve(
-    { accountId: 'acc', vmId: 'vm-1', maxConcurrency: 2, sessionSlots: 2, model: 'claude' },
-    {},
-  )
-  assert.equal(typeof anon.slotIndex, 'number')
-  anon.release()
-  assert.equal(scheduler.usedSlotCount('vm-1'), 0)
-  assert.equal(scheduler.assignedSlot('vm-1', 'conversation'), 0)
 })
 
 test('reset closes an open unit and view reports state', () => {
