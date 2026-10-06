@@ -41,7 +41,7 @@ ENV NODE_ENV=production \
     KIN_CODEX_KERNEL_BIN=/opt/vm2api/bin/kin-codex-kernel \
     KIN_OAUTH_AUTH_BIN=/opt/vm2api/bin/kin-oauth-auth
 RUN node scripts/subscriptions-manifest.mjs "$CUSTOM_REVISION"
-ENV VM2API_CUSTOM_BUILD=subscriptions-v7
-LABEL org.vm2api.variant="shared-subscriptions-v7" org.opencontainers.image.revision=$CUSTOM_REVISION
+ENV VM2API_CUSTOM_BUILD=subscriptions-v8
+LABEL org.vm2api.variant="shared-subscriptions-v8" org.opencontainers.image.revision=$CUSTOM_REVISION
 EXPOSE 8787
 ENTRYPOINT ["/usr/local/bin/vm2api-entrypoint"]

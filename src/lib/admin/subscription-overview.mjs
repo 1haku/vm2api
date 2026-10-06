@@ -36,10 +36,11 @@ export function subscriptionOverview(db, slots, days = 1, inflight = {}) {
     until,
     days,
     slots: slots.map((slot) => {
-      const plan = plans.find((p) => p.vm_ids.includes(slot.id))
+      const slotPlans = plans.filter((p) => p.vm_ids.includes(slot.id))
+      const planIds = new Set(slotPlans.map((p) => p.id))
       const members = subscriptions.filter(
         (s) =>
-          s.group_id === plan?.id &&
+          planIds.has(s.group_id) &&
           s.status === 'active' &&
           s.plan_status === 'active' &&
           s.starts_at <= until &&
@@ -51,8 +52,9 @@ export function subscriptionOverview(db, slots, days = 1, inflight = {}) {
         status: slot.status,
         has_token: slot.has_token,
         schedulable: slot.schedulable,
-        plan_id: plan?.id ?? null,
-        plan_name: plan?.name ?? null,
+        plans: slotPlans.map((p) => ({ id: p.id, name: p.name, status: p.status })),
+        plan_id: slotPlans.length === 1 ? slotPlans[0].id : null,
+        plan_name: slotPlans.map((p) => p.name).join('、') || null,
         subscribed_users: new Set(members.map((s) => s.user_id)).size,
         inflight: inflight[slot.id] ?? 0,
         max_concurrency: slot.max_concurrency ?? 2,

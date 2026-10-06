@@ -12,6 +12,7 @@ import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../../src/lib/admin/
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { resolveOutboundSessionId } from '../../src/lib/identity/identity-rewrite.mjs'
 import { subscriptionOverview } from '../../src/lib/admin/subscription-overview.mjs'
+import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 
 function setup(t, config = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subscription-test-'))
@@ -41,6 +42,44 @@ function setup(t, config = {}) {
   return { dir, db, repo, plan, a, b }
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
+
+test('plans sharing one slot keep quota, reservations, RPM and revocation independent', (t) => {
+  const { db, repo, plan, a } = setup(t, { subscription_concurrency: 1, group_rpm_limit: 1 })
+  const second = repo.savePlan(
+    { name: 'Premium', vm_ids: ['vm-1', 'vm-1'], daily_limit_usd: 80, group_rpm_limit: 2 },
+    'admin',
+  )
+  assert.deepEqual(second.vm_ids, ['vm-1'])
+  repo.assign({ group_id: second.id, user_ids: ['a', 'c'] }, 'admin')
+  const premiumKey = { ...a, id: 'premium-key', group_id: second.id }
+  const first = repo.reserve(a, 'basic', body)
+  const premium = repo.reserve(premiumKey, 'premium', body)
+  assert.throws(() => repo.reserve(a, 'basic-concurrent', body), /并发/)
+  repo.settle('basic', first.id, 30)
+  assert.throws(() => repo.reserve(a, 'basic-empty', body), /额度/)
+  assert.equal(repo.progress(premium).daily_used, 0)
+  repo.settle('premium', premium.id, 2)
+  assert.equal(repo.progress(first).daily_used, 30)
+  assert.equal(repo.progress(premium).daily_used, 2)
+  const limits = new RequestLimitsRepo(db),
+    now = Date.now()
+  assert.equal(limits.consume(a, now, 'rpm-basic').ok, true)
+  assert.equal(limits.consume(a, now, 'rpm-basic-blocked').code, 'group_rpm_limit')
+  assert.equal(limits.consume(premiumKey, now, 'rpm-premium').ok, true)
+  const overview = subscriptionOverview(db, [{ id: 'vm-1' }])
+  assert.equal(overview.slots.length, 1)
+  assert.equal(overview.slots[0].plans.length, 2)
+  assert.equal(overview.slots[0].subscribed_users, 3, 'same user in two plans counts once')
+  repo.update(first.id, { status: 'revoked' }, 'admin')
+  assert.throws(() => repo.entitlement(a), /订阅/)
+  assert.equal(repo.entitlement(premiumKey).id, premium.id)
+  repo.savePlan({ status: 'disabled', vm_ids: [] }, 'admin', plan.id)
+  assert.deepEqual(repo.entitlement(premiumKey).vmIds, ['vm-1'])
+  assert.equal(subscriptionOverview(db, [{ id: 'vm-1' }]).slots[0].subscribed_users, 2)
+  assert.throws(() => db.prepare('INSERT INTO custom_subscription_slots VALUES(?,?)').run(second.id, 'vm-1'), /UNIQUE/)
+  db.prepare("UPDATE vms SET owner_user_id='a' WHERE id='vm-2'").run()
+  assert.throws(() => repo.savePlan({ name: 'Private', vm_ids: ['vm-2'] }, 'admin'), /个人/)
+})
 
 test('key aggregates cover the whole selected range, retain deleted key history, and never cross user ownership', (t) => {
   const { db, plan } = setup(t)
@@ -119,7 +158,7 @@ test('shared slot grants separate entitlements and rejects unassigned, paused, e
   const scope = ownerScopeFromRequest({ apiKeyRecord: a }, { db })
   assert.equal(vmMatchesOwnerScope({ id: 'vm-1' }, scope), true)
   assert.equal(vmMatchesOwnerScope({ id: 'vm-2' }, scope), false)
-  assert.throws(() => repo.savePlan({ name: 'Duplicate', vm_ids: ['vm-1'] }, 'admin'), /已绑定/)
+  assert.deepEqual(repo.savePlan({ name: 'Another plan', vm_ids: ['vm-1'] }, 'admin').vm_ids, ['vm-1'])
   repo.update(repo.entitlement(a).id, { status: 'revoked' }, 'admin')
   assert.throws(() => repo.entitlement(a), /订阅/)
   assert.ok(repo.entitlement(b))

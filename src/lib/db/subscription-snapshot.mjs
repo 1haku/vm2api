@@ -109,4 +109,6 @@ export function verifySubscriptionSchema(db) {
     throw new Error('Custom migration 002 missing')
   if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='003'").get())
     throw new Error('Custom migration 003 missing')
+  if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='004'").get())
+    throw new Error('Custom migration 004 missing')
 }

@@ -30,7 +30,12 @@ cp "$BACKUP/kin.db" "$BACKUP/migration-check/kin.db"
 docker run --rm --entrypoint node -v "$BACKUP/migration-check:/migration-check" "$IMAGE" scripts/check-subscriptions-upgrade.mjs /migration-check/kin.db > "$BACKUP/migration-check.json"
 # Capture the exact stopped DB and WAL before its schema changes.
 cd "$ROOT"
+sha256sum "$ROOT/vms/active.json" > "$BACKUP/active-before.sha256"
 docker compose stop vm2api
+# Back up persistent slot records after stopping the control plane; runtime
+# sockets and logs can keep changing while the slot containers are running.
+docker run --rm --entrypoint sh -v "$ROOT/vms:/vms:ro" "$IMAGE" -c 'cd /; tar -czf - vms/*.json' > "$BACKUP/vms.tar.gz"
+chmod 600 "$BACKUP/vms.tar.gz"
 mkdir -p "$BACKUP/stopped-data"
 docker run --rm --entrypoint sh -v "$ROOT/data:/live:ro" -v "$BACKUP/stopped-data:/backup" "$IMAGE" -c 'for file in kin.db kin.db-wal kin.db-shm; do if [ -f "/live/$file" ]; then cp "/live/$file" "/backup/$file"; fi; done; test -f /backup/kin.db'
 printf 'services:\n  vm2api:\n    image: %s\n' "$IMAGE" > "$ROOT/docker-compose.override.yml"

@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { verifySubscriptionSchema } from '../src/lib/db/subscription-snapshot.mjs'
 const manifest = JSON.parse(fs.readFileSync('release-manifest.json', 'utf8'))
 assert.equal(manifest.revision, process.argv[2])
-assert.equal(process.env.VM2API_CUSTOM_BUILD, 'subscriptions-v7')
+assert.equal(process.env.VM2API_CUSTOM_BUILD, 'subscriptions-v8')
 for (const [file, expected] of Object.entries(manifest.files)) {
   const actual = file.startsWith('image-bin/')
     ? file.replace('image-bin/', 'bin/')

@@ -288,7 +288,7 @@ export function SubscriptionWizard({
             <>
               <p className='text-sm'>
                 {mode === 'new'
-                  ? '勾选此方案使用的槽位。'
+                  ? '勾选此方案使用的槽位。同一槽位可供多个套餐共享，各套餐独立计算额度和限流。'
                   : '以下为方案已绑定的槽位；更换绑定可到“编辑方案与槽位”。'}
               </p>
               <div className='max-h-72 space-y-2 overflow-y-auto'>
@@ -300,11 +300,10 @@ export function SubscriptionWizard({
                       : plan?.vm_ids.includes(v.id)
                   )
                   .map((v) => {
-                    const bound = plans.data?.items.find((p) =>
+                    const bound = plans.data?.items.filter((p) =>
                       p.vm_ids.includes(v.id)
                     )
-                    const disabled =
-                      mode === 'existing' || !!bound || !!v.owner_user_id
+                    const disabled = mode === 'existing' || !!v.owner_user_id
                     return (
                       <label
                         key={v.id}
@@ -326,8 +325,8 @@ export function SubscriptionWizard({
                         <span className='flex-1'>
                           {v.name || v.id}
                           <span className='block text-xs text-muted-foreground'>
-                            {bound
-                              ? `所属方案：${bound.name} · ${bound.members} 位用户`
+                            {bound?.length
+                              ? `已关联套餐：${bound.map((p) => p.name).join('、')}（可共享）`
                               : v.owner_user_id
                                 ? '个人专属槽位'
                                 : '尚未绑定订阅'}

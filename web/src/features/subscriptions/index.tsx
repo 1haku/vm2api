@@ -675,6 +675,9 @@ export function SubscriptionsPage() {
             </div>
             <fieldset className='rounded-lg border p-3'>
               <legend className='px-1 text-sm'>绑定槽位（可多选）</legend>
+              <p className='mb-2 text-xs text-muted-foreground'>
+                同一槽位可绑定多个套餐，各套餐额度和限流独立，合计仍受槽位自身容量限制。
+              </p>
               <div className='max-h-40 space-y-2 overflow-y-auto'>
                 {vms.data?.items
                   .filter(
@@ -683,7 +686,7 @@ export function SubscriptionsPage() {
                       draft.platform
                   )
                   .map((v) => {
-                    const bound = plans.data?.items.some(
+                    const bound = plans.data?.items.filter(
                       (p) => p.id !== editId && p.vm_ids.includes(v.id)
                     )
                     return (
@@ -693,7 +696,7 @@ export function SubscriptionsPage() {
                       >
                         <input
                           type='checkbox'
-                          disabled={bound || !!v.owner_user_id}
+                          disabled={!!v.owner_user_id}
                           checked={draft.vm_ids.includes(v.id)}
                           onChange={(e) =>
                             setDraft({
@@ -705,8 +708,8 @@ export function SubscriptionsPage() {
                           }
                         />
                         {v.name || v.id} · {v.id}
-                        {bound
-                          ? '（已绑定）'
+                        {bound?.length
+                          ? `（已关联：${bound.map((p) => p.name).join('、')}，可共享）`
                           : v.owner_user_id
                             ? '（个人槽位）'
                             : ''}

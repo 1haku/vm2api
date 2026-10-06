@@ -97,8 +97,6 @@ export class SubscriptionsRepo {
       const vm = this.db.prepare('SELECT * FROM vms WHERE id=?').get(vmId)
       if (!vm) throw subscriptionError(`槽位不存在：${vmId}`)
       if (vm.owner_user_id) throw subscriptionError(`槽位 ${vmId} 已分配给个人，请先收回`)
-      const binding = this.db.prepare('SELECT group_id FROM custom_subscription_slots WHERE vm_id=?').get(vmId)
-      if (binding && binding.group_id !== id) throw subscriptionError(`槽位 ${vmId} 已绑定其他订阅方案`)
     }
     return withTransaction(this.db, () => {
       let groupId = id
