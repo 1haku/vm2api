@@ -55,6 +55,8 @@ export const QUEUE_MAX_MIN = 1
 export const QUEUE_MAX_MAX = 999
 export const SEAT_GRACE_MAX_MS = 120000
 export const SEAT_BUDGET_RESERVE_MAX = 0.5
+export const CIRCUIT_THRESHOLD_MAX = 20
+export const CIRCUIT_OPEN_MIN_MS = 1000
 
 /** A queued request re-reads eligibility this often, so cooldown lifts and new slots reach it. */
 const QUEUE_REFRESH_MS = 2000
@@ -67,6 +69,8 @@ export const DEFAULT_POOL_ROUTING = Object.freeze({
   seat_budget_reserve_pct: 0.02,
   fallback_wait_timeout_ms: 30000,
   sticky_wait_timeout_ms: 45000,
+  circuit_failure_threshold: 3,
+  circuit_open_ms: 30000,
 })
 
 const DEFAULT_CONFIG = {
@@ -115,7 +119,26 @@ export function normalizePoolRouting(pool = {}) {
     next.fallback_wait_timeout_ms,
     DEFAULT_POOL_ROUTING.fallback_wait_timeout_ms,
   )
+  // UnitCircuit used to read 0 / junk as its default; store that default so the
+  // panel shows the value that actually runs.
+  next.circuit_failure_threshold = circuitSetting(
+    next.circuit_failure_threshold,
+    DEFAULT_POOL_ROUTING.circuit_failure_threshold,
+    1,
+    CIRCUIT_THRESHOLD_MAX,
+  )
+  next.circuit_open_ms = circuitSetting(
+    next.circuit_open_ms,
+    DEFAULT_POOL_ROUTING.circuit_open_ms,
+    CIRCUIT_OPEN_MIN_MS,
+    Number.MAX_SAFE_INTEGER,
+  )
   return next
+}
+
+function circuitSetting(value, fallback, min, max) {
+  if (!Number(value)) return fallback
+  return clampNumber(value, fallback, min, max)
 }
 
 function normalizePoolConfig(config = {}) {
