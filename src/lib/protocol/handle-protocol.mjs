@@ -208,9 +208,9 @@ export function createHandleProtocol(deps) {
         retry_after: result?.body?.error?.retry_after || result?.headers?.['retry-after'] || null,
       }
     }
-    // Pool 529 always carries Retry-After: the planner's wake estimate, floored at 1s.
-    if (mapped.body?.error?.code === 'pool_overloaded') {
-      mapped.retryAfterSec = Math.max(1, Math.ceil(Number(result?.retryAfterSec) || 0))
+    // Pool 529 / pool-wide 429 always carry Retry-After: the runner's wake estimate, floored at 1s.
+    if (mapped.retryAfterSec && Number(result?.retryAfterSec) > 0) {
+      mapped.retryAfterSec = Math.max(1, Math.ceil(Number(result.retryAfterSec)))
     }
     return mapped
   }

@@ -7,6 +7,7 @@ import {
 import { listQuotaFromHeaders } from './quota-window.mjs'
 import {
   CLIENT_POOL_BUSY_MESSAGE,
+  CLIENT_POOL_RATE_LIMITED_MESSAGE,
   clientCancelledResult,
   isClientCancelledResult,
   isCompleteAssistantMessage,
@@ -99,7 +100,36 @@ export function poolOverloadedError(details = {}) {
   }
 }
 
-const CAPACITY_SELECTION_REASONS = new Set(['all_accounts_busy', 'pool_wait_queue_full', 'pool_queue_timeout'])
+const CAPACITY_SELECTION_REASONS = new Set([
+  'all_accounts_busy',
+  'pool_wait_queue_full',
+  'pool_queue_timeout',
+  'pool_overload_cooldown',
+])
+
+/**
+ * Every remaining account sits in an upstream 429 rate-limit cooldown. The
+ * caller hit the provider's limit, so this is a 429 with the earliest reset.
+ */
+function poolRateLimitedError(details = {}) {
+  const retryMs = Number(details.retry_after_ms ?? details.soonest_available_ms)
+  return {
+    ok: false,
+    status: 429,
+    via: 'pool-failover',
+    terminalState: 'exhausted',
+    retryAfterSec: Number.isFinite(retryMs) && retryMs > 0 ? Math.max(1, Math.ceil(retryMs / 1000)) : 1,
+    body: {
+      type: 'error',
+      error: {
+        type: 'rate_limit_error',
+        code: 'pool_rate_limited',
+        message: CLIENT_POOL_RATE_LIMITED_MESSAGE,
+        details,
+      },
+    },
+  }
+}
 
 function fableRequiresMaxError(details = {}) {
   return {
@@ -323,6 +353,7 @@ function selectionFailure(selected, { excluded, lastPolicy, lastResult, hops }) 
     last_status: lastResult?.status ?? null,
   }
   if (CAPACITY_SELECTION_REASONS.has(reason)) return poolOverloadedError(details)
+  if (reason === 'pool_rate_limited') return poolRateLimitedError(details)
   return poolError('account_pool_exhausted', 'No eligible Claude accounts remain', details)
 }
 

@@ -1148,6 +1148,32 @@ test('a seat queue timeout is a 529 overloaded_error with the planner retry-afte
   assert.equal(result.retryAfterSec, 3)
 })
 
+test('every account in an upstream cooldown: 529 cooldown is capacity, 429 cooldown is a 429', async () => {
+  const cases = [
+    ['pool_overload_cooldown', 529, 'overloaded_error', 'pool_overloaded'],
+    ['pool_rate_limited', 429, 'rate_limit_error', 'pool_rate_limited'],
+  ]
+  for (const [reason, status, type, code] of cases) {
+    const scheduler = {
+      async selectAndReserve() {
+        return { ok: false, reason, retry_after_ms: 41_200, eligible: 0 }
+      },
+      markCooldown() {},
+      markSuccess() {},
+    }
+    const result = await new FailoverRunner({ scheduler }).run({
+      requestId: `req-${reason}`,
+      canonicalBody: { model: 'claude-sonnet-test' },
+      model: 'claude-sonnet-test',
+      callAttempt: () => success(),
+    })
+    assert.equal(result.status, status, reason)
+    assert.equal(result.body.error.type, type, reason)
+    assert.equal(result.body.error.code, code, reason)
+    assert.equal(result.retryAfterSec, 42, reason)
+  }
+})
+
 test('a full pool queue answers 529 immediately with retry-after >= 1s', async () => {
   const scheduler = {
     async selectAndReserve() {

@@ -1844,7 +1844,19 @@ test('skipSessionSlot probe still obeys concurrency quota cooldown and hard bloc
     skipSessionSlot: true,
   })
   assert.equal(hard.ok, false)
-  assert.equal(hard.reason, 'no_eligible_accounts')
+  assert.equal(hard.reason, 'pool_rate_limited')
+  assert.ok(hard.retry_after_ms > 50_000 && hard.retry_after_ms <= 60_000)
+
+  const overloadRepo = new RuntimeRepo()
+  overloadRepo.upsert({ account_id: 'account-1', vm_id: 'vm-01', overload_until: Date.now() + 30_000 })
+  overloadRepo.upsert({ account_id: 'account-2', vm_id: 'vm-02', rate_limit_reset_at: Date.now() + 60_000 })
+  const overloaded = await scheduler(root, { runtimeRepo: overloadRepo }).selectAndReserve({
+    model: 'claude-test',
+    allowWait: false,
+    skipSessionSlot: true,
+  })
+  assert.equal(overloaded.reason, 'pool_overload_cooldown')
+  assert.ok(overloaded.retry_after_ms > 20_000 && overloaded.retry_after_ms <= 30_000)
 })
 
 test('exact sticky session outranks device VM affinity', async (t) => {
