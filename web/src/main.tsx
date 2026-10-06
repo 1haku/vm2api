@@ -69,7 +69,7 @@ if (!rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider defaultTheme='dark'>
+        <ThemeProvider>
           <FontProvider>
             <DirectionProvider>
               <RouterProvider router={router} />
