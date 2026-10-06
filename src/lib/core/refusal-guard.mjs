@@ -2,7 +2,7 @@
  * Persist upstream content-filter refusals and short-circuit repeats.
  * Fingerprint is model + normalized system/user/tool names (not stream/max_tokens).
  *
- * Wrap "Usage Policy" text is not a cacheable refusal. HostDzire 1.3.8 stored
+ * Wrap "Usage Policy" text is not a cacheable refusal. 1.3.8 stored
  * 262 envelope sessions that way (normal coding prompts, hit_count=0) because
  * persistable JSON changes every turn. Stripping that JSON would 403 later
  * real turns of the same Claude Code session.

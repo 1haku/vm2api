@@ -132,7 +132,7 @@ test('memory-stage-one harvest is distill even at 4096 tokens', () => {
   )
 })
 
-test('hostdzire memory-stage-one envelope is distill even if official or zero inject', () => {
+test('memory-stage-one envelope is distill even if official or zero inject', () => {
   const inbound = {
     model: 'claude-opus-5',
     max_tokens: 4096,
