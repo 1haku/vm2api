@@ -16,6 +16,12 @@ type PoolPaneProps = {
   onFailoverChange: (next: Record<string, unknown>) => void
 }
 
+/** 配置存小数，界面显示百分数；保留一位小数，避免 0.07 × 100 的浮点尾巴。 */
+function percentOf(fraction: unknown, fallback: number): number {
+  const n = Number(fraction ?? fallback)
+  return Math.round((Number.isFinite(n) ? n : fallback) * 1000) / 10
+}
+
 export function PoolPane(props: PoolPaneProps) {
   const { pool, failover, onPoolChange, onFailoverChange } = props
   return (
@@ -30,19 +36,18 @@ export function PoolPane(props: PoolPaneProps) {
       <CardContent className='divide-y'>
         <SettingRow
           label='策略'
-          desc='只作用于 Claude VM。同优先级里先取最低负载，再按这里的方式挑选。'
+          desc='只作用于 Claude VM 的新席位。平衡：先开占用比例最低的 VM；填充：先填满占用比例最高的 VM。同比例再按配额余量。'
         >
           <Select
-            value={String(pool.strategy || 'weighted-round-robin')}
+            value={pool.strategy === 'fill' ? 'fill' : 'balanced'}
             onValueChange={(strategy) => onPoolChange({ ...pool, strategy })}
           >
             <SelectTrigger className='w-56'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value='weighted-round-robin'>平滑 WRR</SelectItem>
-              <SelectItem value='round-robin'>轮询</SelectItem>
-              <SelectItem value='lru'>LRU</SelectItem>
+              <SelectItem value='balanced'>平衡</SelectItem>
+              <SelectItem value='fill'>填充</SelectItem>
             </SelectContent>
           </Select>
         </SettingRow>
@@ -146,18 +151,56 @@ export function PoolPane(props: PoolPaneProps) {
           />
         </SettingRow>
         <SettingRow
-          label='每账号等待人数'
-          desc='max_waiters_per_account，默认 100'
+          label='允许排队数量'
+          desc='全部 Claude 排队请求的总数（等席位、并发、冷却 / RPM），范围 1–999，默认 50；满了新请求直接 529'
         >
           <Input
             className='w-24'
             type='number'
             min={1}
-            value={Number(pool.max_waiters_per_account ?? 100)}
+            max={999}
+            value={Number(pool.queue_max ?? 50)}
             onChange={(event) =>
               onPoolChange({
                 ...pool,
-                max_waiters_per_account: Number(event.target.value),
+                queue_max: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='席位宽限'
+          desc='毫秒，范围 0–120000，默认 30000。请求结束后席位为同一设备保留的时长'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={0}
+            max={120000}
+            value={Number(pool.seat_grace_ms ?? 30000)}
+            onChange={(event) =>
+              onPoolChange({
+                ...pool,
+                seat_grace_ms: Number(event.target.value),
+              })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          label='每席位预算预留'
+          desc='百分比，范围 0–50，默认 2。VM 的 5h/7d 余量至少为（已占席位 + 1）× 该值才开新席位'
+        >
+          <Input
+            className='w-24'
+            type='number'
+            min={0}
+            max={50}
+            step={0.5}
+            value={percentOf(pool.seat_budget_reserve_pct, 0.02)}
+            onChange={(event) =>
+              onPoolChange({
+                ...pool,
+                seat_budget_reserve_pct: Number(event.target.value) / 100,
               })
             }
           />

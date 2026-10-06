@@ -162,8 +162,8 @@ export function CredentialWeightPane() {
           <CardTitle>凭证调度等级</CardTitle>
           <CardDescription className='max-w-3xl leading-5'>
             等级越高越先参与普通调度。自动模式按 Claude 7D 重置倒计时计算 1～7
-            级；手动模式可设 1～10 级。健康粘性会话仍优先，同等级内继续使用原
-            WRR 权重。
+            级；手动模式可设 1～10 级。健康粘性会话仍优先，同等级内按账号池策略
+            （平衡 / 填充）开新席位。
           </CardDescription>
         </CardHeader>
         <CardContent className='divide-y'>

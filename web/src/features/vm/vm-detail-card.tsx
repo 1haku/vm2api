@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { credTypeLabel, credTypeOf } from '@/lib/cred-type'
 import { fmtExpiresAt, fmtNum, fmtUsd } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { compactEmail, isCodexVm, slotNameLabel } from '@/lib/vm-kind'
 import {
   accountStatus,
@@ -19,6 +20,7 @@ import {
   credExpiry,
   poolStatus,
   restrictionCopy,
+  seatTitle,
   vmRunning,
 } from '@/lib/vm-status'
 import {
@@ -95,11 +97,19 @@ function CardBody({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
         <span className='text-xs text-muted-foreground'>
           {vmRunning(vm) ? '运行' : '停止'}
           {inflight > 0 ? ` · 在飞 ${inflight}` : ''}
-          {vm.seats_max != null
-            ? ` · 席位 ${Number(vm.seats_used) || 0}/${vm.seats_max}`
-            : ''}
-          {queued > 0 ? ` · 排队 ${queued}` : ''}
         </span>
+        {vm.seats_max != null ? (
+          <span
+            className={cn(
+              'text-xs text-muted-foreground tabular-nums',
+              queued > 0 && 'text-[color:var(--status-warn)]'
+            )}
+            title={seatTitle(vm)}
+          >
+            席位 {Number(vm.seats_used) || 0}/{vm.seats_max}
+            {queued > 0 ? ` · 排队 ${queued}` : ''}
+          </span>
+        ) : null}
         <div className='ms-auto flex items-center gap-1.5 text-xs text-muted-foreground'>
           调度
           <SchedulableSwitch {...vmSchedulableProps(vm)} />
