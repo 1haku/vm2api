@@ -50,6 +50,7 @@ const CODE_MAP = {
   api_key_concurrency_limit: 'quota',
   pool_overloaded: 'overloaded',
   pool_wait_queue_full: 'overloaded',
+  pool_queue_timeout: 'overloaded',
   account_pool_exhausted: 'unavailable',
   api_pool_exhausted: 'unavailable',
   no_eligible_accounts: 'unavailable',
@@ -109,6 +110,10 @@ export const SLA_OK_ERROR_CODES = new Set([
   'distill_blocked',
   'refusal_guard',
   'content_filter_refusal',
+  // Pool queue full / timeout moved from 429 to 529; SLA keeps counting them as it did at 429.
+  'pool_overloaded',
+  'pool_wait_queue_full',
+  'pool_queue_timeout',
 ])
 
 export function ignoredErrorSqlList() {

@@ -1,0 +1,344 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { EventEmitter } from 'node:events'
+import { PoolScheduler, normalizePoolRouting } from '../../src/lib/pool/pool-scheduler.mjs'
+import { SeatPlanner, budgetAllows, rankSeatCandidates } from '../../src/lib/pool/seat-planner.mjs'
+import { servePoolSeatStream } from '../../src/lib/admin/pool-seat-stream.mjs'
+
+const MODEL = 'claude-test'
+
+function project(specs) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-seat-planner-'))
+  const vms = path.join(root, 'vms')
+  fs.mkdirSync(vms, { recursive: true })
+  specs.forEach(({ id, policy = {} }, index) => {
+    const accountId = `account-${index + 1}`
+    const vm = {
+      id,
+      name: id,
+      status: 'running',
+      schedulable: true,
+      proxy_cli_enabled: true,
+      proxy: { id: `proxy-${id}`, url: `socks5h://127.0.0.1:${11001 + index}` },
+      runtime: { worker_socket: path.join(vms, id, 'run', 'worker.sock') },
+      policy: { maxConcurrency: 4, concurrencyOverride: true, weight: 1, ...policy },
+      claude: {
+        account_uuid: accountId,
+        account_tier: 'max',
+        access_token: `access-${accountId}`,
+        refresh_token: `refresh-${accountId}`,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      },
+    }
+    fs.writeFileSync(path.join(vms, `${id}.json`), JSON.stringify(vm))
+  })
+  fs.writeFileSync(path.join(vms, 'active.json'), JSON.stringify({ active_vm: specs[0].id }))
+  return root
+}
+
+class RuntimeRepo {
+  states = new Map()
+  get(id) {
+    return this.states.get(id) || null
+  }
+  clearExpired() {}
+  upsert(state) {
+    this.states.set(state.account_id, { ...(this.states.get(state.account_id) || {}), ...state })
+  }
+  markCooldown() {}
+}
+
+function scheduler(root, config = {}) {
+  const pool = new PoolScheduler({
+    projectRoot: root,
+    runtimeRepo: new RuntimeRepo(),
+    accountQuota: { canAccept: () => ({ ok: true }) },
+    workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
+    config: { seat_grace_ms: 0, ...config },
+  })
+  pool.config.sticky_wait_timeout_ms = config.sticky ?? 2000
+  pool.config.fallback_wait_timeout_ms = config.fallback ?? 2000
+  return pool
+}
+
+function setup(t, specs, config) {
+  const root = project(specs)
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  return scheduler(root, config)
+}
+
+async function waitFor(check, ms = 2000) {
+  const until = Date.now() + ms
+  while (!check()) {
+    if (Date.now() > until) throw new Error('waitFor timed out')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+const seat = (pool, device, extra = {}) =>
+  pool.selectAndReserve({ model: MODEL, seatKey: `seat:dev:${device}`, ...extra })
+
+function perVm(holds) {
+  const out = {}
+  for (const hold of holds) out[hold.vmId] = (out[hold.vmId] || 0) + 1
+  return out
+}
+
+test('5 devices on 2×2 seats: 4 seat now, the 5th queues and the 6th waits behind it', async (t) => {
+  const pool = setup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 2 } },
+    { id: 'vm-02', policy: { sessionSlots: 2 } },
+  ])
+  const held = []
+  for (const device of ['d1', 'd2', 'd3', 'd4']) held.push(await seat(pool, device))
+  assert.ok(held.every((hold) => hold.ok))
+  assert.deepEqual(perVm(held), { 'vm-01': 2, 'vm-02': 2 })
+  const fifth = seat(pool, 'd5')
+  await waitFor(() => pool.planner.globalQueue.length === 1)
+  const sixth = seat(pool, 'd6')
+  await waitFor(() => pool.planner.globalQueue.length === 2)
+  assert.deepEqual(
+    pool.planner.globalQueue.map((ticket) => ticket.seatKey),
+    ['seat:dev:d5', 'seat:dev:d6'],
+  )
+  held[0].release()
+  const got5 = await fifth
+  assert.equal(got5.ok, true)
+  assert.equal(got5.vmId, held[0].vmId)
+  assert.equal(got5.selectionReason, 'queued')
+  assert.deepEqual(
+    pool.planner.globalQueue.map((ticket) => ticket.seatKey),
+    ['seat:dev:d6'],
+  )
+  held[1].release()
+  const got6 = await sixth
+  assert.equal(got6.ok, true)
+  for (const hold of [...held.slice(2), got5, got6]) hold.release()
+})
+
+test('one device with 3 concurrent requests holds 1 seat; VM concurrency 2 releases them in arrival order', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 2, maxConcurrency: 2 } }])
+  const a = await seat(pool, 'x')
+  const b = await seat(pool, 'x')
+  const order = []
+  const c = seat(pool, 'x').then((hold) => (order.push('c'), hold))
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).length === 1)
+  const d = seat(pool, 'x').then((hold) => (order.push('d'), hold))
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).length === 2)
+  assert.equal(pool.planner.openCount('vm-01'), 1)
+  const snap = pool.seatSnapshot()
+  assert.equal(snap.seats['vm-01'].seats_used, 1)
+  assert.equal(snap.seats['vm-01'].conc_waiting, 2)
+  a.release()
+  const gotC = await c
+  assert.deepEqual(order, ['c'])
+  b.release()
+  const gotD = await d
+  assert.deepEqual(order, ['c', 'd'])
+  assert.equal(pool.planner.openCount('vm-01'), 1)
+  gotC.release()
+  gotD.release()
+})
+
+test('seat cap comes from the VM override, else inference.session_slots, clamped to 20', async (t) => {
+  const pool = setup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 3 } },
+    { id: 'vm-02' },
+    { id: 'vm-03', policy: { sessionSlots: 50 } },
+  ])
+  pool.config.default_session_slots = 5
+  const caps = Object.fromEntries((await pool.eligibleCandidates({ model: MODEL })).map((c) => [c.vmId, c.seatCap]))
+  assert.deepEqual(caps, { 'vm-01': 3, 'vm-02': 5, 'vm-03': 20 })
+  pool.config.default_session_slots = 99
+  const clamped = await pool.eligibleCandidates({ model: MODEL })
+  assert.equal(clamped.find((c) => c.vmId === 'vm-02').seatCap, 20)
+})
+
+test('within seat_grace_ms the seat stays with its device; afterwards a queued device gets it', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }], { seat_grace_ms: 150 })
+  const a = await seat(pool, 'owner')
+  a.release()
+  assert.equal(pool.seatSnapshot().seats['vm-01'].seats_grace, 1)
+  let granted = false
+  const other = seat(pool, 'other').then((hold) => ((granted = true), hold))
+  await waitFor(() => pool.planner.globalQueue.length === 1)
+  const again = await seat(pool, 'owner', { allowWait: false })
+  assert.equal(again.ok, true)
+  assert.equal(again.selectionReason, 'seat-held')
+  again.release()
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(granted, false)
+  const got = await other
+  assert.equal(got.ok, true)
+  assert.equal(got.vmId, 'vm-01')
+  got.release()
+})
+
+test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
+  assert.equal(budgetAllows(0.05, 2, 0.02), false)
+  assert.equal(budgetAllows(0.05, 1, 0.02), true)
+  assert.equal(budgetAllows(null, 9, 0.02), true)
+  const planner = new SeatPlanner({ reservePct: 0.02 })
+  planner.open('a', { vmId: 'vm-1', cap: 4 })
+  assert.equal(planner.canOpen('vm-1', 4, 0.05), true)
+  planner.open('b', { vmId: 'vm-1', cap: 4 })
+  assert.equal(planner.canOpen('vm-1', 4, 0.05), false)
+
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 4 } }])
+  const check = pool.checkEligibility.bind(pool)
+  pool.checkEligibility = async (args) => ({ ...(await check(args)), headroom: 0.05 })
+  const d1 = await seat(pool, 'd1')
+  const d2 = await seat(pool, 'd2')
+  assert.equal(d1.ok && d2.ok, true)
+  const d3 = await seat(pool, 'd3', { allowWait: false })
+  assert.equal(d3.ok, false)
+  const d1Again = await seat(pool, 'd1', { allowWait: false })
+  assert.equal(d1Again.ok, true)
+  assert.equal(d1Again.selectionReason, 'seat-held')
+  for (const hold of [d1, d2, d1Again]) hold.release()
+})
+
+test('balanced spreads 4 devices 2/2, fill packs 4/0; headroom then vmId break ties', async (t) => {
+  const specs = [
+    { id: 'vm-01', policy: { sessionSlots: 4, maxConcurrency: 8 } },
+    { id: 'vm-02', policy: { sessionSlots: 4, maxConcurrency: 8 } },
+  ]
+  const balanced = setup(t, specs)
+  const spread = []
+  for (const device of ['b1', 'b2', 'b3', 'b4']) spread.push(await seat(balanced, device))
+  assert.deepEqual(perVm(spread), { 'vm-01': 2, 'vm-02': 2 })
+  assert.equal(spread[0].selectionReason, 'balanced')
+  for (const hold of spread) hold.release()
+
+  const fill = setup(t, specs, { strategy: 'fill' })
+  const packed = []
+  for (const device of ['f1', 'f2', 'f3', 'f4']) packed.push(await seat(fill, device))
+  assert.deepEqual(perVm(packed), { 'vm-01': 4 })
+  assert.equal(packed[0].selectionReason, 'fill')
+  for (const hold of packed) hold.release()
+
+  const openOf = () => 0
+  const tie = [
+    { vmId: 'vm-a', seatCap: 4, headroom: 0.3 },
+    { vmId: 'vm-b', seatCap: 4, headroom: 0.5 },
+  ]
+  assert.equal(rankSeatCandidates(tie, { strategy: 'balanced', openOf })[0].vmId, 'vm-b')
+  assert.equal(rankSeatCandidates(tie, { strategy: 'fill', openOf })[0].vmId, 'vm-b')
+  const prio = [{ ...tie[0], priority: 9 }, tie[1]]
+  assert.equal(rankSeatCandidates(prio, { strategy: 'balanced', openOf })[0].vmId, 'vm-a')
+  const even = [
+    { vmId: 'vm-b', seatCap: 4, headroom: 0.4 },
+    { vmId: 'vm-a', seatCap: 4, headroom: 0.4 },
+  ]
+  assert.equal(rankSeatCandidates(even, { strategy: 'balanced', openOf })[0].vmId, 'vm-a')
+})
+
+test('queue timeout is pool_queue_timeout', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }], { fallback: 80 })
+  const held = await seat(pool, 'd1')
+  const started = Date.now()
+  const late = await seat(pool, 'd2')
+  assert.equal(late.ok, false)
+  assert.equal(late.reason, 'pool_queue_timeout')
+  assert.ok(Date.now() - started >= 70)
+  assert.equal(pool.planner.pending(), 0)
+  held.release()
+})
+
+test('queue_max=2: the 3rd waiter is refused at once; a freed place admits the next', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }], { queue_max: 2 })
+  const held = await seat(pool, 'd1')
+  const cancel = new AbortController()
+  const second = seat(pool, 'd2', { signal: cancel.signal })
+  const third = seat(pool, 'd3')
+  await waitFor(() => pool.queuedTotal() === 2)
+  const started = Date.now()
+  await assert.rejects(seat(pool, 'd4'), { code: 'pool_wait_queue_full' })
+  assert.ok(Date.now() - started < 200)
+  cancel.abort()
+  await assert.rejects(second, { code: 'selection_cancelled' })
+  assert.equal(pool.queuedTotal(), 1)
+  const fifth = seat(pool, 'd5')
+  await waitFor(() => pool.queuedTotal() === 2)
+  held.release()
+  const got3 = await third
+  got3.release()
+  const got5 = await fifth
+  got5.release()
+})
+
+test('pool routing normalization: queue_max clamps, legacy strategy, dropped per-account cap', () => {
+  assert.equal(normalizePoolRouting({}).queue_max, 50)
+  assert.equal(normalizePoolRouting({ queue_max: 0 }).queue_max, 1)
+  assert.equal(normalizePoolRouting({ queue_max: 1000 }).queue_max, 999)
+  for (const legacy of ['weighted-round-robin', 'round-robin', 'lru', 'fill-first', 'nope']) {
+    assert.equal(normalizePoolRouting({ strategy: legacy }).strategy, 'balanced')
+  }
+  assert.equal(normalizePoolRouting({ strategy: 'fill' }).strategy, 'fill')
+  const next = normalizePoolRouting({
+    max_waiters_per_account: 100,
+    seat_grace_ms: 999999,
+    seat_budget_reserve_pct: 0.9,
+  })
+  assert.equal(Object.hasOwn(next, 'max_waiters_per_account'), false)
+  assert.equal(next.seat_grace_ms, 120000)
+  assert.equal(next.seat_budget_reserve_pct, 0.5)
+  assert.equal(normalizePoolRouting({}).seat_budget_reserve_pct, 0.02)
+})
+
+test('seatless and pinned requests bypass the planner', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
+  const probe = await seat(pool, 'p', { skipSessionSlot: true, allowWait: false })
+  const pinned = await seat(pool, 'q', { pinVmId: 'vm-01', allowWait: false })
+  assert.equal(probe.ok && pinned.ok, true)
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  probe.release()
+  pinned.release()
+})
+
+test('failover off a VM frees the old seat at once and opens one on the new VM', async (t) => {
+  const pool = setup(
+    t,
+    [
+      { id: 'vm-01', policy: { sessionSlots: 1 } },
+      { id: 'vm-02', policy: { sessionSlots: 1 } },
+    ],
+    { seat_grace_ms: 30000 },
+  )
+  const first = await seat(pool, 'dev')
+  first.release()
+  assert.equal(pool.planner.openCount(first.vmId), 1)
+  const other = first.vmId === 'vm-01' ? 'vm-02' : 'vm-01'
+  const moved = await seat(pool, 'dev', { excluded: new Set([first.accountId]), allowWait: false })
+  assert.equal(moved.ok, true)
+  assert.equal(moved.vmId, other)
+  assert.equal(moved.seatMoved, true)
+  assert.equal(pool.planner.openCount(first.vmId), 0)
+  assert.equal(pool.planner.seatOf('seat:dev:dev').vmId, other)
+  moved.release()
+  pool.planner.free(pool.planner.seatOf('seat:dev:dev'))
+})
+
+test('seat stream frames carry per-VM seats, global queue and queue_max', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
+  let changes = 0
+  pool.on('change', () => changes++)
+  const req = new EventEmitter()
+  const res = new EventEmitter()
+  const frames = []
+  res.write = (chunk) => frames.push(String(chunk))
+  servePoolSeatStream({ req, res, getScheduler: () => pool, writeSSEHeaders() {}, throttleMs: 1, pingMs: 60_000 })
+  const held = await seat(pool, 'd1')
+  await waitFor(() => frames.length >= 2)
+  assert.ok(changes > 0)
+  const last = JSON.parse(frames.at(-1).split('data: ')[1])
+  assert.equal(last.seats['vm-01'].seats_used, 1)
+  assert.equal(last.global_queue_depth, 0)
+  assert.equal(last.queue_max, 50)
+  assert.equal(Object.hasOwn(last, 'holds'), false)
+  held.release()
+  req.emit('close')
+})

@@ -42,7 +42,8 @@ import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders, isOfficialWindowLimited } from '../pool/quota-window.mjs'
 import { hardBlockOf } from '../pool/rate-limit-service.mjs'
 import { unitCircuit } from '../pool/unit-circuit.mjs'
-import { accountIdOf } from '../pool/pool-scheduler.mjs'
+import { accountIdOf, normalizePoolRouting } from '../pool/pool-scheduler.mjs'
+import { codexMaxSessions } from '../pool/codex-slot-pool.mjs'
 import { resolveCredentialScheduleLevel } from '../pool/credential-weight.mjs'
 import {
   evaluateAccount,
@@ -587,7 +588,16 @@ export async function buildVmList({
       }
     })(),
   )
-  return ok({ items: vms, active_vm: active, total: vms.length, proxy_pool: summarizeProxyPool(proxyPool) })
+  return ok({
+    items: vms,
+    active_vm: active,
+    total: vms.length,
+    proxy_pool: summarizeProxyPool(proxyPool),
+    pool_queue: {
+      global_queue_depth: Number(pool.pool_queue?.global_queue_depth) || 0,
+      queue_max: pool.pool_queue?.queue_max ?? normalizePoolRouting(routingConfig?.pool).queue_max,
+    },
+  })
 }
 
 export async function buildVmDetail({
@@ -1205,7 +1215,7 @@ export function buildRouting({ routingConfig, stickyRouter }) {
     concurrency: routingConfig?.concurrency || {},
     tiers,
     logging: routingConfig?.logging || {},
-    pool: routingConfig?.pool || {},
+    pool: normalizePoolRouting(routingConfig?.pool),
     failover: routingConfig?.failover || {},
     compatibility: routingConfig?.compatibility || {},
     inference: routingConfig?.inference || {},
@@ -1427,7 +1437,6 @@ export function credStatusFromQuota(hasToken, q = {}, expiresAt = null, extras =
       workerCredential: extras.worker_credential || extras.runtime?.worker_status?.credential || null,
       quota: q,
       policy: extras.policy,
-      sessionLimit: extras.sessionLimit,
       cooldownUntil: extras.cooldown_until,
       cooldownReason: extras.cooldown_reason,
     }),
@@ -1542,11 +1551,14 @@ function enrichVm(v, accountQuota, active, extras = {}) {
   const policy = applyVmQuotaPolicy(inheritedPolicy, quotaOverride)
   const safety = Number(policy.limit_5h ?? policy.safety_ratio ?? 0.85)
   const weeklySafety = Number(policy.limit_7d ?? policy.weekly_safety_ratio ?? 0.8)
-  const sessionLimit = extras.sessionLimit || accountQuota?.sessions || null
-  const sessions = sessionLimit?.snapshot?.(acc?.account_id || v.account_uuid || v.id, {
-    max: Number(v.max_sessions ?? policy.max_sessions ?? 0),
-    idleMin: policy.session_idle_min,
-  }) || { active: 0, max: Number(v.max_sessions ?? policy.max_sessions ?? 0), idle_min: policy.session_idle_min }
+  // Codex keeps its own conversation window (vm max_sessions); Claude rows report planner seats.
+  const codexSessions = isCodex
+    ? accountQuota?.sessions?.snapshot?.(acc?.account_id || v.account_uuid || v.id, {
+        max: codexMaxSessions(v),
+        idleMin: 5,
+      }) || { active: 0, max: codexMaxSessions(v), idle_min: 5 }
+    : null
+  const seatRow = isCodex ? null : extras.pool?.seats?.[v.id] || null
   const liveHardBlock = hardBlockOf(runtime)
   const availability = evaluateAccount({
     vm: v,
@@ -1564,7 +1576,6 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     workerCredential: workerCred,
     quota: mergedQuota,
     policy,
-    sessionLimit,
     hardBlock: liveHardBlock,
     cooldownUntil:
       runtime?.cooldown_until ||
@@ -1710,13 +1721,19 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     // Claude unit circuit (Codex has its own failover set and never trips it).
     circuit: isCodex ? null : circuitViewFor(v, extras.projectRoot),
     refresh_error: v.refresh_error || v.claude?.refresh_error || runtime?.refresh_error || null,
-    sessions,
-    session_active: sessions.active,
-    session_max: sessions.max,
-    // Live seat book from PoolScheduler; session_active above is the idle-retained window count.
-    seats_used: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.seats_used) || 0,
+    ...(isCodex
+      ? {
+          sessions: codexSessions,
+          session_active: codexSessions.active,
+          session_max: codexSessions.max,
+        }
+      : {}),
+    // Live seat book from the seat planner (Claude only).
+    seats_used: isCodex ? null : Number(seatRow?.seats_used) || 0,
     seats_max: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
-    queue_depth: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.queue_depth) || 0,
+    seats_grace: isCodex ? null : Number(seatRow?.seats_grace) || 0,
+    queue_depth: isCodex ? null : Number(seatRow?.queue_depth) || 0,
+    conc_waiting: isCodex ? null : Number(seatRow?.conc_waiting) || 0,
     inflight: acc?.inflight ?? 0,
     requests: acc?.requests ?? v.stats?.requests ?? 0,
     tokens_in: acc?.tokens_in ?? 0,

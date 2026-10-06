@@ -19,7 +19,7 @@ import { normalizeInferenceConfig, normalizeSessionSlots } from '../vm/slot-engi
 import { accountTierKey, mergeTierMaps, normalizeTiers } from '../pool/quota-tiers.mjs'
 import { vmQuotaOverrideOf } from '../pool/vm-quota-override.mjs'
 import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
-import { PoolScheduler } from '../pool/pool-scheduler.mjs'
+import { PoolScheduler, normalizePoolRouting } from '../pool/pool-scheduler.mjs'
 import { FailoverRunner } from '../pool/failover-runner.mjs'
 import { unitCircuit } from '../pool/unit-circuit.mjs'
 import { RateLimitService } from '../pool/rate-limit-service.mjs'
@@ -275,7 +275,7 @@ export function createRoutingRuntime(ctx) {
     if (body.quota) routingConfig.quota = { ...(routingConfig.quota || {}), ...body.quota }
     if (body.concurrency) routingConfig.concurrency = { ...(routingConfig.concurrency || {}), ...body.concurrency }
     if (body.pool) {
-      routingConfig.pool = { ...(routingConfig.pool || {}), ...body.pool }
+      routingConfig.pool = normalizePoolRouting({ ...(routingConfig.pool || {}), ...body.pool })
       setManualScheduleWins(routingConfig.pool.manual_schedule_wins)
     }
     if (body.failover) routingConfig.failover = { ...(routingConfig.failover || {}), ...body.failover }
@@ -315,7 +315,11 @@ export function createRoutingRuntime(ctx) {
     ctx.accountQuota.reloadConfig(routingConfig)
     getPool()?.reloadConfig?.(poolSchedulerConfig())
     const kernelPersona = compatibilityTouchesKernel(body.compatibility) ? syncKernelPanelConfig(routingConfig) : null
-    if (body.pool || body.failover) initPoolRuntime()
+    // Pool and failover settings hot-reload into the live scheduler and runner.
+    // Rebuilding them would drop the seat book and queues while their requests
+    // still run (the panel sends `failover` with every routing save).
+    if (body.pool) configureUnitCircuit(routingConfig)
+    if (body.failover) ctx.failoverRunner?.reloadConfig?.(routingConfig.failover || {})
     try {
       return {
         concurrency: applyRoutingTierConcurrency(routingConfig.tiers),
@@ -351,6 +355,7 @@ export function createRoutingRuntime(ctx) {
     try {
       const doc = JSON.parse(raw)
       doc.codex = normalizeCodexRouting(doc.codex)
+      doc.pool = normalizePoolRouting(doc.pool)
       return doc
     } catch (error) {
       throw new Error(`Routing config '${ctx.routingConfigPath}' has invalid JSON: ${error?.message || error}`, {
@@ -384,6 +389,13 @@ export function createRoutingRuntime(ctx) {
     return String(tier || '').toLowerCase()
   }
 
+  function configureUnitCircuit(routingConfig) {
+    unitCircuit.configure({
+      failureThreshold: routingConfig.pool?.circuit_failure_threshold,
+      openMs: routingConfig.pool?.circuit_open_ms,
+    })
+  }
+
   function initPoolRuntime() {
     const routingConfig = getRouting()
     const runtimeRepo = new AccountRuntimeRepo()
@@ -403,10 +415,7 @@ export function createRoutingRuntime(ctx) {
       config: poolSchedulerConfig(),
     })
     setPool(poolScheduler)
-    unitCircuit.configure({
-      failureThreshold: routingConfig.pool?.circuit_failure_threshold,
-      openMs: routingConfig.pool?.circuit_open_ms,
-    })
+    configureUnitCircuit(routingConfig)
     ctx.accountQuota.onQuotaCooldownCleared = () => {
       try {
         poolScheduler.notifyCapacity()

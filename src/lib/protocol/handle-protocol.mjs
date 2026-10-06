@@ -79,6 +79,7 @@ import {
   extractFirstUserIdentity,
   outboundSessionMode,
   resolveInboundIdentity,
+  resolveSeatIdentity,
   resolveOutboundSessionId,
   sessionIdFromOutboundBody,
   sessionContextDiscriminator,
@@ -207,9 +208,9 @@ export function createHandleProtocol(deps) {
         retry_after: result?.body?.error?.retry_after || result?.headers?.['retry-after'] || null,
       }
     }
-    // Only a known wake time (cooldown / RPM / window reset) earns a Retry-After.
-    if (mapped.body?.error?.code === 'pool_overloaded' && Number(result?.retryAfterSec) > 0) {
-      mapped.retryAfterSec = Number(result.retryAfterSec)
+    // Pool 529 always carries Retry-After: the planner's wake estimate, floored at 1s.
+    if (mapped.body?.error?.code === 'pool_overloaded') {
+      mapped.retryAfterSec = Math.max(1, Math.ceil(Number(result?.retryAfterSec) || 0))
     }
     return mapped
   }
@@ -719,6 +720,10 @@ export function createHandleProtocol(deps) {
     // One-shot test calls (sub2api account test, new-api channel test) keep their
     // sticky identity but never hold a session seat the main conversation needs.
     const seatless = isProbe || isShortProbeRequest(inbound)
+    // Seat = inbound device (R1/R2); the API key never scopes it.
+    const seatKey = seatless
+      ? null
+      : resolveSeatIdentity({ inbound, body: ctx.body, headers: req.headers, clientIp: clientIp(req) }).key
     const sessionKeys = stickyRouter?.sessionPoolKeys
       ? stickyRouter.sessionPoolKeys(req, inbound, {
           sessionId: inboundIdentity.sessionId,
@@ -742,10 +747,6 @@ export function createHandleProtocol(deps) {
         ? stickyRouter.familyPoolKey(req, familySession, { trusted: familyTrusted })
         : stickyRouter?.familyKey?.(req, familySession, 'anthropic') || null
     const familyVmId = familyKey ? stickyRouter?.resolve?.(familyKey)?.vmId || null : null
-    // An explicit child counts against its root's conversation window, not a
-    // new one. Without a local root record there is no relation to trust.
-    const rootWindowKey = parentSession ? stickyRouter?.canonicalSessionKey?.(parentSession) || null : null
-    const windowKey = rootWindowKey && stickyRouter?.resolve?.(rootWindowKey) ? rootWindowKey : undefined
     const stickyBound =
       stickyKey && typeof stickyRouter?.resolve === 'function' ? stickyRouter.resolve(stickyKey) : null
     const outboundSessionId = resolveOutboundSessionId(callerSession, {
@@ -885,7 +886,7 @@ export function createHandleProtocol(deps) {
         if (!res.headersSent) {
           const mapped = mapProtocolClientError(result, logBag, 'api_pool_exhausted')
           if (!isClientCancelledResult(result)) stats.errors++
-          return json(res, mapped.status, mapped.body)
+          return sendMapped(res, mapped)
         }
         if (result?.ok && protocol !== 'anthropic.messages') res.write('data: [DONE]\n\n')
         return res.end()
@@ -894,7 +895,7 @@ export function createHandleProtocol(deps) {
         if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
         const mapped = mapProtocolClientError(result, logBag, 'upstream_error')
         stats.errors++
-        return json(res, mapped.status, mapped.body)
+        return sendMapped(res, mapped)
       }
       let output
       const clientBody = hidePersonaUsageOnMessage(result.body, personaHideTokens)
@@ -965,7 +966,7 @@ export function createHandleProtocol(deps) {
         deviceKey,
         skipSessionSeat: seatless,
         familyKey,
-        windowKey,
+        seatKey,
         familyVmId,
         pinVmId,
         ownerScope,

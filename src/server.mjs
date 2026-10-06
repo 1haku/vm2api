@@ -101,7 +101,6 @@ const FEATURES = [
   'protocol-convert',
   'go-slot-worker',
   'account-pool-failover',
-  'weighted-round-robin',
   'tools',
   'client-workspace',
   'api-direct-kernel',

@@ -25,13 +25,15 @@ test('an empty pool is a 503 "no available account", never a load message', () =
   assert.equal(mapped.body.error.details, undefined)
 })
 
-test('real capacity exhaustion is a 429 pool_overloaded', () => {
-  for (const code of ['pool_overloaded', 'pool_wait_queue_full']) {
-    const mapped = mapUpstreamError(429, { error: { type: 'rate_limit_error', code, message: 'busy' } })
-    assert.equal(mapped.status, 429, code)
-    assert.equal(mapped.body.error.type, 'rate_limit_error', code)
+test('real capacity exhaustion and queue timeout are a 529 overloaded_error with retry-after', () => {
+  for (const code of ['pool_overloaded', 'pool_wait_queue_full', 'pool_queue_timeout']) {
+    const mapped = mapUpstreamError(529, { error: { type: 'overloaded_error', code, message: 'busy' } })
+    assert.equal(mapped.status, 529, code)
+    assert.equal(mapped.body.error.type, 'overloaded_error', code)
     assert.equal(mapped.body.error.code, 'pool_overloaded', code)
     assert.equal(mapped.body.error.message, CLIENT_POOL_BUSY_MESSAGE, code)
+    assert.ok(mapped.retryAfterSec >= 1, code)
+    assert.equal(poolErrorKind(code), 'overloaded', code)
   }
 })
 
