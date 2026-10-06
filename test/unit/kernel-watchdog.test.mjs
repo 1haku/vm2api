@@ -126,3 +126,30 @@ test('watchdog does not restart a live crag slot', async () => {
   assert.deepEqual(ensured, [])
   fs.rmSync(root, { recursive: true, force: true })
 })
+
+test('telemetry sidecar is checked once per window on live kernels only', async () => {
+  let now = 0
+  const checked = []
+  const wd = createKernelWatchdog({
+    now: () => now,
+    telemetryEveryMs: 600_000,
+    listTargets: () => [
+      { id: 'vm-up', inference_engine: 'rust' },
+      { id: 'vm-down', inference_engine: 'rust' },
+    ],
+    homeDirFor: (vm) => `/tmp/${vm.id}`,
+    health: async (exec) => (exec.vmId === 'vm-up' ? { ok: true, healthy: true, ready_slots: 1 } : null),
+    ensure: async () => ({ ok: true }),
+    ensureTelemetry: async (vm) => {
+      checked.push(vm.id)
+      return { ok: true, action: 'started' }
+    },
+  })
+  await wd.tick()
+  now = 599_999
+  await wd.tick()
+  assert.deepEqual(checked, ['vm-up'])
+  now = 600_000
+  await wd.tick()
+  assert.deepEqual(checked, ['vm-up', 'vm-up'])
+})
