@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 控制台「设置 → 账号池」重做：顶部「实时态势」显示 Claude 席位占用 / 宽限、各 VM 排队、全局排队与 `queue_max`，并按草稿策略预估下一席落点（席位 SSE 实时更新）；参数分为开席策略（平衡 / 填充示意卡、手动开关优先）、席位（全局席位上限 `inference.session_slots` 从「协议 → Claude 内核」移到这里、宽限、每席位预算预留阶梯图）、排队（排队上限、粘性 / 全局等待、总重试时限时间轴）、重试与切号、熔断（流程示意），滑块 + 常用档位 + 一键恢复默认，范围与后端规范化一致。
+- 「设置 → 配额」三个分档并排编辑，5h / 7d 闸线轴上标出本档各 VM 当前用量；5h / 7d 闸、周仓拆分改为说明卡片，并写明闸线与预调度余量的关系。
+- VM 详情「运行」栏的并发 / RPM、Session 槽位、配额三块合并为「调度」块（席位格、排队、并发、RPM、席位上限、调度等级、配额闸，覆盖项高亮），一个「调度配置」弹窗可逐项选「跟随」或「本槽」；5h / 7d 用量条标出生效闸线。
+- `PATCH /api/panel/vms/:id`：`max_concurrency` / `max_rpm` / `session_slots` 传 `null` = 去掉本槽覆盖，立即落回分档 / 全局值。VM 行新增 `concurrency_override`、`rpm_override` 与 `scheduling_inherited: { max_concurrency, max_rpm, session_slots }`。
+
 ## 1.3.110 — 2026-10-06
 
 - Claude 号池新增预调度（席位规划）：席位按入站 device 计（device id → metadata `session_id` → `cache_control: ephemeral` 内容哈希 → IP + UA + system + 首轮内容哈希，API key 不参与；一次性短探测不占席位）。同一 device 的并发请求共用一个席位、共享 VM 并发，在 VM 内按到达顺序等待，不拆到两台 VM。席位数沿用 `session_slots`（VM 覆盖 → 全局，上限 20）；最后一个请求结束后保留 `pool.seat_grace_ms`（默认 30 秒）；开新席位要求 5h/7d 余量 ≥ (已占 + 1) × `pool.seat_budget_reserve_pct`（默认 2%）。新 device 先回粘性 VM，否则按策略 `balanced`（占用率最低）或 `fill`（已占最多未满）开席位，同级比余量；都满时进全局 FIFO，新到请求不插队。诊断 pin 照旧绕过。跨 VM 换号时旧席位立即释放并在新 VM 开席位、更新设备绑定。
