@@ -83,8 +83,10 @@ import {
   assignOriginForOwner,
   clampVmCreateQuota,
   countUserCreatedVms,
+  filterVmsForPanel,
   normalizeOwnerId,
 } from './resource-owner.mjs'
+import { servePoolSeatStream } from './pool-seat-stream.mjs'
 import { logsToCsv, logsToJsonl } from './request-log.mjs'
 import {
   listVms,
@@ -196,7 +198,7 @@ import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
 import { setManualScheduleWins } from '../pool/schedule-policy.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
-import { publicNotifyConfig, publicRoutingNotify } from './notify.mjs'
+import { mergeNotifyConfig, publicNotifyConfig, publicRoutingNotify, sendNotifyTest } from './notify.mjs'
 import { UsageLogsView } from '../db/repos/usage-logs-view.mjs'
 import {
   StatisticsRepo,
@@ -1510,6 +1512,26 @@ export function createPanelHandler(ctx) {
             ownerUserId: ident.role === 'user' ? req.panelUserId : null,
           }),
         )
+      }
+      // GET /api/panel/pool/stream — live seat / queue snapshots (SSE over fetch).
+      if (req.method === 'GET' && p === '/api/panel/pool/stream') {
+        const ident = panelIdentity(req)
+        const ownerUserId = ident.role === 'user' ? req.panelUserId : null
+        return servePoolSeatStream({
+          req,
+          res,
+          getScheduler: () => ctx.poolScheduler,
+          writeSSEHeaders: ctx.writeSSEHeaders,
+          visibleVmIds:
+            ident.role === 'user'
+              ? () =>
+                  new Set(
+                    filterVmsForPanel(listVms(cfg.paths.project), { role: ident.role, userId: ownerUserId }).map(
+                      (vm) => vm.id,
+                    ),
+                  )
+              : null,
+        })
       }
       // GET /api/panel/vms/fleet-status — must be before /vms/:id
       if (req.method === 'GET' && p === '/api/panel/vms/fleet-status') {

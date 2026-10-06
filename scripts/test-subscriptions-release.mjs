@@ -28,6 +28,9 @@ const unit = [
   'codex-restriction',
   'handle-codex',
   'failover-runner',
+  'pool-scheduler',
+  'unit-circuit',
+  'pool-seat-stream',
   'guest-identity-reader',
   'request-log',
   'api-backend',
@@ -53,6 +56,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'pool-seat-stream',
   'subscriptions',
   'slot-plan-startup',
   'panel-api',

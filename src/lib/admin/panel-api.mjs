@@ -418,6 +418,12 @@ function snapshotPool(proxyPool) {
   }
 }
 
+/** Deleting a VM leaves its `accounts` row behind; list only accounts whose slot still exists. */
+function liveAccounts(accounts, vms) {
+  const ids = new Set((vms || []).map((v) => String(v.id)))
+  return (accounts || []).filter((a) => !a.vm_id || ids.has(String(a.vm_id)))
+}
+
 export async function buildDashboard({
   cfg,
   accountQuota,
@@ -446,7 +452,7 @@ export async function buildDashboard({
     }),
   )
   const snap = accountQuota.snapshot()
-  const accounts = snap.accounts || []
+  const accounts = liveAccounts(snap.accounts, listed)
   const peak5 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['5h']?.utilization || 0)), 0)
   const peak7 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['7d']?.utilization || 0)), 0)
   const near = accounts.filter(
@@ -470,7 +476,7 @@ export async function buildDashboard({
     vms,
     (() => {
       try {
-        return attachBillingMeta(panelBillingStats(requestLog, accountQuota, vms), accounts)
+        return attachBillingMeta(panelBillingStats(requestLog, accountQuota, vms), snap.accounts || [])
       } catch {
         return null
       }
@@ -1119,7 +1125,7 @@ export function buildUsage({ accountQuota, cfg, requestLog = null }) {
     }
   })()
   const costByKey = indexBillingAccounts(billing)
-  const accounts = (snap.accounts || []).map((a) => {
+  const accounts = liveAccounts(snap.accounts, listed).map((a) => {
     const cost = lookupBilling(costByKey, a)
     const vm = a.vm_id ? getVm(cfg?.paths?.project, a.vm_id) : null
     return {
@@ -1713,6 +1719,10 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     sessions,
     session_active: sessions.active,
     session_max: sessions.max,
+    // Live seat book from PoolScheduler; session_active above is the idle-retained window count.
+    seats_used: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.seats_used) || 0,
+    seats_max: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
+    queue_depth: isCodex ? null : Number(extras.pool?.seats?.[v.id]?.queue_depth) || 0,
     inflight: acc?.inflight ?? 0,
     requests: acc?.requests ?? v.stats?.requests ?? 0,
     tokens_in: acc?.tokens_in ?? 0,
