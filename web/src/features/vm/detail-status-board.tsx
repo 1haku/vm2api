@@ -6,7 +6,6 @@ import {
   fableCardInfo,
   type ConcurrencyInfo,
   type RpmInfo,
-  type SessionCapacity,
   type VmCostSummary,
   type WeeklySplitSummary,
 } from '@/lib/fable-status'
@@ -20,6 +19,7 @@ import {
   restrictionCopy,
   restrictionUntilOf,
   scheduleStateLabel,
+  seatTitle,
   vmRunning,
 } from '@/lib/vm-status'
 import {
@@ -60,7 +60,6 @@ type Props = {
   now: number
   cost: VmCostSummary
   split: WeeklySplitSummary | null
-  sess: SessionCapacity | null
   conc: ConcurrencyInfo
   rpm: RpmInfo | null
 }
@@ -168,7 +167,6 @@ export function VmStatusBoard(props: Props) {
     now,
     cost,
     split,
-    sess,
     conc,
     rpm,
   } = props
@@ -308,12 +306,16 @@ export function VmStatusBoard(props: Props) {
                     />
                   </div>
                 ) : null}
-                {sess ? (
-                  <Meter
-                    label='会话'
-                    value={sess.max > 0 ? (sess.active / sess.max) * 100 : 0}
-                    hint={`${sess.active}/${sess.max}`}
-                  />
+                {vm.seats_max ? (
+                  <div title={seatTitle(vm)}>
+                    <Meter
+                      label='席位'
+                      value={
+                        ((Number(vm.seats_used) || 0) / vm.seats_max) * 100
+                      }
+                      hint={`${Number(vm.seats_used) || 0}/${vm.seats_max}`}
+                    />
+                  </div>
                 ) : null}
                 <ClaudeResetActions vm={vm} now={now} />
               </>

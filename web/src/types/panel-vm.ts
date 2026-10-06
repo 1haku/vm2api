@@ -128,13 +128,13 @@ export type Vm = {
   auth_scheme?: string
   availability?: {
     /**
-     * 后端 `availability.mjs` 实际产出 7 种：
-     * `none` / `bad` / `off` / `quota` / `sessions` / `cool` / `ok`。
+     * 后端 `availability.mjs` 实际产出 6 种：
+     * `none` / `bad` / `off` / `quota` / `cool` / `ok`。
      * 此前只声明了 5 种（含后端根本不返回的 `warn`/`caution`），
      * 导致 `off` 被误归类、「关闭调用」筛选恒为空。
      * 注意 `off` 的 `usable` 为 false，判断顺序上必须先于 `!usable`。
      */
-    key: 'ok' | 'none' | 'bad' | 'off' | 'quota' | 'sessions' | 'cool'
+    key: 'ok' | 'none' | 'bad' | 'off' | 'quota' | 'cool'
     usable: boolean
     text?: string
     reason?: string
@@ -239,7 +239,7 @@ export type Vm = {
   /** 调度等级来源；缺失时按自动模式展示。 */
   schedule_level_mode?: 'auto' | 'manual'
   rpm?: number
-  /** 同等级 WRR 权重，不是调度等级。 */
+  /** 同等级权重（只用于 Codex 选槽；Claude 预调度不看），不是调度等级。 */
   weight?: number
   inflight?: number
   allowed_models?: string[] | null
@@ -296,16 +296,23 @@ export type Vm = {
   schedule_disabled_reason?: string
   container?: string
   official_cc?: OfficialCcStatus
-  /** 会话上限快照对象；旧字段 `session_active`/`session_max` 是它的扁平化镜像。 */
+  /**
+   * Codex 会话上限快照；`session_active`/`session_max` 是它的扁平化镜像。
+   * Claude 行不带这三项，席位看 `seats_*`。
+   */
   sessions?: { active?: number; max?: number }
   session_active?: number
   session_max?: number
-  /** 调度器实时席位簿：正在被请求占用的不同席位数（Codex 为 null）。 */
+  /** 预调度席位簿：已占用的不同席位数，含宽限中的（Codex 为 null）。 */
   seats_used?: number | null
   /** 席位上限（VM 覆盖 → 全局 `inference.session_slots`）。 */
   seats_max?: number | null
-  /** 在该 VM 上排队等待席位/并发的请求数。 */
+  /** `seats_used` 中请求已结束、为原设备保留的宽限席位数。 */
+  seats_grace?: number | null
+  /** 在该 VM 上排队的请求数（等席位、并发、冷却 / RPM）。 */
   queue_depth?: number | null
+  /** `queue_depth` 中已有席位、只在等并发的请求数。 */
+  conc_waiting?: number | null
   status_7d_oi?: string
   window_5h_cost?: number
   window_5h_requests?: number
@@ -318,12 +325,33 @@ export type Vm = {
   [key: string]: unknown
 }
 
-/** `GET /api/panel/pool/stream` 的 `event: seats` 负载；缺席的 VM 表示空闲。 */
-export type PoolSeatSnapshot = {
-  seats: Record<
-    string,
-    { seats_used: number; holds: number; queue_depth: number }
-  >
+/** 全局排队：还没落到任何 VM 的请求数与上限 `routing.pool.queue_max`。 */
+export type PoolQueueSummary = {
+  global_queue_depth: number
+  queue_max: number
+}
+
+/** `GET /api/panel/vms` 响应体。 */
+export type VmsListResponse = {
+  items?: Vm[]
+  active_vm?: string | null
+  total?: number
+  proxy_pool?: Record<string, unknown>
+  pool_queue?: PoolQueueSummary
+}
+
+/** 单台 VM 的实时席位；缺席的 VM 表示空闲（全 0）。 */
+export type PoolSeatLive = {
+  seats_used: number
+  seats_max: number
+  seats_grace: number
+  queue_depth: number
+  conc_waiting: number
+}
+
+/** `GET /api/panel/pool/stream` 的 `event: seats` 负载。 */
+export type PoolSeatSnapshot = PoolQueueSummary & {
+  seats: Record<string, PoolSeatLive>
   ts: number
 }
 
@@ -456,8 +484,6 @@ export type OfficialCcStatus = {
 export type VmQuotaView = {
   limit_5h: number
   limit_7d: number
-  max_sessions: number
-  session_idle_min: number
   block_on_5h: boolean
   block_on_7d: boolean
   weekly_split: boolean
@@ -472,8 +498,6 @@ export type QuotaTierPolicy = {
   max_rpm?: number
   limit_5h?: number
   limit_7d?: number
-  max_sessions?: number
-  session_idle_min?: number
   warn_ratio?: number
   [key: string]: unknown
 }
