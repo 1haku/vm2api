@@ -70,10 +70,18 @@ export function rankSeatCandidates(candidates, { strategy = 'balanced', openOf }
 }
 
 export class SeatPlanner {
-  constructor({ graceMs = 30_000, reservePct = 0.02, strategy = 'balanced', onChange = null } = {}) {
+  constructor({
+    graceMs = 30_000,
+    reservePct = 0.02,
+    strategy = 'balanced',
+    /** Read at use time: the scheduler owns `sticky_wait_timeout_ms` and hot-reloads it. */
+    stickyWaitMs = () => 45_000,
+    onChange = null,
+  } = {}) {
     this.graceMs = graceMs
     this.reservePct = reservePct
     this.strategy = normalizeSeatStrategy(strategy)
+    this.stickyWaitMs = stickyWaitMs
     this.onChange = onChange
     /** @type {Map<string, object>} seatKey → live seat */
     this.seats = new Map()
@@ -170,7 +178,9 @@ export class SeatPlanner {
 
   /**
    * One request of this seat finished. The last one starts the grace window:
-   * the seat stays with its device for `graceMs`, then frees.
+   * the seat stays with its device for `graceMs`, then frees. A device that
+   * still has a ticket queued on this VM keeps the seat; grace starts again
+   * once that queue has drained.
    */
   release(seat) {
     if (!seat) return
@@ -179,20 +189,41 @@ export class SeatPlanner {
       this.pump(seat.vmId)
       return
     }
-    if (seat.inflight === 0) {
-      if (!(this.graceMs > 0)) {
-        this.free(seat)
+    if (seat.inflight === 0) this.armGrace(seat)
+    this.pump(seat.vmId)
+  }
+
+  /** Tickets queued on this seat's VM. Global waiters do not keep the seat. */
+  queuedOn(seat) {
+    return (this.vmQueues.get(seat.vmId) || []).some((ticket) => ticket.seatKey === seat.seatKey)
+  }
+
+  /**
+   * Own the seat for `graceMs` after the last in-flight request. `graceMs`
+   * of 0 still frees immediately. Failover calls `free` and never comes here.
+   */
+  armGrace(seat) {
+    if (!seat?.live || seat.inflight !== 0 || seat.timer) return
+    if (!(this.graceMs > 0)) {
+      this.free(seat)
+      return
+    }
+    if (this.queuedOn(seat)) return
+    seat.graceUntil = Date.now() + this.graceMs
+    seat.timer = setTimeout(() => {
+      seat.timer = null
+      if (!seat.live || seat.inflight !== 0) return
+      // Queued work of this device would otherwise reopen the seat ahead of
+      // devices already waiting for one.
+      if (this.queuedOn(seat)) {
+        seat.graceUntil = null
+        this.changed()
         return
       }
-      seat.graceUntil = Date.now() + this.graceMs
-      seat.timer = setTimeout(() => {
-        seat.timer = null
-        if (seat.live && seat.inflight === 0) this.free(seat)
-      }, this.graceMs)
-      seat.timer.unref?.()
-      this.changed()
-    }
-    this.pump(seat.vmId)
+      this.free(seat)
+    }, this.graceMs)
+    seat.timer.unref?.()
+    this.changed()
   }
 
   /** Drop the seat now. Requests still running on it finish; their release only counts down. */
@@ -229,7 +260,13 @@ export class SeatPlanner {
 
   remove(ticket) {
     if (!ticket?.queued) return
+    const seatKey = ticket.seatKey
+    const vmId = ticket.vmId
     this.unlink(ticket)
+    const seat = vmId ? this.seatOf(seatKey) : null
+    // A timeout never calls release. Rearm grace once this VM's queue is empty
+    // so the seat does not stay taken after the device gave up.
+    if (seat?.vmId === vmId) this.armGrace(seat)
     this.changed()
   }
 
@@ -265,7 +302,9 @@ export class SeatPlanner {
 
   /**
    * A seat just opened for `seatKey`: its other queued requests now wait for
-   * concurrency on that VM, never for a second seat elsewhere.
+   * concurrency on that VM, never for a second seat elsewhere. The wait
+   * restarts at the sticky timeout measured from this move; the deadline they
+   * brought from the global queue would expire them on the wrong clock.
    */
   rehome(seatKey, vmId) {
     const moved = []
@@ -277,7 +316,12 @@ export class SeatPlanner {
         moved.push(ticket)
       }
     }
-    for (const ticket of moved) this.place(ticket, { kind: 'conc', vmId })
+    const deadline = Date.now() + this.stickyWaitMs()
+    for (const ticket of moved) {
+      this.place(ticket, { kind: 'conc', vmId })
+      ticket.deadline = deadline
+      if (!ticket.granted) ticket.wake?.()
+    }
     if (moved.length) this.pump(vmId)
   }
 
