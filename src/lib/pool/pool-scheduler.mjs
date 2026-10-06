@@ -165,6 +165,23 @@ function isUnboundAuthCooldown(candidate, bound, stickyCleared) {
   return candidate.waitReason === 'account_cooldown' && isAuthCooldownReason(candidate.cooldownReason)
 }
 
+/**
+ * Nothing eligible. Fable keeps its Max gate; otherwise an upstream cooldown on
+ * the dropped accounts names the cause: any 529 overload cooldown is capacity
+ * (529), only 429 rate-limit cooldowns are the provider's limit (429). Without
+ * either, nothing will come back by waiting (503).
+ */
+function emptyPoolFailure(model, candidates, now = Date.now()) {
+  if (isFableModel(model)) return { reason: 'fable_requires_max', retry_after_ms: null }
+  const { rate_limited: limited = null, overloaded = null } = candidates?.cooldowns || {}
+  if (overloaded != null) {
+    const until = limited == null ? overloaded : Math.min(overloaded, limited)
+    return { reason: 'pool_overload_cooldown', retry_after_ms: Math.max(0, until - now) }
+  }
+  if (limited != null) return { reason: 'pool_rate_limited', retry_after_ms: Math.max(0, limited - now) }
+  return { reason: 'no_eligible_accounts', retry_after_ms: null }
+}
+
 function selectionSnapshot(candidates = [], available = [], extras = {}) {
   const now = Date.now()
   const waitPool = extras.waitPool || candidates
@@ -428,7 +445,8 @@ export class PoolScheduler extends EventEmitter {
       const waitCandidates = reserveMisses.length ? effectiveCandidates : candidates
       const waitAvailable = reserveMisses.length ? effectiveAvailable : available
       if (waitCandidates.length === 0) {
-        return fail(isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts', waitCandidates, waitAvailable)
+        const empty = emptyPoolFailure(model, candidates)
+        return { ...fail(empty.reason, waitCandidates, waitAvailable), retry_after_ms: empty.retry_after_ms }
       }
       const waitPool = waitCandidates.filter(
         (candidate) => !isUnboundAuthCooldown(candidate, boundBefore, stickyCleared),
@@ -593,7 +611,10 @@ export class PoolScheduler extends EventEmitter {
           if (!ticket) {
             const granted = this.openNewSeat(seatKey, candidates, { avoided, stickyVms })
             if (granted) return finish(granted)
-            if (!candidates.length) return fail(isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts')
+            if (!candidates.length) {
+              const empty = emptyPoolFailure(model, candidates)
+              return { ...fail(empty.reason), retry_after_ms: empty.retry_after_ms }
+            }
             if (!allowWait || now >= failoverDeadline) return fail('all_accounts_busy')
             const home = stickyVms
               .map((vmId) => byVm.get(vmId))
@@ -795,6 +816,9 @@ export class PoolScheduler extends EventEmitter {
     this.runtimeRepo?.clearExpired?.(now)
     const summaries = listVms(this.projectRoot)
     const candidates = []
+    // Accounts dropped by an upstream 429 / 529 cooldown; an empty pool reports
+    // that cause (pool_rate_limited / pool_overload_cooldown) instead of 503.
+    candidates.cooldowns = { rate_limited: null, overloaded: null }
     const pin = pinVmId ? String(pinVmId).trim() : ''
     for (const summary of summaries) {
       if (signal?.aborted) throw makeAbortError()
@@ -815,7 +839,15 @@ export class PoolScheduler extends EventEmitter {
         signal,
         pinned: !!pin,
       })
-      if (!eligibility.ok) continue
+      if (!eligibility.ok) {
+        const kind = eligibility.reason
+        if (kind === 'rate_limited' || kind === 'overloaded') {
+          const until = Number(eligibility.until) || 0
+          const prev = candidates.cooldowns[kind]
+          candidates.cooldowns[kind] = prev == null ? until : Math.min(prev, until)
+        }
+        continue
+      }
       const maxConcurrency = this.effectiveMaxConcurrency(
         vm,
         eligibility.account,
@@ -1245,7 +1277,8 @@ export class PoolScheduler extends EventEmitter {
   async peekAccount({ model, stickyKey = null, signal, ownerScope = PLATFORM_SCOPE } = {}) {
     const candidates = await this.eligibleCandidates({ model, signal, ownerScope })
     if (!candidates.length) {
-      return { ok: false, code: isFableModel(model) ? 'fable_requires_max' : 'no_eligible_accounts' }
+      const empty = emptyPoolFailure(model, candidates)
+      return { ok: false, code: empty.reason, retry_after_ms: empty.retry_after_ms }
     }
     const bound = stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null
     if (bound) {

@@ -235,14 +235,15 @@ curl -sS http://127.0.0.1:8787/health
 | `upstream_error` | 401/403/502 |
 | `api_error` | 500 |
 
-429 可能带 `retry-after`；号池 529 一定带。恢复备份期间协议口 `503 restore_in_progress`。健康探测短请求在无缓存且 fail-closed 时 `503`。
+上游 429 失败转移用尽后原样返回 429 `upstream_rate_limit`，有上游 `retry-after` 时透传；529 一定带 `retry-after`（号池估计，上游 529 取上游值，都没有时为 1）。恢复备份期间协议口 `503 restore_in_progress`。健康探测短请求在无缓存且 fail-closed 时 `503`。
 
 号池结果分开返回，不互相伪装：
 
 | 情况 | HTTP | code | message |
 |---|---|---|---|
-| 排队超时、排队已满（`routing.pool.queue_max`）或有界等待用完 | 529（`overloaded_error`） | `pool_overloaded` | 号池负载过高，稍后再试 |
-| 没有任何合格账号（未配置、额度 / 凭证 / 模型 / 人工关闭都不合格） | 503 | `pool_unavailable` | 号池当前没有可用账号 |
+| 排队超时、排队已满（`routing.pool.queue_max`）、有界等待用完、最后一跳内核槽忙（`slot_busy`），或剩余账号都在上游 529 过载冷却（`overload_until`） | 529（`overloaded_error`） | `pool_overloaded` | 号池负载过高，稍后再试 |
+| 剩余账号都在上游 429 限流冷却（`rate_limit_reset_at`），没有过载冷却 | 429（`rate_limit_error`） | `upstream_rate_limit` | 号池账号均被上游限流，稍后再试 |
+| 没有任何合格账号（未配置、额度 / 凭证 / 模型 / 人工关闭都不合格，且没有上游冷却） | 503 | `pool_unavailable` | 号池当前没有可用账号 |
 | 已经执行过、最后一跳失败 | 上游本义 | 上游错误码（如 `incomplete_response`、429、401） | 上游本义 |
 
 `pool_overloaded` 是 HTTP 529、`type: overloaded_error`，总带 `retry-after`（秒，至少 1）：优先取相关 VM 最早的席位宽限到期，其次已知恢复时刻（冷却、RPM 窗口），都没有时为 1。排队已满时立即返回，不入队。OpenAI 槽仍是自己的 429 `pool_overloaded`。续接 `previous_response_id` 的 Responses 请求只能在原 GPT 账号上继续；该账号已不可用时返回 `409 response_not_portable`，请带完整上下文重新发起。

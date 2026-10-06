@@ -190,9 +190,9 @@ attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终
 | `stop_reason` | 流式来自 `message_delta` |
 | 费用列 | 官方价 input/output/cache 5m·1h·read；上海日切 |
 
-`GET /request-logs/stats` 另返回 `window`：SLA、错误率、429/503、QPS/TPS、耗时与 TTFT 分位、按模型 `avg_first_token_ms`、`error_collection`。`GET /dashboard.ops` 默认近 1 小时同一形状。
+`GET /request-logs/stats` 另返回 `window`：SLA、错误率、429/503/529、QPS/TPS、耗时与 TTFT 分位、按模型 `avg_first_token_ms`、`error_collection`。`GET /dashboard.ops` 默认近 1 小时同一形状。
 
-筛选：`status=error`、`error_class=` = auth / request / signature / rate_limit / quota / overloaded / timeout / credential / proxy / upstream / other。每行带 `error_class` / `error_label` / `error_owner`。5h/7d/限流计入 SLA 成功。
+筛选：`status=error`、`error_class=` = auth / request / signature / rate_limit / quota / overloaded / unavailable / timeout / credential / proxy / upstream / other / distill / refusal。每行带 `error_class` / `error_label` / `error_owner`。5h/7d/限流计入 SLA 成功。号池容量 529（`pool_overloaded` / `pool_wait_queue_full` / `pool_queue_timeout`）不计入 SLA 失败；上游 529（`upstream_overloaded`）计入。
 
 流式 usage 由 worker SSE 校验器合并后经 trailer 回传，终态 attempt 只记一次。
 
