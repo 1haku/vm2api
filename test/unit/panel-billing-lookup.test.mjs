@@ -57,6 +57,33 @@ test('billing rows of an older account on a reused slot keep their own email', (
   assert.deepEqual(emails, ['old@example.com', 'new@example.com', 'three@example.com'])
 })
 
+test('usage rows of a deleted VM are not listed', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-usage-deleted-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(root, 'vms'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'vms', 'vm-02.json'), JSON.stringify({ id: 'vm-02' }))
+  const usage = buildUsage({
+    accountQuota: {
+      snapshot: () => ({
+        accounts: [
+          { account_id: 'two-uuid', vm_id: 'vm-02', email: 'two@example.com', requests: 1 },
+          { account_id: 'three-uuid', vm_id: 'vm-03', email: 'three@example.com', requests: 5 },
+        ],
+      }),
+    },
+    cfg: { paths: { project: root } },
+    requestLog: {
+      billingStats: () => ({ accounts: [{ account_id: 'three-uuid', vm_id: 'vm-03', total_cost: 3 }] }),
+    },
+  })
+  assert.deepEqual(
+    usage.data.accounts.map((a) => a.vm_id),
+    ['vm-02'],
+  )
+  assert.equal(usage.data.totals.requests, 1)
+  assert.equal(usage.data.billing.accounts[0].email, 'three@example.com')
+})
+
 test('GPT usage row without pool email takes slot email', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-gpt-usage-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
