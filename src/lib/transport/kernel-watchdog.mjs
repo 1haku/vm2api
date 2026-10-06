@@ -31,6 +31,9 @@ export const DEFAULT_KERNEL_WATCHDOG = Object.freeze({
   restart_window_sec: 3600,
 })
 
+// A missing sidecar costs telemetry, not inference: one docker exec per slot per window is enough.
+const TELEMETRY_HEAL_MS = 10 * 60 * 1000
+
 function clampInt(value, min, max, fallback) {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return fallback
@@ -75,6 +78,8 @@ export function createKernelWatchdog({
   ensure = ensureRustKernel,
   health = rustKernelHealth,
   onFault = null,
+  ensureTelemetry = null,
+  telemetryEveryMs = TELEMETRY_HEAL_MS,
   now = () => Date.now(),
 } = {}) {
   let config = normalizeKernelWatchdogConfig(initial)
@@ -83,6 +88,22 @@ export function createKernelWatchdog({
   let inTick = false
   // vmId -> { attempts: [ms], nextAt }
   const restarts = new Map()
+  // vmId -> next ms a telemetry sidecar check is due
+  const telemetryDue = new Map()
+
+  async function healTelemetry(vm, at) {
+    if (typeof ensureTelemetry !== 'function' || at < (telemetryDue.get(vm.id) || 0)) return
+    telemetryDue.set(vm.id, at + telemetryEveryMs)
+    try {
+      const result = await ensureTelemetry(vm)
+      if (result?.action === 'started')
+        console.warn(`[kernel-watchdog] ${vm.id} telemetry sidecar was missing; relaunched`)
+      if (result?.ok === false)
+        console.warn(`[kernel-watchdog] ${vm.id} telemetry sidecar relaunch failed: ${result.error}`)
+    } catch (error) {
+      console.warn(`[kernel-watchdog] ${vm.id} telemetry sidecar check failed: ${error?.message || error}`)
+    }
+  }
 
   /** L4 gate: bounded container restarts with growing waits; spending them is L5. */
   function admitRestart(vm, reason, at) {
@@ -124,6 +145,9 @@ export function createKernelWatchdog({
           homeDir: typeof homeDirFor === 'function' ? homeDirFor(vm) : null,
         }
         const current = await health(exec, { timeoutMs: 800 })
+        // Off the tick's critical path: a slow docker exec must not delay kernel restarts.
+        // The due time is set before the check runs, so a slot never has two checks in flight.
+        if (rustKernelProcessUp(current)) void healTelemetry(vm, now())
         // cc-node is the crag worker. Restarting a live kernel SIGKILLs it.
         if (dataplaneUsesCcNode(exec) && rustKernelProcessUp(current)) continue
         if (!rustKernelNeedsRestart(current)) {
