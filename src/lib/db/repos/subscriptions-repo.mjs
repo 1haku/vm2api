@@ -149,20 +149,28 @@ export class SubscriptionsRepo {
         const old = this.db
           .prepare('SELECT * FROM custom_user_subscriptions WHERE user_id=? AND group_id=?')
           .get(user, group.id)
-        const now = iso()
+        const nowMs = Date.now()
+        const now = iso(nowMs)
         const id = old?.id || `sub_${crypto.randomUUID()}`
+        const reassigned = old?.status === 'revoked'
+        const expiresAt = iso((old && !reassigned ? Math.max(nowMs, Date.parse(old.expires_at)) : nowMs) + days * DAY)
         if (old) {
           this.db
             .prepare("UPDATE custom_user_subscriptions SET status='active',expires_at=?,updated_at=? WHERE id=?")
-            .run(iso(Math.max(Date.now(), Date.parse(old.expires_at)) + days * DAY), now, id)
+            .run(expiresAt, now, id)
         } else {
           this.db
             .prepare(
               'INSERT INTO custom_user_subscriptions(id,user_id,group_id,starts_at,expires_at,reset_at,assigned_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
             )
-            .run(id, user, group.id, now, iso(Date.now() + days * DAY), now, actor, now, now)
+            .run(id, user, group.id, now, expiresAt, now, actor, now, now)
         }
-        this.event(old ? 'renewed' : 'assigned', { id, group_id: group.id, actor, detail: { user_id: user, days } })
+        this.event(reassigned ? 'reassigned' : old ? 'renewed' : 'assigned', {
+          id,
+          group_id: group.id,
+          actor,
+          detail: { user_id: user, days, previous_expires_at: old?.expires_at ?? null, expires_at: expiresAt },
+        })
         return id
       }),
     )
@@ -210,6 +218,8 @@ export class SubscriptionsRepo {
   update(id, input, actor) {
     const sub = this.db.prepare('SELECT * FROM custom_user_subscriptions WHERE id=?').get(id)
     if (!sub) throw subscriptionError('订阅不存在', 404)
+    if (sub.status === 'revoked' && (input.action === 'renew' || ['active', 'suspended'].includes(input.status)))
+      throw subscriptionError('已撤销的订阅需重新分配')
     return withTransaction(this.db, () => {
       if (input.action === 'reset') {
         this.db

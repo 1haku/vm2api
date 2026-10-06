@@ -56,6 +56,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'subscription-reassignment',
   'shared-plan-slots',
   'pool-seat-stream',
   'subscriptions',

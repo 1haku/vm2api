@@ -43,6 +43,56 @@ function setup(t, config = {}) {
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
 
+test('reassigning revoked subscriptions replaces remaining time without resetting usage or other users', (t) => {
+  const now = Date.now(),
+    day = 86400000
+  t.mock.timers.enable({ apis: ['Date'], now })
+  const { db, repo, plan, a, b } = setup(t)
+  const initial = repo.entitlement(a),
+    other = repo.entitlement(b)
+  repo.settle('prior-cost', initial.id, 3.5)
+  repo.update(initial.id, { status: 'revoked' }, 'admin')
+  for (const input of [{ action: 'renew', days: 1 }, { status: 'active' }, { status: 'suspended' }])
+    assert.throws(() => repo.update(initial.id, input, 'admin'), /重新分配/)
+  t.mock.timers.setTime(now + day)
+  assert.deepEqual(repo.assign({ group_id: plan.id, user_ids: ['a'], validity_days: 3 }, 'admin'), [initial.id])
+  let sub = repo.entitlement(a)
+  assert.equal(sub.expires_at, new Date(now + 4 * day).toISOString())
+  assert.ok(sub.expires_at < initial.expires_at)
+  assert.equal(sub.starts_at, initial.starts_at)
+  assert.equal(sub.reset_at, initial.reset_at)
+  assert.equal(repo.progress(sub).weekly_used, 3.5)
+  assert.equal(repo.entitlement(b).expires_at, other.expires_at)
+  repo.update(sub.id, { status: 'revoked' }, 'admin')
+  repo.assign({ group_id: plan.id, user_ids: ['a'], validity_days: 1 }, 'admin')
+  sub = repo.entitlement(a)
+  assert.equal(sub.expires_at, new Date(now + 2 * day).toISOString())
+  const event = db
+    .prepare("SELECT detail FROM custom_subscription_events WHERE action='reassigned' ORDER BY id DESC LIMIT 1")
+    .get()
+  assert.equal(JSON.parse(event.detail).expires_at, sub.expires_at)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger').get().n, 1)
+})
+
+test('assignment renews active and paused subscriptions, and starts expired terms from now', (t) => {
+  const now = Date.now(),
+    day = 86400000
+  t.mock.timers.enable({ apis: ['Date'], now })
+  const { db, repo, plan, a } = setup(t)
+  const initial = repo.entitlement(a)
+  repo.assign({ group_id: plan.id, user_ids: ['a'], validity_days: 7 }, 'admin')
+  assert.equal(Date.parse(repo.entitlement(a).expires_at), Date.parse(initial.expires_at) + 7 * day)
+  repo.update(initial.id, { status: 'suspended' }, 'admin')
+  repo.assign({ group_id: plan.id, user_ids: ['a'], validity_days: 2 }, 'admin')
+  assert.equal(Date.parse(repo.entitlement(a).expires_at), Date.parse(initial.expires_at) + 9 * day)
+  db.prepare('UPDATE custom_user_subscriptions SET expires_at=? WHERE id=?').run(
+    new Date(now - day).toISOString(),
+    initial.id,
+  )
+  repo.assign({ group_id: plan.id, user_ids: ['a'], validity_days: 2 }, 'admin')
+  assert.equal(Date.parse(repo.entitlement(a).expires_at), now + 2 * day)
+})
+
 test('plans sharing one slot keep quota, reservations, RPM and revocation independent', (t) => {
   const { db, repo, plan, a } = setup(t, { subscription_concurrency: 1, group_rpm_limit: 1 })
   const second = repo.savePlan(

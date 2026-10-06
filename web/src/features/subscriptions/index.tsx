@@ -460,6 +460,21 @@ export function SubscriptionsPage() {
                           )}
                         {admin && (
                           <>
+                            {s.status === 'revoked' && (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                disabled={s.plan_status !== 'active'}
+                                onClick={() =>
+                                  setWizard({
+                                    planId: s.group_id,
+                                    userId: s.user_id,
+                                  })
+                                }
+                              >
+                                重新分配
+                              </Button>
+                            )}
                             {[
                               ['renew', '续期'],
                               ['reset', '重置额度'],
@@ -470,19 +485,23 @@ export function SubscriptionsPage() {
                                 s.status === 'suspended' ? '恢复' : '暂停',
                               ],
                               ['revoked', '撤销'],
-                            ].map(([a, l]) => (
-                              <Button
-                                key={a}
-                                size='sm'
-                                variant='ghost'
-                                onClick={() => {
-                                  setRenewDays(30)
-                                  setAction({ sub: s, action: a })
-                                }}
-                              >
-                                {l}
-                              </Button>
-                            ))}
+                            ]
+                              .filter(
+                                ([a]) => s.status !== 'revoked' || a === 'reset'
+                              )
+                              .map(([a, l]) => (
+                                <Button
+                                  key={a}
+                                  size='sm'
+                                  variant='ghost'
+                                  onClick={() => {
+                                    setRenewDays(30)
+                                    setAction({ sub: s, action: a })
+                                  }}
+                                >
+                                  {l}
+                                </Button>
+                              ))}
                           </>
                         )}
                       </div>
@@ -586,6 +605,7 @@ export function SubscriptionsPage() {
                   {
                     assigned: '分配订阅',
                     renewed: '续期',
+                    reassigned: '重新分配',
                     renew: '续期',
                     reset: '重置额度',
                     active: '恢复',
