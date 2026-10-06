@@ -7,10 +7,19 @@
 - 号池排队超时 / 排队已满 / 等待用完由 429 `rate_limit_error` 改为 **529 `overloaded_error`**（code 仍为 `pool_overloaded`，新增内部原因 `pool_queue_timeout`），总带 `retry-after`（≥ 1 秒，优先取席位宽限到期）。SLA 统计照旧不计为失败；通知日报新增 529 计数。Codex/GPT 槽不变。
 - 删除 Claude 会话窗口：档位与 VM 配额覆盖的 `max_sessions` / `session_idle_min` 及其准入判断移除（旧值读入时忽略），可用性不再出现「会话已满」。Codex 的 `max_sessions` 不变。
 - `/api/panel/vms` 的 Claude 行改为 `seats_used` / `seats_max` / `seats_grace` / `queue_depth` / `conc_waiting`，不再带 `sessions` / `session_active` / `session_max`（Codex 行保留）；响应新增 `pool_queue: { global_queue_depth, queue_max }`。SSE `event: seats` 载荷改为 `{ seats, global_queue_depth, queue_max, ts }`，去掉 `holds`。
+- 修复对运行中的本地槽做重载 / 启动（改代理、换绑、导入凭证、官方初始化、`/vms/:id/reload`、start）时总是 `docker rm -f` 重建容器：存活判断原来看从未被绑定的 `run/worker.sock`，现改看 PID1 内核绑定的 `run/kernel.sock`，健康槽改为 `docker restart`，不再换容器。
+- 修复遥测 sidecar 丢失后不会恢复：本地槽 `docker restart` / `docker start` 后补起 `kin-worker telemetry`；内核看门狗每 10 分钟检查一次各槽，已启用遥测但容器内没有 sidecar 时重新拉起（覆盖 Docker 自动重启、宿主机重启、sidecar 因 4xx 自行退出）。检查放在看门狗关键路径之外，不拖慢内核重启判断。
+
+## 1.3.109 — 2026-10-05
+
+- 修复 Claude VM 席位（`session_slots`）按在飞请求数计数：同一会话的并发请求共用一个席位，占用数改为不同席位数；VM 已满时，已占席位的会话的新并发请求仍可进入，新会话照旧等待（`session_slots_full`）。实际并发仍受 `max_concurrency` 限制。席位在该席位最后一个请求结束后释放。
+- `/api/panel/vms` 的 Claude 行新增 `seats_used` / `seats_max` / `queue_depth`，来自调度器实时席位簿与等待队列；`session_active` 仍是保留到 `session_idle_min` 的会话窗口计数，两者分开展示。VM 列表与详情卡的「在飞」不再用 `session_active` 兜底。
 - 新增面板 SSE `GET /api/panel/pool/stream`（需面板登录；`user` 只收到自己可见的 VM）：席位占用/释放、入队/出队后约 250ms 推送 `event: seats` 快照，15s 保活。VM 列表页订阅后即时更新席位与排队数；断线期间仍按 5s 轮询，5s 后自动重连。
+- 删除 VM 后用量页和总览不再列出、也不再把该槽计入账号数、请求 / token 合计、5h / 7d 峰值和近限额。`accounts` 行仍保留；账单历史继续用全表，已删槽的花费仍带邮箱（#252）。
+- 修复「设置 → 通知」测试邮件 / Telegram：`POST /api/panel/notify/test` 补上 `mergeNotifyConfig` 与 `sendNotifyTest` 的导入，不再 `ReferenceError`（#254）。
 - 重建控制台产物。
 
-已部署机升级：更新 Node 控制面（`src/`）与 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` / `kin-egress` 不变，**不需要 `wrap-cli/sync`**，不需要重启槽容器。
+已部署 x86 机升级：更新 Node 控制面（`src/`）与 `web/dist`，重启一次 Node；无迁移。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.108 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。#248 未进入本版。
 
 ## 1.3.108 — 2026-10-05
 

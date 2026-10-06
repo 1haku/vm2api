@@ -419,6 +419,12 @@ function snapshotPool(proxyPool) {
   }
 }
 
+/** Deleting a VM leaves its `accounts` row behind; list only accounts whose slot still exists. */
+function liveAccounts(accounts, vms) {
+  const ids = new Set((vms || []).map((v) => String(v.id)))
+  return (accounts || []).filter((a) => !a.vm_id || ids.has(String(a.vm_id)))
+}
+
 export async function buildDashboard({
   cfg,
   accountQuota,
@@ -447,7 +453,7 @@ export async function buildDashboard({
     }),
   )
   const snap = accountQuota.snapshot()
-  const accounts = snap.accounts || []
+  const accounts = liveAccounts(snap.accounts, listed)
   const peak5 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['5h']?.utilization || 0)), 0)
   const peak7 = Math.max(0, ...accounts.map((a) => Number(a.unified?.['7d']?.utilization || 0)), 0)
   const near = accounts.filter(
@@ -471,7 +477,7 @@ export async function buildDashboard({
     vms,
     (() => {
       try {
-        return attachBillingMeta(panelBillingStats(requestLog, accountQuota, vms), accounts)
+        return attachBillingMeta(panelBillingStats(requestLog, accountQuota, vms), snap.accounts || [])
       } catch {
         return null
       }
@@ -1129,7 +1135,7 @@ export function buildUsage({ accountQuota, cfg, requestLog = null }) {
     }
   })()
   const costByKey = indexBillingAccounts(billing)
-  const accounts = (snap.accounts || []).map((a) => {
+  const accounts = liveAccounts(snap.accounts, listed).map((a) => {
     const cost = lookupBilling(costByKey, a)
     const vm = a.vm_id ? getVm(cfg?.paths?.project, a.vm_id) : null
     return {
