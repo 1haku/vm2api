@@ -14,7 +14,7 @@ function project(specs) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-seat-planner-'))
   const vms = path.join(root, 'vms')
   fs.mkdirSync(vms, { recursive: true })
-  specs.forEach(({ id, policy = {} }, index) => {
+  specs.forEach(({ id, policy = {}, owner = null }, index) => {
     const accountId = `account-${index + 1}`
     const vm = {
       id,
@@ -24,6 +24,7 @@ function project(specs) {
       proxy_cli_enabled: true,
       proxy: { id: `proxy-${id}`, url: `socks5h://127.0.0.1:${11001 + index}` },
       runtime: { worker_socket: path.join(vms, id, 'run', 'worker.sock') },
+      ...(owner ? { owner_user_id: owner } : {}),
       policy: { maxConcurrency: 4, concurrencyOverride: true, weight: 1, ...policy },
       claude: {
         account_uuid: accountId,
@@ -80,6 +81,8 @@ async function waitFor(check, ms = 2000) {
 
 const seat = (pool, device, extra = {}) =>
   pool.selectAndReserve({ model: MODEL, seatKey: `seat:dev:${device}`, ...extra })
+/** Planner key for a platform-scope device seat. */
+const planned = (device) => `platform|seat:dev:${device}`
 
 function perVm(holds) {
   const out = {}
@@ -102,7 +105,7 @@ test('5 devices on 2×2 seats: 4 seat now, the 5th queues and the 6th waits behi
   await waitFor(() => pool.planner.globalQueue.length === 2)
   assert.deepEqual(
     pool.planner.globalQueue.map((ticket) => ticket.seatKey),
-    ['seat:dev:d5', 'seat:dev:d6'],
+    [planned('d5'), planned('d6')],
   )
   held[0].release()
   const got5 = await fifth
@@ -111,12 +114,29 @@ test('5 devices on 2×2 seats: 4 seat now, the 5th queues and the 6th waits behi
   assert.equal(got5.selectionReason, 'queued')
   assert.deepEqual(
     pool.planner.globalQueue.map((ticket) => ticket.seatKey),
-    ['seat:dev:d6'],
+    [planned('d6')],
   )
   held[1].release()
   const got6 = await sixth
   assert.equal(got6.ok, true)
   for (const hold of [...held.slice(2), got5, got6]) hold.release()
+})
+
+test('the same device under another owner scope is another seat and cannot free it', async (t) => {
+  const pool = setup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 1 } },
+    { id: 'vm-02', policy: { sessionSlots: 1 }, owner: 'user-7' },
+  ])
+  const platform = await seat(pool, 'shared')
+  assert.equal(platform.vmId, 'vm-01')
+  const tenant = await seat(pool, 'shared', { ownerScope: { type: 'user', userId: 'user-7' } })
+  assert.equal(tenant.ok, true)
+  assert.equal(tenant.vmId, 'vm-02')
+  assert.equal(pool.planner.openCount('vm-01'), 1)
+  assert.equal(pool.planner.openCount('vm-02'), 1)
+  assert.equal(pool.planner.seatOf(planned('shared')).vmId, 'vm-01')
+  platform.release()
+  tenant.release()
 })
 
 test('one device with 3 concurrent requests holds 1 seat; VM concurrency 2 releases them in arrival order', async (t) => {
@@ -317,9 +337,9 @@ test('failover off a VM frees the old seat at once and opens one on the new VM',
   assert.equal(moved.vmId, other)
   assert.equal(moved.seatMoved, true)
   assert.equal(pool.planner.openCount(first.vmId), 0)
-  assert.equal(pool.planner.seatOf('seat:dev:dev').vmId, other)
+  assert.equal(pool.planner.seatOf(planned('dev')).vmId, other)
   moved.release()
-  pool.planner.free(pool.planner.seatOf('seat:dev:dev'))
+  pool.planner.free(pool.planner.seatOf(planned('dev')))
 })
 
 test('a rehomed concurrency wait starts at the move and stays on that VM', async (t) => {
@@ -345,10 +365,10 @@ test('a rehomed concurrency wait starts at the move and stays on that VM', async
   await new Promise((resolve) => setTimeout(resolve, 180))
   assert.equal(pool.planner.globalQueue.length, 0)
   assert.equal(
-    (pool.planner.vmQueues.get(home) || []).some((ticket) => ticket.seatKey === 'seat:dev:c'),
+    (pool.planner.vmQueues.get(home) || []).some((ticket) => ticket.seatKey === planned('c')),
     true,
   )
-  assert.equal(pool.planner.seatOf('seat:dev:c').vmId, home)
+  assert.equal(pool.planner.seatOf(planned('c')).vmId, home)
   gotFirst.release()
   const gotSecond = await second
   assert.equal(gotSecond.ok, true)
@@ -370,15 +390,15 @@ test('grace expiry keeps the seat while that device still queues on the VM', asy
   const waitingC = seat(pool, 'c')
   await waitFor(() => pool.planner.globalQueue.length === 1)
   const againA = seat(pool, 'a')
-  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:a'))
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('a')))
   await waitFor(() => {
-    const owned = pool.planner.seatOf('seat:dev:a')
+    const owned = pool.planner.seatOf(planned('a'))
     return !!owned && owned.inflight === 0 && owned.graceUntil == null
   })
   assert.equal(pool.planner.openCount('vm-01'), 2)
   assert.deepEqual(
     pool.planner.globalQueue.map((ticket) => ticket.seatKey),
-    ['seat:dev:c'],
+    [planned('c')],
   )
   heldB.release()
   const gotA = await againA
@@ -387,7 +407,7 @@ test('grace expiry keeps the seat while that device still queues on the VM', asy
   assert.equal(gotA.selectionReason, 'queued')
   assert.deepEqual(
     pool.planner.globalQueue.map((ticket) => ticket.seatKey),
-    ['seat:dev:c'],
+    [planned('c')],
   )
   gotA.release()
   const gotC = await waitingC
@@ -410,11 +430,11 @@ test('a sticky seat wait leaves a home VM that stopped being eligible', async (t
   assert.equal(heldA.vmId, 'vm-01')
   assert.equal(heldB.vmId, 'vm-02')
   const waiting = seat(pool, 'c', { deviceVmId: 'vm-01' })
-  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:c'))
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('c')))
   pool.runtimeRepo.upsert({ account_id: 'account-1', rate_limit_reset_at: Date.now() + 60_000 })
-  await waitFor(() => pool.planner.globalQueue.some((ticket) => ticket.seatKey === 'seat:dev:c'), 4500)
+  await waitFor(() => pool.planner.globalQueue.some((ticket) => ticket.seatKey === planned('c')), 4500)
   assert.equal(
-    (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:c'),
+    (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('c')),
     false,
   )
   heldB.release()

@@ -38,7 +38,7 @@ import { slotAllowsModel } from './slot-model-gate.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 import { resolveCredentialScheduleLevel } from './credential-weight.mjs'
-import { PLATFORM_SCOPE, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { PLATFORM_SCOPE, normalizeOwnerId, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import {
   kernelFaults,
   rustKernelBusy,
@@ -163,6 +163,18 @@ function isUnboundAuthCooldown(candidate, bound, stickyCleared) {
   if (!stickyCleared || !bound) return false
   if (candidate.vmId !== bound.vmId || candidate.accountId !== bound.accountId) return false
   return candidate.waitReason === 'account_cooldown' && isAuthCooldownReason(candidate.cooldownReason)
+}
+
+/**
+ * The seat book is process-wide and seat identities are client-chosen. Each
+ * owner scope sees a disjoint VM inventory, so the same device under another
+ * scope is another seat; otherwise one tenant's request could find the other's
+ * seat "off its pool" and free it.
+ */
+function scopedSeatKey(seatKey, scope = PLATFORM_SCOPE) {
+  const type = scope?.type || 'platform'
+  const owner = type === 'user' ? `user:${normalizeOwnerId(scope.userId)}` : type
+  return `${owner}|${seatKey}`
 }
 
 /**
@@ -338,7 +350,9 @@ export class PoolScheduler extends EventEmitter {
    */
   async selectAndReserve(args = {}) {
     const pinned = !!String(args.pinVmId || '').trim()
-    if (args.seatKey && !pinned && !args.skipSessionSlot) return this.selectSeat(args)
+    if (args.seatKey && !pinned && !args.skipSessionSlot) {
+      return this.selectSeat({ ...args, seatKey: scopedSeatKey(args.seatKey, args.ownerScope) })
+    }
     return this.selectDirect(args)
   }
 
