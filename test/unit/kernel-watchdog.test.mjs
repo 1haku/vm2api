@@ -127,18 +127,20 @@ test('watchdog does not restart a live crag slot', async () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-test('telemetry sidecar is checked once per window on live kernels only', async () => {
+test('telemetry sidecar is checked once per window on every running slot', async () => {
   let now = 0
   const checked = []
   const wd = createKernelWatchdog({
     now: () => now,
     telemetryEveryMs: 600_000,
     listTargets: () => [
-      { id: 'vm-up', inference_engine: 'rust' },
-      { id: 'vm-down', inference_engine: 'rust' },
+      // Live slots carry no inference_engine / runtime.engine and are not restart targets.
+      { id: 'vm-live', status: 'running', runtime: { type: 'docker', worker: 'rust' } },
+      { id: 'vm-stopped', status: 'stopped' },
+      { id: 'vm-kvm', runtime_kind: 'kvm' },
     ],
     homeDirFor: (vm) => `/tmp/${vm.id}`,
-    health: async (exec) => (exec.vmId === 'vm-up' ? { ok: true, healthy: true, ready_slots: 1 } : null),
+    health: async () => null,
     ensure: async () => ({ ok: true }),
     ensureTelemetry: async (vm) => {
       checked.push(vm.id)
@@ -148,8 +150,8 @@ test('telemetry sidecar is checked once per window on live kernels only', async 
   await wd.tick()
   now = 599_999
   await wd.tick()
-  assert.deepEqual(checked, ['vm-up'])
+  assert.deepEqual(checked, ['vm-live'])
   now = 600_000
   await wd.tick()
-  assert.deepEqual(checked, ['vm-up', 'vm-up'])
+  assert.deepEqual(checked, ['vm-live', 'vm-live'])
 })
