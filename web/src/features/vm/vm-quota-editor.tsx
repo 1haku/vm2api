@@ -22,22 +22,16 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { dashboardQueryOptions } from '@/features/overview/queries'
-import {
-  IDLE_STEPS,
-  RATIO_STEPS,
-  SESSION_STEPS,
-} from '@/features/settings/quota-tier-pane'
+import { RATIO_STEPS } from '@/features/settings/quota-tier-pane'
 import { vmQueryOptions } from '@/features/vm/queries'
 
 type Key = keyof VmQuotaView
-type Kind = 'ratio' | 'sessions' | 'idle' | 'bool'
+type Kind = 'ratio' | 'bool'
 
 /** 与 settings/quota 的字段一一对应；并发 / RPM 走「并发 / RPM」编辑。 */
 const FIELDS: { key: Key; label: string; kind: Kind }[] = [
   { key: 'limit_5h', label: '5h 硬闸', kind: 'ratio' },
   { key: 'limit_7d', label: '7d 硬闸', kind: 'ratio' },
-  { key: 'max_sessions', label: '最大会话', kind: 'sessions' },
-  { key: 'session_idle_min', label: '会话空闲', kind: 'idle' },
   { key: 'block_on_5h', label: '5h 打满阻断', kind: 'bool' },
   { key: 'block_on_7d', label: '7d 打满阻断', kind: 'bool' },
   { key: 'weekly_split', label: '周仓拆分', kind: 'bool' },
@@ -47,47 +41,33 @@ const INHERIT = 'inherit'
 
 function fmtValue(kind: Kind, value: unknown): string {
   if (kind === 'bool') return value ? '开' : '关'
-  const n = Number(value)
-  if (kind === 'ratio') return `${Math.round(n * 100)}%`
-  if (kind === 'sessions') return n > 0 ? String(n) : '不限制'
-  return IDLE_STEPS.find(([v]) => v === n)?.[1] || `${n} 分钟`
+  return `${Math.round(Number(value) * 100)}%`
 }
 
 /** 编辑态用字符串：ratio 存百分数，bool 存 on/off。 */
 function toDraft(kind: Kind, value: unknown): string {
   if (value == null) return INHERIT
   if (kind === 'bool') return value ? 'on' : 'off'
-  if (kind === 'ratio') return String(Math.round(Number(value) * 100))
-  return String(Number(value))
+  return String(Math.round(Number(value) * 100))
 }
 
 function fromDraft(kind: Kind, draft: string): number | boolean | null {
   if (draft === INHERIT) return null
   if (kind === 'bool') return draft === 'on'
-  if (kind === 'ratio') return Number(draft) / 100
-  return Number(draft)
+  return Number(draft) / 100
 }
 
 function options(kind: Kind, draft: string): [string, string][] {
-  const base: [string, string][] =
-    kind === 'bool'
-      ? [
-          ['on', '开'],
-          ['off', '关'],
-        ]
-      : kind === 'ratio'
-        ? RATIO_STEPS.map((p): [string, string] => [String(p), `${p}%`])
-        : kind === 'sessions'
-          ? SESSION_STEPS.map((v): [string, string] => [
-              String(v),
-              v === 0 ? '不限制' : String(v),
-            ])
-          : IDLE_STEPS.map(([v, l]): [string, string] => [String(v), l])
+  if (kind === 'bool') {
+    return [
+      ['on', '开'],
+      ['off', '关'],
+    ]
+  }
+  const base = RATIO_STEPS.map((p): [string, string] => [String(p), `${p}%`])
   // 服务端存了不在档位里的值（手改 vm.json）时保留它，不被吞成别的档。
   if (draft === INHERIT || base.some(([v]) => v === draft)) return base
-  const label =
-    kind === 'ratio' ? `${draft}%` : kind === 'idle' ? `${draft} 分钟` : draft
-  return [...base, [draft, label] as [string, string]].sort(
+  return [...base, [draft, `${draft}%`] as [string, string]].sort(
     (a, b) => Number(a[0]) - Number(b[0])
   )
 }

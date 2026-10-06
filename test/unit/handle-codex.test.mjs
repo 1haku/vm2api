@@ -658,6 +658,10 @@ test('#A11: an OpenAI pool that stays full answers 429 pool_overloaded', async (
   const held = rt.tryAcquireOpenAISlot(vmId, { concurrency: 1 })
   const args = codexArgs(root, { ensureCodexKernel: async () => ({ ok: true }) })
   args.routing = { pool: { fallback_wait_timeout_ms: 1000 } }
+  const headers = {}
+  args.res.setHeader = (name, value) => {
+    headers[name] = value
+  }
   // Waiter timers are unref'd so a systemd process can idle-exit. Keep one
   // ref'd handle so this isolated file cannot drain before the 1s deadline.
   const keepAlive = setTimeout(() => {}, 15_000)
@@ -666,6 +670,7 @@ test('#A11: an OpenAI pool that stays full answers 429 pool_overloaded', async (
     assert.equal(out.status, 429)
     assert.equal(out.body.error.code, 'pool_overloaded')
     assert.equal(out.body.error.message, '号池负载过高，稍后再试')
+    assert.ok(Number(headers['retry-after']) >= 1)
   } finally {
     clearTimeout(keepAlive)
     held.release()

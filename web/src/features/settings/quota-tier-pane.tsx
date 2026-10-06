@@ -24,14 +24,6 @@ const TIER_DEFAULTS: Record<QuotaTierKey, QuotaTierPolicy> = {
   max: { max_concurrency: 4, max_rpm: 0, limit_5h: 0.95, limit_7d: 0.95 },
 }
 
-export const SESSION_STEPS = [0, 1, 2, 4, 8, 12, 16, 20]
-export const IDLE_STEPS: [number, string][] = [
-  [1, '1 分钟'],
-  [5, '5 分钟'],
-  [15, '15 分钟'],
-  [30, '30 分钟'],
-  [60, '1 小时'],
-]
 // 30–100% in 5-point steps, matching the legacy ratio slider's snap-down rule
 export const RATIO_STEPS = Array.from({ length: 15 }, (_, i) => 30 + i * 5)
 
@@ -59,8 +51,6 @@ export function QuotaTierPane({
 
   const conc = Number(t.max_concurrency ?? fallback.max_concurrency)
   const rpm = Number(t.max_rpm ?? defaultRpm ?? 0)
-  const sessions = Number(t.max_sessions ?? 0)
-  const idle = Number(t.session_idle_min ?? 5)
   const limit5h = snapRatio(t.limit_5h, fallback.limit_5h as number)
   const limit7d = snapRatio(t.limit_7d, fallback.limit_7d as number)
 
@@ -72,8 +62,7 @@ export function QuotaTierPane({
       <CardContent className='space-y-4'>
         <p className='text-xs text-muted-foreground'>
           只编当前档的 <code>tiers.*</code>。过 5h/7d
-          硬闸写入受限并切号，不是调度关。 会话满员仍拒新请求，胶囊写「5h 限制 /
-          会话已满」。
+          硬闸写入受限并切号，不是调度关。
         </p>
 
         <Tabs value={tier} onValueChange={(v) => setTier(v as QuotaTierKey)}>
@@ -156,44 +145,6 @@ export function QuotaTierPane({
               </SelectTrigger>
               <SelectContent>
                 {RPM_STEPS.map(([v, l]) => (
-                  <SelectItem key={v} value={String(v)}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className='space-y-1.5'>
-            <Label htmlFor='tier-sessions'>最大会话</Label>
-            <Select
-              value={String(sessions)}
-              onValueChange={(v) => set({ max_sessions: Number(v) })}
-            >
-              <SelectTrigger id='tier-sessions'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SESSION_STEPS.map((v) => (
-                  <SelectItem key={v} value={String(v)}>
-                    {v === 0 ? '不限制' : String(v)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className='space-y-1.5'>
-            <Label htmlFor='tier-idle'>会话空闲</Label>
-            <Select
-              value={String(idle)}
-              onValueChange={(v) => set({ session_idle_min: Number(v) })}
-            >
-              <SelectTrigger id='tier-idle'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {IDLE_STEPS.map(([v, l]) => (
                   <SelectItem key={v} value={String(v)}>
                     {l}
                   </SelectItem>
