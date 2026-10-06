@@ -322,6 +322,110 @@ test('failover off a VM frees the old seat at once and opens one on the new VM',
   pool.planner.free(pool.planner.seatOf('seat:dev:dev'))
 })
 
+test('a rehomed concurrency wait starts at the move and stays on that VM', async (t) => {
+  const pool = setup(
+    t,
+    [
+      { id: 'vm-01', policy: { sessionSlots: 1, maxConcurrency: 1 } },
+      { id: 'vm-02', policy: { sessionSlots: 1, maxConcurrency: 1 } },
+    ],
+    { fallback: 80, sticky: 500 },
+  )
+  const heldA = await seat(pool, 'a')
+  const heldB = await seat(pool, 'b')
+  const home = heldA.vmId
+  const first = seat(pool, 'c')
+  const second = seat(pool, 'c')
+  await waitFor(() => pool.planner.globalQueue.length === 2)
+  heldA.release()
+  const gotFirst = await first
+  assert.equal(gotFirst.ok, true)
+  assert.equal(gotFirst.vmId, home)
+  await waitFor(() => (pool.planner.vmQueues.get(home) || []).some((ticket) => ticket.kind === 'conc'))
+  await new Promise((resolve) => setTimeout(resolve, 180))
+  assert.equal(pool.planner.globalQueue.length, 0)
+  assert.equal(
+    (pool.planner.vmQueues.get(home) || []).some((ticket) => ticket.seatKey === 'seat:dev:c'),
+    true,
+  )
+  assert.equal(pool.planner.seatOf('seat:dev:c').vmId, home)
+  gotFirst.release()
+  const gotSecond = await second
+  assert.equal(gotSecond.ok, true)
+  assert.equal(gotSecond.vmId, home)
+  assert.equal(gotSecond.reason, undefined)
+  gotSecond.release()
+  heldB.release()
+})
+
+test('grace expiry keeps the seat while that device still queues on the VM', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 2, maxConcurrency: 1 } }], {
+    seat_grace_ms: 500,
+    sticky: 5000,
+    fallback: 5000,
+  })
+  const heldA = await seat(pool, 'a')
+  heldA.release()
+  const heldB = await seat(pool, 'b')
+  const waitingC = seat(pool, 'c')
+  await waitFor(() => pool.planner.globalQueue.length === 1)
+  const againA = seat(pool, 'a')
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:a'))
+  await waitFor(() => {
+    const owned = pool.planner.seatOf('seat:dev:a')
+    return !!owned && owned.inflight === 0 && owned.graceUntil == null
+  })
+  assert.equal(pool.planner.openCount('vm-01'), 2)
+  assert.deepEqual(
+    pool.planner.globalQueue.map((ticket) => ticket.seatKey),
+    ['seat:dev:c'],
+  )
+  heldB.release()
+  const gotA = await againA
+  assert.equal(gotA.ok, true)
+  assert.equal(gotA.vmId, 'vm-01')
+  assert.equal(gotA.selectionReason, 'queued')
+  assert.deepEqual(
+    pool.planner.globalQueue.map((ticket) => ticket.seatKey),
+    ['seat:dev:c'],
+  )
+  gotA.release()
+  const gotC = await waitingC
+  assert.equal(gotC.ok, true)
+  assert.equal(gotC.vmId, 'vm-01')
+  gotC.release()
+})
+
+test('a sticky seat wait leaves a home VM that stopped being eligible', async (t) => {
+  const pool = setup(
+    t,
+    [
+      { id: 'vm-01', policy: { sessionSlots: 1, maxConcurrency: 2 } },
+      { id: 'vm-02', policy: { sessionSlots: 1, maxConcurrency: 2 } },
+    ],
+    { sticky: 8000, fallback: 8000 },
+  )
+  const heldA = await seat(pool, 'a', { deviceVmId: 'vm-01' })
+  const heldB = await seat(pool, 'b', { deviceVmId: 'vm-02' })
+  assert.equal(heldA.vmId, 'vm-01')
+  assert.equal(heldB.vmId, 'vm-02')
+  const waiting = seat(pool, 'c', { deviceVmId: 'vm-01' })
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:c'))
+  pool.runtimeRepo.upsert({ account_id: 'account-1', rate_limit_reset_at: Date.now() + 60_000 })
+  await waitFor(() => pool.planner.globalQueue.some((ticket) => ticket.seatKey === 'seat:dev:c'), 4500)
+  assert.equal(
+    (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === 'seat:dev:c'),
+    false,
+  )
+  heldB.release()
+  const got = await waiting
+  assert.equal(got.ok, true)
+  assert.equal(got.vmId, 'vm-02')
+  assert.equal(got.selectionReason, 'queued')
+  got.release()
+  heldA.release()
+})
+
 test('seat stream frames carry per-VM seats, global queue and queue_max', async (t) => {
   const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
   let changes = 0

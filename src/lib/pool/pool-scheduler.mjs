@@ -284,6 +284,7 @@ export class PoolScheduler extends EventEmitter {
       graceMs: this.config.seat_grace_ms,
       reservePct: this.config.seat_budget_reserve_pct,
       strategy: this.config.strategy,
+      stickyWaitMs: () => this.config.sticky_wait_timeout_ms,
       onChange: () => this.emit('change'),
     })
     this.unitCircuit = unitCircuit
@@ -525,6 +526,12 @@ export class PoolScheduler extends EventEmitter {
         const byVm = new Map(candidates.map((candidate) => [candidate.vmId, candidate]))
         if (ticket) ticket.candidates = byVm
         const now = Date.now()
+        // Home left the pool (circuit open, unschedulable, hard cooldown, removed).
+        // A full home is still a candidate, so that wait keeps its sticky clock.
+        if (ticket?.kind === 'seat' && ticket.vmId && !byVm.has(ticket.vmId)) {
+          this.planner.toGlobal(ticket)
+          ticket.deadline = Math.min(failoverDeadline, now + this.config.fallback_wait_timeout_ms)
+        }
         let seat = this.planner.seatOf(seatKey)
         if (seat) {
           const home = byVm.get(seat.vmId)
