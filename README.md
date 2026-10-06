@@ -357,7 +357,7 @@ Before opening an issue, follow [ISSUE_GUIDE.md](ISSUE_GUIDE.md): version, repro
         <span style="color: #888; font-size: 13px;">请作者喝杯咖啡 · 助力持续迭代演进</span>
         <br/><br/>
         <a href="#-交流与赞助支持--community--sponsorship">
-          <img src="https://img.shields.io/badge/Sponsor-WeChat%20Pay-07C160?style=for-the-badge&logo=wechat&logoColor=white" />
+          <img src="https://img.shields.io/badge/Sponsor-Alipay%20Pay-07C160?style=for-the-badge&logo=alipay&logoColor=white" />
         </a>
       </td>
     </tr>
