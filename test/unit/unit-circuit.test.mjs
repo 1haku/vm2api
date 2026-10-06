@@ -1,6 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { UnitCircuit } from '../../src/lib/pool/unit-circuit.mjs'
+import { normalizePoolRouting } from '../../src/lib/pool/pool-scheduler.mjs'
+
+test('stored circuit settings are the ones the breaker runs with', () => {
+  const cases = [
+    [{}, 3, 30000],
+    [{ circuit_failure_threshold: 0, circuit_open_ms: 0 }, 3, 30000],
+    [{ circuit_failure_threshold: 'junk', circuit_open_ms: null }, 3, 30000],
+    [{ circuit_failure_threshold: 5, circuit_open_ms: 60000 }, 5, 60000],
+    [{ circuit_failure_threshold: 100, circuit_open_ms: 500 }, 20, 1000],
+  ]
+  for (const [stored, threshold, openMs] of cases) {
+    const pool = normalizePoolRouting(stored)
+    const circuit = new UnitCircuit()
+    circuit.configure({ failureThreshold: pool.circuit_failure_threshold, openMs: pool.circuit_open_ms })
+    assert.equal(pool.circuit_failure_threshold, threshold)
+    assert.equal(pool.circuit_open_ms, openMs)
+    assert.equal(circuit.failureThreshold, threshold)
+    assert.equal(circuit.openMs, openMs)
+  }
+})
 
 test('half-open admits one probe and holds the rest', () => {
   let now = 1_000
