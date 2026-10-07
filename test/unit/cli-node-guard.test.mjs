@@ -50,8 +50,8 @@ async function settle() {
 
 test('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs including -p', async (t) => {
   const slot = slotFixture(t)
-  const kernel = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
-  const duplicate = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const kernel = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
+  const duplicate = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
   const hello = slot.add(['-p', 'hello', '--permission-mode', 'bypassPermissions'], ['KIN_OFFICIAL_CC=1'])
   const usage = slot.add(['/usage', '--print'], ['KIN_OFFICIAL_CC=1'])
   const setupToken = slot.add(['setup-token'], ['KIN_SETUP_TOKEN=1'])
@@ -66,7 +66,7 @@ test('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs incl
 
 test('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t) => {
   const slot = slotFixture(t)
-  const kernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const kernel = slot.add(['-p'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
   const closedPanel = slot.add(['-p', 'hello'], ['KIN_PANEL_SHELL=gone'])
   const stray = slot.add(['-p', 'hello'], ['HOME=/home/kincli'])
   slot.run([])
