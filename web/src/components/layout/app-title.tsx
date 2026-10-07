@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { REPO_URL } from '@/config/repo'
-import { Menu, X } from 'lucide-react'
+import { ArrowUpRight, Menu, X } from 'lucide-react'
 import { IconGithub } from '@/assets/brand-icons'
 import { Logo } from '@/assets/logo'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,9 @@ const CHIP_CLASS =
 
 const CHIP_LINK_CLASS =
   'cursor-pointer hover:border-primary/45 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+
+// 版本号单独占一行且不截断：发布号可能带预发布/构建后缀，截断会丢失关键信息。
+const VERSION_CHIP_CLASS = 'h-auto min-h-10 gap-2 py-1.5 text-base'
 
 export function AppTitle({ version }: { version?: string }) {
   const { setOpenMobile } = useSidebar()
@@ -46,7 +49,7 @@ export function AppTitle({ version }: { version?: string }) {
           </Link>
           <ToggleSidebar className='group-data-[collapsible=icon]:hidden' />
         </div>
-        <div className='mt-3 flex items-center gap-1 group-data-[collapsible=icon]:hidden'>
+        <div className='mt-3 grid gap-1.5 group-data-[collapsible=icon]:hidden'>
           <VersionChip version={version?.replace(/^v/i, '')} />
           <a
             href={REPO_URL}
@@ -54,7 +57,7 @@ export function AppTitle({ version }: { version?: string }) {
             rel='noreferrer'
             title='查看上游 GitHub 项目'
             aria-label='查看上游 GitHub 项目'
-            className={cn(CHIP_CLASS, CHIP_LINK_CLASS, 'ml-auto')}
+            className={cn(CHIP_CLASS, CHIP_LINK_CLASS, 'justify-self-start')}
           >
             <IconGithub aria-hidden className='size-4 shrink-0' />
           </a>
@@ -67,11 +70,9 @@ export function AppTitle({ version }: { version?: string }) {
 function VersionChip({ version }: { version?: string }) {
   if (!version) {
     return (
-      <span className={CHIP_CLASS}>
+      <span className={cn(CHIP_CLASS, VERSION_CHIP_CLASS)}>
         <span className='size-2 shrink-0 rounded-full bg-sidebar-foreground/30' />
-        <span className='truncate font-mono text-sidebar-foreground/60'>
-          版本 —
-        </span>
+        <span className='font-mono text-sidebar-foreground/60'>版本 —</span>
       </span>
     )
   }
@@ -81,11 +82,15 @@ function VersionChip({ version }: { version?: string }) {
       target='_blank'
       rel='noreferrer'
       title={`v${version} 发布说明`}
-      className={cn(CHIP_CLASS, CHIP_LINK_CLASS)}
+      className={cn(CHIP_CLASS, CHIP_LINK_CLASS, VERSION_CHIP_CLASS)}
     >
-      <span className='truncate font-mono font-semibold tabular-nums'>
+      <span className='font-mono font-semibold break-all tabular-nums'>
         v{version}
       </span>
+      <ArrowUpRight
+        aria-hidden
+        className='ms-auto size-4 shrink-0 opacity-60'
+      />
     </a>
   )
 }
