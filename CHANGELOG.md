@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.117 — 2026-10-07
+
+- 控制台账号池、配额、粘性改为主次摘要与完整配置弹窗；运行明细按需展开。弹窗取消不污染草稿，「应用到草稿」与全局「保存」分开，VM 本槽保存单独生效。
+- 新增独立 `codex.quota`：OpenAI 5h/7d 本地闸线、并发、RPM、对话窗口在准入时生效。Claude 分档保存不改 OpenAI 限额。软闸调整不切断在飞流，不清除上游硬限制或人工关闭。
+- OpenAI VM 可单独设 `max_sessions`。缺少 `codex.quota` 的旧配置在启动时补上，不覆盖凭证或操作员开关。
+- 网关自己合成的 429（`fable_requires_max`、`pool_rate_limited`）不再把账号标成 5 小时额度用尽。真正的上游 429 和 `You've hit your limit` 仍记额度。
+- Codex `POST /v1/responses` 流的 SSE 事件名改为 payload 的 `type`（`response.created`、`response.output_text.delta`、`response.completed`），不再每帧都是 `event: response`。
+
+已部署机升级：只更新 Node 控制面与 `web/dist` 并重启一次。启动时若 routing 里没有 `codex.quota` 会补上，不覆盖已有限额和凭证。不要手改或覆盖 `routing.json`、`vms/`、`data/`、`.env`。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.116 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽。
+
 ## 1.3.116 — 2026-10-07
 
 - 协议入口收成一条前置闸门：蒸馏硬规则、去掉 system-reminder 并按需展开 base64 后的硬正则、拒答缓存、决策模型。决策模型走 `/v1/systemone`，题库默认六题一起问（综合、色情、破限、逆向、渗透、网络攻击），高分表示安全，任一题低于阈值拦截。题库可在面板增删改。阈值、去重、送模长度、失败放行都可配。最多 8 把 key，401 / 429 / 529 换下一把。Jev、本机 Laya、ModernBERT 共用这套。模型故障默认放行。
@@ -33,13 +43,6 @@
 - 重建控制台产物。
 
 已部署 x86 机升级：换 `bin/kin-codex-kernel`（sha256 `98715a2f…`）并更新 `web/dist`。替换后停掉 `kin-codex-kernel` 进程，再重启一次 Node：Node 留着它自己拉起的内核子进程句柄，只杀进程不重启 Node 的话，该槽会一直 503。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.111 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
-
-- 控制台账号池、配额、粘性改为主次摘要与完整配置弹窗；运行明细按需展开。弹窗取消不污染草稿，“应用到草稿”与全局“保存”分开，VM 本槽保存单独生效；保留现有主题、键盘焦点恢复及移动/平板布局。
-- 新增独立 `codex.quota`：OpenAI 5h/7d 本地闸线、并发、RPM、对话窗口默认值在真实准入和恢复中生效；Claude 分档保存不改 OpenAI 限额。软闸调整不切断在飞流，不清除上游硬限制或人工关闭。
-- OpenAI VM 新增 `max_sessions` 数字/null 与来源标记；并发/RPM/null 重置跟随 OpenAI 全局值。创建时默认继承，重导入保留本槽覆盖；移除 OpenAI 无效的 Claude 调度等级编辑入口。
-- 缺少 `codex.quota` 的旧配置启动时迁移，保留有效非默认限额与异常大历史对话上限，支持重启/部分迁移续跑；历史 OpenAI 并发 0 仍执行为 2。迁移先写 VM、再原子写 routing，不覆盖凭证或操作员开关。
-- 修复保存值首屏未正确进入设置草稿、OpenAI 在飞数被 Claude 投影覆盖，以及 OpenAI 面板错误沿用 Claude 闸线；列表/详情新增 `openai_quota_policy`，未知用量/本地重置时间不伪造。
-- 重建控制台产物。此项仍为 Unreleased，未部署；后续升级只需 Node 控制面与 `web/dist`，无需 kernel/container 重建。升级前备份 routing 与 VM 记录，不要覆盖部署配置/凭证。
 
 
 ## 1.3.111 — 2026-10-07
