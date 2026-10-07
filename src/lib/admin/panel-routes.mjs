@@ -15,8 +15,9 @@ import {
   revokePanelSessionsForUser,
 } from '../core/security.mjs'
 import { loadDistillRules, saveDistillRules, validateDistillPatch } from '../core/distill-detect.mjs'
-import { isRefusalGuardEnabled, REFUSAL_GUARD_SETTING } from '../core/refusal-guard.mjs'
+import { applyRefusalGuardPatch, refusalGuardPolicy } from '../core/refusal-guard.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
+import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { parseCodexImportPayload, upsertCodexAccount, readCodexAccounts } from '../vm/codex-slot.mjs'
 import { generateAuthUrl, exchangeAuthCode, normalizeOauthFlavor } from '../oauth/oauth-auth-url.mjs'
@@ -423,10 +424,14 @@ export function createPanelHandler(ctx) {
   function refusalGuardSnapshot() {
     const settings = new SettingsRepo()
     const repo = new RefusalGuardsRepo()
+    const devices = new RefusalDeviceBlocksRepo()
+    const read = (key, fallback) => settings.get(key, fallback)
     return {
-      enabled: isRefusalGuardEnabled((key, fallback) => settings.get(key, fallback)),
+      ...refusalGuardPolicy(read),
       count: repo.count(),
       items: repo.list(),
+      device_count: devices.count(),
+      devices: devices.list(),
     }
   }
 
@@ -3629,18 +3634,16 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'PUT' && p === '/api/panel/refusal-guards') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
-        if (body && Object.prototype.hasOwnProperty.call(body, 'enabled') && typeof body.enabled !== 'boolean') {
+        const patched = applyRefusalGuardPatch(new SettingsRepo(), body || {})
+        if (!patched.ok) {
           return json(res, 400, {
             ok: false,
             error: {
               type: 'invalid_request_error',
               code: 'invalid_refusal_guard',
-              message: 'enabled 必须是布尔',
+              message: patched.problems.join('；'),
             },
           })
-        }
-        if (body && Object.prototype.hasOwnProperty.call(body, 'enabled')) {
-          new SettingsRepo().set(REFUSAL_GUARD_SETTING, body.enabled !== false)
         }
         return json(res, 200, panel.ok(refusalGuardSnapshot()))
       }
@@ -3668,6 +3671,32 @@ export function createPanelHandler(ctx) {
           })
         }
         new RefusalGuardsRepo().clear()
+        return json(res, 200, panel.ok(refusalGuardSnapshot()))
+      }
+      if (req.method === 'DELETE' && p === '/api/panel/refusal-device-blocks') {
+        const body = await readBody(req, 8 * 1024).catch(() => ({}))
+        const repo = new RefusalDeviceBlocksRepo()
+        const deviceId = String(body?.device_id || '').trim()
+        if (deviceId) {
+          if (!repo.remove(deviceId)) {
+            return json(res, 404, {
+              ok: false,
+              error: { type: 'not_found_error', code: 'refusal_device_not_found', message: 'device 不存在' },
+            })
+          }
+          return json(res, 200, panel.ok(refusalGuardSnapshot()))
+        }
+        if (body?.confirm !== true) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              type: 'invalid_request_error',
+              code: 'confirm_required',
+              message: '清空 device 封禁须 confirm: true，或传 device_id',
+            },
+          })
+        }
+        repo.clear()
         return json(res, 200, panel.ok(refusalGuardSnapshot()))
       }
       if (req.method === 'GET' && p === '/api/panel/notify') {
