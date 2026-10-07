@@ -222,11 +222,12 @@ export class SubscriptionsRepo {
       throw subscriptionError('已撤销的订阅需重新分配')
     return withTransaction(this.db, () => {
       if (input.action === 'reset') {
+        const resetAt = iso()
         this.db
           .prepare(
             'UPDATE custom_user_subscriptions SET reset_at=?,reset_ledger_rowid=(SELECT COALESCE(MAX(rowid),0) FROM custom_subscription_ledger),updated_at=? WHERE id=?',
           )
-          .run(iso(), iso(), id)
+          .run(resetAt, resetAt, id)
       } else if (input.action === 'renew') {
         const days = number(input.days, 30, 1, 3650)
         if (!Number.isInteger(days)) throw subscriptionError('续期天数须为整数')
@@ -245,7 +246,9 @@ export class SubscriptionsRepo {
 
   progress(sub, now = Date.now()) {
     const day = shanghaiDayStartIso(new Date(now))
-    const anchor = Date.parse(sub.starts_at)
+    // A manual reset starts a fresh seven-day window. reset_at already exists
+    // on older records, so both historical resets and new resets use this anchor.
+    const anchor = Math.max(Date.parse(sub.starts_at), Date.parse(sub.reset_at) || 0)
     const week = anchor + Math.max(0, Math.floor((now - anchor) / (7 * DAY))) * 7 * DAY
     const dayStart = sub.reset_at > day ? sub.reset_at : day
     const weekStart = sub.reset_at > iso(week) ? sub.reset_at : iso(week)

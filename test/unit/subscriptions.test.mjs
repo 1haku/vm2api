@@ -237,6 +237,54 @@ test('multiple keys share quota and concurrency; settlement is idempotent; reset
   assert.equal(repo.list('a')[0].daily_used, 1.25)
 })
 
+test('manual quota reset restarts the weekly window, enforces it past the old boundary and keeps history', (t) => {
+  const start = Date.parse('2026-10-01T04:00:00.000Z'),
+    day = 86400000
+  t.mock.timers.enable({ apis: ['Date'], now: start })
+  const { db, repo, a, b } = setup(t, { daily_limit_usd: 0, weekly_limit_usd: 10 })
+  const original = repo.entitlement(a),
+    other = repo.entitlement(b)
+  repo.settle('before-reset', original.id, 7)
+  const resetTime = start + 3 * day + 3600000
+  t.mock.timers.setTime(resetTime)
+  const reset = repo.update(original.id, { action: 'reset' }, 'admin')
+  const boundary = resetTime + 7 * day
+  assert.equal(reset.weekly_reset_at, new Date(boundary).toISOString())
+  assert.equal(reset.daily_reset_at, '2026-10-04T16:00:00.000Z')
+  assert.equal(reset.weekly_used, 0)
+  assert.equal(reset.starts_at, original.starts_at)
+  assert.equal(reset.expires_at, original.expires_at)
+  assert.equal(repo.progress(other).weekly_reset_at, new Date(start + 7 * day).toISOString())
+  // Settlement in the same millisecond as reset is counted by ledger sequence.
+  repo.settle('after-reset', original.id, 10)
+  assert.equal(repo.progress(repo.entitlement(a)).weekly_used, 10)
+  t.mock.timers.setTime(start + 7 * day + 1)
+  assert.equal(
+    repo.progress(repo.entitlement(a)).weekly_used,
+    10,
+    'original weekly boundary must not grant fresh quota',
+  )
+  assert.throws(() => repo.reserve(a, 'over-week-limit', body), /额度/)
+  t.mock.timers.setTime(boundary - 1)
+  assert.equal(repo.progress(repo.entitlement(a)).weekly_used, 10)
+  t.mock.timers.setTime(boundary)
+  const fresh = repo.progress(repo.entitlement(a))
+  assert.equal(fresh.weekly_used, 0)
+  assert.equal(fresh.weekly_reset_at, new Date(boundary + 7 * day).toISOString())
+  assert.ok(repo.reserve(a, 'new-week', body))
+  repo.settle('new-week', original.id, 1)
+  t.mock.timers.setTime(boundary + day)
+  const again = repo.update(original.id, { action: 'reset' }, 'admin')
+  assert.equal(again.weekly_reset_at, new Date(boundary + 8 * day).toISOString())
+  assert.equal(again.weekly_used, 0)
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger WHERE subscription_id=?').get(original.id).n,
+    3,
+  )
+  const raw = repo.entitlement(a)
+  assert.equal(repo.progress({ ...raw, reset_at: undefined }).weekly_reset_at, new Date(start + 14 * day).toISOString())
+})
+
 test('batch updates validate all members before modifying and retain quota history', (t) => {
   const { repo, db, a, plan } = setup(t)
   const subs = repo.list(),

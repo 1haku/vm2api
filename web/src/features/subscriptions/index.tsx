@@ -777,7 +777,8 @@ export function SubscriptionsPage() {
             <p className='text-xs text-muted-foreground'>
               分组总 RPM 由所有用户共享，每人 RPM
               合并该用户在本分组的所有密钥；按最近 60 秒计数，0
-              表示不限。每日额度于北京时间 00:00 重置，每周从分配时间起每 7
+              表示不限。每日额度于北京时间 00:00
+              重置，每周从首次分配或最近一次手动重置起每 7
               天重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
             </p>
             <Button
@@ -809,7 +810,7 @@ export function SubscriptionsPage() {
           <p className='text-sm'>
             {action?.sub.plan_name} ·{' '}
             {action?.action === 'reset'
-              ? '重置个人额度，历史明细保留。'
+              ? '清零个人日/周额度消耗，每周重置时间改为现在起 7 天后；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
               : action?.action === 'renew'
                 ? '从当前到期时间或今天起延长有效期。'
                 : `将订阅设为${statusName[action?.action || ''] || ''}。`}
