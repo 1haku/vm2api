@@ -366,6 +366,7 @@ export function createPanelHandler(ctx) {
   const applyVmConcurrency = (...args) => ctx.applyVmConcurrency(...args)
   const applyVmRpm = (...args) => ctx.applyVmRpm(...args)
   const applyVmSessionSlots = (...args) => ctx.applyVmSessionSlots(...args)
+  const inheritVmScheduling = (...args) => ctx.inheritVmScheduling(...args)
   const applyVmQuotaOverride = (...args) => ctx.applyVmQuotaOverride(...args)
   const initPoolRuntime = (...args) => ctx.initPoolRuntime(...args)
   const poolSchedulerConfig = (...args) => ctx.poolSchedulerConfig(...args)
@@ -1831,6 +1832,9 @@ export function createPanelHandler(ctx) {
         const body = await readBody(req, 8192).catch(() => ({}))
         const next = body?.max_concurrency ?? body?.maxConcurrency
         const nextRpm = body?.max_rpm ?? body?.maxRpm
+        // Explicit null = drop the slot's pin and follow its tier / global default again.
+        const inheritConc = body?.max_concurrency === null
+        const inheritRpm = body?.max_rpm === null
         const hasSessionSlots = body && Object.prototype.hasOwnProperty.call(body, 'session_slots')
         const hasQuotaOverride = body && Object.prototype.hasOwnProperty.call(body, 'quota_override')
         const hasModels = body && Object.prototype.hasOwnProperty.call(body, 'allowed_models')
@@ -1847,6 +1851,8 @@ export function createPanelHandler(ctx) {
         if (
           next == null &&
           nextRpm == null &&
+          !inheritConc &&
+          !inheritRpm &&
           !hasSessionSlots &&
           !hasQuotaOverride &&
           !hasModels &&
@@ -1934,6 +1940,13 @@ export function createPanelHandler(ctx) {
           const vm = applyVmRpm(id, nextRpm, { override: true })
           if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
+        if ((inheritConc && next == null) || (inheritRpm && nextRpm == null)) {
+          const vm = inheritVmScheduling(id, {
+            concurrency: inheritConc && next == null,
+            rpm: inheritRpm && nextRpm == null,
+          })
+          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        }
         if (hasSessionSlots) {
           const currentVm = getVm(cfg.paths.project, id)
           if (!currentVm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
@@ -1943,15 +1956,19 @@ export function createPanelHandler(ctx) {
               error: { code: 'gpt_session_slots_forbidden', message: 'GPT slots do not use native session slots' },
             })
           }
-          const raw = Number(body.session_slots)
-          if (!Number.isInteger(raw) || raw < SESSION_SLOT_MIN || raw > SESSION_SLOT_MAX) {
-            return json(res, 400, {
-              ok: false,
-              error: { message: `session_slots must be an integer from ${SESSION_SLOT_MIN} to ${SESSION_SLOT_MAX}` },
-            })
+          if (body.session_slots === null) {
+            inheritVmScheduling(id, { sessionSlots: true })
+          } else {
+            const raw = Number(body.session_slots)
+            if (!Number.isInteger(raw) || raw < SESSION_SLOT_MIN || raw > SESSION_SLOT_MAX) {
+              return json(res, 400, {
+                ok: false,
+                error: { message: `session_slots must be an integer from ${SESSION_SLOT_MIN} to ${SESSION_SLOT_MAX}` },
+              })
+            }
+            const vm = applyVmSessionSlots(id, normalizeSessionSlots(raw), { override: true })
+            if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
           }
-          const vm = applyVmSessionSlots(id, normalizeSessionSlots(raw), { override: true })
-          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         if (parsedQuotaOverride) {
           const vm = applyVmQuotaOverride(id, parsedQuotaOverride.value)

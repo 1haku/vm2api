@@ -1,5 +1,5 @@
 /**
- * GPT slot pool. Claude WRR never sees these VMs (`evaluateSlotGate`
+ * GPT slot pool. The Claude pool scheduler never sees these VMs (`evaluateSlotGate`
  * returns `codex_vm`). A Codex hop picks here, then failovers on
  * quota/auth before any SSE byte is committed.
  */

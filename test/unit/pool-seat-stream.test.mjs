@@ -34,7 +34,7 @@ test('seat route scopes all snapshots to owned slots and denies client API keys'
   const seats = Object.fromEntries(
     ['alice-slot', 'bob-slot', 'shared-slot'].map((id) => [id, { seats_used: 1, holds: 2, queue_depth: 3 }]),
   )
-  scheduler.seatSnapshot = () => seats
+  scheduler.seatSnapshot = () => ({ seats, global_queue_depth: 7, queue_max: 50 })
   const handler = createPanelHandler({
     cfg: { paths: { project: root } },
     poolScheduler: scheduler,
@@ -60,8 +60,11 @@ test('seat route scopes all snapshots to owned slots and denies client API keys'
     try {
       await handler(req, res, new URL('http://localhost/api/panel/pool/stream'))
       assert.equal(res.statusCode, expected ? 200 : 403)
-      if (expected) assert.deepEqual(Object.keys(res.frames[0].seats), expected)
-      else assert.deepEqual(res.frames, [])
+      if (expected) {
+        assert.deepEqual(Object.keys(res.frames[0].seats), expected)
+        assert.equal(res.frames[0].global_queue_depth, identity.panelRole === 'user' ? 0 : 7)
+        assert.equal(res.frames[0].queue_max, identity.panelRole === 'user' ? 0 : 50)
+      } else assert.deepEqual(res.frames, [])
     } finally {
       req.emit('close')
     }
@@ -72,7 +75,7 @@ test('seat route scopes all snapshots to owned slots and denies client API keys'
 test('stream refreshes visibility on updates and frees scheduler listeners on disconnect', async () => {
   const scheduler = new EventEmitter()
   let visible = new Set(['mine'])
-  scheduler.seatSnapshot = () => ({ mine: { seats_used: 1 }, other: { seats_used: 3 } })
+  scheduler.seatSnapshot = () => ({ seats: { mine: { seats_used: 1 }, other: { seats_used: 3 } } })
   const req = new EventEmitter(),
     res = response()
   try {

@@ -29,6 +29,7 @@ import {
 import { createKernelWatchdog, normalizeKernelWatchdogConfig } from './lib/transport/kernel-watchdog.mjs'
 import { ensureSlotSubscriptionType } from './lib/oauth/oauth-credentials.mjs'
 import { createCliNodeGuard } from './lib/vm/cli-node-guard.mjs'
+import { ensureTelemetrySidecar } from './lib/vm/slot-process-status.mjs'
 
 import { createUsageProbeMonitor, normalizeUsageProbeConfig } from './lib/oauth/usage-probe-monitor.mjs'
 import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs'
@@ -102,7 +103,6 @@ const FEATURES = [
   'protocol-convert',
   'go-slot-worker',
   'account-pool-failover',
-  'weighted-round-robin',
   'tools',
   'client-workspace',
   'api-direct-kernel',
@@ -257,6 +257,7 @@ const {
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  inheritVmScheduling,
   applyVmQuotaOverride,
 } = routingRt
 
@@ -447,6 +448,7 @@ kernelWatchdog = createKernelWatchdog({
   config: routingConfig.kernel_watchdog,
   listTargets: () => listVms(cfg.paths.project),
   homeDirFor: (vm) => path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'),
+  ensureTelemetry: (vm) => ensureTelemetrySidecar({ projectRoot: cfg.paths.project, vm }),
   onFault: (vm, reason) => {
     const title = `槽内核故障 ${vm.id}`
     dispatchNotify(routingConfig.notify, {
@@ -932,6 +934,7 @@ const handlePanel = createPanelHandler({
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  inheritVmScheduling,
   applyVmQuotaOverride,
   initPoolRuntime,
   poolSchedulerConfig,

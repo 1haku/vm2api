@@ -2,7 +2,7 @@
  * User protocol: POST /v1/messages/count_tokens and GET /v1/usage.
  * Peek only — never bind/unbind sticky or bill tokens_in.
  */
-import { makeError, rewritePoolErrorForClient, ErrorType, ErrorCode } from '../core/errors.mjs'
+import { makeError, mapUpstreamError, rewritePoolErrorForClient, ErrorType, ErrorCode } from '../core/errors.mjs'
 import { detectDistill, distillBlockError } from '../core/distill-detect.mjs'
 import { isRefusalGuardEnabled, refusalFingerprint, refusalGuardError } from '../core/refusal-guard.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
@@ -113,15 +113,21 @@ export async function peekCurrentAccount({
     ownerScope: ownerScopeFromRequest(req, usersRepo),
   })
 }
-function poolFail(peeked) {
-  return rewritePoolErrorForClient(
-    makeError({
-      type: ErrorType.OVERLOADED,
-      code: peeked?.code || ErrorCode.POOL_UNAVAILABLE,
-      message: peeked?.code || 'no_eligible_accounts',
-      status: 503,
-    }),
-  )
+
+/** Same client contract as Messages: Fable gate 429, capacity 529 / pool-wide limit 429 with Retry-After, else 503. */
+function sendPoolFail(res, json, peeked) {
+  const code = peeked?.code || 'no_eligible_accounts'
+  if (code === ErrorCode.FABLE_REQUIRES_MAX) {
+    const mapped = mapUpstreamError(429, { error: { code } })
+    return json(res, mapped.status, mapped.body)
+  }
+  const mapped = rewritePoolErrorForClient(makeError({ type: ErrorType.OVERLOADED, code, message: code, status: 503 }))
+  if (mapped.retryAfterSec) {
+    const retryMs = Number(peeked?.retry_after_ms)
+    const secs = retryMs > 0 ? Math.max(1, Math.ceil(retryMs / 1000)) : mapped.retryAfterSec
+    res.setHeader?.('retry-after', String(secs))
+  }
+  return json(res, mapped.status, mapped.body)
 }
 
 function distillContext(req, inbound) {
@@ -209,10 +215,7 @@ export async function handleUserCountTokens(req, res, deps) {
     model: parsed.body.model,
     usersRepo: deps.apiKeyStore?.users || null,
   })
-  if (!peeked.ok) {
-    const mapped = poolFail(peeked)
-    return json(res, mapped.status, mapped.body)
-  }
+  if (!peeked.ok) return sendPoolFail(res, json, peeked)
   const mode = credentialModeOfVm(peeked.vm)
   if (!canCountTokens(mode)) {
     const { listed, source } = await resolveUsageWindows({
@@ -236,15 +239,22 @@ export async function handleUserCountTokens(req, res, deps) {
     timeoutMs: 45000,
   })
   if (!hop.ok) {
+    const status = hop.status && hop.status >= 400 ? hop.status : 502
+    // Upstream limit / overload: same mapping and Retry-After as Messages.
+    if (status === 429 || status === 529) {
+      const mapped = mapUpstreamError(status, hop.body, hop.headers || {})
+      if (mapped.retryAfterSec) res.setHeader?.('retry-after', String(mapped.retryAfterSec))
+      return json(res, mapped.status, mapped.body)
+    }
     const err = hop.body?.error || {}
     return json(
       res,
-      hop.status && hop.status >= 400 ? hop.status : 502,
+      status,
       makeError({
         type: err.type || ErrorType.UPSTREAM,
         code: err.code || 'count_tokens_failed',
         message: err.message || 'count_tokens 失败',
-        status: hop.status && hop.status >= 400 ? hop.status : 502,
+        status,
       }).body,
     )
   }
@@ -295,10 +305,7 @@ export async function handleUserUsage(req, res, deps) {
     inbound: {},
     usersRepo: deps.apiKeyStore?.users || null,
   })
-  if (!peeked.ok) {
-    const mapped = poolFail(peeked)
-    return json(res, mapped.status, mapped.body)
-  }
+  if (!peeked.ok) return sendPoolFail(res, json, peeked)
   const mode = credentialModeOfVm(peeked.vm)
   if (!canOfficialUsage(mode)) {
     const err = usageUnsupportedError()

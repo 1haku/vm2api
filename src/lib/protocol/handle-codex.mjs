@@ -709,8 +709,10 @@ function rejectCodexAdmission({ res, json, stats, logBag, picked, model }) {
     picked.error === 'session_window_full' ||
     picked.error === 'pool_wait_queue_full'
   ) {
+    // Queue-full has no retryAt. Every Codex pool_overloaded 429 still advertises >= 1s.
     const waitMs = Number(picked.retryAt) - Date.now()
-    if (waitMs > 0) res.setHeader?.('retry-after', String(Math.ceil(waitMs / 1000)))
+    const retryAfterSec = Math.max(1, waitMs > 0 ? Math.ceil(waitMs / 1000) : 0)
+    res.setHeader?.('retry-after', String(retryAfterSec))
     return json(res, 429, {
       error: {
         type: 'rate_limit_error',
