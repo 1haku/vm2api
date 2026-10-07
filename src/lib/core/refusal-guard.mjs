@@ -1,18 +1,16 @@
 /**
- * Persist upstream content-filter refusals and short-circuit repeats.
+ * Persist upstream refusals and short-circuit repeats.
  * Fingerprint is model + normalized system/user/tool names (not stream/max_tokens).
  *
- * Wrap "Usage Policy" text is not a cacheable refusal. 1.3.8 stored
- * 262 envelope sessions that way (normal coding prompts, hit_count=0) because
- * persistable JSON changes every turn. Stripping that JSON would 403 later
- * real turns of the same Claude Code session.
+ * Claude Code "API Error: ... Usage Policy" is a real refusal: cache that exact
+ * prompt with no expiry and answer 503. Do not strip envelope JSON — 1.3.8 did
+ * that and later turns of normal sessions collided.
  */
 import { createHash } from 'node:crypto'
-import { ErrorType, ErrorCode, makeError } from './errors.mjs'
+import { ErrorType, ErrorCode, isUsagePolicyErrorMessage, makeError, REFUSAL_GUARD_MESSAGE } from './errors.mjs'
 import { extractPrompt, normalizeText } from './distill-detect.mjs'
 
-export const REFUSAL_GUARD_MESSAGE =
-  "Request blocked by the refusal guard. Anthropic's API previously refused this pattern."
+export { REFUSAL_GUARD_MESSAGE }
 
 export const REFUSAL_GUARD_SETTING = 'refusal_guard_enabled'
 
@@ -69,6 +67,10 @@ export function isUpstreamRefusal(result = {}, extra = {}) {
       if (block?.type === 'refusal' && String(block.refusal || block.text || '').trim()) return true
     }
   }
+  const message = [result?.body?.error?.message, result?.body?.message, extra?.error_message, extra?.message]
+    .filter(Boolean)
+    .join('\n')
+  if (isUsagePolicyErrorMessage(message)) return true
   return false
 }
 
@@ -77,7 +79,7 @@ export function refusalGuardError(requestId) {
     type: ErrorType.PERMISSION,
     code: ErrorCode.REFUSAL_GUARD,
     message: REFUSAL_GUARD_MESSAGE,
-    status: 500,
+    status: 503,
     request_id: requestId,
   })
 }
