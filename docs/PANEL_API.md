@@ -157,7 +157,7 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET/PUT | `/refusal-guards` | 仅缓存 `stop_reason=refusal` / refusal 块 / `finalState=content_filter`。命中后 HTTP 500，`code=refusal_guard`，不 hop。wrap `Usage Policy` 文案和信封 JSON 不会入缓存 |
+| GET/PUT | `/refusal-guards` | 缓存 `stop_reason=refusal` / refusal 块 / `finalState=content_filter`，以及 Claude Code Usage Policy `API Error`。后一类不过期。命中后 HTTP 503，`code=refusal_guard`，不 hop。信封 JSON 不会被剥掉再入库 |
 | DELETE | `/refusal-guards/:fingerprint` | 删除一条 64 位 hex 指纹 |
 | DELETE | `/refusal-guards` | 须 `{ "confirm": true }` 清空 |
 
