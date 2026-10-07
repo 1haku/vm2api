@@ -34,6 +34,14 @@
 
 已部署 x86 机升级：换 `bin/kin-codex-kernel`（sha256 `98715a2f…`）并更新 `web/dist`。替换后停掉 `kin-codex-kernel` 进程，再重启一次 Node：Node 留着它自己拉起的内核子进程句柄，只杀进程不重启 Node 的话，该槽会一直 503。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.111 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
+- 控制台账号池、配额、粘性改为主次摘要与完整配置弹窗；运行明细按需展开。弹窗取消不污染草稿，“应用到草稿”与全局“保存”分开，VM 本槽保存单独生效；保留现有主题、键盘焦点恢复及移动/平板布局。
+- 新增独立 `codex.quota`：OpenAI 5h/7d 本地闸线、并发、RPM、对话窗口默认值在真实准入和恢复中生效；Claude 分档保存不改 OpenAI 限额。软闸调整不切断在飞流，不清除上游硬限制或人工关闭。
+- OpenAI VM 新增 `max_sessions` 数字/null 与来源标记；并发/RPM/null 重置跟随 OpenAI 全局值。创建时默认继承，重导入保留本槽覆盖；移除 OpenAI 无效的 Claude 调度等级编辑入口。
+- 缺少 `codex.quota` 的旧配置启动时迁移，保留有效非默认限额与异常大历史对话上限，支持重启/部分迁移续跑；历史 OpenAI 并发 0 仍执行为 2。迁移先写 VM、再原子写 routing，不覆盖凭证或操作员开关。
+- 修复保存值首屏未正确进入设置草稿、OpenAI 在飞数被 Claude 投影覆盖，以及 OpenAI 面板错误沿用 Claude 闸线；列表/详情新增 `openai_quota_policy`，未知用量/本地重置时间不伪造。
+- 重建控制台产物。此项仍为 Unreleased，未部署；后续升级只需 Node 控制面与 `web/dist`，无需 kernel/container 重建。升级前备份 routing 与 VM 记录，不要覆盖部署配置/凭证。
+
+
 ## 1.3.111 — 2026-10-07
 
 - 控制台「设置 → 账号池」重做：顶部「实时态势」显示 Claude 席位占用 / 宽限、各 VM 排队、全局排队与 `queue_max`，并按草稿策略预估下一席落点（席位 SSE 实时更新）；参数分为开席策略（平衡 / 填充示意卡、手动开关优先）、席位（全局席位上限 `inference.session_slots` 从「协议 → Claude 内核」移到这里、宽限、每席位预算预留阶梯图）、排队（排队上限、粘性 / 全局等待、总重试时限时间轴）、重试与切号、熔断（流程示意），滑块 + 常用档位 + 一键恢复默认，范围与后端规范化一致。
