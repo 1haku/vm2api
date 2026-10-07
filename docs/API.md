@@ -235,7 +235,7 @@ curl -sS http://127.0.0.1:8787/health
 | `upstream_error` | 401/403/502 |
 | `api_error` | 500 |
 
-上游 429 失败转移用尽后原样返回 429 `upstream_rate_limit`，有上游 `retry-after` 时透传；529 一定带 `retry-after`（号池估计，上游 529 取上游值，都没有时为 1）。恢复备份期间协议口 `503 restore_in_progress`。健康探测短请求在无缓存且 fail-closed 时 `503`。
+上游 429 失败转移用尽后原样返回 429 `upstream_rate_limit`，有上游 `retry-after` 时透传；529 一定带 `retry-after`（号池估计，上游 529 取上游值，都没有时为 1）。恢复备份期间协议口 `503 restore_in_progress`。健康探测短请求在无缓存且 fail-closed 时 `503`。Claude Code Usage Policy `API Error`（含内核报成 400 的）不换号、不修复重试，客户端收到 503 `refusal_guard`，并把该 prompt 永久写入拒答缓存；再次相同请求，或用户正文与已缓存正文的估计 Jaccard 达到面板阈值（默认 0.90，可选 0.80/0.85/0.90/0.95），都在 hop 前被拦。`content_policy`、`cyber_policy`、`moderation_blocked` 等内容错误码同样入库。协议硬正则，或面板所选的 Jev / Laya / ModernBERT（`/v1/systemone`，`noul ≥ 0.5`）判为 NSFW、蒸馏、破解、破限时返回 403 `policy_blocked`，不 hop，并在拒答守卫开启时入库、可封禁 device。近似和 device 封禁可在面板关闭。拒答命中在 device 封禁开启时还会永久封禁该入站 device id。
 
 号池结果分开返回，不互相伪装：
 
@@ -265,12 +265,12 @@ curl -sS http://127.0.0.1:8787/health
 
 上游 400/404、401/403、429、5xx 分别保留 `upstream_invalid_request`、`upstream_auth_error`、`upstream_rate_limit`、`upstream_error`（过载为 `upstream_overloaded` / 529）。一次 native job 只发一次上游请求；CLI 不做隐藏重试、换模型或流式转非流式，重放预算由 Node 统一计数。
 
-客户端取消经内部鉴权的 `POST /internal/v1/cancel {"request_id":"单次 hop ID"}` 传到 CLI。每次执行使用不同 ID；提前到达的取消也阻止后续提交。HTTP 断开是第二条兜底路径。取消不会触发重试、账号处罚或重启；CLI 任务真正结束并返回匹配 `kin_cancel_ack` 前，内核不复用该 slot。取消一个任务不阻塞其他 slot 或探活。
+客户端取消经内部鉴权的 `POST /internal/v1/cancel {"request_id":"单次 hop ID"}` 传到 CLI。每次执行使用不同 ID；提前到达的取消也阻止后续提交。HTTP 断开是第二条兜底路径。取消不会触发重试、账号处罚或重启；CLI 任务真正结束并返回匹配 `cancel_ack` 前，内核不复用该 slot。取消一个任务不阻塞其他 slot 或探活。
 
 自动恢复由低到高，不能由普通推理请求绕过：
 
 1. Cancel ack 超过 30 秒：只关闭该 slot，最多重发 3 次取消，间隔 30 / 60 / 120 秒；匹配的迟到 ack 恢复该 slot。
-2. 共享 CLI 60 秒无输出且有在途任务、job 超时或出现关闭 slot：用 `kin_ping` / `kin_pong` 探测，最多 3 次，间隔 10 秒。正常长请求可回答 pong，不按请求总时长判死。
+2. 共享 CLI 60 秒无输出且有在途任务、job 超时或出现关闭 slot：用 `ping` / `pong` 探测，最多 3 次，间隔 10 秒。正常长请求可回答 pong，不按请求总时长判死。
 3. 探活失败、进程退出、stdin 断管 / 写入超过 10 秒、全部 slot 关闭或至少半数关闭且无在途任务：内核只重启 CLI 子进程，10 分钟内最多 3 次，等待 10 / 30 / 60 秒。
 4. 内核不可达或 CLI 恢复已耗尽：Node watchdog 才重启容器，1 小时内最多 3 次，每次先等待 1 / 5 / 15 分钟。
 5. 容器恢复仍失败：停止自动重启，排除该 VM（粘性与诊断 pin 都不能绕过），经配置的通知渠道告警。观察到内核恢复健康后解除故障；运行中的 cc-node/crag 保留原有不重启例外。

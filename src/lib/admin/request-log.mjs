@@ -645,6 +645,10 @@ export class RequestLogStore {
     return this.repo.windowStats(opts)
   }
 
+  protocolEntryStats(opts = {}) {
+    return this.repo.protocolEntryStats(opts)
+  }
+
   listDebug({
     limit = 20,
     exclude_error_class = null,

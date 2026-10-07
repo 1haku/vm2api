@@ -66,3 +66,8 @@ patches/
 /web/pnpm-workspace.yaml
 /src/lib/oauth/auth.js
 /docs/auto-mode
+/docs/jev.md
+
+.omp
+/dist/
+share/wrap-cli/dist/

@@ -1,1 +1,0 @@
-var e={subscriptions:`订阅管理`,"usage-records":`使用记录`,overview:`工作台`,cluster:`集群`,vm:`虚拟机`,import:`导入`,usage:`用量`,billing:`计费`,proxies:`代理池`,models:`模型`,protocol:`协议`,system:`system提示词`,keys:`密钥`,api:`API`,logs:`日志`,statistics:`统计`,database:`数据库`,settings:`设置`,users:`用户`,wrap:`内核`};export{e as t};

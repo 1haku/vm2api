@@ -3,10 +3,12 @@
  * Peek only — never bind/unbind sticky or bill tokens_in.
  */
 import { makeError, mapUpstreamError, rewritePoolErrorForClient, ErrorType, ErrorCode } from '../core/errors.mjs'
-import { detectDistill, distillBlockError } from '../core/distill-detect.mjs'
-import { isRefusalGuardEnabled, refusalFingerprint, refusalGuardError } from '../core/refusal-guard.mjs'
+import { refusalGuardPolicy } from '../core/refusal-guard.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
+import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
+import { readJevConfig } from './jev-intercept.mjs'
+import { runProtocolIntercept } from './intercept-gate.mjs'
 import { readRoutingConfigFile } from '../core/config.mjs'
 import {
   detectProxiedOfficialCcFromRouting,
@@ -149,12 +151,12 @@ function distillContext(req, inbound) {
   return { official, zeroInject: inject === 'zero' || preset === 'zero' }
 }
 
-function refusalEnabled(deps) {
+function refusalPolicy(deps) {
   try {
     const settings = deps.settings || new SettingsRepo()
-    return isRefusalGuardEnabled((key, fallback) => settings.get(key, fallback))
+    return refusalGuardPolicy((key, fallback) => settings.get(key, fallback))
   } catch {
-    return isRefusalGuardEnabled()
+    return refusalGuardPolicy()
   }
 }
 
@@ -167,21 +169,36 @@ function refusalRepo(deps) {
   }
 }
 
-/** Distill and refusal-cache hits return before peek or worker hop. */
-export function blockCountTokensBeforeHop(req, inbound, deps = {}) {
-  const hit = detectDistill({ inbound, body: inbound, ...distillContext(req, inbound) }, deps.cfg?.distill)
-  if (hit.action === 'block') return distillBlockError(deps.cfg?.distill)
-  if (!refusalEnabled(deps)) return null
-  const repo = refusalRepo(deps)
-  if (!repo) return null
-  const row = repo.get(refusalFingerprint(inbound, inbound))
-  if (!row) return null
+function deviceRepo(deps) {
+  if (deps.refusalDevices) return deps.refusalDevices
   try {
-    repo.hit(row.fingerprint)
+    return new RefusalDeviceBlocksRepo()
   } catch {
-    /* counter is best-effort; the response still must not hop */
+    return null
   }
-  return refusalGuardError()
+}
+
+/** Distill, hard regex, refusal cache, and jev all return before peek or worker hop. */
+export async function blockCountTokensBeforeHop(req, inbound, deps = {}) {
+  let jev
+  try {
+    const settings = deps.settings || new SettingsRepo()
+    jev = readJevConfig((key, fallback) => settings.get(key, fallback))
+  } catch {
+    jev = readJevConfig()
+  }
+  const decision = await runProtocolIntercept({
+    inbound,
+    body: inbound,
+    headers: req?.headers,
+    ...distillContext(req, inbound),
+    distillRules: deps.cfg?.distill,
+    policy: refusalPolicy(deps),
+    jev,
+    repo: refusalRepo(deps),
+    devices: deviceRepo(deps),
+  })
+  return decision?.error || null
 }
 
 export async function handleUserCountTokens(req, res, deps) {
@@ -205,7 +222,7 @@ export async function handleUserCountTokens(req, res, deps) {
   }
   const parsed = parseCountTokensBody(inbound)
   if (!parsed.ok) return json(res, parsed.error.status, parsed.error.body)
-  const blocked = blockCountTokensBeforeHop(req, parsed.body, deps)
+  const blocked = await blockCountTokensBeforeHop(req, parsed.body, deps)
   if (blocked) return json(res, blocked.status, blocked.body)
   const peeked = await peekCurrentAccount({
     poolScheduler: typeof deps.getPoolScheduler === 'function' ? deps.getPoolScheduler() : deps.poolScheduler,

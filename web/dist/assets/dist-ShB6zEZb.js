@@ -1,1 +1,0 @@
-import{i as e}from"./button-nre7L5bm.js";var t=e(`chevron-down`,[[`path`,{d:`m6 9 6 6 6-6`,key:`qrunsl`}]]),n=Object.defineProperty,r=(e,t)=>n(e,`name`,{value:t,configurable:!0});function i(e,[t,n]){return Math.min(n,Math.max(t,e))}r(i,`clamp`);export{t as n,i as t};

@@ -67,6 +67,10 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   db.prepare("UPDATE usage_logs SET outbound_session_id='outbound-changed' WHERE id='history'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
   db.prepare("UPDATE usage_logs SET outbound_session_id=NULL WHERE id='history'").run()
+  assert.equal(db.prepare("SELECT intercept FROM usage_logs WHERE id='history'").get().intercept, null)
+  db.prepare("UPDATE usage_logs SET intercept='changed' WHERE id='history'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+  db.prepare("UPDATE usage_logs SET intercept=NULL WHERE id='history'").run()
   assert.equal(db.prepare("SELECT label FROM proxies WHERE id='proxy'").get().label, null)
   db.prepare("UPDATE proxies SET label='changed' WHERE id='proxy'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /proxies/)
@@ -109,9 +113,9 @@ test('fresh install applies upstream 027/028/029 alongside the independent custo
   )
   const upstream = path.join(dir, 'upstream')
   fs.mkdirSync(upstream)
-  fs.writeFileSync(path.join(upstream, '030_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
+  fs.writeFileSync(path.join(upstream, '032_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
   applyMigrations(db, { migrationsDir: upstream })
-  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='030'").get().name, '030_future.sql')
+  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='032'").get().name, '032_future.sql')
 })
 
 test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions', (t) => {

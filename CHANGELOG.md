@@ -1,6 +1,84 @@
 # Changelog
 
-## Unreleased
+## 1.3.122 — 2026-10-08
+
+- 确定性蒸馏正则只放在硬前置，类别是 distill。保存蒸馏配置不再把这组正则补回去。命中仍是 403 `distill_blocked`。它们跟蒸馏总开关走，不跟硬正则开关：关掉硬正则仍拦这些短语，关掉蒸馏拦截则放行。官方客户端和 0 注入仍拦。针、指纹和结构收割留在蒸馏检测器。
+- gpt 模型只跳过 distill 类硬规则。同一句里后面的硬规则仍然生效。
+- 放行原因按实际检查来记：规则扫过是 `regex`，蒸馏和硬正则都关、决策模型又没配地址是 `unchecked`，模型连不上是 `fail-open`。
+- 协议页「今天」显示请求、拦截、放行、Jev 清洗和 Jev 拦截。点详情可按来源看每条规则的命中词、规则和数量。
+- 硬正则已经拦住的请求不再写入拒答缓存。`phishing kit` 进硬规则，安全课里的 phishing 讲解不命中。
+
+已部署机升级：只更新 Node 控制面和 `web/dist`，重启一次 Node。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.121 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.121 — 2026-10-08
+
+- `official_full` 只在 Opus/Sonnet 5 把调用方 system 放进对话中的 `role=system`。Haiku 和 Claude 4.x（含 opus-4-6、sonnet-4-5）留在顶层 `system`，避免上游 400 `role 'system' is not supported`。
+- 官方初装不再强制 `CI=1`。hello 空输出或非法 JSON 记失败，不再把空 stdout 当成成功。
+- 自定义工具的 `eager_input_streaming` 布尔值原样保留，缺省不补。
+- 已提交给客户端的 Claude 流如果上游中途断开且不是超时、也不是未完成的 thinking 块，补 `stop_reason=max_tokens` 收尾。日志仍记 `stream_incomplete`。
+- 非官方请求不再因为正文里出现或消失「搜索 / search」而增删 `web_search`。显式开关和已回放的搜索结果不变。
+
+已部署机升级：覆盖控制面并重启 Node 一次。不必 `wrap-cli/sync`。不要 `docker rm` 槽。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.120 — 2026-10-07
+
+- 内核线协议去掉 `kin_` 前缀，和已经发出的 cli-node 对齐。帧是 `host_ready`、`slot_ready`、`job_start`、`job_done`、`job_error`、`stream_event`、`response_headers`、`cancel_ack`。头是 `x-internal-token`、`x-terminal-state`、`x-usage`、`x-model`、`x-stop-reason`、`x-rate-limit-headers`。新内核只给子进程设 `CLAUDE_CODE_NATIVE_SLOTS`。`kin-codex-kernel` 的内部鉴权头同样改成 `x-internal-token`。
+- cli-node 守护在槽还没 sync 时仍认旧的 `CLAUDE_CODE_KIN_NATIVE_SLOTS`，不把现网内核 CLI 当泄漏杀掉。两边同时在时留无前缀的那个。
+- 协议入口的硬正则可以在拦截页改、关、删，或恢复内置。`vmpanel-keygen`、`ssh-keygen` 不再命中 `keygen`。每条请求记下是哪道闸拦截或放行：蒸馏、硬正则、拒答缓存、Jev 判安全、正则未命中、模型故障放行。判定顺序不变。
+- Codex `web.run` 的 `POST /v1/alpha/search` 和 `/alpha/search` 由 GPT 槽转到 ChatGPT `alpha/search`。没有 hosted web_search 的模型，缺这条路由时一轮搜索会整段失败。要调用方密钥。401/403 先沿用槽里已经刷新的 token，否则该槽只刷新一次再重试。额度、鉴权和 5xx 换下一个 GPT 槽。
+- 控制台侧栏收成监控、资源、协议、系统。总览不再内嵌统计图，统计、日志、用量各自一页。厂商图标按变体单独引入，去掉未生效的 Google Fonts。带内容哈希的 `assets/` 用长期 `immutable` 缓存，`index.html` 仍是 `no-store`。
+
+已部署机升级：更新 Node 控制面和 `web/dist`，重启一次 Node。替换 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`（sha256 `c59a1292…`，两者相同）以及 `bin/kin-codex-kernel`（sha256 `11c8ec08…`）。**需要 `wrap-cli/sync`**（逐槽重启 dataplane，不要 `docker rm`）。`cli-node` 与 1.3.119 相同，不要换。1.3.119 写的「不要替换 `kin-kernel`」到此为止，这次必须换内核。启动时跑迁移 `031_usage_logs_intercept.sql`（`usage_logs.intercept`）。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。`kin-worker` / `kin-egress` 与 1.3.119 相同。
+
+## 1.3.119 — 2026-10-07
+
+- 修复 1.3.118 的 cli-node 与现网 kin-kernel 不配套：内核启动参数仍是 `CLAUDE_CODE_KIN_NATIVE_SLOTS` / `CLAUDE_CODE_KIN_HOST_REFRESH`，新 CLI 只认去掉 `KIN_` 的名字，于是落到官方 `--print`，空 stdin 报 `Input must be provided either through stdin or as a prompt argument when using --print` 后退出，内核反复重启也起不来。现在两套名字都认，先进入 native stdin 循环。
+
+已部署机升级：只换 `share/wrap-cli/cli-node`（sha256 `5d0f966c…`），**需要 `wrap-cli/sync`**（逐槽重启 dataplane，不要 `docker rm`）。不要替换 `kin-kernel`。控制面源码与 1.3.118 相同。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.118 — 2026-10-07
+
+- 官方初装 `/usage` 对齐槽内 cli-node 2.1.284。print 模式不再把交互式 `/usage` 丢掉，改为回写 `GET /api/oauth/usage` 的全部窗口：`five_hour`、`seven_day`、`seven_day_sonnet`、`seven_day_opus`、`seven_day_oauth_apps`、`extra_usage`（含 `monthly_limit`、`used_credits`）。两个主窗口加上任一具名字段即算完整，不再因为没有旧的 Fable `limits[]` 重试失败。
+- 初装、常驻、面板终端和 `setup-token` 改设源码实际读取的 `CLAUDE_CODE_HOST_REFRESH=1`、`CLAUDE_CODE_VERSION=2.1.284`、`USER_TYPE=external`。
+- 构建产物目录 `dist/` 不入库。
+
+已部署机升级：更新 Node 控制面（`src/`、`scripts/`）并重启一次 Node。`share/wrap-cli/cli-node` 字节变化（sha256 `2a4c89c5…`），**需要 `wrap-cli/sync`**（逐槽重启 dataplane，不要 `docker rm`）。kernel / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.117 相同。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.117 — 2026-10-07
+
+- 控制台账号池、配额、粘性改为主次摘要与完整配置弹窗；运行明细按需展开。弹窗取消不污染草稿，「应用到草稿」与全局「保存」分开，VM 本槽保存单独生效。
+- 新增独立 `codex.quota`：OpenAI 5h/7d 本地闸线、并发、RPM、对话窗口在准入时生效。Claude 分档保存不改 OpenAI 限额。软闸调整不切断在飞流，不清除上游硬限制或人工关闭。
+- OpenAI VM 可单独设 `max_sessions`。缺少 `codex.quota` 的旧配置在启动时补上，不覆盖凭证或操作员开关。
+- 网关自己合成的 429（`fable_requires_max`、`pool_rate_limited`）不再把账号标成 5 小时额度用尽。真正的上游 429 和 `You've hit your limit` 仍记额度。
+- Codex `POST /v1/responses` 流的 SSE 事件名改为 payload 的 `type`（`response.created`、`response.output_text.delta`、`response.completed`），不再每帧都是 `event: response`。
+
+已部署机升级：只更新 Node 控制面与 `web/dist` 并重启一次。启动时若 routing 里没有 `codex.quota` 会补上，不覆盖已有限额和凭证。不要手改或覆盖 `routing.json`、`vms/`、`data/`、`.env`。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.116 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽。
+
+## 1.3.116 — 2026-10-07
+
+- 协议入口收成一条前置闸门：蒸馏硬规则、去掉 system-reminder 并按需展开 base64 后的硬正则、拒答缓存、决策模型。决策模型走 `/v1/systemone`，题库默认六题一起问（综合、色情、破限、逆向、渗透、网络攻击），高分表示安全，任一题低于阈值拦截。题库可在面板增删改。阈值、去重、送模长度、失败放行都可配。最多 8 把 key，401 / 429 / 529 换下一把。Jev、本机 Laya、ModernBERT 共用这套。模型故障默认放行。
+- 上游内容错误码（`content_policy`、`content_filter`、`cyber_policy`、`moderation_blocked`、`safety_violation`、`usage_policy`）和 Usage Policy 文案一样永久写入拒答缓存。拒答守卫开启且封禁 device 时，蒸馏、硬正则、模型违禁和这些错误码都会封禁入站 device id。
+
+已部署机升级：只更新 Node 控制面与 `web/dist` 并重启一次。无迁移。`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.115 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.115 — 2026-10-07
+
+- 某一档的常驻约束开关打开后，这段文字会写进该档的 agent 块。保存的模板即使丢掉了 `{{agent_standing}}`，也不会再跳过。其它档的开关仍然分开，面板不再因为模板未引用而锁死这个开关。
+
+已部署机升级：只更新 Node 控制面并重启一次。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.114 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.114 — 2026-10-07
+
+- 拒答缓存除精确指纹外，用户正文 MinHash 估计 Jaccard ≥ 0.90 也在 hop 前返回 503 `refusal_guard`。比较的是用户轮次，不含共享 system，短于 512 字的正文不做近似。一条约 5 万 token 的拒答，改掉大约一成仍会被拦住。面板可关掉近似，或把阈值改成 80/85/90/95。
+- 拒答守卫命中（精确、近似，或上游内容拒答入库）后，永久封禁该入站 session 的 device id。之后同一 device 的任意 prompt 都不再 hop。空 device、短于 8 字符的值不封。面板可关闭封禁，并查看、解除或清空。`DELETE /api/panel/refusal-device-blocks` 同样可解封。
+
+已部署机升级：只更新 Node 控制面并重启一次。启动时跑迁移 `030_refusal_near.sql`（拒答表增加 `signature`，新建 device 封禁表）。`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.113 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.113 — 2026-10-07
+
+- Claude Code Usage Policy `API Error`（`unable to respond` / `legal/aup`，内核常报成 HTTP 400 `upstream_invalid_request`）不再当无效请求，也不再 `repair-and-retry` 或换号。客户端改为 503 `refusal_guard`。该 prompt 永久写入拒答缓存（`expires_at` 为空），相同 model + prompt 在 hop 前拦住。账号不因此冷却。`stop_reason=refusal` 的缓存命中也改为 503。
+
+已部署机升级：只更新 Node 控制面并重启一次。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` / `kin-codex-kernel` 与 1.3.112 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.112 — 2026-10-07
 
@@ -9,6 +87,7 @@
 - 重建控制台产物。
 
 已部署 x86 机升级：换 `bin/kin-codex-kernel`（sha256 `98715a2f…`）并更新 `web/dist`。替换后停掉 `kin-codex-kernel` 进程，再重启一次 Node：Node 留着它自己拉起的内核子进程句柄，只杀进程不重启 Node 的话，该槽会一直 503。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.111 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 
 ## 1.3.111 — 2026-10-07
 

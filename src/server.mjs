@@ -257,11 +257,14 @@ const {
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmMaxSessions,
   inheritVmScheduling,
   applyVmQuotaOverride,
+  migrateLegacyOpenAIPolicies,
 } = routingRt
 
 routingConfig = loadRoutingConfig()
+migrateLegacyOpenAIPolicies(routingConfig)
 setManualScheduleWins(routingConfig.pool?.manual_schedule_wins)
 if (routingConfig.official_cc) {
   routingConfig.official_cc = normalizeOfficialCcConfig(routingConfig.official_cc)
@@ -468,7 +471,9 @@ usageProbeMonitor = createUsageProbeMonitor({
     const id = account?.account_id || vm?.claude?.account_uuid || vm?.account_uuid || vm?.id
     if (isCodexVm(vm)) {
       try {
-        syncCodexQuotaSchedule(cfg.paths.project, getVm(cfg.paths.project, vm.id) || vm)
+        syncCodexQuotaSchedule(cfg.paths.project, getVm(cfg.paths.project, vm.id) || vm, {
+          policy: routingConfig.codex?.quota,
+        })
       } catch {}
       return
     }
@@ -479,7 +484,7 @@ usageProbeMonitor = createUsageProbeMonitor({
       poolScheduler.syncQuotaSchedule(vm, account)
     } catch {}
   },
-  probeOne: (vm) => panel.buildProbeOne({ cfg, accountQuota, id: vm.id }),
+  probeOne: (vm) => panel.buildProbeOne({ cfg, accountQuota, id: vm.id, routingConfig }),
 })
 notifyMonitor = createNotifyMonitor({
   config: routingConfig.notify,
@@ -512,6 +517,7 @@ backupService.onRestored((db) => {
   apiScheduler.reload(apiEndpointStore.listRaw())
 
   routingConfig = loadRoutingConfig()
+  migrateLegacyOpenAIPolicies(routingConfig)
   setManualScheduleWins(routingConfig.pool?.manual_schedule_wins)
   if (routingConfig.official_cc) {
     routingConfig.official_cc = normalizeOfficialCcConfig(routingConfig.official_cc)
@@ -817,7 +823,7 @@ const importCommit = createImportCommit({
 
 const { commitImportedOauth, requireSlotProxy, officialCcStatsHandler } = importCommit
 
-const { handleProtocol } = createHandleProtocol({
+const { handleProtocol, handleSearch } = createHandleProtocol({
   json,
   writeSSEHeaders,
   readBody,
@@ -934,6 +940,7 @@ const handlePanel = createPanelHandler({
   applyVmConcurrency,
   applyVmRpm,
   applyVmSessionSlots,
+  applyVmMaxSessions,
   inheritVmScheduling,
   applyVmQuotaOverride,
   initPoolRuntime,
@@ -1102,6 +1109,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && (p === '/v1/messages' || p === '/messages')) {
       return await handleProtocol(req, res, 'anthropic.messages', p)
+    }
+    if (req.method === 'POST' && (p === '/v1/alpha/search' || p === '/alpha/search')) {
+      return await handleSearch(req, res, p)
     }
 
     json(res, 404, { error: { message: `not found: ${p}` } })

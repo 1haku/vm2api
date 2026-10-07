@@ -22,18 +22,25 @@ export function subscriptionSnapshot(db) {
       .prepare(`SELECT * FROM ${table}`)
       .all()
       .map((row) => {
-        // 027/028/029 add nullable fields. Missing pre-upgrade fields and new NULLs are equivalent.
+        // Nullable upstream additions: missing pre-upgrade fields and NULLs are equivalent.
         if (table === 'usage_logs')
           return {
             ...row,
             session_id: row.session_id ?? null,
             reasoning_effort: row.reasoning_effort ?? null,
             outbound_session_id: row.outbound_session_id ?? null,
+            intercept: row.intercept ?? null,
           }
         if (table === 'proxies') return { ...row, label: row.label ?? null }
         return row
       })
     state[table] = { count: rows.length, hash: digest(rows) }
+  }
+  for (const table of ['refusal_guards', 'refusal_device_blocks']) {
+    const rows = exists(db, table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
+    const normalized =
+      table === 'refusal_guards' ? rows.map((row) => ({ ...row, signature: row.signature ?? null })) : rows
+    state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [
     'subscription_slots',

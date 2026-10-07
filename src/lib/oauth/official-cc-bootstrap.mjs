@@ -10,9 +10,10 @@
  * Node restart still kills the detached host python; listen() restores
  * already-initialized residents without another hello.
  *
- * Every bootstrap CLI runs with CLAUDE_CODE_KIN_HOST_REFRESH=1: the host Go
- * Refresher is the only RT writer. Node never dials Anthropic.
- * After hello, quota is CLI /usage inside the slot (one try, then two retries).
+ * Every bootstrap CLI runs with CLAUDE_CODE_HOST_REFRESH=1 (the name
+ * cli-node 2.1.284 reads) plus CLAUDE_CODE_VERSION. The host Go Refresher
+ * is the only RT writer. Node never dials Anthropic.
+ * After hello, quota is CLI `/usage` inside the slot (one try, then two retries).
  * Account tier comes from GET /api/oauth/profile via kin-worker oauth.
  */
 import { spawn, execFileSync } from 'node:child_process'
@@ -40,7 +41,7 @@ import { canOfficialCc, credentialModeOfVm } from './credential-mode.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { inferTierFromOfficialStats, parseOfficialCcStats, tierFromOauthProfile } from './official-cc-stats.mjs'
 import { defaultSeedPolicy } from '../protocol/seed-policy.mjs'
-import { loadVmIdentity, persistVmSettings } from '../identity/vm-identity.mjs'
+import { OFFICIAL_CLI_VERSION, loadVmIdentity, persistVmSettings } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm, readOfficialCcIdentity } from '../identity/official-fingerprint.mjs'
 import { writeSlotSeedFiles, inferProjectRootFromCliHome } from '../vm/slot-seed.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
@@ -51,7 +52,7 @@ import { slotHost } from '../vm/slot-host.mjs'
 
 export { officialCcUidGid } from '../vm/vm-runtime.mjs'
 export const DEFAULT_HELLO_PROMPT = 'hello'
-/** `/stats` and `/cost` are aliases of `/usage` since Claude Code 2.1.28x. */
+/** Plan limits. 2.1.284 `/stats` is activity and `/cost` is session cost. */
 export const DEFAULT_USAGE_PROMPT = '/usage'
 export const DEFAULT_PLAN_PROMPT = DEFAULT_HELLO_PROMPT
 /** `/usage` in the slot is retried at most this many times after the first try. */
@@ -309,6 +310,7 @@ export function startOfficialCcResidentProcess({ vmId, projectRoot, uid, gid, ti
       KIN_UID: String(uid),
       KIN_GID: String(gid),
       KIN_CLI_BIN: CONTAINER_CLI_NODE_BIN,
+      KIN_CLI_VERSION: OFFICIAL_CLI_VERSION,
       TZ: timezone || 'UTC',
       LANG: locale || 'en_US.UTF-8',
       LC_ALL: locale || 'en_US.UTF-8',
@@ -776,9 +778,13 @@ export function buildOfficialCcDockerArgs({
     '-e',
     'PATH=/home/kincli/.local/bin:/usr/bin:/bin',
     '-e',
-    'CLAUDE_CODE_KIN_HOST_REFRESH=1',
+    'CLAUDE_CODE_HOST_REFRESH=1',
     '-e',
     OFFICIAL_CC_MARKER,
+    '-e',
+    `CLAUDE_CODE_VERSION=${OFFICIAL_CLI_VERSION}`,
+    '-e',
+    'USER_TYPE=external',
     '-e',
     'CLAUDE_CODE_USE_BEDROCK=0',
     '-e',
@@ -795,8 +801,6 @@ export function buildOfficialCcDockerArgs({
     'ANTHROPIC_API_KEY=',
     '-e',
     'ANTHROPIC_AUTH_TOKEN=',
-    '-e',
-    'CI=1',
     '-w',
     '/home/kincli',
     containerName(vmId),
@@ -805,6 +809,30 @@ export function buildOfficialCcDockerArgs({
       ? [text, '--print', '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose']
       : ['-p', text, '--permission-mode', 'bypassPermissions', '--output-format', 'json']),
   ]
+}
+
+export function officialCcTurnSucceeded({ code, timedOut, raw, slash }) {
+  const text = String(raw || '').trim()
+  if (code !== 0 || timedOut || !text) return false
+  if (slash) {
+    return text.split('\n').some((line) => {
+      const row = line.trim()
+      if (!row) return false
+      try {
+        JSON.parse(row)
+        return true
+      } catch {
+        return false
+      }
+    })
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return false
+  }
+  return !!parsed && typeof parsed === 'object' && !parsed.is_error && !parsed.error
 }
 
 export async function runOfficialCcTurn({
@@ -849,11 +877,14 @@ export async function runOfficialCcTurn({
   } catch {}
   let parsed = null
   let raw = ''
+  const slash = String(prompt || '')
+    .trim()
+    .startsWith('/')
   try {
     raw = fs.readFileSync(outFile, 'utf8').trim()
-    if (raw) parsed = JSON.parse(raw)
+    if (raw && !slash) parsed = JSON.parse(raw)
   } catch {}
-  const ok = finished.code === 0 && !finished.timed_out && !parsed?.is_error && !parsed?.error
+  const ok = officialCcTurnSucceeded({ code: finished.code, timedOut: finished.timed_out, raw, slash })
   return {
     ok,
     timed_out: !!finished.timed_out,

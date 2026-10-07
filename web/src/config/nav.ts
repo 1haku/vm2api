@@ -87,3 +87,10 @@ export const NAV_ITEMS: {
   { id: 'wrap', url: '/wrap', icon: Puzzle },
   { id: 'users', url: '/users', icon: Users },
 ]
+
+export const VIEW_DESCRIPTIONS: Partial<Record<ViewId, string>> = {
+  overview: '集群健康、账号可用性与近 1 小时服务质量',
+  statistics: '请求、消费与耗时趋势，以及用户 / 供应商 / 模型排行',
+  logs: '逐条请求记录，支持筛选、导出与查看详情',
+  usage: '各账号 5h / 7d 限额占用、并发与费用',
+}
