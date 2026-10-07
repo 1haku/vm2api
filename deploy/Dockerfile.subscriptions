@@ -27,6 +27,7 @@ COPY --from=worker-build /out/ /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
+  && cp /opt/vm2api/image-bin/kin-kernel /opt/vm2api/image-wrap-cli/kin-kernel.bin \
   && rm -f /opt/vm2api/src/lib/oauth/auth.js \
   && cp -a /opt/vm2api/src/config /opt/vm2api/image-config \
   && mkdir -p /opt/vm2api/vms /opt/vm2api/data /opt/vm2api/bin /opt/vm2api/share
