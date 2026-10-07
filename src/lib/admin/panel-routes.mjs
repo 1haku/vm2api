@@ -16,6 +16,12 @@ import {
 } from '../core/security.mjs'
 import { loadDistillRules, saveDistillRules, validateDistillPatch } from '../core/distill-detect.mjs'
 import { applyRefusalGuardPatch, refusalGuardPolicy } from '../core/refusal-guard.mjs'
+import {
+  applyJevPatch,
+  listPolicyModels as listDecisionModels,
+  publicJevConfig,
+  readJevConfig,
+} from '../protocol/jev-intercept.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
@@ -432,6 +438,15 @@ export function createPanelHandler(ctx) {
       items: repo.list(),
       device_count: devices.count(),
       devices: devices.list(),
+    }
+  }
+
+  function jevInterceptSnapshot() {
+    try {
+      const settings = new SettingsRepo()
+      return publicJevConfig(readJevConfig((key, fallback) => settings.get(key, fallback)))
+    } catch {
+      return publicJevConfig(null)
     }
   }
 
@@ -3698,6 +3713,45 @@ export function createPanelHandler(ctx) {
         }
         repo.clear()
         return json(res, 200, panel.ok(refusalGuardSnapshot()))
+      }
+      if (req.method === 'GET' && p === '/api/panel/jev-intercept') {
+        return json(res, 200, panel.ok(jevInterceptSnapshot()))
+      }
+      if (req.method === 'PUT' && p === '/api/panel/jev-intercept') {
+        const body = await readBody(req, 64 * 1024).catch(() => ({}))
+        const patched = applyJevPatch(new SettingsRepo(), body || {})
+        if (!patched.ok) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              type: 'invalid_request_error',
+              code: 'invalid_jev_intercept',
+              message: patched.problems.join('；'),
+            },
+          })
+        }
+        return json(res, 200, panel.ok(patched.config))
+      }
+      if (req.method === 'POST' && p === '/api/panel/jev-intercept/models') {
+        const body = await readBody(req, 8192).catch(() => ({}))
+        const current = jevInterceptSnapshot()
+        const baseUrl = String(body?.base_url || current.base_url || '').trim()
+        const typedKey = String(body?.api_key || '').trim()
+        const stored = readJevConfig((key, fallback) => new SettingsRepo().get(key, fallback))
+        const apiKey = typedKey || stored.api_keys[0] || ''
+        try {
+          const listed = await listDecisionModels(baseUrl, apiKey, Number(body?.timeout_ms) || current.timeout_ms)
+          return json(res, 200, panel.ok({ models: listed.models, url: listed.url }))
+        } catch (error) {
+          return json(res, 502, {
+            ok: false,
+            error: {
+              type: 'api_error',
+              code: error?.code || 'fetch_models_failed',
+              message: error?.message || '获取模型失败',
+            },
+          })
+        }
       }
       if (req.method === 'GET' && p === '/api/panel/notify') {
         return json(
