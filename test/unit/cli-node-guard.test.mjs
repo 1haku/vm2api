@@ -76,6 +76,26 @@ test('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t
   assert.equal(alive(stray), false)
 })
 
+test('keeps a not-yet-synced kernel CLI that still has the prefixed slots env', async (t) => {
+  const slot = slotFixture(t)
+  const kernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const stray = slot.add(['-p', 'hello'], ['HOME=/home/kincli'])
+  slot.run([])
+  await settle()
+  assert.equal(alive(kernel), true)
+  assert.equal(alive(stray), false)
+})
+
+test('prefers the unprefixed kernel CLI over a leftover prefixed one', async (t) => {
+  const slot = slotFixture(t)
+  const oldKernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
+  const newKernel = slot.add(['-p'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
+  slot.run([])
+  await settle()
+  assert.equal(alive(oldKernel), false)
+  assert.equal(alive(newKernel), true)
+})
+
 test('leaves a CLI alone when its environ cannot be read', async (t) => {
   const slot = slotFixture(t)
   const unknown = slot.add(['-p', 'hello'], null)
