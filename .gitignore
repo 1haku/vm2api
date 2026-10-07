@@ -68,3 +68,5 @@ patches/
 /docs/auto-mode
 
 .omp
+/dist/
+share/wrap-cli/dist/
