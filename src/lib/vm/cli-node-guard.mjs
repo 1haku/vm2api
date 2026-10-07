@@ -1,6 +1,6 @@
 /**
  * One kernel cli-node per slot: the process the kernel spawned (it carries
- * CLAUDE_CODE_KIN_NATIVE_SLOTS). Beside it may run: any `claude` (interactive
+ * CLAUDE_CODE_NATIVE_SLOTS). Beside it may run: any `claude` (interactive
  * or `-p`) in a live panel shell, and host-run init bootstrap / setup-token CLIs
  * (KIN_OFFICIAL_CC=1 / KIN_SETUP_TOKEN=1) that have their own lifecycle.
  * Anything else is a leak from a closed terminal (cli-node ignores SIGHUP) and
@@ -21,7 +21,7 @@ for d in "$proc"/[0-9]*; do
   pid=\${d##*/}
   cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
   case "$cmd" in *cli-node*) ;; *) continue ;; esac
-  tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -q '^CLAUDE_CODE_KIN_NATIVE_SLOTS=' || continue
+  tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -q '^CLAUDE_CODE_NATIVE_SLOTS=' || continue
   if [ -z "$keep" ] || [ "$pid" -lt "$keep" ]; then keep=$pid; fi
 done
 for d in "$proc"/[0-9]*; do
@@ -31,7 +31,7 @@ for d in "$proc"/[0-9]*; do
   case "$cmd" in *cli-node*) ;; *) continue ;; esac
   env=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null) || continue
   [ -n "$env" ] || continue
-  if printf '%s\\n' "$env" | grep -q '^CLAUDE_CODE_KIN_NATIVE_SLOTS='; then
+  if printf '%s\\n' "$env" | grep -q '^CLAUDE_CODE_NATIVE_SLOTS='; then
     kill -KILL "$pid" 2>/dev/null || true
     continue
   fi
