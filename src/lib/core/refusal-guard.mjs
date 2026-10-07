@@ -9,10 +9,16 @@
 import { createHash } from 'node:crypto'
 import { ErrorType, ErrorCode, isUsagePolicyErrorMessage, makeError, REFUSAL_GUARD_MESSAGE } from './errors.mjs'
 import { extractPrompt, normalizeText } from './distill-detect.mjs'
+import { resolveInboundIdentity } from '../identity/identity-rewrite.mjs'
+import { encodeSignature, refusalSignature, refusalUserDocument } from './refusal-similarity.mjs'
 
 export { REFUSAL_GUARD_MESSAGE }
 
 export const REFUSAL_GUARD_SETTING = 'refusal_guard_enabled'
+export const REFUSAL_SIMILARITY_SETTING = 'refusal_similarity_enabled'
+export const REFUSAL_SIMILARITY_VALUE_SETTING = 'refusal_similarity'
+export const REFUSAL_DEVICE_BLOCK_SETTING = 'refusal_device_block_enabled'
+export const REFUSAL_SIMILARITY_CHOICES = Object.freeze([80, 85, 90, 95])
 
 export function isRefusalGuardEnabled(readSetting) {
   const flag = process.env.VM2API_REFUSAL_GUARD || process.env.REFUSAL_GUARD || process.env.KIN_REFUSAL_GUARD
@@ -82,4 +88,96 @@ export function refusalGuardError(requestId) {
     status: 503,
     request_id: requestId,
   })
+}
+
+const DEVICE_ID_MIN = 8
+const DEVICE_ID_MAX = 200
+
+/** Inbound client device. Never the slot's rewritten outbound id, and never IP/UA/API key. */
+export function inboundRefusalDeviceId({ inbound, body, headers } = {}) {
+  const id = resolveInboundIdentity({ inbound, body, headers }).deviceId
+  if (id.length < DEVICE_ID_MIN || id.length > DEVICE_ID_MAX) return ''
+  return id
+}
+
+export function refusalPromptSignature(inbound, body = inbound) {
+  return encodeSignature(refusalSignature(refusalUserDocument(inbound, body)))
+}
+
+function flagOn(value) {
+  return !(value === false || value === 0 || value === '0' || value === 'false')
+}
+
+/** Panel policy. Missing settings stay on, with similarity at 90. */
+export function refusalGuardPolicy(readSetting) {
+  const read = typeof readSetting === 'function' ? readSetting : () => undefined
+  const raw = read(REFUSAL_SIMILARITY_VALUE_SETTING, 90)
+  const similarity = REFUSAL_SIMILARITY_CHOICES.includes(Number(raw)) ? Number(raw) : 90
+  return {
+    enabled: isRefusalGuardEnabled(readSetting),
+    similarity_enabled: flagOn(read(REFUSAL_SIMILARITY_SETTING, true)),
+    similarity,
+    device_block_enabled: flagOn(read(REFUSAL_DEVICE_BLOCK_SETTING, true)),
+  }
+}
+
+export function normalizeRefusalSimilarity(value) {
+  const n = Number(value)
+  return REFUSAL_SIMILARITY_CHOICES.includes(n) ? n : null
+}
+
+/** Apply a panel PUT. Unknown similarity values are rejected, not coerced. */
+export function applyRefusalGuardPatch(settings, body = {}) {
+  const problems = []
+  if (Object.hasOwn(body, 'enabled') && typeof body.enabled !== 'boolean') problems.push('enabled 必须是布尔')
+  if (Object.hasOwn(body, 'similarity_enabled') && typeof body.similarity_enabled !== 'boolean') {
+    problems.push('similarity_enabled 必须是布尔')
+  }
+  if (Object.hasOwn(body, 'device_block_enabled') && typeof body.device_block_enabled !== 'boolean') {
+    problems.push('device_block_enabled 必须是布尔')
+  }
+  if (Object.hasOwn(body, 'similarity') && normalizeRefusalSimilarity(body.similarity) == null) {
+    problems.push('similarity 只能是 80、85、90、95')
+  }
+  if (problems.length) return { ok: false, problems }
+  if (typeof body.enabled === 'boolean') settings.set(REFUSAL_GUARD_SETTING, body.enabled)
+  if (typeof body.similarity_enabled === 'boolean') settings.set(REFUSAL_SIMILARITY_SETTING, body.similarity_enabled)
+  if (typeof body.device_block_enabled === 'boolean') {
+    settings.set(REFUSAL_DEVICE_BLOCK_SETTING, body.device_block_enabled)
+  }
+  if (Object.hasOwn(body, 'similarity')) {
+    settings.set(REFUSAL_SIMILARITY_VALUE_SETTING, normalizeRefusalSimilarity(body.similarity))
+  }
+  return { ok: true }
+}
+
+/**
+ * Pre-hop decision. Device ban wins, then the exact fingerprint, then a
+ * user-text signature at or above the configured similarity. Does not write.
+ */
+export function matchStoredRefusal({
+  inbound,
+  body = inbound,
+  headers,
+  repo,
+  devices,
+  similarityEnabled = true,
+  similarity = 0.9,
+  deviceBlockEnabled = true,
+} = {}) {
+  const deviceId = inboundRefusalDeviceId({ inbound, body, headers })
+  if (deviceBlockEnabled && deviceId && typeof devices?.get === 'function') {
+    const banned = devices.get(deviceId)
+    if (banned) return { kind: 'device', deviceId, row: banned }
+  }
+  if (!repo || typeof repo.get !== 'function') return null
+  const fingerprint = refusalFingerprint(body, inbound)
+  const exact = repo.get(fingerprint)
+  if (exact) return { kind: 'exact', deviceId, fingerprint, row: exact }
+  if (!similarityEnabled || typeof repo.nearest !== 'function') return null
+  const signature = refusalSignature(refusalUserDocument(inbound, body))
+  if (!signature) return null
+  const near = repo.nearest(signature, similarity)
+  if (!near) return null
+  return { kind: 'similar', deviceId, fingerprint: near.fingerprint, score: near.score, row: near }
 }
