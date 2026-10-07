@@ -842,7 +842,11 @@ export function createPanelHandler(ctx) {
           json,
           readBody,
           projectRoot: cfg.paths.project,
-          slotInflight: (id) => ctx.poolScheduler?.usedSlotCount(id) ?? 0,
+          slotInflight: (id) => {
+            const seat = ctx.poolScheduler?.seatSnapshot?.().seats?.[id]
+            // Subscription load counts busy seats, not idle seats held in grace.
+            return Math.max(0, (seat?.seats_used || 0) - (seat?.seats_grace || 0))
+          },
         })
       )
         return true
