@@ -253,13 +253,17 @@ export function createHandleProtocol(deps) {
       devices: deviceRepo(),
       requestId,
     })
-    if (!decision) return false
+    if (!decision || decision.action !== 'block') {
+      if (decision?.intercept) logBag.intercept = decision.intercept
+      return false
+    }
     stats.errors++
     logBag.via = decision.via
     logBag.attempt_count = 0
     logBag.final_state = decision.final_state
     logBag.error_code = decision.error?.body?.error?.code || null
     logBag.error_message = decision.errorMessage || decision.error?.body?.error?.message || null
+    logBag.intercept = decision.intercept || null
     json(res, decision.error.status, decision.error.body)
     return true
   }
