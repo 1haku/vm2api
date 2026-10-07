@@ -10,6 +10,7 @@ import {
   responsesSseToChatChunk,
   responsesSseToAnthropicEvents,
   createAnthropicSseState,
+  createResponsesSseEventNamer,
   assembleCodexBodyFromSse,
   codexBodyToAnthropicMessage,
   toCodexResponses,
@@ -504,6 +505,7 @@ export async function handleCodexProtocol({
         logBag.vm_id = vm.id
         logBag.attempt_count = hops
         const chunks = []
+        const nameSseEvent = createResponsesSseEventNamer()
         let responseServiceTier = null
         let streamedUsage = null
         const attemptStartedAt = Date.now()
@@ -566,7 +568,8 @@ export async function handleCodexProtocol({
               if (mapped) res.write(mapped)
               return
             }
-            res.write(line.endsWith('\n') ? `${line}\n` : `${line}\n`)
+            const named = nameSseEvent(line)
+            if (named) res.write(named)
           },
         })
         ingestCodexHop(projectRoot, vm.id, result)
