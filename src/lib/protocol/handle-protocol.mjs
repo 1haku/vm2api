@@ -389,7 +389,7 @@ export function createHandleProtocol(deps) {
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
       onEvent: async (line) => {
-        if (/kin_response_headers/.test(String(line))) return
+        if (/response_headers/.test(String(line))) return
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
       },
     })
@@ -1250,7 +1250,7 @@ export function createHandleProtocol(deps) {
                 onCommit()
               },
               onEvent: async (line) => {
-                if (/kin_response_headers/.test(String(line))) return
+                if (/response_headers/.test(String(line))) return
                 line = restoreToolNamesInSSELine(line, attemptMeta?.toolNames || {})
                 if (personaHideTokens) line = hidePersonaUsageInSseLine(line, personaHideTokens, cacheTtl)
                 keepalive.observeLine(line)
