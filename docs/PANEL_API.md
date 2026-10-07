@@ -164,6 +164,18 @@
 
 `PUT { enabled }` 写入 SQLite `settings.refusal_guard_enabled`。环境变量 `REFUSAL_GUARD=0` 仍强制关闭。与蒸馏拦截独立：0 注入跳过普通蒸馏针，本缓存仍生效。`count_tokens` 同样在 peek / worker hop 之前拦截。device 取入站 `metadata.user_id.device_id`，否则显式 `device_id` / `x-kin-device-id`，不用 IP、UA 或 API key。仅 admin。
 
+## 决策模型与硬正则
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/PUT | `/jev-intercept` | 协议入口。顺序：蒸馏硬规则 → 去掉 reminder、按需展开 base64 后的硬正则 → 拒答缓存 → 决策模型。没配地址则跳过模型；模型失败默认放行 |
+
+`PUT` 写入 SQLite `settings.jev_intercept`。字段：`enabled`（默认关）、`hard_regex_enabled`（默认开）、`provider`（`jev` 默认、`laya`、`modernbert`）、`base_url`、`model`、`timeout_ms`（200–8000，默认 2000）、`patterns[]`、`api_key` 或 `api_keys`（最多 8 把）、`question_ids`（题库 id，缺省为全部）。省略密钥保持原值；`api_key: ""` 或 `api_keys: []` 清除。另有 `safety_instruction`（空则不加自定义题）、`safety_threshold`（0–1，默认 0.5）、`block_if_below`（默认开）、`fail_open`（默认开）、`dedup_sec`（0–3600，默认 60）、`max_state_chars`（256–64000，默认 16000）、`expand_base64`、`strip_reminders`（后两个默认开）。GET 不回密钥，回 `api_key_set`、`api_key_count`、`question_bank`、`providers`、`builtin_patterns`。
+
+三个后端走同一套 `/v1/systemone`。题库存在 `questions`：可增删改，缺省是内置六题（综合、色情、破限、逆向、渗透、网络攻击）。每题都是「是否安全」，高分表示安全，启用的题目一起问，任一题低于阈值就拦。`safety_instruction` 非空时再多问一题自定义要求。`POST /jev-intercept/models` 用地址和 Key（留空则用已存的第一把）请求 `{base}/v1/models`，失败回 502，不会把上游 401 当成面板登出。
+
+内置正则覆盖 NSFW、蒸馏、破解、破限，面板删不掉。比较的是用户正文。命中硬正则或模型返回 HTTP 403 `policy_blocked`，不 hop；拒答守卫开启时写入拒答缓存，并在 device 封禁开启时封禁入站 device id。上游 `content_policy` / `content_filter` / `cyber_policy` / `moderation_blocked` / `safety_violation` / `usage_policy` 同样入库。仅 admin。
+
 
 ## 密钥 / 日志
 
