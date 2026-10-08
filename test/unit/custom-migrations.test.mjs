@@ -50,6 +50,10 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   db = createDatabase({ dataDir: dir })
   verifySubscriptionSchema(db)
   assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT group_type FROM api_keys WHERE id='key'").get().group_type, 'all')
+  db.prepare("UPDATE api_keys SET group_type='openai',allowed_vms='[\"slot\"]' WHERE id='key'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
+  db.prepare("UPDATE api_keys SET group_type='all',allowed_vms='[]' WHERE id='key'").run()
   const limits = new RequestLimitsRepo(db)
   assert.deepEqual({ ...limits.userLimits({ id: 'a' }) }, { concurrency: 7, rpm_limit: 0 })
   assert.deepEqual({ ...limits.userLimits({ id: 'admin' }) }, { concurrency: 0, rpm_limit: 0 })
@@ -113,9 +117,9 @@ test('fresh install applies upstream 027/028/029 alongside the independent custo
   )
   const upstream = path.join(dir, 'upstream')
   fs.mkdirSync(upstream)
-  fs.writeFileSync(path.join(upstream, '032_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
+  fs.writeFileSync(path.join(upstream, '999_future.sql'), 'CREATE TABLE future_upstream(id TEXT);')
   applyMigrations(db, { migrationsDir: upstream })
-  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='032'").get().name, '032_future.sql')
+  assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version='999'").get().name, '999_future.sql')
 })
 
 test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions', (t) => {

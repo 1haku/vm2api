@@ -381,6 +381,7 @@ test('usage stays attached to caller after VM/key transfer, including totals and
       id,
       request_id: id,
       user_id: user,
+      api_key_id: 'transferred-key',
       vm_id: 'vm-1',
       created_at: new Date().toISOString(),
       status: 200,
@@ -391,6 +392,16 @@ test('usage stays attached to caller after VM/key transfer, including totals and
   assert.equal(logs.ownerBilling({ ownerUserId: 'a' }).totals.requests, 1)
   assert.equal(logs.belongsToOwner('rb', 'a'), false)
   assert.equal(logs.belongsToOwner('legacy', 'a'), false)
+  const keyStats = logs.keyUsageStats({ apiKeyId: 'transferred-key', owner_user_id: 'a' })
+  assert.equal(
+    keyStats.history.reduce((sum, row) => sum + row.requests, 0),
+    1,
+  )
+  assert.equal(
+    keyStats.history.reduce((sum, row) => sum + row.total_cost, 0),
+    1,
+  )
+  assert.equal(logs.keyUsageStats({ apiKeyId: 'transferred-key' }).history[0].requests, 3)
   const own = usageRecords(db, new URLSearchParams({ user_id: 'b' }), 'a', false)
   assert.equal(own.total, 1)
   assert.equal(own.totals.actual_cost, 1)

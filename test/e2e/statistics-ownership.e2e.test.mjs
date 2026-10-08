@@ -49,6 +49,14 @@ test('new logs and statistics remain caller-scoped after key and slot ownership 
     db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'))
     db.exec('PRAGMA busy_timeout=5000')
     db.prepare('UPDATE api_keys SET user_id=? WHERE id=?').run(ids[1], keys[0].id)
+    const transferredStats = await api(gw, 'GET', `/api/panel/api-keys/${keys[0].id}/stats`, { headers: sessions[1] })
+    assert.equal(transferredStats.status, 200, transferredStats.text)
+    assert.equal(transferredStats.json.usage_stats.history.length, 0)
+    const oldOwnerStats = await api(gw, 'GET', `/api/panel/api-keys/${keys[0].id}/stats`, { headers: sessions[0] })
+    assert.equal(oldOwnerStats.status, 404)
+    const adminStats = await api(gw, 'GET', `/api/panel/api-keys/${keys[0].id}/stats`)
+    assert.equal(adminStats.status, 200, adminStats.text)
+    assert.equal(adminStats.json.usage_stats.history[0].requests, 1)
     db.prepare("UPDATE vms SET owner_user_id=? WHERE id='vm-sim-01'").run(ids[1])
     for (let i = 0; i < 2; i++) {
       const query = `user_id=${ids[1 - i]}`

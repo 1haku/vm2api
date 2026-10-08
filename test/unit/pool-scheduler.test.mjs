@@ -2634,3 +2634,58 @@ test('returning to a previously used VM mints a new outbound session', async (t)
   assert.notEqual(backSeen[0].sessionId, 'S-other')
   assert.equal(sticky.resolve(stickyKey).sessionId, backSeen[0].sessionId)
 })
+
+test('a key scope only reserves the checked VMs', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const pool = scheduler(root)
+  const selected = await pool.selectAndReserve({
+    model: 'claude-haiku-4-5',
+    allowWait: false,
+    keyScope: { group_type: 'anthropic', allowed_vms: ['vm-02'] },
+  })
+  assert.equal(selected.ok, true)
+  assert.equal(selected.vmId, 'vm-02')
+  selected.release()
+  const blocked = await pool.selectAndReserve({
+    model: 'claude-haiku-4-5',
+    allowWait: false,
+    keyScope: { group_type: 'openai', allowed_vms: ['vm-02'] },
+  })
+  assert.equal(blocked.ok, false)
+  const open = await pool.eligibleCandidates({
+    model: 'claude-haiku-4-5',
+    keyScope: { group_type: 'all', allowed_vms: [] },
+  })
+  assert.deepEqual(open.map((c) => c.vmId).sort(), ['vm-01', 'vm-02'])
+  const ownerScope = { type: 'subscription', vmIds: ['vm-01'] }
+  const restricted = await pool.eligibleCandidates({
+    model: 'claude-haiku-4-5',
+    ownerScope,
+    keyScope: { group_type: 'anthropic', allowed_vms: ['vm-02'] },
+  })
+  assert.equal(restricted.length, 0)
+  const subscription = await pool.eligibleCandidates({
+    model: 'claude-haiku-4-5',
+    ownerScope,
+    keyScope: { group_type: 'all', allowed_vms: [] },
+  })
+  assert.deepEqual(
+    subscription.map((c) => c.vmId),
+    ['vm-01'],
+  )
+})
+
+test('peekAccount honors the key scope', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const pool = scheduler(root)
+  const peeked = await pool.peekAccount({
+    model: 'claude-haiku-4-5',
+    keyScope: { group_type: 'anthropic', allowed_vms: ['vm-02'] },
+  })
+  assert.equal(peeked.ok, true)
+  assert.equal(peeked.vmId, 'vm-02')
+  const none = await pool.peekAccount({ keyScope: { group_type: 'openai', allowed_vms: ['vm-02'] } })
+  assert.equal(none.ok, false)
+})

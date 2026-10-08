@@ -32,6 +32,9 @@ export function subscriptionSnapshot(db) {
             intercept: row.intercept ?? null,
           }
         if (table === 'proxies') return { ...row, label: row.label ?? null }
+        // Upstream 032 adds these defaults; existing subscription scope still applies.
+        if (table === 'api_keys')
+          return { ...row, group_type: row.group_type ?? 'all', allowed_vms: row.allowed_vms ?? '[]' }
         return row
       })
     state[table] = { count: rows.length, hash: digest(rows) }

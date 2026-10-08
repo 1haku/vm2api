@@ -41,6 +41,7 @@ import {
   type KeyUsage,
   type UsageSearch,
 } from '@/features/usage-records/filters'
+import { vmsListQueryOptions } from '@/features/vm/queries'
 import {
   keyIsDead,
   keyQuotaLabel,
@@ -52,6 +53,7 @@ import {
 import { KeyLimitsDialog } from './key-limits-dialog'
 import { keyLimitsPayload, type KeyLimitsDraft } from './key-payload'
 import { KeyRevealDialog, type RevealedKey } from './key-reveal-dialog'
+import { KeyStatsDialog } from './key-stats-dialog'
 
 export function KeysPage() {
   const qc = useQueryClient()
@@ -86,11 +88,14 @@ export function KeysPage() {
   const metrics = new Map(stats.data?.keys.map((k) => [k.api_key_id, k]))
   const metricsReady = valid && stats.isSuccess && !stats.isError
   const q = useQuery(apiKeysQueryOptions())
+  const vms = useQuery(vmsListQueryOptions())
+  const vmItems = vms.data?.items || []
   const [createOpen, setCreateOpen] = useState(false)
   const [editId, setEditId] = useState('')
-  const [delId, setDelId] = useState('')
+  const [statsId, setStatsId] = useState('')
   const [rotateId, setRotateId] = useState('')
   const [revealed, setRevealed] = useState<RevealedKey | null>(null)
+  const [delId, setDelId] = useState('')
   const keys = q.data?.keys || []
   const visible = keys.filter((k) =>
     (k.name || '').toLowerCase().includes(filter.toLowerCase())
@@ -376,6 +381,7 @@ export function KeysPage() {
                 onRotate={() => setRotateId(k.id)}
                 onEdit={() => setEditId(k.id)}
                 onDetails={() => setDetails(k)}
+                onStats={() => setStatsId(k.id)}
                 onToggle={() =>
                   toggle.mutate({ id: k.id, enable: k.status === 'disabled' })
                 }
@@ -456,6 +462,7 @@ export function KeysPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         pending={create.isPending}
+        vms={vmItems}
         onSubmit={(draft) => create.mutate(draft)}
       />
       <KeyLimitsDialog
@@ -465,6 +472,7 @@ export function KeysPage() {
           if (!open) setEditId('')
         }}
         initial={editing}
+        vms={vmItems}
         pending={edit.isPending}
         onSubmit={(draft) => {
           if (!editId) return
@@ -472,6 +480,13 @@ export function KeysPage() {
         }}
       />
       <KeyRevealDialog value={revealed} onClose={() => setRevealed(null)} />
+      <KeyStatsDialog
+        item={keys.find((k) => k.id === statsId) || null}
+        vms={vmItems}
+        onOpenChange={(open) => {
+          if (!open) setStatsId('')
+        }}
+      />
       <ConfirmDialog
         open={!!rotateId}
         onOpenChange={() => setRotateId('')}
@@ -525,6 +540,7 @@ function KeyRow({
   onRotate,
   onEdit,
   onDetails,
+  onStats,
   onToggle,
   onReset,
   onDelete,
@@ -540,6 +556,7 @@ function KeyRow({
   onRotate: () => void
   onEdit: () => void
   onDetails: () => void
+  onStats: () => void
   onToggle: () => void
   onReset: () => void
   onDelete: () => void
@@ -558,6 +575,7 @@ function KeyRow({
           {item.name || '未命名密钥'}
         </p>
         <p className='truncate text-xs text-muted-foreground'>{planName}</p>
+        <p className='text-xs text-muted-foreground'>{scopeText(item)}</p>
         <code className='text-xs text-muted-foreground'>
           {maskApiKeyItem(item)}
         </code>
@@ -614,6 +632,7 @@ function KeyRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end'>
+            <DropdownMenuItem onSelect={onStats}>统计</DropdownMenuItem>
             <DropdownMenuItem onSelect={onDetails}>详情与限制</DropdownMenuItem>
             <DropdownMenuItem onSelect={onEdit}>编辑限制</DropdownMenuItem>
             {item.revealable && (
@@ -633,4 +652,12 @@ function KeyRow({
       </div>
     </article>
   )
+}
+
+function scopeText(item: ApiKeyItem): string {
+  if (item.group_type === 'anthropic')
+    return `Anthropic · ${item.allowed_vms?.length || 0} 台`
+  if (item.group_type === 'openai')
+    return `OpenAI · ${item.allowed_vms?.length || 0} 台`
+  return '按账户 / 订阅授权'
 }

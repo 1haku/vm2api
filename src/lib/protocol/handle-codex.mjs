@@ -5,6 +5,7 @@ import path from 'node:path'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
 import { isCodexProtocolAllowed, isCodexVm, normalizeCodexRouting } from './codex-route.mjs'
+import { keyAllowsVm, keyScopeFromRequest } from '../admin/key-scope.mjs'
 import { normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
 import { restrictCodexClient } from './codex-restriction.mjs'
 import {
@@ -14,6 +15,7 @@ import {
   createResponsesSseEventNamer,
   assembleCodexBodyFromSse,
   codexBodyToAnthropicMessage,
+  isToolArgumentsError,
   toCodexResponses,
 } from './codex-convert.mjs'
 import { extraFromCodexHeaders, codexQuotaPark, CODEX_DEFAULT_PARK_MS } from './codex-usage.mjs'
@@ -160,9 +162,12 @@ export function pickCodexCandidates(
   const pin = pinnedVmId(req)
   const model = body?.model || null
   const routingPolicy = normalizeCodexRouting(routing.codex || routing).quota
+  const scope = keyScopeFromRequest(req)
+  if (scope.group_type === 'anthropic') return { error: 'key_group_mismatch', ids: [], candidates: [] }
   if (pin) {
     const vm = getVm(projectRoot, pin)
     if (!vm || !isCodexVm(vm)) return { error: 'platform_mismatch', pin, ids: [] }
+    if (!keyAllowsVm(scope, vm)) return { error: 'key_group_mismatch', pin, ids: [] }
     if (!codexSlotAllowsModel(vm, model)) return { error: 'model_not_allowed', pin, ids: [] }
     const ordered = orderCodexSessionSlots([vm], {
       pin,
@@ -185,8 +190,10 @@ export function pickCodexCandidates(
     if (!owner) return { error: 'response_not_portable', ids: [], sessionKey, stickyKeys }
     bound = { ...bound, vmId: owner.vm_id }
   }
-  const scope = ownerScopeFromRequest(req)
-  const vms = listVms(projectRoot, { codex: { quota: routingPolicy } }).filter((vm) => vmMatchesOwnerScope(vm, scope))
+  const ownerScope = ownerScopeFromRequest(req)
+  const vms = listVms(projectRoot, { codex: { quota: routingPolicy } }).filter(
+    (vm) => vmMatchesOwnerScope(vm, ownerScope) && keyAllowsVm(scope, vm),
+  )
   const continuesResponse = !!body?.previous_response_id && !!bound?.vmId
   const ordered = orderCodexSessionSlots(continuesResponse ? vms.filter((vm) => vm.id === bound.vmId) : vms, {
     boundVmId: bound?.vmId || null,
@@ -542,6 +549,7 @@ export async function handleCodexProtocol({
         const nameSseEvent = createResponsesSseEventNamer()
         let responseServiceTier = null
         let streamedUsage = null
+        let conversionError = null
         const attemptStartedAt = Date.now()
         const sessionOptions = {
           tenantId: req.apiKeyRecord?.user_id || '',
@@ -589,6 +597,7 @@ export async function handleCodexProtocol({
             },
           },
           onEvent: async (line) => {
+            if (conversionError) return
             if (req.apiKeyRecord?.user_id) {
               for (const part of String(line).split('\n')) {
                 if (!part.startsWith('data:')) continue
@@ -611,20 +620,34 @@ export async function handleCodexProtocol({
               return
             }
             if (!res.headersSent) writeSSEHeaders(res)
-            if (protocol === 'openai.chat' || protocol === 'openai.completions') {
-              const mapped = responsesSseToChatChunk(line, 'codex', chatSse)
-              if (mapped) res.write(mapped)
-              return
-            }
-            if (protocol === 'anthropic.messages') {
-              const mapped = responsesSseToAnthropicEvents(line, anthropicSse)
-              if (mapped) res.write(mapped)
+            if (protocol !== 'openai.responses') {
+              try {
+                const mapped =
+                  protocol === 'anthropic.messages'
+                    ? responsesSseToAnthropicEvents(line, anthropicSse)
+                    : responsesSseToChatChunk(line, 'codex', chatSse)
+                if (mapped) res.write(mapped)
+              } catch (error) {
+                if (error.code !== 'tool_arguments_mismatch') throw error
+                conversionError = { type: 'upstream_protocol_error', code: error.code, message: error.message }
+                res.write(
+                  protocol === 'anthropic.messages'
+                    ? `event: error\ndata: ${JSON.stringify({ type: 'error', error: conversionError })}\n\n`
+                    : `data: ${JSON.stringify({ error: conversionError })}\n\ndata: [DONE]\n\n`,
+                )
+              }
               return
             }
             const named = nameSseEvent(line)
             if (named) res.write(named)
           },
         })
+        if (conversionError) {
+          result.ok = false
+          result.status = 502
+          result.terminalState = 'incomplete'
+          result.body = { error: conversionError }
+        }
         ingestCodexHop(projectRoot, vm.id, result, Date.now(), normalizeCodexRouting(routing.codex).quota)
         if (req.apiKeyRecord?.user_id)
           new SubscriptionsRepo().rememberResponse(
@@ -638,7 +661,7 @@ export async function handleCodexProtocol({
         const usage = preferUsage(hopUsage, streamedUsage)
         // Responses SSE is not a Claude assistant message, so the stream client
         // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
-        const delivered = result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0)
+        const delivered = !conversionError && (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
         if (delivered) {
           attemptKind = 'succeeded'
           bindSticky(outboundSessionId)
@@ -660,11 +683,22 @@ export async function handleCodexProtocol({
           logBag.upstream_model = converted.body.model
           if (hops > 1) logBag.codex_failed_over = true
           if (!stream) {
-            const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
-            const body =
-              protocol === 'anthropic.messages'
-                ? codexBodyToAnthropicMessage(assembled, converted.body.model)
-                : assembled
+            let body
+            try {
+              const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
+              body =
+                protocol === 'anthropic.messages'
+                  ? codexBodyToAnthropicMessage(assembled, converted.body.model)
+                  : assembled
+            } catch (error) {
+              if (!isToolArgumentsError(error)) throw error
+              stats.errors++
+              logBag.error_code = error.code
+              logBag.final_state = 'incomplete'
+              return json(res, 502, {
+                error: { type: 'upstream_protocol_error', code: error.code, message: error.message },
+              })
+            }
             return json(res, 200, body)
           }
           if (!res.headersSent) writeSSEHeaders(res)
@@ -711,6 +745,15 @@ function rejectCodexAdmission({ res, json, stats, logBag, picked, model }) {
         type: 'invalid_request_error',
         code: 'platform_mismatch',
         message: `vm '${picked.pin}' is not a GPT slot`,
+      },
+    })
+  }
+  if (picked.error === 'key_group_mismatch') {
+    return json(res, 403, {
+      error: {
+        type: 'permission_error',
+        code: 'key_group_mismatch',
+        message: '此密钥不能调用 openai',
       },
     })
   }

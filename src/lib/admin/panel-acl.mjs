@@ -162,7 +162,7 @@ function userVmPathAllowed(method, path) {
   if (USER_VM_DENIED.has(id) || USER_VM_DENIED.has(head) || rest.startsWith('wrap-cli')) return false
   if (method === 'GET') {
     if (!rest) return true
-    if (rest === 'oauth/credential') return false
+    if (rest === 'oauth/credential' || rest === 'package') return false
     return (
       rest.startsWith('oauth/') ||
       rest === 'probe' ||
@@ -172,7 +172,7 @@ function userVmPathAllowed(method, path) {
     )
   }
   if (method === 'POST') {
-    if (id === 'create' || id === 'import') return true
+    if (id === 'create' || id === 'import' || id === 'package') return true
     if (!rest) return false
     if (head === 'official-cc-bootstrap' || head === 'wrap-cli' || head === 'reset-fingerprint') return false
     if (head === 'owner') return false
@@ -210,6 +210,7 @@ function userKeyPathAllowed(method, path) {
   if (/^\/api\/panel\/api-keys\/[^/]+\/reveal$/.test(path) && method === 'POST') return true
   if (/^\/api\/panel\/api-keys\/[^/]+\/rotate$/.test(path) && method === 'POST') return true
   if (/^\/api\/panel\/api-keys\/[^/]+\/reset-quota$/.test(path) && method === 'POST') return true
+  if (/^\/api\/panel\/api-keys\/[^/]+\/stats$/.test(path) && method === 'GET') return true
   if (/^\/api\/panel\/api-keys\/[^/]+\/reset$/.test(path) && method === 'POST') return true
   return false
 }
