@@ -5,6 +5,7 @@ import path from 'node:path'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
 import { isCodexProtocolAllowed, isCodexVm, normalizeCodexRouting } from './codex-route.mjs'
+import { keyAllowsVm, keyScopeFromRequest } from '../admin/key-scope.mjs'
 import { normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
 import { restrictCodexClient } from './codex-restriction.mjs'
 import {
@@ -158,9 +159,12 @@ export function pickCodexCandidates(
   const pin = pinnedVmId(req)
   const model = body?.model || null
   const routingPolicy = normalizeCodexRouting(routing.codex || routing).quota
+  const scope = keyScopeFromRequest(req)
+  if (scope.group_type === 'anthropic') return { error: 'key_group_mismatch', ids: [], candidates: [] }
   if (pin) {
     const vm = getVm(projectRoot, pin)
     if (!vm || !isCodexVm(vm)) return { error: 'platform_mismatch', pin, ids: [] }
+    if (!keyAllowsVm(scope, vm)) return { error: 'key_group_mismatch', pin, ids: [] }
     if (!codexSlotAllowsModel(vm, model)) return { error: 'model_not_allowed', pin, ids: [] }
     const ordered = orderCodexSessionSlots([vm], {
       pin,
@@ -178,7 +182,7 @@ export function pickCodexCandidates(
   const stickyKeys = stickyRouter?.collectPoolKeys?.(req, body || {}, { platform: 'openai' }) || []
   const sessionKey = stickyRouter?.extractPoolKey?.(req, body || {}, { platform: 'openai' }) || stickyKeys[0] || null
   const bound = sessionKey ? stickyRouter?.resolve?.(sessionKey) : null
-  const vms = listVms(projectRoot, { codex: { quota: routingPolicy } })
+  const vms = listVms(projectRoot, { codex: { quota: routingPolicy } }).filter((vm) => keyAllowsVm(scope, vm))
   const continuesResponse = !!body?.previous_response_id && !!bound?.vmId
   const ordered = orderCodexSessionSlots(continuesResponse ? vms.filter((vm) => vm.id === bound.vmId) : vms, {
     boundVmId: bound?.vmId || null,
@@ -678,6 +682,15 @@ function rejectCodexAdmission({ res, json, stats, logBag, picked, model }) {
         type: 'invalid_request_error',
         code: 'platform_mismatch',
         message: `vm '${picked.pin}' is not a GPT slot`,
+      },
+    })
+  }
+  if (picked.error === 'key_group_mismatch') {
+    return json(res, 403, {
+      error: {
+        type: 'permission_error',
+        code: 'key_group_mismatch',
+        message: '此密钥不能调用 openai',
       },
     })
   }
