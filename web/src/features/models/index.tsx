@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/page-header'
 import { TableSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
 import { modelPolicyQueryOptions } from '@/features/models/queries'
+import { EntryStrip } from './entry-strip'
 import { ModelAdvanced } from './model-advanced'
 import { ModelRow } from './model-row'
 import {
@@ -299,6 +300,7 @@ export function ModelsPage() {
         </div>
       }
     >
+      <EntryStrip />
       <QueryGate
         loading={q.isLoading}
         error={q.error}
