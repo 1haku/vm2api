@@ -103,6 +103,7 @@ const PANEL_ROUTE_SAMPLES = [
   ['POST', '/api/panel/api-keys/k1/reset-quota'],
   ['POST', '/api/panel/api-keys/k1/reveal'],
   ['POST', '/api/panel/api-keys/k1/rotate'],
+  ['GET', '/api/panel/api-keys/k1/stats'],
   ['GET', '/api/panel/api-endpoints'],
   ['POST', '/api/panel/api-endpoints'],
   ['PATCH', '/api/panel/api-endpoints/e1'],
