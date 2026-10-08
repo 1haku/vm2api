@@ -988,3 +988,50 @@ test('openai.responses stream names each kernel SSE frame after its payload type
   assert.match(out, /^event: response\.completed\ndata: /m)
   fs.rmSync(root, { recursive: true, force: true })
 })
+
+test('auto-review preserves original model, instructions and input through the native Codex hop', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-auto-review-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  writeGptVm(root, 'review-slot')
+  const body = {
+    model: 'codex-auto-review',
+    instructions: 'Review the supplied action.',
+    input: [{ role: 'user', content: 'Synthetic action for test.' }],
+    stream: false,
+  }
+  const logBag = {}
+  let called = false
+  await handleCodexProtocol({
+    req: { headers: {}, apiKeyKind: 'user' },
+    res: { headersSent: false },
+    protocol: 'openai.responses',
+    ctx: { body },
+    inbound: { stream: false },
+    logBag,
+    stats: { errors: 0, requests: 0, by_route: {} },
+    routing: {},
+    projectRoot: root,
+    json: (_res, status) => assert.equal(status, 200),
+    writeSSEHeaders() {},
+    ops: {
+      writeCodexKernelConfig() {},
+      ensureCodexKernel: async () => ({ ok: true }),
+      streamCodexKernel: async ({ body: forwarded }) => {
+        called = true
+        assert.equal(forwarded.model, body.model)
+        assert.equal(forwarded.instructions, body.instructions)
+        assert.deepEqual(forwarded.input, body.input)
+        return {
+          ok: true,
+          status: 200,
+          terminalState: 'verified',
+          body: { id: 'resp_review', model: body.model },
+          usage: { input_tokens: 12, output_tokens: 2 },
+        }
+      },
+    },
+  })
+  assert.equal(called, true)
+  assert.equal(logBag.upstream_model, body.model)
+  assert.equal(logBag.input_tokens, 12)
+})

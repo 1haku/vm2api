@@ -1,4 +1,4 @@
-/** GPT chat ids. No I/O. */
+/** GPT chat ids and the native Codex approval model. No I/O. */
 
 export const SKIP_GPT =
   /^(whisper|tts-|dall-e|chatgpt-image|gpt-image|text-embedding|text-moderation|omni-moderation|davinci|babbage|curie)/i
@@ -7,7 +7,7 @@ export const GPT_ID_PREFIX = /^gpt/i
 
 export function isGptSeriesId(id) {
   const s = String(id || '').trim()
-  return GPT_ID_PREFIX.test(s) && !SKIP_GPT.test(s)
+  return s.toLowerCase() === 'codex-auto-review' || (GPT_ID_PREFIX.test(s) && !SKIP_GPT.test(s))
 }
 
 /** ChatGPT 网页目录里的 wm / luna-wm 变体，Codex 账号请求会 400。gpt-6-luna 是正式模型。 */

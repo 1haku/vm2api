@@ -8,6 +8,33 @@ import {
   costColumnsFromUsage,
 } from '../../src/lib/admin/pricing.mjs'
 
+test('auto-review has explicit zero pricing and retains token buckets across supported tiers', () => {
+  for (const model of ['codex-auto-review', 'openai/codex-auto-review']) {
+    for (const service_tier of [undefined, 'default', 'priority', 'flex']) {
+      const c = calculateCost(
+        {
+          input_tokens: 400_000,
+          output_tokens: 1000,
+          cache_read_tokens: 200_000,
+          cache_creation_tokens: 10_000,
+          service_tier,
+        },
+        model,
+      )
+      assert.equal(c.known, true)
+      assert.equal(c.pricing_source, 'custom-free-auto-review')
+      assert.equal(c.total_cost, 0)
+      assert.equal(c.input_tokens, 190_000)
+      assert.equal(c.output_tokens, 1000)
+      assert.equal(c.cache_read_tokens, 200_000)
+      assert.equal(c.cache_creation_5m_tokens, 10_000)
+      assert.equal(costColumnsFromUsage({ input_tokens: 1000 }, model).pricing_model, 'codex-auto-review')
+    }
+  }
+  assert.equal(calculateCost({ input_tokens: 1000 }, 'codex-auto-review-unknown').known, false)
+  assert.ok(calculateCost({ input_tokens: 1000 }, 'gpt-5.4').total_cost > 0)
+})
+
 test('official family aliases resolve to current list prices', () => {
   assert.equal(resolvePricingKey('fable'), 'fable-5')
   assert.equal(resolvePricingKey('opus'), 'opus-5')

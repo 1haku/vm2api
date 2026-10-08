@@ -7,7 +7,7 @@
  */
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import { extractOpenaiUsage } from '../protocol/openai-usage.mjs'
-import { OPENAI_PRICING_SOURCE, resolveOpenaiOfficialRates, selectOpenaiRates } from './openai-pricing.mjs'
+import { resolveOpenaiOfficialRates, selectOpenaiRates } from './openai-pricing.mjs'
 
 export const PRICING_SOURCE = 'anthropic-official-2026-08'
 export const PRICING_CURRENCY = 'USD'
@@ -211,7 +211,7 @@ export function calculateCost(usage = {}, model = null) {
       return emptyCost({
         model: mid || null,
         pricing_key: null,
-        pricing_source: OPENAI_PRICING_SOURCE,
+        pricing_source: openai.source,
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_read_tokens: cacheRead,
@@ -220,8 +220,9 @@ export function calculateCost(usage = {}, model = null) {
       })
     }
     rates = selected.rates
-    const billedRead = rates.cache_read ? cacheRead : 0
-    const billedWrite = rates.cache_write ? cacheCreate : 0
+    const freeReview = resolved.key === 'codex-auto-review'
+    const billedRead = rates.cache_read || freeReview ? cacheRead : 0
+    const billedWrite = rates.cache_write || freeReview ? cacheCreate : 0
     const uncached = inputTokens - billedRead - billedWrite
     const input_cost = usd(uncached, rates.input)
     const output_cost = usd(outputTokens, rates.output)
@@ -231,7 +232,7 @@ export function calculateCost(usage = {}, model = null) {
     return {
       model: mid || null,
       pricing_key: resolved.key,
-      pricing_source: OPENAI_PRICING_SOURCE,
+      pricing_source: openai.source,
       currency: PRICING_CURRENCY,
       known: true,
       rates,

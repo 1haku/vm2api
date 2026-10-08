@@ -6,6 +6,11 @@
  */
 export const OPENAI_PRICING_SOURCE = 'openai-official-2026-09'
 
+// Site policy requested by the administrator; not an official API price claim.
+const CUSTOM_OPENAI_RATES = {
+  'codex-auto-review': { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+}
+
 /** USD per million tokens. cache_write 0 = not billed. */
 export const OPENAI_OFFICIAL_RATES = {
   'gpt-6-astra': { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
@@ -201,17 +206,17 @@ export function resolveOpenaiPricingKey(raw) {
     .toLowerCase()
   if (!m) return null
   if (OPENAI_ALIASES[m]) return OPENAI_ALIASES[m]
-  if (OPENAI_OFFICIAL_RATES[m]) return m
+  if (OPENAI_OFFICIAL_RATES[m] || CUSTOM_OPENAI_RATES[m]) return m
   return null
 }
 
 export function resolveOpenaiOfficialRates(raw) {
   const key = resolveOpenaiPricingKey(raw)
-  const rates = key ? OPENAI_OFFICIAL_RATES[key] : null
+  const rates = key ? CUSTOM_OPENAI_RATES[key] || OPENAI_OFFICIAL_RATES[key] : null
   return {
     key,
     rates: rates ? { ...rates } : null,
-    source: OPENAI_PRICING_SOURCE,
+    source: CUSTOM_OPENAI_RATES[key] ? 'custom-free-auto-review' : OPENAI_PRICING_SOURCE,
     known: !!rates,
     family: 'openai',
   }
@@ -235,9 +240,11 @@ export function normalizeOpenaiServiceTier(raw) {
  * cache_write keeps the model's standard write/input ratio (1.25× where published).
  */
 export function selectOpenaiRates(key, { serviceTier = null, inputTokens = 0 } = {}) {
-  const std = key ? OPENAI_OFFICIAL_RATES[key] : null
+  const custom = key ? CUSTOM_OPENAI_RATES[key] : null
+  const std = custom || (key ? OPENAI_OFFICIAL_RATES[key] : null)
   const tier = normalizeOpenaiServiceTier(serviceTier)
   if (!std || !tier) return null
+  if (custom) return { rates: { ...custom }, band: tier, service_tier: tier, long_context: false }
   const extra = OPENAI_TIER_RATES[key] || {}
   const overThreshold = Number(inputTokens) > OPENAI_LONG_CONTEXT_THRESHOLD
   if (overThreshold && extra.unpriced_long_context) return null

@@ -26,6 +26,7 @@ const unit = [
   'max-tokens-default',
   'models',
   'pricing',
+  'platform-detect',
   'vm-identity',
   'worker-telemetry',
   'outbound-official-capture',

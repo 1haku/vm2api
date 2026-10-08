@@ -23,9 +23,16 @@ test('claude-opus-4-8 always selects the Anthropic platform', () => {
 
 test('detectInboundPlatform fail-closes unknown and non-chat gpt', () => {
   assert.equal(detectInboundPlatform('o3').ok, false)
-  assert.equal(detectInboundPlatform('codex-auto-review').ok, false)
+  assert.equal(detectInboundPlatform('codex-auto-review-unknown').ok, false)
   assert.equal(detectInboundPlatform('gpt-image-1').ok, false)
   assert.equal(detectInboundPlatform('').ok, false)
+})
+
+test('native auto-review routes to Codex without replacing the reviewer model', () => {
+  for (const model of ['codex-auto-review', 'openai/codex-auto-review']) {
+    assert.deepEqual(detectInboundPlatform(model), { ok: true, platform: 'openai', model: 'codex-auto-review' })
+  }
+  assert.equal(isGptSeriesId('codex-auto-review'), true)
 })
 
 test('isGptSeriesId is gpt prefix not Claude catalog regex', () => {
