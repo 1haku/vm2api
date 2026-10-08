@@ -534,6 +534,7 @@ export async function handleCodexProtocol({
         const nameSseEvent = createResponsesSseEventNamer()
         let responseServiceTier = null
         let streamedUsage = null
+        let conversionError = null
         const attemptStartedAt = Date.now()
         const sessionOptions = {
           boundSessionId: stickyBound?.sessionId || '',
@@ -575,6 +576,7 @@ export async function handleCodexProtocol({
             },
           },
           onEvent: async (line) => {
+            if (conversionError) return
             const tier = serviceTierFromSseLine(line)
             if (tier) responseServiceTier = tier
             const seen = usageFromSseLine(line)
@@ -584,20 +586,34 @@ export async function handleCodexProtocol({
               return
             }
             if (!res.headersSent) writeSSEHeaders(res)
-            if (protocol === 'openai.chat' || protocol === 'openai.completions') {
-              const mapped = responsesSseToChatChunk(line, 'codex', chatSse)
-              if (mapped) res.write(mapped)
-              return
-            }
-            if (protocol === 'anthropic.messages') {
-              const mapped = responsesSseToAnthropicEvents(line, anthropicSse)
-              if (mapped) res.write(mapped)
+            if (protocol !== 'openai.responses') {
+              try {
+                const mapped =
+                  protocol === 'anthropic.messages'
+                    ? responsesSseToAnthropicEvents(line, anthropicSse)
+                    : responsesSseToChatChunk(line, 'codex', chatSse)
+                if (mapped) res.write(mapped)
+              } catch (error) {
+                if (error.code !== 'tool_arguments_mismatch') throw error
+                conversionError = { type: 'upstream_protocol_error', code: error.code, message: error.message }
+                res.write(
+                  protocol === 'anthropic.messages'
+                    ? `event: error\ndata: ${JSON.stringify({ type: 'error', error: conversionError })}\n\n`
+                    : `data: ${JSON.stringify({ error: conversionError })}\n\ndata: [DONE]\n\n`,
+                )
+              }
               return
             }
             const named = nameSseEvent(line)
             if (named) res.write(named)
           },
         })
+        if (conversionError) {
+          result.ok = false
+          result.status = 502
+          result.terminalState = 'incomplete'
+          result.body = { error: conversionError }
+        }
         ingestCodexHop(projectRoot, vm.id, result, Date.now(), normalizeCodexRouting(routing.codex).quota)
         if (result?.transport_retried) logBag.transport_retried = true
         last = result
@@ -605,7 +621,7 @@ export async function handleCodexProtocol({
         const usage = preferUsage(hopUsage, streamedUsage)
         // Responses SSE is not a Claude assistant message, so the stream client
         // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
-        const delivered = result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0)
+        const delivered = !conversionError && (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
         if (delivered) {
           attemptKind = 'succeeded'
           bindSticky(outboundSessionId)
