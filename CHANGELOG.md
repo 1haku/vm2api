@@ -4,6 +4,12 @@
 
 - 一台完成的槽可以导出成 `vm2api-vm-package` JSON，再导入。id 被占用时顺延到下一个空号，SOCKS5 写入代理池并绑定，然后启动、排队初装、探测。账号页可以下载、导入并覆写这一台，不改 id。
 - 创建槽不再预填美国时区。没有 SOCKS5 地理探测结果时显示「时区未配置」；绑定代理并探测成功后写入出口时区。手改仍会钉住，不被后续绑定覆盖。
+- 修复 Codex 工具参数在 done-only、完整 item 和 completed 快照中丢失的问题（#293）。API backend 与槽位出口均按整条响应保存工具状态，支持并行工具、稳定索引、缺失后缀补发和终结去重；Anthropic 转换输出真正的 `tool_use`。已发送参数与最终快照冲突时显式失败，不把有 usage 的失败计为成功。
+- Claude Code Messages 的 `thinking.display=updates` 与 `dangerous_tool_use` safeguards 分别带匹配的 thinking-display-updates / dangerous-tool-use beta（#296、#297）。门控经 kernel 已有 body 通道交给 CLI，在 SDK 最终构造请求时生成 header；不删除合法字段或换成 summarized，不用 afk-mode 替代 safeguards gate。
+- 以 2.1.293 的实际请求与协议定义核对出站参数：保留调用方 thinking、output_config、工具开关和其他合法顶层字段；分离通用、模型能力、按字段与调用方 opt-in 的 beta，不再常开旧版可选功能。保留 setup-token 精简基线、API-key/OAuth 边界和 Haiku 5.5 adaptive thinking；fast-mode 只随支持模型的显式 fast 请求开启。
+- Node、CLI 与 OAuth 换票二进制的 SDK 出站指纹对齐 `0.128.0`，不是 SDK 依赖升级。Bootstrap 继续只带 OAuth beta，不套用 Messages 列表。
+
+本地修复，尚未发布或部署。将来升级需同步 Node 控制面、`share/wrap-cli/cli-node` 与 `bin/kin-oauth-auth`，并通过 `wrap-cli/sync` 更新驻留 CLI；kernel 无需重编。本地现存 kernel 主文件与槽内副本 hash 不同，本轮未替换，发布前须核对，避免同步时误降级。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`，不要 `docker rm` 槽。
 
 ## 1.3.124 — 2026-10-08
 
