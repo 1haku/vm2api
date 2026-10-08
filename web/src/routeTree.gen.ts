@@ -21,8 +21,8 @@ import { Route as AuthenticatedKeysRouteImport } from './routes/_authenticated/k
 import { Route as AuthenticatedLogsRouteImport } from './routes/_authenticated/logs'
 import { Route as AuthenticatedModelsRouteImport } from './routes/_authenticated/models'
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
-import { Route as AuthenticatedProtocolRouteImport } from './routes/_authenticated/protocol'
 import { Route as AuthenticatedProxiesRouteImport } from './routes/_authenticated/proxies'
+import { Route as AuthenticatedRiskRouteImport } from './routes/_authenticated/risk'
 import { Route as AuthenticatedStatisticsRouteImport } from './routes/_authenticated/statistics'
 import { Route as AuthenticatedSubscriptionsRouteImport } from './routes/_authenticated/subscriptions'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
@@ -94,14 +94,14 @@ const AuthenticatedOverviewRoute = AuthenticatedOverviewRouteImport.update({
   path: '/overview',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedProtocolRoute = AuthenticatedProtocolRouteImport.update({
-  id: '/protocol',
-  path: '/protocol',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
 const AuthenticatedProxiesRoute = AuthenticatedProxiesRouteImport.update({
   id: '/proxies',
   path: '/proxies',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedRiskRoute = AuthenticatedRiskRouteImport.update({
+  id: '/risk',
+  path: '/risk',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedStatisticsRoute = AuthenticatedStatisticsRouteImport.update({
@@ -176,8 +176,8 @@ export interface FileRoutesByFullPath {
   '/logs': typeof AuthenticatedLogsRoute
   '/models': typeof AuthenticatedModelsRoute
   '/overview': typeof AuthenticatedOverviewRoute
-  '/protocol': typeof AuthenticatedProtocolRoute
   '/proxies': typeof AuthenticatedProxiesRoute
+  '/risk': typeof AuthenticatedRiskRoute
   '/statistics': typeof AuthenticatedStatisticsRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -201,8 +201,8 @@ export interface FileRoutesByTo {
   '/logs': typeof AuthenticatedLogsRoute
   '/models': typeof AuthenticatedModelsRoute
   '/overview': typeof AuthenticatedOverviewRoute
-  '/protocol': typeof AuthenticatedProtocolRoute
   '/proxies': typeof AuthenticatedProxiesRoute
+  '/risk': typeof AuthenticatedRiskRoute
   '/statistics': typeof AuthenticatedStatisticsRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -229,8 +229,8 @@ export interface FileRoutesById {
   '/_authenticated/logs': typeof AuthenticatedLogsRoute
   '/_authenticated/models': typeof AuthenticatedModelsRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
-  '/_authenticated/protocol': typeof AuthenticatedProtocolRoute
   '/_authenticated/proxies': typeof AuthenticatedProxiesRoute
+  '/_authenticated/risk': typeof AuthenticatedRiskRoute
   '/_authenticated/statistics': typeof AuthenticatedStatisticsRoute
   '/_authenticated/subscriptions': typeof AuthenticatedSubscriptionsRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
@@ -258,8 +258,8 @@ export interface FileRouteTypes {
     | '/logs'
     | '/models'
     | '/overview'
-    | '/protocol'
     | '/proxies'
+    | '/risk'
     | '/statistics'
     | '/subscriptions'
     | '/system'
@@ -283,8 +283,8 @@ export interface FileRouteTypes {
     | '/logs'
     | '/models'
     | '/overview'
-    | '/protocol'
     | '/proxies'
+    | '/risk'
     | '/statistics'
     | '/subscriptions'
     | '/system'
@@ -310,8 +310,8 @@ export interface FileRouteTypes {
     | '/_authenticated/logs'
     | '/_authenticated/models'
     | '/_authenticated/overview'
-    | '/_authenticated/protocol'
     | '/_authenticated/proxies'
+    | '/_authenticated/risk'
     | '/_authenticated/statistics'
     | '/_authenticated/subscriptions'
     | '/_authenticated/system'
@@ -417,18 +417,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedOverviewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/protocol': {
-      id: '/_authenticated/protocol'
-      path: '/protocol'
-      fullPath: '/protocol'
-      preLoaderRoute: typeof AuthenticatedProtocolRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/proxies': {
       id: '/_authenticated/proxies'
       path: '/proxies'
       fullPath: '/proxies'
       preLoaderRoute: typeof AuthenticatedProxiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/risk': {
+      id: '/_authenticated/risk'
+      path: '/risk'
+      fullPath: '/risk'
+      preLoaderRoute: typeof AuthenticatedRiskRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/statistics': {
@@ -521,8 +521,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedLogsRoute: typeof AuthenticatedLogsRoute
   AuthenticatedModelsRoute: typeof AuthenticatedModelsRoute
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
-  AuthenticatedProtocolRoute: typeof AuthenticatedProtocolRoute
   AuthenticatedProxiesRoute: typeof AuthenticatedProxiesRoute
+  AuthenticatedRiskRoute: typeof AuthenticatedRiskRoute
   AuthenticatedStatisticsRoute: typeof AuthenticatedStatisticsRoute
   AuthenticatedSubscriptionsRoute: typeof AuthenticatedSubscriptionsRoute
   AuthenticatedSystemRoute: typeof AuthenticatedSystemRoute
@@ -547,8 +547,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedLogsRoute: AuthenticatedLogsRoute,
   AuthenticatedModelsRoute: AuthenticatedModelsRoute,
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
-  AuthenticatedProtocolRoute: AuthenticatedProtocolRoute,
   AuthenticatedProxiesRoute: AuthenticatedProxiesRoute,
+  AuthenticatedRiskRoute: AuthenticatedRiskRoute,
   AuthenticatedStatisticsRoute: AuthenticatedStatisticsRoute,
   AuthenticatedSubscriptionsRoute: AuthenticatedSubscriptionsRoute,
   AuthenticatedSystemRoute: AuthenticatedSystemRoute,

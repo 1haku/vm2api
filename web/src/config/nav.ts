@@ -28,7 +28,7 @@ export type ViewId =
   | 'billing'
   | 'proxies'
   | 'models'
-  | 'protocol'
+  | 'risk'
   | 'system'
   | 'keys'
   | 'api'
@@ -50,7 +50,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   billing: '计费',
   proxies: '代理池',
   models: '模型',
-  protocol: '协议',
+  risk: '风险审计',
   system: 'system提示词',
   keys: '密钥',
   api: 'API',
@@ -77,7 +77,7 @@ export const NAV_ITEMS: {
   { id: 'billing', url: '/billing', icon: LineChart },
   { id: 'proxies', url: '/proxies', icon: Shield },
   { id: 'models', url: '/models', icon: List },
-  { id: 'protocol', url: '/protocol', icon: Box },
+  { id: 'risk', url: '/risk', icon: Box },
   { id: 'system', url: '/system', icon: MessageSquareText },
   { id: 'keys', url: '/keys', icon: KeyRound },
   { id: 'logs', url: '/logs', icon: ScrollText },

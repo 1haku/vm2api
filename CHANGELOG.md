@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.130 — 2026-10-09
+
+- 修复风险审计统计：正常请求的 `error_code` / `final_state` 为空时，拦截判定在 SQL 里得到 NULL，既不算拦截也不算放行，面板「放行出站」只剩个位数、「今日入站」远小于实际。判定改为对空值安全；新增 `total`（今日全部推理入站 + 其它路径上的关卡拦截），各关占比与放行率统一以它为分母（#316）。
+- 关卡判定（哪一关、命中词、规则）此前没有写进 `usage_logs.intercept`，放行原因全是「未记录」、拒答缓存命中显示为错误文案。现在每条请求都记录判定；升级前的旧日志仍归为「未经关卡」（#316）。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。
+
+## 1.3.129 — 2026-10-09
+
+- 面板「协议」页改为「风险审计」（`/risk`）：顶部按拦截顺序列出蒸馏 → 硬正则 → 拒答缓存 → 决策模型 → 放行出站五道关与今日计数；每关可看今日命中（按词/规则归并）、拦截流水（点开即请求详情，判断误伤）和本关设置。「放行出站」单列模型故障放行与上游拒答，用于发现漏拦。原「入口」端点复制与模型 id 列表移到「模型」页顶部。旧 `/protocol` 链接不再可用（#314）。
+- 模型页改成卡片式模型矩阵，单个模型点击弹窗配置参数、上下文窗口、别名覆写、官方 beta 和计费说明。Anthropic / OpenAI 平台切换保留，Haiku 5.5 提供 100K 实用模型入口。
+- `claude-haiku-5-5` 默认上下文、默认 `max_tokens` 和输出上限从 128K/1M 收敛到 100K；旧 1M/128K 默认设置会自动迁移到 100K，管理员自定义值不被重置（#312）。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.128 — 2026-10-09
+
+- SOCKS5 出口地理检测新增 IPv6，与 IPv4 `geo` 并列写入 `geo_v6`（`proxies.geo_v6_*`）；启动时自动执行迁移 `033_proxy_geo_v6.sql`（#309，Fixes #307）。
+- 修复 Claude 完整 OAuth 授权码换票的 state 对齐：CAI / Claude Code 粘贴 `code#state` 时只发送 `#` 后的 state，仅 code 时不发送 state；Setup Token 与 Cookie 流程不变（#311）。
+
+已部署机升级：更新 Node 控制面并重启一次 Node，以便 applyMigrations 执行 `033_proxy_geo_v6.sql`。不必 `wrap-cli/sync`，不必重编 `kin-oauth-auth`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.127 — 2026-10-09
+
+- 仓库自带的 `src/config/routing.json` 有两个顶层 `codex` 键，后一个覆盖前一个，`codex.quota` 读不到。新装或用仓库默认配置首次启动时，会被当成旧版配置跑一次 OpenAI 限额迁移：重写 Codex 槽的 `policy`，并把 `routing.json` 改写成展开格式、权限改成 0600。现在合成一个 `codex` 块，取值不变（#308）。
+
+已部署机升级：只更新 Node 控制面并重启一次 Node，无需 `wrap-cli/sync`，二进制不变。已部署机的 `routing.json` 首次加载时已补过 quota，不用改；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.126 — 2026-10-09
+
+- 流空闲上限可在面板「重试与切号 → 流空闲超时」配置（`failover.stream_idle_timeout_ms`，默认 180 秒，30 秒–60 分钟；未配置时用 `KIN_STREAM_IDLE_TIMEOUT`）。网关、`kernel.json` / `worker.json` 的 `idle_timeout_seconds` 与 kernel job 看门狗共用这个值。保存后热写各槽 `kernel.json`，运行中的 rust kernel 在空闲时自动重启以读取新看门狗值（#305）。
+- kernel job 看门狗读的是不带前缀的 `JOB_IDLE_SECS`，此前文档里的 `KIN_JOB_IDLE_SECS` 从未生效。槽内 `kin-kernel` 启动脚本现在从 `kernel.json` 读取并导出它。crag 数据面与无启动脚本的槽仍是默认 180 秒；go 引擎槽的 `worker.json` 在下次启动时才更新。
+- 工具参数流式下发开关 `failover.eager_tool_streaming`（默认关，面板「重试与切号」）。开启后给自定义工具加 `eager_input_streaming: true`，上游边生成边下发大参数，避免长 `Write` 静默超时；服务端工具不动，客户端自带的值优先（#305）。
+- 统计页与日志汇总的缓存命中率分母按每行口径计算：Claude 为 input + 缓存读 + 缓存写，Codex / OpenAI 的 input 已含缓存；混用提供商按 prompt token 加权（#302，关闭 #301）。
+
+已部署机升级：更新 Node 控制面并重启一次 Node。`share/wrap-cli/kin-kernel` 启动脚本变了，**需要 `wrap-cli/sync`** 才能让看门狗跟随面板值（逐槽重启 dataplane，不要 `docker rm`）。kernel、cli-node 等二进制不变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`；新配置项缺省即旧行为。
+
 ## 1.3.125 — 2026-10-08
 
 - 托管密钥可以限定平台和勾选的虚拟机（`group_type` = all / anthropic / openai + `allowed_vms`）。调度、故障转移、Codex 选槽、`count_tokens` 与 `/v1/usage` 只落在范围内的槽；调用另一平台返回 403 `key_group_mismatch`。新增迁移 `032_api_key_group_type.sql`。
@@ -119,7 +156,6 @@
 - 重建控制台产物。
 
 已部署 x86 机升级：换 `bin/kin-codex-kernel`（sha256 `98715a2f…`）并更新 `web/dist`。替换后停掉 `kin-codex-kernel` 进程，再重启一次 Node：Node 留着它自己拉起的内核子进程句柄，只杀进程不重启 Node 的话，该槽会一直 503。无迁移，`routing.json` 不用改。kernel / `cli-node` / `kin-worker` / `kin-egress` 与 1.3.111 相同，**不需要 `wrap-cli/sync`**，不需要重启槽容器。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
-
 
 ## 1.3.111 — 2026-10-07
 
@@ -282,7 +318,6 @@
 - 修复登录页的导入排序与 JSX 格式，使 web CI 的 Prettier 检查通过；重编控制台。
 
 已部署机升级：更新 Node 控制面（`src/`）、`web/dist`、`bin/kin-worker`、`bin/kin-kernel`、`share/wrap-cli/kin-kernel.bin` 和 `share/wrap-cli/cli-node`，重启一次 Node。**需要 `wrap-cli/sync`** 将配套 kernel/CLI 同步进 Claude 槽；各槽还需更新并重载 kin-worker，才能使用原生限额重置。不要 `docker rm` 槽，不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
-
 
 ## 1.3.93 — 2026-10-03
 
@@ -513,7 +548,6 @@
 
 ## 1.3.66 — 2026-09-28
 
-
 - 出站 session 默认重建：入站 session 只作调度身份，不再透传到上游。同一 VM 保持重建值，切换 VM（含切回）换代。
 - `X-Claude-Code-Session-Id` 与 `metadata.user_id.session_id` 使用同一重建值。官方 Claude Code 2.1.281 出站头对齐。
 - 设置页「出站 session」可切回透传。Codex hop 的 `session-id` / `prompt_cache_key` 同样重建。
@@ -545,7 +579,6 @@
 
 - 修复带 `type: setup-token` 标签但实际包含 `user:profile` / `user:sessions:claude_code` 的完整 OAuth 导入被错误降级为 inference-only。现在以实际 scope 集合为准，保留 profile 权限并允许官方 `/profile` / `/usage`。
 
-
 ## 1.3.61 — 2026-09-26
 
 - 修复 native CLI 被 OOM 杀死或管道关闭后，Rust 内核仍宣告槽可用并持续返回 `native stdin: Broken pipe`：退出统一清理在途任务与调度状态，健康清零后由 watchdog 恢复，不重放推理。
@@ -555,8 +588,6 @@
 - 修复 Web 手动调度开关刷新后回弹；新增相关 Node/Web/Rust 回归覆盖。
 
 已部署机升级：覆盖控制面、前端与 kernel 并重启 Node 一次；同步 Claude 槽内 kernel，不 `docker rm` 槽。
-
-
 
 ## 1.3.60 — 2026-09-26
 
@@ -748,7 +779,6 @@
 - 面板显示“限流中 / 过载冷却”和解除时间。新配置 `rate_limit.fallback_cooldown_min` / `overload_cooldown_min` / `empty_response_cooldown_sec` 有默认值，不用改 `routing.json`。
 
 已部署机升级：覆盖控制面并重启 Node 一次，不需要 `wrap-cli/sync`。二进制未变。不要 `docker rm` 槽。
-
 
 ## 1.3.37 — 2026-09-23
 

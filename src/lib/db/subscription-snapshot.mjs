@@ -31,7 +31,25 @@ export function subscriptionSnapshot(db) {
             outbound_session_id: row.outbound_session_id ?? null,
             intercept: row.intercept ?? null,
           }
-        if (table === 'proxies') return { ...row, label: row.label ?? null }
+        if (table === 'proxies') {
+          const normalized = { ...row, label: row.label ?? null }
+          // Upstream 033: newly added IPv6 geo fields are nullable, not rewritten data.
+          for (const field of [
+            'ip',
+            'country',
+            'country_code',
+            'region',
+            'city',
+            'isp',
+            'timezone',
+            'checked_at',
+            'error',
+          ]) {
+            const key = `geo_v6_${field}`
+            normalized[key] = row[key] ?? null
+          }
+          return normalized
+        }
         // Upstream 032 adds these defaults; existing subscription scope still applies.
         if (table === 'api_keys')
           return { ...row, group_type: row.group_type ?? 'all', allowed_vms: row.allowed_vms ?? '[]' }

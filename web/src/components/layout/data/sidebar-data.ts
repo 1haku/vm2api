@@ -12,7 +12,7 @@ import {
   ScrollText,
   Server,
   Settings,
-  Shield,
+  ShieldAlert,
   Sparkles,
   Users,
   CreditCard,
@@ -54,7 +54,7 @@ const ALL_GROUPS: NavGroup[] = [
     title: '协议',
     items: [
       { title: '模型', url: '/models', icon: Sparkles },
-      { title: '协议', url: '/protocol', icon: Shield },
+      { title: '风险审计', url: '/risk', icon: ShieldAlert },
       { title: 'system提示词', url: '/system', icon: MessageSquareText },
     ],
   },
