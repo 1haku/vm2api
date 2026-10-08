@@ -1306,8 +1306,8 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /** Read-only current account. Never bind, unbind, or reserve. */
-  async peekAccount({ model, stickyKey = null, signal, ownerScope = PLATFORM_SCOPE } = {}) {
-    const candidates = await this.eligibleCandidates({ model, signal, ownerScope })
+  async peekAccount({ model, stickyKey = null, signal, ownerScope = PLATFORM_SCOPE, keyScope = null } = {}) {
+    const candidates = await this.eligibleCandidates({ model, signal, ownerScope, keyScope })
     if (!candidates.length) {
       const empty = emptyPoolFailure(model, candidates)
       return { ok: false, code: empty.reason, retry_after_ms: empty.retry_after_ms }
