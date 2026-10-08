@@ -74,6 +74,7 @@ import { defaultSeedPolicy, seedTelemetryContract, standardSeedPolicy } from '..
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
 import { publicKeyView } from './api-keys.mjs'
+import { assertVmScope, normalizeKeyScope } from './key-scope.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
@@ -1002,10 +1003,20 @@ export function createPanelHandler(ctx) {
         }
         return json(res, 200, { ok: true, ...snap })
       }
+      if (req.method === 'GET' && /^\/api\/panel\/api-keys\/[^/]+\/stats$/.test(p)) {
+        const id = p.split('/')[4]
+        if (denyIfUserMissesKey(req, res, { apiKeyStore, json, keyId: id })) return true
+        const rec = apiKeyStore.getById(id)
+        if (!rec) return json(res, 404, { ok: false, error: { message: 'api key not found' } })
+        const usage_stats = requestLog?.keyUsageStats?.({ apiKeyId: id, days: 30 }) || null
+        return json(res, 200, { ok: true, item: publicKeyView(rec, { reveal: false }), usage_stats })
+      }
       if (req.method === 'POST' && p === '/api/panel/api-keys') {
         const body = await readBody(req, 8192).catch(() => ({}))
         const input = normalizePanelApiKeyInput(body)
         try {
+          const scope = normalizeKeyScope({ group_type: body?.group_type, allowed_vms: body?.allowed_vms })
+          assertVmScope(listVms(cfg.paths.project), scope)
           const defaultConc = Number(
             ctx.routingConfig?.concurrency?.default_key_concurrency ??
               ctx.routingConfig?.concurrency?.default_max_per_account ??
@@ -1018,6 +1029,8 @@ export function createPanelHandler(ctx) {
             user_id:
               panelIdentity(req).role === 'user' ? req.panelUserId || null : body?.user_id || req.panelUserId || null,
             group_id: body?.group_id,
+            group_type: scope.group_type,
+            allowed_vms: scope.allowed_vms,
             max_concurrency: body?.max_concurrency ?? defaultConc,
             default_concurrency: defaultConc,
             quota_requests: input.quota_requests,
@@ -1050,7 +1063,17 @@ export function createPanelHandler(ctx) {
         if (denyIfUserMissesKey(req, res, { apiKeyStore, json, keyId: id })) return true
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
-          const rec = apiKeyStore.update(id, normalizePanelApiKeyInput(body || {}))
+          const input = normalizePanelApiKeyInput(body || {})
+          const scope = normalizeKeyScope(
+            { group_type: body?.group_type, allowed_vms: body?.allowed_vms },
+            { partial: true, current: apiKeyStore.getById(id) },
+          )
+          if (scope) {
+            assertVmScope(listVms(cfg.paths.project), scope)
+            input.group_type = scope.group_type
+            input.allowed_vms = scope.allowed_vms
+          }
+          const rec = apiKeyStore.update(id, input)
           if (!rec) {
             return json(res, 404, { ok: false, error: { message: 'api key not found' } })
           }
