@@ -52,6 +52,9 @@ test('import-style create succeeds without seed_policy or SOCKS5', async () => {
     assert.equal(saved.seed_policy.telemetry_disabled, false)
     assert.equal(saved.proxy_required, false)
     assert.equal(saved.proxy, null)
+    assert.equal(saved.timezone, null)
+    assert.equal(saved.timezone_source, 'auto')
+    assert.equal(saved.fingerprint.timezone, '')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
