@@ -50,6 +50,8 @@ const unit = [
   'routing-file',
   'eager-tool-streaming',
   'proxy-geo',
+  'proxy-resolve',
+  'node-egress-socks',
   'wrap-cli-runtime',
   'persona-template',
   'official-cc-stats',
