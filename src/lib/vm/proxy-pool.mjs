@@ -397,6 +397,19 @@ export class ProxyPool {
     this.save()
     return { ok: true, created: true, proxy: this.publicProxy(proxy) }
   }
+  _findSocksRow(parsed) {
+    const key = (p) => JSON.stringify([p.host, p.port, p.username || '', p.password || ''])
+    const wanted = key(parsed)
+    return this.state.proxies.find((p) => key(p) === wanted) || null
+  }
+
+  /** Public view of the SOCKS row with these credentials, or null. Never creates. */
+  findSocks(fields = {}) {
+    const parsed = parseSocks5Fields(fields)
+    const found = parsed ? this._findSocksRow(parsed) : null
+    return found ? this.publicProxy(found) : null
+  }
+
   /**
    * Return the SOCKS row with this host/port/username/password, creating it
    * when absent. Same credentials must not allocate a second id.
@@ -404,9 +417,7 @@ export class ProxyPool {
   ensureSocks(fields = {}, { ownerUserId = null, label = null } = {}) {
     const parsed = parseSocks5Fields(fields)
     if (!parsed) return { ok: false, error: 'invalid_proxy' }
-    const key = (p) => JSON.stringify([p.host, p.port, p.username || '', p.password || ''])
-    const wanted = key(parsed)
-    const found = this.state.proxies.find((p) => key(p) === wanted)
+    const found = this._findSocksRow(parsed)
     if (found) return { ok: true, created: false, proxy: this._withAuth(found) }
     const imported = this.importParsed([parsed], { ownerUserId })
     const id = imported.items[0]?.id
