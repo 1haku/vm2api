@@ -383,7 +383,7 @@ export async function awaitWrapRecycle(exec) {
 }
 
 /**
- * Env-only kernel settings (the KIN_JOB_IDLE_SECS job watchdog) apply on restart.
+ * Env-only kernel settings (the JOB_IDLE_SECS job watchdog) apply on restart.
  * Restart each kernel once nothing runs on it: a busy kernel retries when its last
  * hop ends, or on the next poll for jobs this process does not track.
  */
@@ -396,8 +396,7 @@ function kernelJobsRunning(exec, health) {
   if (health.recovering === true) return 1
   const ready = Number(health.ready_slots)
   if (!Number.isFinite(ready)) return 0
-  const total =
-    Number(readExistingKernelConfig(rustKernelPaths(exec).configPath).slots_per_worker) || WRAP_SLOT_MAX
+  const total = Number(readExistingKernelConfig(rustKernelPaths(exec).configPath).slots_per_worker) || WRAP_SLOT_MAX
   return Math.max(0, total - ready - (Number(health.closed_slots) || 0))
 }
 
@@ -649,8 +648,7 @@ export function writeKernelConfig(
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
   const defaultCacheTtl = routing != null ? cacheTtlFromRouting(routing) : normalizeCacheTtl(previous.default_cache_ttl)
   const previousIdleSeconds = Number(previous.idle_timeout_seconds)
-  const idleMs =
-    routing == null && previousIdleSeconds > 0 ? previousIdleSeconds * 1000 : streamIdleTimeoutMs(routing)
+  const idleMs = routing == null && previousIdleSeconds > 0 ? previousIdleSeconds * 1000 : streamIdleTimeoutMs(routing)
 
   const config = {
     vm_id: vm.id,
