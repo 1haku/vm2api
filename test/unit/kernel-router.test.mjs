@@ -960,6 +960,9 @@ test('requestKernelReloadWhenIdle restarts only once no job runs', async () => {
     await tick()
     assert.deepEqual(restarts, ['vm-07'])
     status = idle
+    // The poll timer is unref'd so a pending reload never holds the server open;
+    // ref'd ticks keep this test's loop alive until it fires.
+    for (let i = 0; i < 200 && restarts.length < 2; i++) await tick()
     await req.done
     assert.deepEqual(restarts, ['vm-07', 'vm-07'])
 
