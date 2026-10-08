@@ -14,6 +14,7 @@ import { getDb } from '../database.mjs'
 import { reportTimezone, zonedDayStartMs, zonedParts, zonedWallToMs } from '../../core/timezone.mjs'
 import { ERROR_PRED, SUCCESS_PRED, ownerPred } from './usage-log-preds.mjs'
 import { lookupNames } from './usage-logs-view.mjs'
+import { OPENAI_OFFICIAL_RATES } from '../../admin/openai-pricing.mjs'
 
 export const STATS_RANGES = ['today', '7days', '30days', 'thisMonth']
 export const STATS_DIMENSIONS = ['user', 'key', 'model', 'vm']
@@ -33,6 +34,32 @@ const DIMENSION_COLUMN = { user: 'user_id', key: 'api_key_id', model: 'model', v
 
 const TOKENS_SQL =
   'IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) + IFNULL(cache_read_tokens, 0) + IFNULL(cache_creation_tokens, 0)'
+
+// Codex keeps OpenAI's inclusive input count. Anthropic stores disjoint input,
+// cache-read and cache-write counts, even when called through an OpenAI endpoint.
+// Prefer the recorded route, with model fallbacks for historical logs. Compute
+// each row's prompt before SUM so a user/key mixing providers stays weighted by tokens.
+const CACHE_MODEL_SQL = `LOWER(TRIM(COALESCE(
+  NULLIF(NULLIF(pricing_model, ''), 'unpriced'), NULLIF(upstream_model, ''),
+  NULLIF(model, ''), requested_model, ''
+)))`
+const OPENAI_MODELS_SQL = Object.keys(OPENAI_OFFICIAL_RATES)
+  .map((id) => `'${id.replaceAll("'", "''")}'`)
+  .join(', ')
+// API non-streaming Anthropic replies persist the converted body's disjoint
+// usage, including when the upstream model is OpenAI. Streaming API and Codex
+// logs instead retain raw upstream usage. Use these persisted route fields
+// before model fallbacks so existing converted logs need no billing rewrite.
+const PROMPT_TOKENS_SQL = `CASE
+  WHEN via = 'api-kernel' AND protocol = 'anthropic.messages' AND stream = 0
+  THEN IFNULL(input_tokens, 0) + IFNULL(cache_read_tokens, 0) + IFNULL(cache_creation_tokens, 0)
+  WHEN via LIKE 'codex-%'
+    OR (${CACHE_MODEL_SQL} LIKE 'gpt%' AND ${CACHE_MODEL_SQL} NOT LIKE 'gpt-image%')
+    OR ${CACHE_MODEL_SQL} LIKE 'codex-%'
+    OR ${CACHE_MODEL_SQL} IN (${OPENAI_MODELS_SQL})
+  THEN IFNULL(input_tokens, 0)
+  ELSE IFNULL(input_tokens, 0) + IFNULL(cache_read_tokens, 0) + IFNULL(cache_creation_tokens, 0)
+END`
 
 /** created_at (`YYYY-MM-DDTHH:MM:SS.sssZ`) floored to its 15-minute UTC slot. */
 const SLOT_SQL = "substr(created_at, 1, 14) || printf('%02d', (CAST(substr(created_at, 15, 2) AS INTEGER) / 15) * 15)"
@@ -127,6 +154,7 @@ export class StatisticsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              AVG(duration_ms) AS avg_duration_ms,
              AVG(first_token_ms) AS avg_ttft_ms
       FROM usage_logs ${cond}
@@ -136,7 +164,7 @@ export class StatisticsRepo {
     const output = num(row.output_tokens)
     const cacheRead = num(row.cache_read_tokens)
     const cacheCreation = num(row.cache_creation_tokens)
-    const lookups = input + cacheRead
+    const prompt = num(row.prompt_tokens)
     return {
       requests: num(row.requests),
       errors: num(row.errors),
@@ -147,7 +175,7 @@ export class StatisticsRepo {
       outputTokens: output,
       cacheReadTokens: cacheRead,
       cacheCreationTokens: cacheCreation,
-      cacheHitRate: lookups > 0 ? cacheRead / lookups : 0,
+      cacheHitRate: prompt > 0 ? Math.min(1, cacheRead / prompt) : 0,
       avgDurationMs: avgOrNull(row.avg_duration_ms),
       avgTtftMs: avgOrNull(row.avg_ttft_ms),
     }
@@ -279,6 +307,7 @@ export class StatisticsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              COALESCE(SUM(total_cost), 0) AS cost,
              COALESCE(SUM(actual_cost), 0) AS actual_cost,
              AVG(duration_ms) AS avg_duration_ms,
@@ -301,7 +330,7 @@ export class StatisticsRepo {
         const cacheRead = num(row.cache_read_tokens)
         const cacheCreation = num(row.cache_creation_tokens)
         const requests = num(row.requests)
-        const lookups = input + cacheRead
+        const prompt = num(row.prompt_tokens)
         return {
           id: ids[i],
           name: this._nameOf(names, ids[i]),
@@ -314,7 +343,7 @@ export class StatisticsRepo {
           outputTokens: output,
           cacheReadTokens: cacheRead,
           cacheCreationTokens: cacheCreation,
-          cacheHitRate: lookups > 0 ? cacheRead / lookups : 0,
+          cacheHitRate: prompt > 0 ? Math.min(1, cacheRead / prompt) : 0,
           totalCost: num(row.cost),
           totalActualCost: num(row.actual_cost),
           avgDurationMs: avgOrNull(row.avg_duration_ms),
