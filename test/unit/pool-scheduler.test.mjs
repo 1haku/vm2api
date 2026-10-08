@@ -2659,3 +2659,17 @@ test('a key scope only reserves the checked VMs', async (t) => {
   })
   assert.deepEqual(open.map((c) => c.vmId).sort(), ['vm-01', 'vm-02'])
 })
+
+test('peekAccount honors the key scope', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const pool = scheduler(root)
+  const peeked = await pool.peekAccount({
+    model: 'claude-haiku-4-5',
+    keyScope: { group_type: 'anthropic', allowed_vms: ['vm-02'] },
+  })
+  assert.equal(peeked.ok, true)
+  assert.equal(peeked.vmId, 'vm-02')
+  const none = await pool.peekAccount({ keyScope: { group_type: 'openai', allowed_vms: ['vm-02'] } })
+  assert.equal(none.ok, false)
+})
