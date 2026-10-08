@@ -713,13 +713,31 @@ export function assembleCodexBodyFromSse(chunks = [], fallback = {}) {
   return { ...response, output, usage }
 }
 
+/** Conversion errors a client should see as a structured 502, not a crash. */
+export function isToolArgumentsError(error) {
+  return error?.code === 'tool_arguments_mismatch' || error?.code === 'tool_arguments_invalid'
+}
+
+function toolUseInput(item) {
+  if (item.type === 'custom_tool_call') return { input: item.input || '' }
+  const args = item.arguments
+  if (args && typeof args === 'object' && !Array.isArray(args)) return args
+  let parsed = null
+  try {
+    parsed = JSON.parse(args || '{}')
+  } catch {}
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+  const error = new Error(`Codex tool ${item.name || item.call_id || ''} arguments are not a JSON object`)
+  error.code = 'tool_arguments_invalid'
+  throw error
+}
+
 export function codexBodyToAnthropicMessage(body = {}, model = '') {
   const resp = body?.response && typeof body.response === 'object' ? body.response : body
   const content = []
   for (const item of resp.output || []) {
     if (item.type === 'function_call' || item.type === 'custom_tool_call') {
-      const input = item.type === 'custom_tool_call' ? { input: item.input || '' } : JSON.parse(item.arguments || '{}')
-      content.push({ type: 'tool_use', id: item.call_id || item.id, name: item.name, input })
+      content.push({ type: 'tool_use', id: item.call_id || item.id, name: item.name, input: toolUseInput(item) })
     } else {
       for (const block of item.content || []) {
         if (block.type === 'output_text' || block.type === 'text')

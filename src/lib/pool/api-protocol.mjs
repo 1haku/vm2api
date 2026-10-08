@@ -12,6 +12,7 @@ import {
   createAnthropicSseState,
   createChatSseState,
   responsesSseToAnthropicEvents,
+  isToolArgumentsError,
   responsesSseToChatChunk,
 } from '../protocol/codex-convert.mjs'
 import { usageFromSseLine } from '../protocol/handle-codex.mjs'
@@ -383,11 +384,26 @@ async function runOpenAIResponsesUpstream({
   })
 
   if (!clientStream) {
-    const assembled = assembleCodexBodyFromSse(chunks, {})
-    const outBody =
-      protocol === 'anthropic.messages'
-        ? codexBodyToAnthropicMessage(assembled, inbound?.model || body?.model)
-        : assembled
+    let assembled
+    let outBody
+    try {
+      assembled = assembleCodexBodyFromSse(chunks, {})
+      outBody =
+        protocol === 'anthropic.messages'
+          ? codexBodyToAnthropicMessage(assembled, inbound?.model || body?.model)
+          : assembled
+    } catch (error) {
+      if (!isToolArgumentsError(error)) throw error
+      return {
+        ...resultBase,
+        ok: false,
+        status: 502,
+        body: { error: { type: 'upstream_protocol_error', code: error.code, message: error.message } },
+        terminalState: 'incomplete',
+        committed: true,
+        usage: streamedUsage,
+      }
+    }
     return {
       ...resultBase,
       ok: resultBase.ok && !!(assembled && (assembled.output || assembled.id || outBody)),

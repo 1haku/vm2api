@@ -359,6 +359,17 @@ test('done only appends missing suffix and rejects a conflicting streamed prefix
   )
 })
 
+test('non-stream Anthropic conversion accepts object arguments and rejects non-object JSON', () => {
+  const call = { type: 'function_call', call_id: 'call_a', name: 'edit' }
+  const ok = codexBodyToAnthropicMessage({ output: [{ ...call, arguments: { path: 'a.txt' } }] })
+  assert.deepEqual(ok.content[0].input, { path: 'a.txt' })
+  for (const bad of ['{"path":', '[1]', '"text"']) {
+    assert.throws(() => codexBodyToAnthropicMessage({ output: [{ ...call, arguments: bad }] }), {
+      code: 'tool_arguments_invalid',
+    })
+  }
+})
+
 test('completed snapshots recover unregistered function and custom calls in every output shape', () => {
   const output = [
     { type: 'function_call', call_id: 'call_a', id: 'fc_a', name: 'edit', arguments: '{"path":"a.txt"}' },
