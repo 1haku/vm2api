@@ -20,7 +20,7 @@ import {
   takenFingerprintKeys,
   writeGuestMachineIdFile,
 } from '../identity/workstation-fingerprint.mjs'
-import { VM_ORIGIN, normalizeOwnerId } from '../admin/resource-owner.mjs'
+import { VM_ORIGIN, canBindProxyToVm, normalizeOwnerId } from '../admin/resource-owner.mjs'
 import { readCodexAccounts, writeCodexAccounts } from './codex-slot.mjs'
 import { isLocalEgressProxy } from './egress.mjs'
 import { OS_CATALOG, STANDARD_LOCALE, nextNumericIndex, padVm, parseVmIndex } from './vm-runtime.mjs'
@@ -497,6 +497,23 @@ function mirrorCodex(vm, account) {
   }
 }
 
+/**
+ * Same ownership rule as the panel bind routes: a tenant binds only its own
+ * SOCKS rows, never px-local or a platform/other-tenant row with equal credentials.
+ * Runs before any file is written so a refused package leaves nothing behind.
+ */
+function proxyBindAllowed(spec, vm, role, proxyPool) {
+  if (!spec.proxy) return true
+  let owner = null
+  if (spec.proxy.kind === 'local') {
+    if (role === 'user') return false
+  } else {
+    const found = proxyPool.findSocks?.(spec.proxy)
+    owner = found ? found.owner_user_id : vm.owner_user_id || null
+  }
+  return canBindProxyToVm({ owner_user_id: owner }, vm, { role })
+}
+
 async function attachProxy(projectRoot, id, spec, proxyPool, ownerUserId) {
   if (!spec.proxy) {
     proxyPool.unbindVm?.(id)
@@ -567,6 +584,8 @@ export async function commitVmPackage({
   if (!parsed?.ok)
     return { ok: false, status: 400, error: parsed?.error || { code: 'invalid_package', message: '包无效' } }
   const spec = parsed.value
+  // Tenants cannot read or write seed-settings; a package must not smuggle them in either.
+  if (owner.role === 'user') spec.vm.seed_policy = null
   const create = mode === 'create'
   let id = create ? spec.id : targetId
   let renamedFrom = null
@@ -634,7 +653,9 @@ export async function commitVmPackage({
     }
     status = vm.status || 'stopped'
   }
-
+  if (!proxyBindAllowed(spec, vm, owner.role, proxyPool)) {
+    return { ok: false, status: 403, error: { code: 'proxy_forbidden', message: '无权绑定这个出口' } }
+  }
   applyTraits(vm, spec)
   applySchedule(vm, spec, false)
   atomicWriteJson(file, vm, { mode: 0o600 })
@@ -655,8 +676,7 @@ export async function commitVmPackage({
     saved.updated_at = new Date().toISOString()
     atomicWriteJson(file, saved, { mode: 0o600 })
   }
-  const ownerUserId = owner.role === 'user' ? owner.userId : saved.owner_user_id || null
-  const attached = await attachProxy(projectRoot, id, spec, proxyPool, ownerUserId)
+  const attached = await attachProxy(projectRoot, id, spec, proxyPool, saved.owner_user_id || null)
   if (!attached.ok) return { ok: false, status: 400, error: attached.error }
   saved = finishControl(projectRoot, id, spec, status)
   if (written.account) mirrorCodex(saved, written.account)
