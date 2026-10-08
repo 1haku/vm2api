@@ -159,6 +159,7 @@ import {
   slotExec,
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
+import { commitVmPackage, exportVmPackage, parseVmPackage } from '../vm/vm-package.mjs'
 import { preflightNode } from '../cluster/placement.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { syncIpv6ProxyEgress } from '../vm/proxy-policy-runtime.mjs'
@@ -418,6 +419,63 @@ export function createPanelHandler(ctx) {
       return
     }
     setVmSchedulable(cfg.paths.project, vmId, true)
+  }
+
+  // A slot without a zone takes its exit's; a set zone (manual or already synced) stays.
+  async function fillTimezoneFromExit(id) {
+    const vm = getVm(cfg.paths.project, id)
+    if (!vm?.proxy?.id || validTimezone(vm.timezone)) return null
+    return syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, id, { force: true })
+  }
+
+  async function bringUpImportedVm(id) {
+    let vm = getVm(cfg.paths.project, id)
+    let startError = null
+    if (!vm) return { start_error: 'vm not found', official_cc_bootstrap: null, probe: null }
+    if (!hasBoundExit(vm.proxy)) {
+      startError = 'no_exit'
+    } else {
+      const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
+      vm = getVm(cfg.paths.project, id) || vm
+      if (!boot?.ok) {
+        startError = boot?.error || boot?.reason || 'runtime start failed'
+        vm.status = 'error'
+        vm.schedulable = false
+        vm.schedule_disabled_reason = String(startError).slice(0, 240)
+        vm.updated_at = new Date().toISOString()
+        atomicWriteJson(path.join(cfg.paths.project, 'vms', `${id}.json`), vm, { mode: 0o600 })
+      } else {
+        vm.status = 'running'
+        vm.updated_at = new Date().toISOString()
+        atomicWriteJson(path.join(cfg.paths.project, 'vms', `${id}.json`), vm, { mode: 0o600 })
+      }
+    }
+    vm = getVm(cfg.paths.project, id) || vm
+    let bootstrap
+    if (startError) bootstrap = { scheduled: false, reason: startError === 'no_exit' ? 'no_exit' : 'start_failed' }
+    else if (isCodexVm(vm)) bootstrap = { scheduled: false, reason: 'gpt_slot' }
+    else if (!vmHasClaudeCredential(vm)) bootstrap = { scheduled: false, reason: 'no_credential' }
+    else if (!canOfficialCc(credentialModeOfVm(vm))) {
+      bootstrap = { scheduled: false, reason: 'credential_mode_unsupported' }
+    } else {
+      bootstrap = scheduleOfficialCcBootstrap({
+        vmId: id,
+        projectRoot: cfg.paths.project,
+        vm,
+        force: true,
+        manual: true,
+        collectIdentity: collectSlotIdentity,
+        onStats: officialCcStatsHandler(id, vm.claude?.account_uuid),
+        routingFile: routingConfigPath,
+        config: ctx.routingConfig?.official_cc,
+        credentialMode: credentialModeOfVm(vm),
+      })
+    }
+    const probed = await panel.buildProbeOne({ cfg, accountQuota, id, routingConfig: ctx.routingConfig })
+    const probe = probed?.status
+      ? { ok: false, error: probed.body?.error?.message || probed.body?.error?.code || 'probe_failed' }
+      : { ok: probed?.data?.ok !== false, source: probed?.data?.source || null }
+    return { start_error: startError, official_cc_bootstrap: bootstrap, probe }
   }
 
   function normalizePanelApiKeyInput(body = {}) {
@@ -2685,6 +2743,91 @@ export function createPanelHandler(ctx) {
         )
       }
 
+      if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/package$/.test(p)) {
+        const id = p.split('/')[4]
+        const result = exportVmPackage(cfg.paths.project, id, proxyPool)
+        if (!result.ok) return json(res, result.status || 404, { ok: false, error: result.error })
+        return json(res, 200, panel.ok(result.package))
+      }
+      if (req.method === 'PUT' && /^\/api\/panel\/vms\/[^/]+\/package$/.test(p)) {
+        const id = p.split('/')[4]
+        const body = await readBody(req, 256 * 1024).catch(() => null)
+        const result = await commitVmPackage({
+          projectRoot: cfg.paths.project,
+          parsed: parseVmPackage(body),
+          mode: 'update',
+          targetId: id,
+          owner: { role: panelIdentity(req).role, userId: req.panelUserId },
+          proxyPool,
+        })
+        if (!result.ok) return json(res, result.status, { ok: false, error: result.error })
+        await fillTimezoneFromExit(id)
+        let worker = null
+        // The package may swap credentials or exit; a running worker keeps the old ones until reloaded.
+        if (ctx.packageImportBringUp !== false && result.vm.status === 'running' && process.env.KIN_CRS_MOCK !== '1') {
+          setVmSchedulable(cfg.paths.project, id, false, 'package_update_worker_reload')
+          worker = await reloadSlotReady(getVm(cfg.paths.project, id), cfg.paths.project, {
+            routing: ctx.routingConfig,
+          })
+          if (worker.ok) restoreSchedulableIfReady(id)
+        }
+        const saved = getVm(cfg.paths.project, id) || result.vm
+        return json(
+          res,
+          200,
+          panel.ok({
+            vm: summarizeVm(saved, cfg.paths.project, ctx.routingConfig),
+            worker_reload: worker ? { ok: !!worker.ok, error: worker.ok ? null : worker.error || null } : null,
+          }),
+        )
+      }
+      if (req.method === 'POST' && p === '/api/panel/vms/package') {
+        const body = await readBody(req, 256 * 1024).catch(() => null)
+        const parsed = parseVmPackage(body)
+        const ident = panelIdentity(req)
+        if (parsed.ok && ident.role === 'user') {
+          const ownerId = normalizeOwnerId(req.panelUserId)
+          const quota = clampVmCreateQuota(panelUsers.getById(ownerId)?.vm_create_quota, 0)
+          const used = countUserCreatedVms(listVms(cfg.paths.project), ownerId)
+          if (!ownerId || quota <= 0 || used >= quota) {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'vm_create_quota_exceeded', message: '自建虚拟机数量已达上限' },
+            })
+          }
+        }
+        const historic = (accountQuota?.snapshot?.().accounts || []).flatMap((a) => [
+          { id: a.vm_id },
+          { id: a.account_id },
+        ])
+        const result = await commitVmPackage({
+          projectRoot: cfg.paths.project,
+          parsed,
+          mode: 'create',
+          owner: { role: ident.role, userId: req.panelUserId },
+          proxyPool,
+          occupied: historic,
+        })
+        if (!result.ok) return json(res, result.status, { ok: false, error: result.error })
+        await fillTimezoneFromExit(result.vm.id)
+        const brought =
+          ctx.packageImportBringUp === false
+            ? { start_error: null, official_cc_bootstrap: null, probe: null }
+            : await bringUpImportedVm(result.vm.id)
+        const saved = getVm(cfg.paths.project, result.vm.id) || result.vm
+        return json(
+          res,
+          result.status,
+          panel.ok({
+            vm: summarizeVm(saved, cfg.paths.project, ctx.routingConfig),
+            renamed_from: result.renamed_from,
+            start_error: brought.start_error,
+            official_cc_bootstrap: brought.official_cc_bootstrap,
+            probe: brought.probe,
+          }),
+        )
+      }
+
       // POST /api/panel/vms/create — configurable seed VM + pure Claude Code home
       if (req.method === 'POST' && p === '/api/panel/vms/create') {
         const body = await readBody(req, 32 * 1024)
@@ -2755,8 +2898,9 @@ export function createPanelHandler(ctx) {
             })
           }
         }
+        const requestedTimezone = validTimezone(body.timezone)
         const generated = generateWorkstationFingerprint(
-          { id, kernel: wantKernel, timezone: body.timezone, locale: STANDARD_LOCALE },
+          { id, kernel: wantKernel, timezone: requestedTimezone, locale: STANDARD_LOCALE },
           { taken: takenFingerprintKeys(existing) },
         )
         const vm = {
@@ -2764,10 +2908,10 @@ export function createPanelHandler(ctx) {
           name: body.name || padVm(idx),
           status: startNow ? 'running' : body.status || 'stopped',
           kernel: wantKernel,
-          timezone: normalizeTimezone(generated.timezone),
-          // An explicitly requested zone is a pin: a later proxy bind must not
-          // silently move a slot the operator placed on purpose.
-          timezone_source: validTimezone(body.timezone) ? 'manual' : 'auto',
+          timezone: requestedTimezone || null,
+          // Only an explicit zone is a pin. An empty zone stays unset so the
+          // next SOCKS5 bind can write the exit node's detected timezone.
+          timezone_source: requestedTimezone ? 'manual' : 'auto',
           locale: generated.locale || STANDARD_LOCALE,
           region: body.region || body.zone || null,
           note: body.note || `${(OS_CATALOG[wantKernel] || {}).pretty || wantKernel} · Go slot worker`,
@@ -2883,6 +3027,13 @@ export function createPanelHandler(ctx) {
             }
           } catch (e) {}
         }
+        // vm is written again below; carry the exit's zone so that write keeps it.
+        const zoned = await fillTimezoneFromExit(id)
+        if (zoned?.applied) {
+          vm.timezone = zoned.timezone
+          vm.timezone_source = 'proxy_geo'
+          if (vm.fingerprint && typeof vm.fingerprint === 'object') vm.fingerprint.timezone = zoned.timezone
+        }
         if (body.activate === true) {
           try {
             activateVmSlot(id)
@@ -2935,6 +3086,7 @@ export function createPanelHandler(ctx) {
           })
         }
         bindVmProxy(cfg.paths.project, id, bound)
+        await fillTimezoneFromExit(id)
         vm = getVm(cfg.paths.project, id) || vm
         const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
         if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
