@@ -5,6 +5,7 @@
 - SOCKS5 出口地理检测新增 IPv6：与现有 IPv4 `geo` 并列写入 `geo_v6`（`proxies.geo_v6_*`），经代理访问仅 AAAA 的 IP 探针确认公网 IPv6 后再查地理；探针返回 IPv4 记 `geo_ipv6_got_ipv4`，无 IPv6 出口记明确错误，不把 IPv4 当地理 IPv6。环境变量 `KIN_PROXY_GEO_V6_IP_URL` / `KIN_PROXY_GEO_V6_URL` 可覆盖探针与地理查询 URL（Fixes #307）。
 - 迁移 `033_proxy_geo_v6.sql` 启动时自动执行。
 - 修复 Claude 完整 OAuth 授权码换票的 state 对齐：CAI / Claude Code 按 sub2api 使用 `code#state` 返回的 state，只有 code 时不补授权链接的 nonce；保留 PKCE、会话期限与 VM 绑定。Setup Token 和 Cookie 流程不变。
+- 面板「协议」页改为「风险审计」（`/risk`）：顶部按拦截顺序列出蒸馏 → 硬正则 → 拒答缓存 → 决策模型 → 放行出站五道关与今日计数；每关可看今日命中（按词/规则归并）、拦截流水（点开即请求详情，判断误伤）和本关设置。「放行出站」单列模型故障放行与上游拒答，用于发现漏拦。原「入口」端点复制与模型 id 列表移到「模型」页顶部。旧 `/protocol` 链接不再可用。
 
 已部署机升级：更新 Node 控制面并重启一次 Node，以便 applyMigrations 执行 033。不必 `wrap-cli/sync`，不必重编 `kin-oauth-auth`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
