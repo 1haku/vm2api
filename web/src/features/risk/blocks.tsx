@@ -34,6 +34,41 @@ export function Group({
   )
 }
 
+/** A bordered region of the audit page: list or editor under one heading. */
+export function Panel({
+  title,
+  hint,
+  action,
+  children,
+  className,
+}: {
+  title: string
+  hint?: React.ReactNode
+  action?: React.ReactNode
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <section
+      className={cn(
+        'flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card',
+        className
+      )}
+    >
+      <header className='flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-3'>
+        <div className='min-w-0'>
+          <h3 className='text-sm font-semibold'>{title}</h3>
+          {hint ? (
+            <p className='text-xs leading-5 text-muted-foreground'>{hint}</p>
+          ) : null}
+        </div>
+        {action}
+      </header>
+      {children}
+    </section>
+  )
+}
+
 export function Segmented<T extends string>({
   value,
   options,
@@ -95,7 +130,7 @@ export function FieldLine({
 
 export function ToggleList({ children }: { children: React.ReactNode }) {
   return (
-    <div className='grid overflow-hidden rounded-xl border md:grid-cols-2 [&>*]:border-b [&>*]:md:odd:border-e [&>*:last-child]:border-b-0 md:[&>*:nth-last-child(-n+2)]:border-b-0'>
+    <div className='grid overflow-hidden rounded-xl border md:grid-cols-2 [&>*]:border-b [&>*:last-child]:border-b-0 md:[&>*:last-child:nth-child(odd)]:col-span-2 md:[&>*:last-child:nth-child(odd)]:border-e-0 md:[&>*:nth-child(odd)]:border-e md:[&>*:nth-last-child(2):nth-child(odd)]:border-b-0'>
       {children}
     </div>
   )
