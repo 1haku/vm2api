@@ -891,3 +891,54 @@ test('Responses API backend keeps parallel done-only tools in one stream state',
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('Responses API backend returns 502 for conflicting tool arguments when the client is not streaming', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-api-tools-ns-'))
+  const socket = path.join(root, 'run', 'api-kernel.sock')
+  fs.mkdirSync(path.dirname(socket), { recursive: true })
+  const events = [
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', id: 'fc_0', call_id: 'call_0', name: 'edit', arguments: '' },
+    },
+    { type: 'response.function_call_arguments.delta', output_index: 0, item_id: 'fc_0', delta: '{"path":"a' },
+    { type: 'response.function_call_arguments.done', output_index: 0, item_id: 'fc_0', arguments: '{"path":"b.txt"}' },
+    { type: 'response.completed', response: { output: [] } },
+  ]
+  const kernel = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n')
+    })
+  })
+  await new Promise((resolve) => kernel.listen(socket, resolve))
+  try {
+    const result = await runApiInference({
+      cfg: { paths: { data: root } },
+      res: { headersSent: false, write: () => {} },
+      protocol: 'anthropic.messages',
+      clientStream: false,
+      deliveryMode: 'verified',
+      convertedBody: { model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'edit' }] },
+      inbound: {},
+      converters: { writeSSEHeaders: () => {} },
+      scheduler: {
+        pick: () => ({
+          ok: true,
+          endpoint: { id: 'ep', kind: 'openai', protocol: 'openai', base_url: 'https://fixture.invalid' },
+          key: { id: 'key', api_key: 'fixture' },
+          upstream_model: 'gpt-5.4',
+        }),
+      },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.status, 502)
+    assert.equal(result.body.error.code, 'tool_arguments_mismatch')
+  } finally {
+    kernel.closeAllConnections()
+    await new Promise((resolve) => kernel.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

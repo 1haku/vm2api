@@ -14,6 +14,7 @@ import {
   createResponsesSseEventNamer,
   assembleCodexBodyFromSse,
   codexBodyToAnthropicMessage,
+  isToolArgumentsError,
   toCodexResponses,
 } from './codex-convert.mjs'
 import { extraFromCodexHeaders, codexQuotaPark, CODEX_DEFAULT_PARK_MS } from './codex-usage.mjs'
@@ -643,11 +644,22 @@ export async function handleCodexProtocol({
           logBag.upstream_model = converted.body.model
           if (hops > 1) logBag.codex_failed_over = true
           if (!stream) {
-            const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
-            const body =
-              protocol === 'anthropic.messages'
-                ? codexBodyToAnthropicMessage(assembled, converted.body.model)
-                : assembled
+            let body
+            try {
+              const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
+              body =
+                protocol === 'anthropic.messages'
+                  ? codexBodyToAnthropicMessage(assembled, converted.body.model)
+                  : assembled
+            } catch (error) {
+              if (!isToolArgumentsError(error)) throw error
+              stats.errors++
+              logBag.error_code = error.code
+              logBag.final_state = 'incomplete'
+              return json(res, 502, {
+                error: { type: 'upstream_protocol_error', code: error.code, message: error.message },
+              })
+            }
             return json(res, 200, body)
           }
           if (!res.headersSent) writeSSEHeaders(res)
