@@ -433,14 +433,20 @@ export function VmDetailPage() {
           />
           <TabsContent value='seed' className='space-y-3 pt-4'>
             <p className='text-sm text-muted-foreground'>
-              官方 Claude Code 初装之后的后置覆写。开=删键 · 关=写 1。
+              官方 Claude Code 初装之后的后置覆写。遥测只看这一只开关。
             </p>
-            <SeedPolicyCard
-              policy={pol}
-              saving={saveSeed.isPending}
-              syncTelemetry={syncTelemetry}
-              onSave={(next) => saveSeed.mutate(next)}
-            />
+            {seed.data ? (
+              <SeedPolicyCard
+                policy={pol}
+                saving={saveSeed.isPending}
+                syncTelemetry={syncTelemetry}
+                onSave={(next) => saveSeed.mutate(next)}
+              />
+            ) : (
+              <p className='text-sm text-muted-foreground'>
+                {seed.isError ? '种子策略读取失败' : '读取种子策略…'}
+              </p>
+            )}
           </TabsContent>
         </Tabs>
         <ConfirmDialog
