@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
-import { REPO_URL } from '@/config/repo'
-import { ArrowUpRight, Menu, X } from 'lucide-react'
+import { DOCS_URL, REPO_URL } from '@/config/repo'
+import { ArrowUpRight, BookOpen, Menu, X } from 'lucide-react'
 import { IconGithub } from '@/assets/brand-icons'
 import { Logo } from '@/assets/logo'
 import { cn } from '@/lib/utils'
@@ -51,16 +51,29 @@ export function AppTitle({ version }: { version?: string }) {
         </div>
         <div className='mt-3 grid gap-1.5 group-data-[collapsible=icon]:hidden'>
           <VersionChip version={version?.replace(/^v/i, '')} />
-          <a
-            href={REPO_URL}
-            target='_blank'
-            rel='noreferrer'
-            title='查看上游 GitHub 项目'
-            aria-label='查看上游 GitHub 项目'
-            className={cn(CHIP_CLASS, CHIP_LINK_CLASS, 'justify-self-start')}
-          >
-            <IconGithub aria-hidden className='size-4 shrink-0' />
-          </a>
+          <div className='flex gap-1.5'>
+            <a
+              href={REPO_URL}
+              target='_blank'
+              rel='noreferrer'
+              title='查看上游 GitHub 项目'
+              aria-label='查看上游 GitHub 项目'
+              className={cn(CHIP_CLASS, CHIP_LINK_CLASS, 'justify-self-start')}
+            >
+              <IconGithub aria-hidden className='size-4 shrink-0' />
+            </a>
+            <a
+              href={DOCS_URL}
+              target='_blank'
+              rel='noreferrer'
+              title='项目入门文档'
+              aria-label='项目入门文档'
+              className={cn(CHIP_CLASS, CHIP_LINK_CLASS)}
+            >
+              <BookOpen aria-hidden className='size-4 shrink-0' />
+              文档
+            </a>
+          </div>
         </div>
       </SidebarMenuItem>
     </SidebarMenu>

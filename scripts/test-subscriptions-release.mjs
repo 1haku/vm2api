@@ -8,6 +8,8 @@ const unit = [
   'request-limits-stream',
   'api-keys',
   'key-scope',
+  'vm-pools',
+  'seed-policy',
   'vm-package',
   'vm-recreate',
   'panel-vm-create',

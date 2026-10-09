@@ -6,6 +6,53 @@ import { classifierFixture } from '../fixtures/auto-mode.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 
+test('named pools preserve subscription admission and release reservations when disabled or empty', async () => {
+  const gw = await startGateway()
+  try {
+    const user = await api(gw, 'POST', '/api/panel/users', {
+      body: { username: 'pool-subscriber', password: 'test-password-123', role: 'user' },
+    })
+    const userId = user.json.data.item.id
+    const provision = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: {
+        plan: { name: 'Pool subscription', platform: 'claude', vm_ids: ['vm-sim-01'], daily_limit_usd: 30 },
+        user_ids: [userId],
+      },
+    })
+    assert.equal(provision.status, 200, provision.text)
+    const sub = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.user_id === userId)
+    const pool = await api(gw, 'POST', '/api/panel/vm-pools', { body: { name: 'Shared pool', vm_ids: ['vm-sim-01'] } })
+    assert.equal(pool.status, 201, pool.text)
+    const poolId = pool.json.data.pool.id
+    const key = await api(gw, 'POST', '/api/panel/api-keys', {
+      body: { name: 'pool-key', user_id: userId, group_id: sub.group_id, vm_pool_id: poolId },
+    })
+    assert.equal(key.status, 201, key.text)
+    const headers = { authorization: `Bearer ${key.json.item.key}` }
+    const body = { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }], max_tokens: 8 }
+    assert.equal((await api(gw, 'POST', '/v1/messages', { headers, body })).status, 200)
+    const login = await api(gw, 'POST', '/api/panel/login', {
+      body: { username: 'pool-subscriber', password: 'test-password-123' },
+    })
+    assert.equal(
+      (await api(gw, 'GET', '/api/panel/vm-pools', { headers: { authorization: `Bearer ${login.json.token}` } }))
+        .status,
+      403,
+    )
+    for (const patch of [{ enabled: false }, { enabled: true, vm_ids: [] }]) {
+      assert.equal((await api(gw, 'PATCH', `/api/panel/vm-pools/${poolId}`, { body: patch })).status, 200)
+      const rejected = await api(gw, 'POST', '/v1/messages', { headers, body })
+      assert.equal(rejected.status, 403, rejected.text)
+      assert.equal(rejected.json.error.code, 'vm_pool_unavailable')
+      const current = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === sub.id)
+      assert.equal(current.pending_cost, 0)
+    }
+    assert.equal((await api(gw, 'DELETE', `/api/panel/vm-pools/${poolId}`)).status, 409)
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('subscription admission ignores transport metadata and returns a useful logged quota rejection', async () => {
   const gw = await startGateway()
   try {

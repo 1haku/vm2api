@@ -54,6 +54,7 @@ import { KeyLimitsDialog } from './key-limits-dialog'
 import { keyLimitsPayload, type KeyLimitsDraft } from './key-payload'
 import { KeyRevealDialog, type RevealedKey } from './key-reveal-dialog'
 import { KeyStatsDialog } from './key-stats-dialog'
+import { VmPoolsCard, vmPoolsQueryOptions } from './vm-pools-card'
 
 export function KeysPage() {
   const qc = useQueryClient()
@@ -88,6 +89,8 @@ export function KeysPage() {
   const metrics = new Map(stats.data?.keys.map((k) => [k.api_key_id, k]))
   const metricsReady = valid && stats.isSuccess && !stats.isError
   const q = useQuery(apiKeysQueryOptions())
+  const isAdmin = me?.role === 'admin'
+  const pools = useQuery({ ...vmPoolsQueryOptions(), enabled: isAdmin })
   const vms = useQuery(vmsListQueryOptions())
   const vmItems = vms.data?.items || []
   const [createOpen, setCreateOpen] = useState(false)
@@ -273,6 +276,7 @@ export function KeysPage() {
         </div>
       }
     >
+      {isAdmin ? <VmPoolsCard vms={vmItems} /> : null}
       <p className='mb-5 text-sm text-muted-foreground'>
         按所选时间查看每个 Key 的用量。同一订阅下的密钥共享你的订阅额度。
       </p>
@@ -463,6 +467,7 @@ export function KeysPage() {
         onOpenChange={setCreateOpen}
         pending={create.isPending}
         vms={vmItems}
+        pools={isAdmin ? pools.data?.pools || [] : undefined}
         onSubmit={(draft) => create.mutate(draft)}
       />
       <KeyLimitsDialog
@@ -473,6 +478,7 @@ export function KeysPage() {
         }}
         initial={editing}
         vms={vmItems}
+        pools={isAdmin ? pools.data?.pools || [] : undefined}
         pending={edit.isPending}
         onSubmit={(draft) => {
           if (!editId) return
@@ -655,6 +661,7 @@ function KeyRow({
 }
 
 function scopeText(item: ApiKeyItem): string {
+  if (item.vm_pool_id) return `账号池 · ${item.vm_pool_name || item.vm_pool_id}`
   if (item.group_type === 'anthropic')
     return `Anthropic · ${item.allowed_vms?.length || 0} 台`
   if (item.group_type === 'openai')

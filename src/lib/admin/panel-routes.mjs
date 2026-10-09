@@ -70,13 +70,26 @@ import {
   resetGptModelPolicy,
 } from '../protocol/gpt-model-policy.mjs'
 import { refreshCodexAccessToken } from '../protocol/codex-models.mjs'
-import { defaultSeedPolicy, seedTelemetryContract, standardSeedPolicy } from '../protocol/seed-policy.mjs'
+import {
+  defaultSeedPolicy,
+  isTelemetryEnabled,
+  seedTelemetryContract,
+  standardSeedPolicy,
+} from '../protocol/seed-policy.mjs'
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
 import { publicKeyView } from './api-keys.mjs'
 import { handleSubscriptionPanel } from './panel-subscriptions.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { assertVmScope, normalizeKeyScope } from './key-scope.mjs'
+import {
+  assertVmPoolExists,
+  createVmPool,
+  deleteVmPool,
+  updateVmPool,
+  vmPoolHttpStatus,
+  vmPoolsFor,
+} from './vm-pools.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
@@ -1064,6 +1077,50 @@ export function createPanelHandler(ctx) {
           })
         }
       }
+      if (req.method === 'GET' && p === '/api/panel/vm-pools') {
+        return json(res, 200, panel.ok({ pools: vmPoolsFor(apiKeyStore.db).list() }))
+      }
+      if (req.method === 'POST' && p === '/api/panel/vm-pools') {
+        const body = await readBody(req, 64 * 1024).catch(() => ({}))
+        try {
+          const pool = createVmPool(vmPoolsFor(apiKeyStore.db), body || {}, listVms(cfg.paths.project))
+          return json(res, 201, panel.ok({ pool }))
+        } catch (e) {
+          return json(res, vmPoolHttpStatus(e.code), {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'create_failed' },
+          })
+        }
+      }
+      if (req.method === 'PATCH' && /^\/api\/panel\/vm-pools\/[^/]+$/.test(p)) {
+        const id = decodeURIComponent(p.split('/').pop())
+        const body = await readBody(req, 64 * 1024).catch(() => ({}))
+        try {
+          const pool = updateVmPool(vmPoolsFor(apiKeyStore.db), id, body || {}, listVms(cfg.paths.project))
+          if (!pool) return json(res, 404, { ok: false, error: { message: '账号池不存在', code: 'vm_pool_not_found' } })
+          return json(res, 200, panel.ok({ pool }))
+        } catch (e) {
+          return json(res, vmPoolHttpStatus(e.code), {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'update_failed' },
+          })
+        }
+      }
+      if (req.method === 'DELETE' && /^\/api\/panel\/vm-pools\/[^/]+$/.test(p)) {
+        const id = decodeURIComponent(p.split('/').pop())
+        const result = deleteVmPool(vmPoolsFor(apiKeyStore.db), id)
+        if (!result.ok) {
+          return json(res, vmPoolHttpStatus(result.error), {
+            ok: false,
+            error: {
+              message: result.error === 'vm_pool_in_use' ? '仍有密钥绑定该账号池' : '账号池不存在',
+              code: result.error,
+              keys: result.keys,
+            },
+          })
+        }
+        return json(res, 200, { ok: true, deleted: id })
+      }
       if (req.method === 'GET' && p === '/api/panel/api-keys') {
         const snap = apiKeyStore.snapshot()
         if (panelIdentity(req).role === 'user') {
@@ -1102,8 +1159,12 @@ export function createPanelHandler(ctx) {
             body.category,
             panelIdentity(req).role,
           )
-          const scope = normalizeKeyScope({ group_type: body?.group_type, allowed_vms: body?.allowed_vms })
-          assertVmScope(listVms(cfg.paths.project), scope)
+          const scopeInput = { group_type: body?.group_type, allowed_vms: body?.allowed_vms }
+          if (Object.prototype.hasOwnProperty.call(body || {}, 'vm_pool_id')) scopeInput.vm_pool_id = body.vm_pool_id
+          const scope = normalizeKeyScope(scopeInput)
+          const pools = vmPoolsFor(apiKeyStore.db)
+          if (scope.vm_pool_id) assertVmPoolExists(pools, scope.vm_pool_id)
+          else assertVmScope(listVms(cfg.paths.project), scope)
           const defaultConc = Number(
             ctx.routingConfig?.concurrency?.default_key_concurrency ??
               ctx.routingConfig?.concurrency?.default_max_per_account ??
@@ -1118,6 +1179,7 @@ export function createPanelHandler(ctx) {
             group_id: body?.group_id,
             group_type: scope.group_type,
             allowed_vms: scope.allowed_vms,
+            vm_pool_id: scope.vm_pool_id,
             max_concurrency: body?.max_concurrency ?? defaultConc,
             default_concurrency: defaultConc,
             quota_requests: input.quota_requests,
@@ -1138,7 +1200,7 @@ export function createPanelHandler(ctx) {
             note: 'plaintext stays recoverable via POST /api/panel/api-keys/:id/reveal',
           })
         } catch (e) {
-          const status = e.code === 'key_exists' ? 409 : 400
+          const status = vmPoolHttpStatus(e.code)
           return json(res, status, {
             ok: false,
             error: { message: String(e.message || e), code: e.code || 'create_failed' },
@@ -1162,14 +1224,16 @@ export function createPanelHandler(ctx) {
               )
           }
           const input = normalizePanelApiKeyInput(body || {})
-          const scope = normalizeKeyScope(
-            { group_type: body?.group_type, allowed_vms: body?.allowed_vms },
-            { partial: true, current: apiKeyStore.getById(id) },
-          )
+          const scopeInput = { group_type: body?.group_type, allowed_vms: body?.allowed_vms }
+          if (Object.prototype.hasOwnProperty.call(body || {}, 'vm_pool_id')) scopeInput.vm_pool_id = body.vm_pool_id
+          const scope = normalizeKeyScope(scopeInput, { partial: true, current: apiKeyStore.getById(id) })
           if (scope) {
-            assertVmScope(listVms(cfg.paths.project), scope)
+            const pools = vmPoolsFor(apiKeyStore.db)
+            if (scope.vm_pool_id) assertVmPoolExists(pools, scope.vm_pool_id)
+            else assertVmScope(listVms(cfg.paths.project), scope)
             input.group_type = scope.group_type
             input.allowed_vms = scope.allowed_vms
+            input.vm_pool_id = scope.vm_pool_id
           }
           const rec = apiKeyStore.update(id, input)
           if (!rec) {
@@ -1177,7 +1241,10 @@ export function createPanelHandler(ctx) {
           }
           return json(res, 200, { ok: true, item: publicKeyView(rec, { reveal: false }) })
         } catch (e) {
-          return json(res, 400, { ok: false, error: { message: String(e.message || e), code: e.code } })
+          return json(res, vmPoolHttpStatus(e.code), {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code },
+          })
         }
       }
       if (req.method === 'POST' && /^\/api\/panel\/api-keys\/[^/]+\/reveal$/.test(p)) {
@@ -2684,15 +2751,9 @@ export function createPanelHandler(ctx) {
         if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         const body = await readBody(req, 256 * 1024)
         const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        const telemetryWasOff = (vm.seed_policy || {}).telemetry_disabled !== false
+        const telemetryWasOff = !isTelemetryEnabled(vm.seed_policy || {})
         const merged = { ...(vm.seed_policy || {}), ...(body.seed_policy || {}) }
-        for (const k of [
-          'telemetry_disabled',
-          'disable_nonessential_traffic',
-          'do_not_track',
-          'reject_client_settings',
-          'reject_client_metadata_identity',
-        ]) {
+        for (const k of ['telemetry_disabled', 'reject_client_settings', 'reject_client_metadata_identity']) {
           if (body[k] !== undefined) merged[k] = !!body[k]
         }
         if (body.theme !== undefined) merged.theme = body.theme
@@ -4360,7 +4421,7 @@ export function createPanelHandler(ctx) {
         // Forward only the keys the caller actually sent — update() reads
         // presence, not value, to tell "leave alone" from "clear".
         const patch = {}
-        for (const key of ['host', 'port', 'username', 'password', 'label']) {
+        for (const key of ['host', 'port', 'username', 'password', 'label', 'domain_forward']) {
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key]
         }
         const result = proxyPool.update(id, patch)
@@ -4369,9 +4430,21 @@ export function createPanelHandler(ctx) {
           const type = status === 404 ? 'not_found_error' : 'invalid_request_error'
           return json(res, status, { ok: false, error: { type, code: result.error, message: result.error } })
         }
+        // Hostname mode is inside kin-egress. Restart that helper only; the
+        // slot workers keep the same bridge and do not need a reload.
+        let egress = null
+        if (
+          result.domain_forward_changed &&
+          egressEnabled() &&
+          process.env.KIN_CRS_MOCK !== '1' &&
+          (result.proxy.bound_vm_ids || []).length
+        ) {
+          const restarted = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(id))
+          egress = { ok: !!restarted.ok, error: restarted.ok ? null : restarted.error || 'egress_restart_failed' }
+        }
         // A label is display-only; reloading every bound worker for it would
         // pull live slots out of scheduling for nothing.
-        if (!result.connection_changed) return json(res, 200, panel.ok({ proxy: result.proxy, workers: [] }))
+        if (!result.connection_changed) return json(res, 200, panel.ok({ proxy: result.proxy, workers: [], egress }))
         // The pool store is only one of three places the credentials live
         // (pool -> vms/<id>.json -> worker.json). Without this the edit looks
         // like it worked while every bound slot keeps dialing the old proxy.
@@ -4392,7 +4465,7 @@ export function createPanelHandler(ctx) {
             workers.push({ vm_id: vmId, ok: true, error: null })
           }
         }
-        return json(res, 200, panel.ok({ proxy: result.proxy, workers }))
+        return json(res, 200, panel.ok({ proxy: result.proxy, workers, egress }))
       }
       // The one endpoint allowed to return proxy credentials. Mirrors
       // POST /api/panel/api-keys/:id/reveal: POST so it never lands in browser

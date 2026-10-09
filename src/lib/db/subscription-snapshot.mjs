@@ -32,7 +32,7 @@ export function subscriptionSnapshot(db) {
             intercept: row.intercept ?? null,
           }
         if (table === 'proxies') {
-          const normalized = { ...row, label: row.label ?? null }
+          const normalized = { ...row, label: row.label ?? null, domain_forward: row.domain_forward ?? 0 }
           // Upstream 033: newly added IPv6 geo fields are nullable, not rewritten data.
           for (const field of [
             'ip',
@@ -52,12 +52,17 @@ export function subscriptionSnapshot(db) {
         }
         // Upstream 032 adds these defaults; existing subscription scope still applies.
         if (table === 'api_keys')
-          return { ...row, group_type: row.group_type ?? 'all', allowed_vms: row.allowed_vms ?? '[]' }
+          return {
+            ...row,
+            group_type: row.group_type ?? 'all',
+            allowed_vms: row.allowed_vms ?? '[]',
+            vm_pool_id: row.vm_pool_id ?? null,
+          }
         return row
       })
     state[table] = { count: rows.length, hash: digest(rows) }
   }
-  for (const table of ['refusal_guards', 'refusal_device_blocks']) {
+  for (const table of ['refusal_guards', 'refusal_device_blocks', 'vm_pools', 'vm_pool_members']) {
     const rows = exists(db, table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
     const normalized =
       table === 'refusal_guards' ? rows.map((row) => ({ ...row, signature: row.signature ?? null })) : rows

@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { ApiKeyItem } from '@/types/panel-keys'
+import type { ApiKeyItem, VmPool } from '@/types/panel-keys'
+import type { Vm } from '@/types/panel-vm'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
-import type { Vm } from '@/types/panel-vm'
 import { isCodexVm } from '@/lib/vm-kind'
 import { Button } from '@/components/ui/button'
 import {
@@ -96,6 +96,7 @@ export function KeyLimitsDialog({
   pending,
   onSubmit,
   vms = [],
+  pools,
 }: {
   mode: 'create' | 'edit'
   open: boolean
@@ -104,6 +105,7 @@ export function KeyLimitsDialog({
   pending: boolean
   onSubmit: (draft: KeyLimitsDraft) => void
   vms?: Vm[]
+  pools?: VmPool[]
 }) {
   const user = useAuthStore((s) => s.me)
   const plans = useQuery({
@@ -119,7 +121,8 @@ export function KeyLimitsDialog({
   useEffect(() => {
     if (!open) return
     if (mode === 'edit' && initial) {
-      const group = groupOf(initial.group_type)
+      const pooled = !!pools && !!initial.vm_pool_id
+      const group = pooled ? 'pool' : groupOf(initial.group_type)
       setDraft({
         name: initial.name || '',
         group_id: initial.group_id,
@@ -130,18 +133,23 @@ export function KeyLimitsDialog({
         rpm: Number(initial.rpm ?? 0),
         expires_in_days: 0,
         group_type: group,
-        allowed_vms: group === 'all' ? [] : initial.allowed_vms || [],
+        allowed_vms:
+          group === 'all' || group === 'pool' ? [] : initial.allowed_vms || [],
+        ...(pools ? { vm_pool_id: initial.vm_pool_id || '' } : {}),
       })
       return
     }
     setDraft(blankDraft())
+    // pools is only the option list. Reloading it must not wipe an open form.
   }, [open, mode, initial])
 
   const quotaOpts = mode === 'edit' ? QUOTA_EDIT : QUOTA_CREATE
   const rpmOpts = mode === 'edit' ? RPM_EDIT : RPM_CREATE
   const listed = vmsInGroup(vms || [], draft.group_type)
   const scopeBlocked =
-    draft.group_type !== 'all' && draft.allowed_vms.length === 0
+    draft.group_type === 'pool'
+      ? !draft.vm_pool_id
+      : draft.group_type !== 'all' && draft.allowed_vms.length === 0
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -266,79 +274,115 @@ export function KeyLimitsDialog({
               />
             </Field>
           ) : null}
-          {user?.role === 'admin' && <><Field label='调用范围'>
-            <Select
-              value={draft.group_type}
-              onValueChange={(v) => {
-                const group = groupOf(v)
-                const keep = new Set(
-                  vmsInGroup(vms || [], group).map((vm) => vm.id)
-                )
-                setDraft((d) => ({
-                  ...d,
-                  group_type: group,
-                  allowed_vms:
-                    group === 'all'
-                      ? []
-                      : d.allowed_vms.filter((id) => keep.has(id)),
-                }))
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>按账户 / 订阅授权范围</SelectItem>
-                <SelectItem value='anthropic'>anthropic</SelectItem>
-                <SelectItem value='openai'>openai</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          {draft.group_type === 'all' ? (
-            <p className='text-xs text-muted-foreground sm:col-span-2'>
-              使用账户或订阅已授权的槽位；指定平台和槽位可进一步收窄范围。
-            </p>
-          ) : (
-            <div className='sm:col-span-2'>
-              <Field label='可用 VM'>
-                <div className='max-h-40 space-y-1 overflow-y-auto rounded-md border p-2'>
-                  {listed.length === 0 ? (
-                    <p className='text-xs text-muted-foreground'>
-                      该分组下没有 VM
-                    </p>
-                  ) : (
-                    listed.map((vm) => (
-                      <label
-                        key={vm.id}
-                        className='flex items-center gap-2 text-sm'
-                      >
-                        <input
-                          type='checkbox'
-                          className='size-3.5'
-                          checked={draft.allowed_vms.includes(vm.id)}
-                          onChange={(e) => {
-                            const on = e.target.checked
-                            setDraft((d) => ({
-                              ...d,
-                              allowed_vms: on
-                                ? [...d.allowed_vms, vm.id]
-                                : d.allowed_vms.filter((id) => id !== vm.id),
-                            }))
-                          }}
-                        />
-                        <span className='truncate'>
-                          {vm.name || vm.email || vm.id}
-                        </span>
-                        <span className='font-mono text-xs text-muted-foreground'>
-                          {vm.id}
-                        </span>
-                      </label>
-                    ))
-                  )}
-                </div>
+          {user?.role === 'admin' && (
+            <>
+              <Field label='调用范围'>
+                <Select
+                  value={draft.group_type}
+                  onValueChange={(v) => {
+                    const group = v === 'pool' ? 'pool' : groupOf(v)
+                    const keep = new Set(
+                      vmsInGroup(vms || [], group).map((vm) => vm.id)
+                    )
+                    setDraft((d) => ({
+                      ...d,
+                      group_type: group,
+                      allowed_vms:
+                        group === 'all' || group === 'pool'
+                          ? []
+                          : d.allowed_vms.filter((id) => keep.has(id)),
+                      ...(pools
+                        ? {
+                            vm_pool_id:
+                              group === 'pool' ? d.vm_pool_id || '' : '',
+                          }
+                        : {}),
+                    }))
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>按账户 / 订阅授权范围</SelectItem>
+                    {pools ? (
+                      <SelectItem value='pool'>账号池</SelectItem>
+                    ) : null}
+                    <SelectItem value='anthropic'>anthropic</SelectItem>
+                    <SelectItem value='openai'>openai</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
-            </div>
-          )}</>}
+              {draft.group_type === 'pool' ? (
+                <Field label='账号池'>
+                  <Select
+                    value={draft.vm_pool_id || ''}
+                    onValueChange={(id) =>
+                      setDraft((d) => ({ ...d, vm_pool_id: id }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder='选择账号池' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(pools || []).map((pool) => (
+                        <SelectItem key={pool.id} value={pool.id}>
+                          {pool.name}
+                          {pool.enabled ? '' : ' · 停用'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              ) : draft.group_type === 'all' ? (
+                <p className='text-xs text-muted-foreground sm:col-span-2'>
+                  使用账户或订阅已授权的槽位；指定平台和槽位可进一步收窄范围。
+                </p>
+              ) : (
+                <div className='sm:col-span-2'>
+                  <Field label='可用 VM'>
+                    <div className='max-h-40 space-y-1 overflow-y-auto rounded-md border p-2'>
+                      {listed.length === 0 ? (
+                        <p className='text-xs text-muted-foreground'>
+                          该分组下没有 VM
+                        </p>
+                      ) : (
+                        listed.map((vm) => (
+                          <label
+                            key={vm.id}
+                            className='flex items-center gap-2 text-sm'
+                          >
+                            <input
+                              type='checkbox'
+                              className='size-3.5'
+                              checked={draft.allowed_vms.includes(vm.id)}
+                              onChange={(e) => {
+                                const on = e.target.checked
+                                setDraft((d) => ({
+                                  ...d,
+                                  allowed_vms: on
+                                    ? [...d.allowed_vms, vm.id]
+                                    : d.allowed_vms.filter(
+                                        (id) => id !== vm.id
+                                      ),
+                                }))
+                              }}
+                            />
+                            <span className='truncate'>
+                              {vm.name || vm.email || vm.id}
+                            </span>
+                            <span className='font-mono text-xs text-muted-foreground'>
+                              {vm.id}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </Field>
+                </div>
+              )}
+            </>
+          )}
         </div>
         <DialogFooter>
           <Button

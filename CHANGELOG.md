@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.134 — 2026-10-09
+
+- 命名账号池（`/api/panel/vm-pools`）：多把密钥绑定同一池，成员只在池上维护。调度、故障转移、排队和粘性会话都限制在当前成员内；池停用、为空或不存在返回 403 `vm_pool_unavailable`，不回落全局。未绑定的密钥仍按原来的 `group_type` / `allowed_vms`。迁移 `034_vm_pools.sql`（#320）。
+- 代理可开「域名转发」（`domain_forward`）。kin-egress 只在本助手刚答过、且该 IP 只对应一个主机名时，把透明 TCP 的 SOCKS CONNECT 写成主机名；故意的 IP 字面量保持原样，多个主机名共享同一地址则拒绝猜测。默认关闭。IPv6 代理地址和这条开关是两件事。迁移 `035_proxy_domain_forward.sql`。打开开关时只重启该出口的 kin-egress，不重载槽位 worker（#322）。
+
+已部署机升级：更新 Node 控制面、`web/dist` 和 `bin/kin-egress`，重启一次 Node。启动时执行迁移 `034_vm_pools.sql`、`035_proxy_domain_forward.sql`。不必 `wrap-cli/sync`，不要动槽容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.3.133 — 2026-10-09
+
+- 遥测只读 `seed_policy.telemetry_disabled === false`。`disable_nonessential_traffic` 与 `do_not_track` 由这一位派生，不再单独作为开关或判定依据。虚拟机页「遥测」开关在默认开时为开；详情状态同一位，进程是否在跑另计。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。已有槽的磁盘种子要等下一次播种才把派生旗标写成同一极性。
+
+## 1.3.132 — 2026-10-09
+
+- 控制台左上角 GitHub 右侧增加「文档」，指向入门站 https://vm2api.fkcodex.com/zh/。
+- README 与 `docs/RISK.md` 写明封控拦截顺序：蒸馏 → 硬正则 → 拒答缓存 → 决策模型 → 放行出站，并记下 1.3.122 以来调用方能碰到的变化（本地代理、模型页、密钥范围、流空闲）。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.131 — 2026-10-09
 
 - 本地代理语义扩展为「当前VPS的本地代理」：槽位走所在 VPS 自身出口。集群节点上的槽位绑本地代理时，除槽内流量外，控制面代发的请求（OAuth 换票 / 刷新、测试对话、地理 → 时区）也经该节点 SSH 链路从节点出网；节点未连接时这些请求直接失败，不回落控制面直连。节点槽时区跟随节点出口地理（#318）。
