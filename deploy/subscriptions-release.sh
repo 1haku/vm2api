@@ -28,6 +28,9 @@ docker cp "vm2api:/opt/vm2api/data/pre-subscriptions-$STAMP.db" "$BACKUP/kin.db"
 docker exec vm2api rm "/opt/vm2api/data/pre-subscriptions-$STAMP.db"
 cp "$BACKUP/kin.db" "$BACKUP/migration-check/kin.db"
 docker run --rm --entrypoint node -v "$BACKUP/migration-check:/migration-check" "$IMAGE" scripts/check-subscriptions-upgrade.mjs /migration-check/kin.db > "$BACKUP/migration-check.json"
+# Validation succeeded. Keep the original snapshot/report and the stopped backup,
+# not a third, disposable migrated database copy on every release.
+rm -f "$BACKUP/migration-check/kin.db" "$BACKUP/migration-check/kin.db-wal" "$BACKUP/migration-check/kin.db-shm"
 # Capture the exact stopped DB and WAL before its schema changes.
 cd "$ROOT"
 sha256sum "$ROOT/vms/active.json" > "$BACKUP/active-before.sha256"

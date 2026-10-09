@@ -57,6 +57,7 @@ const unit = [
   'node-egress-socks',
   'wrap-cli-runtime',
   'persona-template',
+  'persona-settings-switch',
   'official-cc-stats',
   'crs-usage-probe',
   'openai-quota',
