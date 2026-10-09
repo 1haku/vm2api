@@ -3,6 +3,59 @@ import assert from 'node:assert/strict'
 import WebSocket from 'ws'
 import { startGateway, api } from '../harness.mjs'
 import { classifierFixture } from '../fixtures/auto-mode.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import path from 'node:path'
+
+test('subscription admission ignores transport metadata and returns a useful logged quota rejection', async () => {
+  const gw = await startGateway()
+  try {
+    const created = await api(gw, 'POST', '/api/panel/users', {
+      body: { username: 'estimate-subscriber', password: 'test-password-123', role: 'user' },
+    })
+    const userId = created.json.data.item.id
+    const provisioned = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: {
+        plan: { name: 'Estimate plan', platform: 'claude', vm_ids: ['vm-sim-01'], daily_limit_usd: 0.05 },
+        user_ids: [userId],
+      },
+    })
+    assert.equal(provisioned.status, 200, provisioned.text)
+    const sub = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.user_id === userId)
+    const key = await api(gw, 'POST', '/api/panel/api-keys', {
+      body: { name: 'estimate', user_id: userId, group_id: sub.group_id },
+    })
+    assert.equal(key.status, 201, key.text)
+    const headers = { authorization: `Bearer ${key.json.item.key}` }
+    const input = {
+      model: 'claude-haiku-4-5',
+      messages: [{ role: 'user', content: 'hi' }],
+      metadata: { client_diagnostics: 'x'.repeat(300_000) },
+      max_tokens: 8,
+    }
+    const accepted = await api(gw, 'POST', '/v1/messages', { headers, body: input })
+    assert.equal(accepted.status, 200, accepted.text)
+    const rejected = await api(gw, 'POST', '/v1/messages', { headers, body: { ...input, max_tokens: 1_000_000 } })
+    assert.equal(rejected.status, 429, rejected.text)
+    assert.equal(rejected.json.error.code, 'subscription_quota')
+    assert.equal(rejected.json.error.quota.period, 'daily')
+    assert.ok(rejected.json.error.quota.estimated > rejected.json.error.quota.remaining)
+    const db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'), { readOnly: true })
+    try {
+      const logged = db
+        .prepare(
+          "SELECT error_message,actual_cost FROM usage_logs WHERE api_key_id=? AND error_code='subscription_quota'",
+        )
+        .get(key.json.item.id)
+      assert.ok(logged)
+      assert.equal(logged.error_message, rejected.json.error.message)
+      assert.equal(logged.actual_cost, 0)
+    } finally {
+      db.close()
+    }
+  } finally {
+    await gw.stop()
+  }
+})
 
 test('classifier rejection releases subscription reservations without charging or bypassing revocation', async () => {
   const gw = await startGateway()

@@ -449,11 +449,13 @@ export function createHandleProtocol(deps) {
       req.subscriptionAdmission = null
       if (error.status === 429) res.setHeader('Retry-After', String(error.retry_after || 1))
       logBag.error_code = error.code || 'subscription_invalid'
+      logBag.error_message = error.message
       json(res, error.status || 400, {
         error: {
           type: error.status === 429 ? 'rate_limit_error' : 'permission_error',
           code: logBag.error_code,
           message: error.message,
+          ...(error.quota ? { quota: error.quota } : {}),
         },
       })
       return false

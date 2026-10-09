@@ -2,6 +2,7 @@ import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
 import { calculateCost, shanghaiDayStartIso } from '../../admin/pricing.mjs'
+import { estimateSubscriptionInput } from '../../admin/subscription-estimate.mjs'
 
 const DAY = 86400000
 const iso = (n = Date.now()) => new Date(n).toISOString()
@@ -322,12 +323,12 @@ export class SubscriptionsRepo {
       if (pending.n >= sub.group.subscription_concurrency)
         throw subscriptionError('订阅并发已满，请稍后重试', 429, 'subscription_concurrency')
       const progress = this.progress(sub)
-      const bytes = Buffer.byteLength(JSON.stringify(body || {}))
+      const input = estimateSubscriptionInput(body)
       const requestedOutput = Number(body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? 16384)
       if (!Number.isFinite(requestedOutput) || requestedOutput < 1) throw subscriptionError('输出 Token 上限无效')
       const estimate = calculateCost(
         {
-          input_tokens: bytes + 8192,
+          input_tokens: input.tokens,
           output_tokens: requestedOutput,
           requested_speed: body.speed,
           service_tier: body.service_tier,
@@ -338,16 +339,32 @@ export class SubscriptionsRepo {
       if (limited && !estimate?.known)
         throw subscriptionError('此模型尚未配置计价，无法使用限额订阅', 403, 'subscription_unpriced_model')
       const amount = (estimate?.total_cost || 0) * sub.group.rate_multiplier
-      for (const [limit, used] of [
-        [sub.group.daily_limit_usd, progress.daily_used],
-        [sub.group.weekly_limit_usd, progress.weekly_used],
+      for (const [period, limit, used] of [
+        ['daily', sub.group.daily_limit_usd, progress.daily_used],
+        ['weekly', sub.group.weekly_limit_usd, progress.weekly_used],
       ]) {
-        if (limit > 0 && used + pending.cost + amount > limit)
-          throw subscriptionError(
-            '订阅剩余额度不足（含进行中请求预留），请降低输出上限或等待重置',
-            429,
-            'subscription_quota',
+        if (limit > 0 && used + pending.cost + amount > limit) {
+          const remaining = Math.max(0, limit - used)
+          throw Object.assign(
+            subscriptionError(
+              `订阅${period === 'daily' ? '日' : '周'}剩余额度不足：剩余 $${remaining.toFixed(4)}，进行中预留 $${pending.cost.toFixed(4)}，本次预估预留 $${amount.toFixed(4)}。请缩减上下文或输出上限，或等待额度重置`,
+              429,
+              'subscription_quota',
+            ),
+            {
+              quota: {
+                period,
+                limit,
+                used,
+                remaining,
+                pending: pending.cost,
+                estimated: amount,
+                estimated_input_tokens: input.tokens,
+                max_output_tokens: requestedOutput,
+              },
+            },
           )
+        }
       }
       this.db
         .prepare(

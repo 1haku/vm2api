@@ -43,6 +43,51 @@ function setup(t, config = {}) {
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
 
+test('large encoded requests no longer exhaust healthy balances; real output and pending costs remain gated', (t) => {
+  const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 3 })
+  const initial = repo.entitlement(a)
+  repo.settle('prior-spend', initial.id, 44.07762688)
+  const request = {
+    model: 'gpt-6-astra',
+    max_output_tokens: 16384,
+    input: [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Review the image' },
+          { type: 'input_image', image_url: 'data:image/png;base64,' + 'A'.repeat(6_420_000) },
+        ],
+      },
+    ],
+  }
+  const admitted = repo.reserve(a, 'large-image', request)
+  assert.ok(admitted.reserved > 0 && admitted.reserved < 2)
+  assert.equal(repo.progress(admitted).daily_used, 44.07762688)
+  repo.settle('large-image', admitted.id, 0.153194)
+  assert.equal(
+    db.prepare('SELECT amount FROM custom_subscription_ledger WHERE request_id=?').get('large-image').amount,
+    0.153194,
+  )
+  assert.throws(
+    () => repo.reserve(a, 'large-output', { ...request, input: 'hi', max_output_tokens: 3_000_000 }),
+    (e) => {
+      assert.equal(e.code, 'subscription_quota')
+      assert.equal(e.quota.period, 'daily')
+      assert.ok(e.quota.estimated > e.quota.remaining)
+      assert.match(e.message, /本次预估预留/)
+      return true
+    },
+  )
+  const one = repo.reserve(a, 'pending-1', { ...request, input: 'hi', max_output_tokens: 1_200_000 })
+  assert.throws(
+    () => repo.reserve(a, 'pending-2', { ...request, input: 'hi', max_output_tokens: 1_200_000 }),
+    (e) => {
+      assert.equal(e.quota.pending, one.reserved)
+      return e.code === 'subscription_quota'
+    },
+  )
+})
+
 test('free approval model reserves zero but still enforces subscription concurrency and revocation', (t) => {
   const { repo, db, a } = setup(t, { subscription_concurrency: 1 })
   const request = { model: 'codex-auto-review', input: 'review', max_output_tokens: 100 }

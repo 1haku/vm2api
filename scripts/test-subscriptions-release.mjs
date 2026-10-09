@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 
 const unit = [
   'subscriptions',
+  'subscription-estimate',
   'request-limits',
   'request-limits-stream',
   'api-keys',
