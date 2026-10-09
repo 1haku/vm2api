@@ -88,11 +88,16 @@ test('subscription admission ignores transport metadata and returns a useful log
     assert.ok(rejected.json.error.quota.estimated > rejected.json.error.quota.remaining)
     const db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'), { readOnly: true })
     try {
-      const logged = db
-        .prepare(
-          "SELECT error_message,actual_cost FROM usage_logs WHERE api_key_id=? AND error_code='subscription_quota'",
-        )
-        .get(key.json.item.id)
+      const query = db.prepare(
+        "SELECT error_message,actual_cost FROM usage_logs WHERE api_key_id=? AND error_code='subscription_quota'",
+      )
+      // Receiving the response can precede the gateway's finish listener on a busy host.
+      let logged
+      for (let attempt = 0; attempt < 40; attempt++) {
+        logged = query.get(key.json.item.id)
+        if (logged) break
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
       assert.ok(logged)
       assert.equal(logged.error_message, rejected.json.error.message)
       assert.equal(logged.actual_cost, 0)
