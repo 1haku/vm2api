@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { RuntimeType } from '@/types/panel-vm'
 import { toast } from 'sonner'
 import { api, isApiError } from '@/lib/api'
 import { importErrorMessage } from '@/lib/import-errors'
@@ -40,13 +41,29 @@ import {
   VM_WEIGHT_OPTIONS,
 } from '@/features/vm/create-options'
 import { KernelFeatTags } from '@/features/vm/kernel-feat-tags'
+import {
+  TCG_WARNING,
+  VM_DISK_GB_MAX,
+  VM_DISK_GB_MIN,
+  VM_MEMORY_LABELS,
+  VM_MEMORY_OPTIONS,
+  VM_VCPU_OPTIONS,
+  createMachinePayload,
+  isMemoryOption,
+  kvmAvailabilityFromLocal,
+  kvmAvailabilityFromPreflight,
+  normalizeVmConfig,
+} from '@/features/vm/machine-spec'
 import { preflightChecksFromError } from '@/features/vm/placement'
 import {
   PlacementField,
   PreflightCheckList,
   usePlacement,
 } from '@/features/vm/placement-field'
-import { vmsListQueryOptions } from '@/features/vm/queries'
+import {
+  vmCreateOptionsQueryOptions,
+  vmsListQueryOptions,
+} from '@/features/vm/queries'
 
 /** 「之后」的 5 档，对齐 index.html `createVmFromPage()` 的派生逻辑。 */
 export type CreateVmAfter = 'idle' | 'start' | 'proxy' | 'active' | 'full'
@@ -116,10 +133,41 @@ export function CreateVmFields({
   const [weight, setWeight] = useState<number>(DEFAULT_TEMPLATE.weight)
   const [platform, setPlatform] = useState<'anthropic' | 'openai'>('anthropic')
   const [advOpen, setAdvOpen] = useState(false)
+  const [runtimeOverride, setRuntimeOverride] = useState<RuntimeType | null>(
+    null
+  )
+  const [memoryOverride, setMemoryOverride] = useState<string | null>(null)
+  const [vcpusOverride, setVcpusOverride] = useState<number | null>(null)
+  const [diskOverride, setDiskOverride] = useState<number | null>(null)
+
+  const createOptions = useQuery(vmCreateOptionsQueryOptions())
+  const vmCfg = normalizeVmConfig(createOptions.data?.vm)
+  const preferredRuntime = runtimeOverride ?? vmCfg.default_runtime
+  const memory = memoryOverride ?? vmCfg.memory
+  const vcpus = vcpusOverride ?? vmCfg.vcpus
+  const diskGb = diskOverride ?? vmCfg.disk_gb
 
   // 名称留空时由后端编号：它还会跳过已删除槽位留下历史用量的序号，前端推不出来。
   const typedName = name.trim()
-  const placement = usePlacement(kernel)
+  const placement = usePlacement(kernel, preferredRuntime)
+  const kvmAvail = placement.nodeId
+    ? kvmAvailabilityFromPreflight({
+        fetching: placement.preflight.isFetching,
+        error: placement.preflight.error,
+        data: placement.preflight.data,
+      })
+    : kvmAvailabilityFromLocal({
+        fetching: createOptions.isFetching,
+        error: createOptions.error,
+        kvm: createOptions.data?.kvm,
+      })
+  const disableKvmOption =
+    !placement.nodeId &&
+    (kvmAvail.status === 'disabled' || kvmAvail.status === 'unknown')
+  const runtimeType: RuntimeType =
+    preferredRuntime === 'kvm' && disableKvmOption ? 'docker' : preferredRuntime
+  const kvmPending =
+    runtimeType === 'kvm' && !placement.nodeId && kvmAvail.status === 'loading'
   const remoteGpt = !!placement.nodeId && platform === 'openai'
   const exit = useCreateExit(placement.nodeId)
   const wantsExit = after !== 'idle'
@@ -164,6 +212,12 @@ export function CreateVmFields({
           family: platform === 'openai' ? 'codex' : 'claude',
           ...(nodeId ? { node_id: nodeId } : {}),
           ...(wantsExit && exit.proxyId ? { proxy_id: exit.proxyId } : {}),
+          ...createMachinePayload({
+            runtimeType,
+            memory,
+            vcpus,
+            diskGb,
+          }),
         }),
       })
       return {
@@ -221,40 +275,73 @@ export function CreateVmFields({
         </Select>
       </div>
 
-      <div className='space-y-1'>
-        <Label>平台</Label>
-        <Select
-          value={platform}
-          onValueChange={(next) => {
-            if (next === 'anthropic' || next === 'openai') {
-              setPlatform(next)
-              if (next === 'openai') {
-                setOpenaiConc(null)
-                setOpenaiOwnConc(false)
+      <div className='grid gap-3 sm:grid-cols-2'>
+        <div className='space-y-1'>
+          <Label>平台</Label>
+          <Select
+            value={platform}
+            onValueChange={(next) => {
+              if (next === 'anthropic' || next === 'openai') {
+                setPlatform(next)
+                if (next === 'openai') {
+                  setOpenaiConc(null)
+                  setOpenaiOwnConc(false)
+                }
               }
-            }
-          }}
-        >
-          <SelectTrigger aria-label='槽位平台'>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value='anthropic'>
-              <span className='inline-flex items-center gap-1.5'>
-                <PlatformChip kind='claude' />
-                默认
-              </span>
-            </SelectItem>
-            <SelectItem value='openai'>
-              <PlatformChip kind='codex' />
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        {platform === 'openai' ? (
-          <p className='text-xs text-muted-foreground'>
-            可先创建空槽，账号用 OAuth 或 auth.json 稍后导入。
-          </p>
-        ) : null}
+            }}
+          >
+            <SelectTrigger aria-label='槽位平台'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='anthropic'>
+                <span className='inline-flex items-center gap-1.5'>
+                  <PlatformChip kind='claude' />
+                  默认
+                </span>
+              </SelectItem>
+              <SelectItem value='openai'>
+                <PlatformChip kind='codex' />
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {platform === 'openai' ? (
+            <p className='text-xs text-muted-foreground'>
+              可先创建空槽，账号用 OAuth 或 auth.json 稍后导入。
+            </p>
+          ) : null}
+        </div>
+        <div className='space-y-1'>
+          <Label>形态</Label>
+          <Select
+            value={runtimeType}
+            onValueChange={(next) => {
+              if (next !== 'docker' && next !== 'kvm') return
+              setRuntimeOverride(next)
+              if (next === 'kvm') setAdvOpen(true)
+            }}
+          >
+            <SelectTrigger aria-label='槽位形态'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='docker'>容器 (Docker)</SelectItem>
+              <SelectItem value='kvm' disabled={disableKvmOption}>
+                虚拟机 (KVM)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {disableKvmOption &&
+          (kvmAvail.status === 'disabled' || kvmAvail.status === 'unknown') ? (
+            <p className='text-xs text-muted-foreground'>{kvmAvail.reason}</p>
+          ) : runtimeType === 'kvm' &&
+            kvmAvail.status === 'ok' &&
+            kvmAvail.accel === 'tcg' ? (
+            <p className='text-xs text-[color:var(--status-caution)]'>
+              {TCG_WARNING}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className='space-y-1'>
@@ -287,6 +374,7 @@ export function CreateVmFields({
         placement={placement}
         kernel={kernel}
         gptBlocked={remoteGpt}
+        runtimeType={runtimeType}
       />
 
       <div className='space-y-1'>
@@ -426,6 +514,68 @@ export function CreateVmFields({
               </SelectContent>
             </Select>
           </div>
+          <div className='space-y-1'>
+            <Label>内存</Label>
+            <Select
+              value={memory}
+              onValueChange={(next) => {
+                if (isMemoryOption(next)) setMemoryOverride(next)
+              }}
+            >
+              <SelectTrigger aria-label='槽位内存'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VM_MEMORY_OPTIONS.map((id) => (
+                  <SelectItem key={id} value={id}>
+                    {VM_MEMORY_LABELS[id]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {runtimeType === 'kvm' ? (
+            <>
+              <div className='space-y-1'>
+                <Label>vCPU</Label>
+                <Select
+                  value={String(vcpus)}
+                  onValueChange={(next) => setVcpusOverride(Number(next))}
+                >
+                  <SelectTrigger aria-label='槽位 vCPU'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VM_VCPU_OPTIONS.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className='space-y-1'>
+                <Label>磁盘 GB</Label>
+                <Input
+                  type='number'
+                  min={VM_DISK_GB_MIN}
+                  max={VM_DISK_GB_MAX}
+                  value={diskGb}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    if (!Number.isFinite(n)) return
+                    setDiskOverride(
+                      Math.min(
+                        VM_DISK_GB_MAX,
+                        Math.max(VM_DISK_GB_MIN, Math.round(n))
+                      )
+                    )
+                  }}
+                  aria-label='槽位磁盘 GB'
+                />
+              </div>
+            </>
+          ) : null}
         </CollapsibleContent>
       </Collapsible>
 
@@ -451,7 +601,9 @@ export function CreateVmFields({
         ) : null}
         <Button
           onClick={() => create.mutate()}
-          disabled={create.isPending || placement.blocked || remoteGpt}
+          disabled={
+            create.isPending || placement.blocked || remoteGpt || kvmPending
+          }
           loading={create.isPending}
         >
           {submitLabel}
