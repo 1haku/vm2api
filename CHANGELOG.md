@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 槽位可创建为 KVM 虚拟机（与 Docker 子容器并存）。新增 `routing.vm`（默认形态、内存、vCPU、磁盘、CPU 型号、SMBIOS、MAC 前缀、`allow_tcg`）；创建时可覆盖内存 / vCPU / 磁盘并固化到 `vm.machine`。槽内存改为读 `vm.machine.memory` → `routing.vm.memory`（默认 `1g`），移除 `KIN_VM_MEMORY`。`GET /api/panel/cluster/local` 返回 `kvm: { ok, accel, error }`；节点 preflight 在 `runtime_type=kvm` 时含 `kvm` 检查。租户创建表单读 `GET /api/panel/vms/create-options`（与 `POST /vms/create` 同 ACL），因为 user 不能读 cluster/local 与 routing。
+- KVM 槽 runner 镜像 `ghcr.io/dofastted/kin-kvm-{ubuntu,debian,arch,fedora}`，`os-catalog` 每项有 `kvm.image` / `kvm.cloud_image`。Release 由 `.github/workflows/guest-images.yml` 构建，离线构建上下文 `docker/kin-kvm/`，本机构建 `node docker/kin-kvm/build.mjs`。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。原先用 `KIN_VM_MEMORY` 的部署，先在 `routing.json` 写 `vm.memory`（可选 512m / 1g / 2g / 4g / 8g / 16g），否则新槽与官方 CC 回落 1g。不要覆盖 `vms/`、`data/`、`.env`。
+
 ## 1.3.135 — 2026-10-09
 
 - 对话中途 `role=system` 的模型白名单按官方文档补齐：Fable 5 / 5.1、Mythos 5 / 5.1、Opus 4.8 的这类轮次按原位发出，不再拼进顶层 `system`。之前这些模型的 `system` 每轮变长，提示缓存从 `system` 处断开，后面整段对话每轮重写 1h 缓存。文档列明 Sonnet 5 不支持，它的这类轮次改为挪进顶层 `system`（#324）。
