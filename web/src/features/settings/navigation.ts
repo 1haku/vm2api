@@ -2,7 +2,6 @@ import {
   Activity,
   Archive,
   BellRing,
-  Cpu,
   Fingerprint,
   Gauge,
   Info,
@@ -24,7 +23,6 @@ export const SETTINGS_TABS = [
   ['protocol', '协议'],
   ['whitelist', '白名单'],
   ['init', '初装'],
-  ['vm', '虚拟机'],
   ['health', '探测'],
   ['notify', '通知'],
   ['telemetry', '遥测'],
@@ -61,7 +59,6 @@ export const SETTINGS_NAV_GROUPS: {
   {
     label: '槽位',
     items: [
-      { id: 'vm', icon: Cpu },
       { id: 'init', icon: PackageCheck },
       { id: 'health', icon: Activity },
       { id: 'telemetry', icon: RadioTower },
