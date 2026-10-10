@@ -1675,6 +1675,8 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     status: v.status,
     active: v.id === active,
     kernel: v.kernel || null,
+    runtime_type: runtimeKind(v),
+    machine: v.machine || null,
     inference_engine: v.inference_engine || null,
     persona_preset: v.persona_preset || null,
     dataplane: v.dataplane || null,
