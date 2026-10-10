@@ -36,6 +36,7 @@ import { ProxyChip } from '@/features/proxies/proxy-chip'
 import { SlotSubscription } from '@/features/subscriptions/slot-subscription'
 import { NodeChip } from '@/features/vm/node-chip'
 import { OpenaiPlanBadge } from '@/features/vm/openai-plan-badge'
+import { RuntimeChip } from '@/features/vm/runtime-chip'
 import {
   SchedulableSwitch,
   vmSchedulableProps,
@@ -382,6 +383,7 @@ function SlotCell({ vm }: { vm: Vm }) {
       <SlotSubscription vm={vm} />
       <div className='flex min-w-0 items-center gap-1.5'>
         <TierBadge vm={vm} />
+        <RuntimeChip vm={vm} />
         <NodeChip nodeId={vm.node_id} />
         <span
           className='min-w-0 truncate text-[11px] text-muted-foreground'

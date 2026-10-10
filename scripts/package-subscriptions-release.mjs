@@ -19,6 +19,7 @@ execFileSync('git', [
   'bin',
   'share/wrap-cli',
   'docker/kin-os',
+  'docker/kin-kvm',
   'web/dist',
   'web/src',
   'deploy',

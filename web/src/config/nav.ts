@@ -24,6 +24,7 @@ export type ViewId =
   | 'cluster'
   | 'vm'
   | 'import'
+  | 'specs'
   | 'usage'
   | 'billing'
   | 'proxies'
@@ -46,6 +47,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   cluster: '集群',
   vm: '虚拟机',
   import: '导入',
+  specs: '规格',
   usage: '用量',
   billing: '计费',
   proxies: '代理池',
@@ -73,6 +75,7 @@ export const NAV_ITEMS: {
   { id: 'cluster', url: '/cluster', icon: Network },
   { id: 'vm', url: '/vm', icon: Monitor },
   { id: 'import', url: '/import', icon: Download },
+  { id: 'specs', url: '/specs', icon: Monitor },
   { id: 'usage', url: '/usage', icon: LineChart },
   { id: 'billing', url: '/billing', icon: LineChart },
   { id: 'proxies', url: '/proxies', icon: Shield },
