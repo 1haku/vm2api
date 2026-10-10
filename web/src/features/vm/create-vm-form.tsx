@@ -8,12 +8,18 @@ import {
 import { Link } from '@tanstack/react-router'
 import type { PreflightCheck } from '@/types/panel-cluster'
 import type { RuntimeType } from '@/types/panel-vm'
+import { ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, isApiError } from '@/lib/api'
 import { importErrorMessage } from '@/lib/import-errors'
 import { cn } from '@/lib/utils'
 import { vmIdOf } from '@/lib/vm-name'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -389,28 +395,75 @@ function Section({
   title,
   hint,
   action,
+  summary,
+  summaryCaution = false,
   children,
 }: {
   title: string
   hint?: ReactNode
   action?: ReactNode
+  /** 传入后该节默认收起，标题旁显示这一行；点标题再展开配置。 */
+  summary?: ReactNode
+  summaryCaution?: boolean
   children: ReactNode
 }) {
-  return (
-    <section className='space-y-3 border-t pt-5 first:border-t-0 first:pt-0'>
-      <div className='space-y-0.5'>
-        <div className='flex items-baseline justify-between gap-3'>
-          <h4 className='text-sm font-semibold'>{title}</h4>
-          {action}
-        </div>
-        {hint ? (
-          <p className='text-xs leading-relaxed text-muted-foreground'>
-            {hint}
-          </p>
-        ) : null}
-      </div>
+  const [open, setOpen] = useState(summary == null)
+  const head = (
+    <div className='flex items-baseline justify-between gap-3'>
+      {summary == null ? (
+        <h4 className='text-sm font-semibold'>{title}</h4>
+      ) : (
+        <CollapsibleTrigger className='flex min-w-0 flex-1 cursor-pointer items-baseline gap-1.5 rounded-sm text-left outline-none focus-visible:ring-[3px] focus-visible:ring-select-border/40 data-[state=open]:[&_svg]:rotate-90'>
+          <ChevronRight className='size-3.5 shrink-0 translate-y-px text-muted-foreground transition-transform duration-150' />
+          <span className='text-sm font-semibold'>{title}</span>
+          <span
+            className={cn(
+              'min-w-0 truncate text-sm font-normal tabular-nums',
+              open && 'sr-only',
+              summaryCaution
+                ? 'text-[color:var(--status-caution)]'
+                : 'text-muted-foreground'
+            )}
+          >
+            {summary}
+          </span>
+        </CollapsibleTrigger>
+      )}
+      {action}
+    </div>
+  )
+  const body = (
+    <>
+      {hint ? (
+        <p className='text-xs leading-relaxed text-muted-foreground'>{hint}</p>
+      ) : null}
       {children}
-    </section>
+    </>
+  )
+  if (summary == null) {
+    return (
+      <section className='space-y-3 border-t pt-5 first:border-t-0 first:pt-0'>
+        <div className='space-y-0.5'>
+          {head}
+          {hint ? (
+            <p className='text-xs leading-relaxed text-muted-foreground'>
+              {hint}
+            </p>
+          ) : null}
+        </div>
+        {children}
+      </section>
+    )
+  }
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className='space-y-3 border-t pt-5 first:border-t-0 first:pt-0'
+    >
+      {head}
+      <CollapsibleContent className='space-y-3'>{body}</CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -505,6 +558,8 @@ export function CreateVmForm({
 
       <Section
         title='规格'
+        summary={machineLine(d.runtimeType, d.memory, d.vcpus, d.diskGb)}
+        summaryCaution={d.memory === '256m' || d.memory === '512m'}
         hint={
           kvm
             ? '固化到槽位，开机后不变。'

@@ -3,9 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { VIEW_TITLES } from '@/config/nav'
 import type { VmRoutingConfig } from '@/types/panel-routing'
 import type { StatusTone } from '@/types/status'
+import { ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -60,24 +66,48 @@ const SMBIOS_FIELDS = [
 function Group({
   title,
   desc,
+  summary,
+  forceOpen = false,
   children,
 }: {
   title: string
   desc?: ReactNode
+  summary: ReactNode
+  /** 这一组有校验错误时展开，避免错误藏在收起的配置里。 */
+  forceOpen?: boolean
   children: ReactNode
 }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (forceOpen) setOpen(true)
+  }, [forceOpen])
   return (
-    <section className='space-y-4 border-t pt-7 first:border-t-0 first:pt-0'>
-      <div className='space-y-1'>
-        <h3 className='text-base font-semibold'>{title}</h3>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className='border-t first:border-t-0'
+    >
+      <CollapsibleTrigger className='flex w-full cursor-pointer items-baseline gap-1.5 rounded-sm py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-select-border/40 data-[state=open]:[&_svg]:rotate-90'>
+        <ChevronRight className='size-3.5 shrink-0 translate-y-px text-muted-foreground transition-transform duration-150' />
+        <span className='text-sm font-semibold'>{title}</span>
+        <span
+          className={cn(
+            'min-w-0 truncate text-sm font-normal text-muted-foreground tabular-nums',
+            open && 'sr-only'
+          )}
+        >
+          {summary}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className='space-y-4 pb-6'>
         {desc ? (
           <p className='max-w-[60ch] text-xs leading-relaxed text-muted-foreground'>
             {desc}
           </p>
         ) : null}
-      </div>
-      {children}
-    </section>
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -221,6 +251,10 @@ export function SpecsPage() {
           <div className='min-w-0 space-y-0'>
             <Group
               title='默认形态'
+              summary={
+                cfg.default_runtime === 'kvm' ? '虚拟机 (KVM)' : '容器 (Docker)'
+              }
+              forceOpen={!!errors.default_runtime}
               desc='导入页与快捷创建打开时预选这一项。宿主不支持 KVM 时仍回落到容器。'
             >
               <ChoiceTiles
@@ -244,6 +278,8 @@ export function SpecsPage() {
 
             <Group
               title='资源'
+              summary={`${VM_MEMORY_LABELS[cfg.memory as VmMemoryOption] || cfg.memory} · ${cfg.vcpus} vCPU · ${diskValue || '—'} GB`}
+              forceOpen={!!(errors.memory || errors.vcpus || errors.disk_gb)}
               desc='内存对两种形态都生效；vCPU 与磁盘只对虚拟机生效。'
             >
               <div className='divide-y'>
@@ -320,6 +356,8 @@ export function SpecsPage() {
 
             <Group
               title='硬件指纹'
+              summary={`${isCpuModel(cfg.cpu_model) ? VM_CPU_MODEL_LABELS[cfg.cpu_model] : cfg.cpu_model} · ${macValue || '—'}`}
+              forceOpen={!!(errors.cpu_model || errors.mac_oui)}
               desc='只对虚拟机生效。写进客户机的 CPU 型号与 DMI；序列号、UUID、MAC 后三字节与磁盘序列号每槽另行随机。'
             >
               <div className='divide-y'>
@@ -379,7 +417,10 @@ export function SpecsPage() {
               </div>
             </Group>
 
-            <Group title='软件模拟'>
+            <Group
+              title='软件模拟'
+              summary={cfg.allow_tcg ? '允许 TCG' : '关闭'}
+            >
               <div className='divide-y'>
                 <SettingRow
                   label='允许 TCG'
