@@ -195,6 +195,7 @@ import { personaPreviewVars } from '../identity/crs-persona.mjs'
 import {
   applyGeneratedFingerprint,
   generateWorkstationFingerprint,
+  SLOT_LOCALES,
   takenFingerprintKeys,
   writeGuestMachineIdFile,
 } from '../identity/workstation-fingerprint.mjs'
@@ -3036,8 +3037,15 @@ export function createPanelHandler(ctx) {
           }
         }
         const requestedTimezone = validTimezone(body.timezone)
+        const requestedLocale = body.locale == null || body.locale === '' ? STANDARD_LOCALE : String(body.locale)
+        if (!SLOT_LOCALES.includes(requestedLocale)) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_locale', message: `语言必须是 ${SLOT_LOCALES.join('、')}` },
+          })
+        }
         const generated = generateWorkstationFingerprint(
-          { id, kernel: wantKernel, timezone: requestedTimezone, locale: STANDARD_LOCALE },
+          { id, kernel: wantKernel, timezone: requestedTimezone, locale: requestedLocale },
           { taken: takenFingerprintKeys(existing) },
         )
         const vm = {

@@ -13,8 +13,8 @@ export type Choice<T extends string> = {
 }
 
 /**
- * 互斥选项的可读版：每个选项带一句结果说明。选中态用前景色描边 +
- * 勾，不用主色 —— 主色只留给提交动作。键盘与读屏走 Radix RadioGroup。
+ * 互斥选项的可读版：每个选项带一句结果说明。选中态走冷蓝选择轴
+ * （--select-*），青绿只留给提交动作。键盘与读屏走 Radix RadioGroup。
  */
 export function ChoiceTiles<T extends string>({
   value,
@@ -54,13 +54,13 @@ export function ChoiceTiles<T extends string>({
           disabled={c.disabled}
           className={cn(
             'group relative flex min-w-0 flex-col items-start gap-1 rounded-lg border bg-card px-3 py-2.5 text-left transition-[border-color,background-color,box-shadow] duration-150 outline-none',
-            'hover:border-foreground/30 focus-visible:ring-[3px] focus-visible:ring-ring/50',
-            'data-[state=checked]:border-foreground data-[state=checked]:bg-accent/50',
+            'hover:border-select-border/60 focus-visible:ring-[3px] focus-visible:ring-select-border/40',
+            'data-[state=checked]:border-select-border data-[state=checked]:bg-select-surface',
             'disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-border'
           )}
         >
           <span className='flex w-full min-w-0 items-center gap-2 pe-5'>
-            <span className='min-w-0 truncate text-sm font-medium'>
+            <span className='min-w-0 truncate text-sm font-medium group-data-[state=checked]:text-select-fg'>
               {c.title}
             </span>
             {c.aside ? (
@@ -74,7 +74,7 @@ export function ChoiceTiles<T extends string>({
               {c.detail}
             </span>
           ) : null}
-          <RadioGroupPrimitive.Indicator className='absolute top-2.5 right-2.5 inline-flex size-4 items-center justify-center rounded-full bg-foreground text-background'>
+          <RadioGroupPrimitive.Indicator className='absolute top-2.5 right-2.5 inline-flex size-4 items-center justify-center rounded-full bg-select-solid text-select-solid-fg'>
             <Check className='size-3' strokeWidth={3} aria-hidden='true' />
           </RadioGroupPrimitive.Indicator>
         </RadioGroupPrimitive.Item>
@@ -115,9 +115,9 @@ export function Segmented<T extends string>({
           key={o.value}
           value={o.value}
           className={cn(
-            'h-7 min-w-12 rounded-md px-2.5 text-sm text-muted-foreground tabular-nums transition-colors duration-150 outline-none',
-            'hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
-            'data-[state=checked]:bg-background data-[state=checked]:font-medium data-[state=checked]:text-foreground data-[state=checked]:shadow-[0_1px_2px_rgb(0_0_0/0.08)]'
+            'h-7 min-w-11 rounded-md px-2 text-sm text-muted-foreground tabular-nums transition-colors duration-150 outline-none sm:px-2.5',
+            'hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-select-border/40',
+            'data-[state=checked]:bg-select-surface data-[state=checked]:font-medium data-[state=checked]:text-select-fg data-[state=checked]:shadow-[inset_0_0_0_1px_var(--select-border)]'
           )}
         >
           {o.label}

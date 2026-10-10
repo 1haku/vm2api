@@ -159,8 +159,9 @@ function Stepper({
             aria-hidden='true'
             className={cn(
               'relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums transition-colors duration-150',
-              active && 'border-foreground bg-foreground text-background',
-              done && 'border-foreground/60 bg-background text-foreground',
+              active &&
+                'border-select-solid bg-select-solid text-select-solid-fg',
+              done && 'border-select-border bg-background text-select-fg',
               !active && !done && 'bg-background text-muted-foreground'
             )}
           >
@@ -212,7 +213,7 @@ function Stepper({
                 aria-hidden='true'
                 className={cn(
                   'absolute top-7 bottom-0 left-[9.5px] w-px',
-                  s.n < natural ? 'bg-foreground/40' : 'bg-border'
+                  s.n < natural ? 'bg-select-border/70' : 'bg-border'
                 )}
               />
             ) : null}
@@ -260,8 +261,8 @@ function Step({
           aria-hidden='true'
           className={cn(
             'inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums',
-            cur && 'border-foreground bg-foreground text-background',
-            done && !cur && 'border-foreground/60 text-foreground',
+            cur && 'border-select-solid bg-select-solid text-select-solid-fg',
+            done && !cur && 'border-select-border text-select-fg',
             !cur && !done && 'text-muted-foreground'
           )}
         >

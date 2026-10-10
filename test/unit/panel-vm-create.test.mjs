@@ -333,6 +333,37 @@ test('create rejects an invalid machine override with 400', async () => {
   }
 })
 
+test('create writes the requested locale into the slot and its fingerprint', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-locale-'))
+  try {
+    const { handlePanel, response } = makeCreateHandler(root, {
+      start: false,
+      auto_allocate_proxy: false,
+      locale: 'ja_JP.UTF-8',
+    })
+    await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/vms/create'))
+    assert.equal(response.status, 200, response.body?.error?.message || JSON.stringify(response.body))
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${response.body.data.vm.id}.json`), 'utf8'))
+    assert.equal(saved.locale, 'ja_JP.UTF-8')
+    assert.equal(saved.fingerprint.locale, 'ja_JP.UTF-8')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('create rejects an unknown locale before writing the slot', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-locale-bad-'))
+  try {
+    const { handlePanel, response } = makeCreateHandler(root, { id: 'vm-x', start: false, locale: 'xx_YY' })
+    await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/vms/create'))
+    assert.equal(response.status, 400)
+    assert.equal(response.body?.error?.code, 'invalid_locale')
+    assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-x.json')), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('GET /vms/create-options is available to a tenant user', async () => {
   const response = {}
   const handlePanel = createPanelHandler({

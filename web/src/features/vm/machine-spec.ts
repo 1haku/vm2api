@@ -3,6 +3,7 @@ import type { VmRoutingConfig } from '@/types/panel-routing'
 import type { KvmProbe, RuntimeType, Vm } from '@/types/panel-vm'
 
 export const VM_MEMORY_OPTIONS = [
+  '256m',
   '512m',
   '1g',
   '2g',
@@ -14,6 +15,7 @@ export const VM_MEMORY_OPTIONS = [
 export type VmMemoryOption = (typeof VM_MEMORY_OPTIONS)[number]
 
 export const VM_MEMORY_LABELS: Record<VmMemoryOption, string> = {
+  '256m': '256 MB',
   '512m': '512 MB',
   '1g': '1 GB',
   '2g': '2 GB',
@@ -160,7 +162,7 @@ export function vmConfigFieldErrors(raw: unknown): VmConfigFieldErrors {
     errors.default_runtime = '默认形态须为容器或虚拟机'
   }
   if (src.memory != null && !isMemoryOption(src.memory)) {
-    errors.memory = '内存须为 512m / 1g / 2g / 4g / 8g / 16g'
+    errors.memory = `内存须为 ${VM_MEMORY_OPTIONS.join(' / ')}`
   }
   if (src.vcpus != null) {
     const n = typeof src.vcpus === 'number' ? src.vcpus : Number(src.vcpus)
