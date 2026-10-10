@@ -8,18 +8,12 @@ import {
 import { Link } from '@tanstack/react-router'
 import type { PreflightCheck } from '@/types/panel-cluster'
 import type { RuntimeType } from '@/types/panel-vm'
-import { ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, isApiError } from '@/lib/api'
 import { importErrorMessage } from '@/lib/import-errors'
 import { cn } from '@/lib/utils'
 import { vmIdOf } from '@/lib/vm-name'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -29,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { ChoiceTiles, Segmented } from '@/components/choice-tiles'
 import { PlatformChip } from '@/components/platform-chip'
 import { meQueryOptions } from '@/features/auth/queries'
@@ -41,13 +34,10 @@ import {
 } from '@/features/vm/create-exit-field'
 import {
   KERNELS,
-  VM_CONCURRENCY_OPTIONS,
   VM_CREATE_AFTER,
   VM_LOCALES,
   VM_REGION_AUTO,
   VM_REGIONS,
-  VM_TEMPLATES,
-  VM_WEIGHT_OPTIONS,
   kernelProfile,
 } from '@/features/vm/create-options'
 import {
@@ -106,6 +96,7 @@ function deriveAfter(after: string) {
 }
 
 const MEMORY_SHORT: Record<VmMemoryOption, string> = {
+  '256m': '256M',
   '512m': '512M',
   '1g': '1G',
   '2g': '2G',
@@ -123,7 +114,7 @@ export interface CreateVmDraft {
   platform: Platform
   setPlatform: (next: Platform) => void
   kernel: string
-  pickKernel: (next: string) => void
+  setKernel: (next: string) => void
   name: string
   setName: (next: string) => void
   typedName: string
@@ -133,14 +124,6 @@ export interface CreateVmDraft {
   setRegion: (next: string) => void
   locale: string
   setLocale: (next: string) => void
-  conc: number
-  setConc: (next: number) => void
-  openaiOwnConc: boolean
-  setOpenaiOwnConc: (next: boolean) => void
-  openaiConc: number | null
-  setOpenaiConc: (next: number | null) => void
-  weight: number
-  setWeight: (next: number) => void
   runtimeType: RuntimeType
   setRuntime: (next: RuntimeType) => void
   memory: string
@@ -176,17 +159,12 @@ export function useCreateVmDraft({
   onCreated?: (id: string) => void
 } = {}): CreateVmDraft {
   const qc = useQueryClient()
-  const first = VM_TEMPLATES[0]
-  const [platform, setPlatformState] = useState<Platform>('anthropic')
-  const [kernel, setKernel] = useState<string>(first.kernel)
+  const [platform, setPlatform] = useState<Platform>('anthropic')
+  const [kernel, setKernel] = useState<string>(KERNELS[0].id)
   const [name, setName] = useState('')
-  const [after, setAfter] = useState<string>(pinnedAfter || first.after)
-  const [region, setRegion] = useState<string>(first.region || VM_REGION_AUTO)
-  const [locale, setLocale] = useState<string>(first.locale)
-  const [conc, setConc] = useState<number>(first.conc)
-  const [openaiOwnConc, setOpenaiOwnConc] = useState(false)
-  const [openaiConc, setOpenaiConc] = useState<number | null>(null)
-  const [weight, setWeight] = useState<number>(first.weight)
+  const [after, setAfter] = useState<string>(pinnedAfter || 'start')
+  const [region, setRegion] = useState<string>(VM_REGION_AUTO)
+  const [locale, setLocale] = useState<string>(VM_LOCALES[0][0])
   const [runtimeOverride, setRuntimeOverride] = useState<RuntimeType | null>(
     null
   )
@@ -227,28 +205,6 @@ export function useCreateVmDraft({
   const exit = useCreateExit(placement.nodeId)
   const wantsExit = after !== 'idle'
 
-  function setPlatform(next: Platform) {
-    setPlatformState(next)
-    if (next === 'openai') {
-      setOpenaiConc(null)
-      setOpenaiOwnConc(false)
-    }
-  }
-
-  function pickKernel(next: string) {
-    // 系统与模板一一对应：选系统即套用它的区域 / 语言 / 并发预设。
-    const tpl = VM_TEMPLATES.find((t) => t.kernel === next) || first
-    setKernel(next)
-    // 宿主钉死了「之后」（导入流程）时不跟模板走。
-    setAfter(pinnedAfter || tpl.after)
-    setRegion(tpl.region || VM_REGION_AUTO)
-    setLocale(tpl.locale)
-    setConc(tpl.conc)
-    setOpenaiConc(null)
-    setOpenaiOwnConc(false)
-    setWeight(tpl.weight)
-  }
-
   const create = useMutation({
     mutationFn: async () => {
       // 纯非 ASCII 名称（如「测试槽」）清洗后为空：不发 id，让后端自动编号。
@@ -263,12 +219,7 @@ export function useCreateVmDraft({
           locale,
           // 「自动」是纯 UI 哨兵值，不发给后端。
           region: region === VM_REGION_AUTO ? undefined : region,
-          ...(platform === 'openai'
-            ? openaiOwnConc && openaiConc != null
-              ? { max_concurrency: openaiConc }
-              : {}
-            : { max_concurrency: conc }),
-          weight,
+          // 并发、权重不在创建时定：后端按设置里的全局默认（Claude / OpenAI 各自）填。
           ...deriveAfter(after),
           platform,
           family: platform === 'openai' ? 'codex' : 'claude',
@@ -319,7 +270,7 @@ export function useCreateVmDraft({
     platform,
     setPlatform,
     kernel,
-    pickKernel,
+    setKernel,
     name,
     setName,
     typedName,
@@ -329,14 +280,6 @@ export function useCreateVmDraft({
     setRegion,
     locale,
     setLocale,
-    conc,
-    setConc,
-    openaiOwnConc,
-    setOpenaiOwnConc,
-    openaiConc,
-    setOpenaiConc,
-    weight,
-    setWeight,
     runtimeType,
     setRuntime: (next: RuntimeType) => setRuntimeOverride(next),
     memory,
@@ -500,7 +443,6 @@ export function CreateVmForm({
   variant: 'flow' | 'dialog'
   onCancel?: () => void
 }) {
-  const [moreOpen, setMoreOpen] = useState(false)
   const remote = !!d.placement.nodeId
   const kvm = d.runtimeType === 'kvm'
 
@@ -547,11 +489,11 @@ export function CreateVmForm({
         />
       </Section>
 
-      <Section title='系统' hint='选系统同时套用它的区域、语言与并发预设。'>
+      <Section title='系统' hint='客体操作系统，决定槽里的发行版与包管理器。'>
         <ChoiceTiles
           label='客体系统'
           value={d.kernel}
-          onChange={d.pickKernel}
+          onChange={d.setKernel}
           className='grid-cols-2 lg:grid-cols-4'
           choices={KERNELS.map((k) => ({
             value: k.id,
@@ -637,6 +579,48 @@ export function CreateVmForm({
             </>
           ) : null}
         </div>
+        {d.memory === '256m' || d.memory === '512m' ? (
+          <p className='text-xs text-[color:var(--status-caution)]'>
+            低于 1G：常驻 CLI 与官方初装同时运行时可能被 OOM
+            {kvm ? '，虚拟机系统本身还要占一部分' : ''}。
+          </p>
+        ) : null}
+      </Section>
+
+      <Section
+        title='环境'
+        hint='写进槽位的地区标签与系统语言（LANG）。时区不在这里选：绑定出口并完成地理探测后自动写入。'
+      >
+        <div className='space-y-4'>
+          <div className='space-y-1.5'>
+            <Label>区域</Label>
+            <Segmented
+              label='区域'
+              value={d.region}
+              onChange={d.setRegion}
+              options={VM_REGIONS.map(([value, label]) => ({ value, label }))}
+            />
+          </div>
+          <div className='space-y-1.5'>
+            <Label>语言</Label>
+            <Segmented
+              label='语言'
+              value={d.locale}
+              onChange={d.setLocale}
+              options={VM_LOCALES.map(([value, label]) => ({
+                value,
+                label: (
+                  <span className='inline-flex items-baseline gap-1.5'>
+                    {label}
+                    <span className='font-mono text-[11px] opacity-70'>
+                      {value.replace('.UTF-8', '')}
+                    </span>
+                  </span>
+                ),
+              }))}
+            />
+          </div>
+        </div>
       </Section>
 
       {d.placement.visible ? (
@@ -651,132 +635,17 @@ export function CreateVmForm({
       ) : null}
 
       <Section title='名称'>
-        <div className='space-y-1.5'>
-          <Input
-            aria-label='槽位名称'
-            value={d.name}
-            onChange={(e) => d.setName(e.target.value)}
-            placeholder='留空自动编号，如 vm-08'
-            className='max-w-sm'
-          />
-        </div>
-        <Collapsible open={moreOpen} onOpenChange={setMoreOpen}>
-          <CollapsibleTrigger className='inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground'>
-            区域、语言、并发与权重
-            <ChevronDown
-              className={cn(
-                'size-3.5 transition-transform duration-150',
-                moreOpen && 'rotate-180'
-              )}
-              aria-hidden='true'
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent className='grid gap-3 pt-3 sm:grid-cols-2'>
-            <Field label='区域'>
-              <Select value={d.region} onValueChange={d.setRegion}>
-                <SelectTrigger aria-label='区域'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VM_REGIONS.map(([v, l]) => (
-                    <SelectItem key={v} value={v}>
-                      {l}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label='语言'>
-              <Select value={d.locale} onValueChange={d.setLocale}>
-                <SelectTrigger aria-label='语言'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VM_LOCALES.map(([v, l]) => (
-                    <SelectItem key={v} value={v}>
-                      {l}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            {d.platform === 'openai' ? (
-              <Field label='OpenAI 并发'>
-                <div className='flex h-9 items-center gap-2'>
-                  <Switch
-                    checked={d.openaiOwnConc}
-                    onCheckedChange={(checked) => {
-                      d.setOpenaiOwnConc(checked)
-                      d.setOpenaiConc(checked ? d.conc : null)
-                    }}
-                    aria-label='使用独立 OpenAI 并发'
-                  />
-                  {d.openaiOwnConc ? (
-                    <Select
-                      value={String(d.openaiConc ?? d.conc)}
-                      onValueChange={(v) => d.setOpenaiConc(Number(v))}
-                    >
-                      <SelectTrigger className='w-24' aria-label='OpenAI 并发'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VM_CONCURRENCY_OPTIONS.filter((v) => v > 0).map(
-                          (v) => (
-                            <SelectItem key={v} value={String(v)}>
-                              {v}
-                            </SelectItem>
-                          )
-                        )}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <span className='text-xs text-muted-foreground'>
-                      跟随 OpenAI 全局默认
-                    </span>
-                  )}
-                </div>
-              </Field>
-            ) : (
-              <Field label='并发'>
-                <Select
-                  value={String(d.conc)}
-                  onValueChange={(v) => d.setConc(Number(v))}
-                >
-                  <SelectTrigger aria-label='并发'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {VM_CONCURRENCY_OPTIONS.map((v) => (
-                      <SelectItem key={v} value={String(v)}>
-                        {v}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            <Field label='权重'>
-              <Select
-                value={String(d.weight)}
-                onValueChange={(v) => d.setWeight(Number(v))}
-              >
-                <SelectTrigger aria-label='权重'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VM_WEIGHT_OPTIONS.map((v) => (
-                    <SelectItem key={v} value={String(v)}>
-                      {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <p className='text-xs leading-relaxed text-muted-foreground sm:col-span-2'>
-              时区不在这里选：绑定 SOCKS5 并完成地理探测后自动写入。
-            </p>
-          </CollapsibleContent>
-        </Collapsible>
+        <Input
+          aria-label='槽位名称'
+          value={d.name}
+          onChange={(e) => d.setName(e.target.value)}
+          placeholder='留空自动编号，如 vm-08'
+          className='max-w-sm'
+        />
+        <p className='text-xs text-muted-foreground'>
+          并发跟随设置里的全局默认（创建后可在槽位详情钉住单槽值），权重为默认
+          1。
+        </p>
       </Section>
 
       {variant === 'dialog' && !d.pinnedAfter ? (

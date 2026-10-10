@@ -249,7 +249,15 @@ export function SpecsPage() {
               <div className='divide-y'>
                 <SettingRow
                   label='内存'
-                  desc='容器的内存上限，或虚拟机的内存。'
+                  desc={
+                    cfg.memory === '256m' || cfg.memory === '512m' ? (
+                      <span className='text-[color:var(--status-caution)]'>
+                        低于 1G：常驻 CLI 与官方初装同时运行时可能被 OOM。
+                      </span>
+                    ) : (
+                      '容器的内存上限，或虚拟机的内存。'
+                    )
+                  }
                 >
                   <Segmented
                     label='默认内存'
@@ -259,7 +267,7 @@ export function SpecsPage() {
                     }}
                     options={VM_MEMORY_OPTIONS.map((id) => ({
                       value: id,
-                      label: VM_MEMORY_LABELS[id].replace(' ', ''),
+                      label: VM_MEMORY_LABELS[id].replace(/ ?([MG])B$/, '$1'),
                     }))}
                   />
                 </SettingRow>

@@ -91,7 +91,7 @@ describe('vmConfigFieldErrors / validateVmConfigPatch', () => {
     expect(vmConfigFieldErrors({ vcpus: 16 })).toEqual({})
     expect(vmConfigFieldErrors({ disk_gb: 9 }).disk_gb).toMatch(/10–200/)
     expect(vmConfigFieldErrors({ disk_gb: 200 })).toEqual({})
-    expect(vmConfigFieldErrors({ memory: '3g' }).memory).toMatch(/512m/)
+    expect(vmConfigFieldErrors({ memory: '3g' }).memory).toMatch(/256m/)
     expect(
       vmConfigFieldErrors({ default_runtime: 'xen' }).default_runtime
     ).toBeTruthy()
