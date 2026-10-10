@@ -11,6 +11,7 @@ export const PANEL_VIEWS = [
   'cluster',
   'vm',
   'import',
+  'specs',
   'usage',
   'proxies',
   'models',

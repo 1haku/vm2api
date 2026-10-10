@@ -50,7 +50,6 @@ import { SettingsSkeleton } from '@/features/settings/settings-skeleton'
 import { Socks5Pane } from '@/features/settings/socks5-pane'
 import { StickyPane } from '@/features/settings/sticky-pane'
 import { TelemetryPane } from '@/features/settings/telemetry-pane'
-import { VmPane } from '@/features/settings/vm-pane'
 
 export function SettingsPage() {
   const { tab: raw } = useParams({ from: '/_authenticated/settings/$tab' })
@@ -360,14 +359,6 @@ export function SettingsPage() {
                 <LogsPane
                   value={logging}
                   onChange={(next) => setDraft({ ...draft, logging: next })}
-                />
-              ) : null}
-              {tab === 'vm' ? (
-                <VmPane
-                  value={
-                    (draft.vm as Record<string, unknown> | undefined) || {}
-                  }
-                  onChange={(next) => setDraft({ ...draft, vm: next })}
                 />
               ) : null}
               {tab === 'init' ? (
