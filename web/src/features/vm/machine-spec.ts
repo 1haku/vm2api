@@ -59,7 +59,7 @@ export const TCG_WARNING = '当前为 TCG 软件模拟，速度很慢，仅供�
 
 export const VM_CONFIG_DEFAULTS: VmRoutingConfig = {
   default_runtime: 'docker',
-  memory: '1g',
+  memory: '512m',
   vcpus: 2,
   disk_gb: 20,
   cpu_model: 'host',

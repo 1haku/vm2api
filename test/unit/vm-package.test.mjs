@@ -121,7 +121,7 @@ test('import creates the slot and rolls a colliding id forward', async (t) => {
   assert.equal(saved.timezone, 'Asia/Tokyo')
   assert.equal(saved.persona_preset, 'official')
   assert.equal(saved.runtime.type, 'docker')
-  assert.equal(saved.machine.memory, '1g')
+  assert.equal(saved.machine.memory, '512m')
   assert.equal(saved.policy.maxConcurrency, 3)
   assert.equal(saved.stats.requests, undefined)
   assert.equal(saved.proxy.host, '10.2.2.2')

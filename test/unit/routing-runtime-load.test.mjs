@@ -384,7 +384,7 @@ test('loadRoutingConfig normalizes a missing or invalid vm section', () => {
       }),
     )
     const doc = runtimeFor(file).loadRoutingConfig()
-    assert.equal(doc.vm.memory, '1g')
+    assert.equal(doc.vm.memory, '512m')
     assert.equal(doc.vm.vcpus, 2)
     assert.equal(doc.vm.default_runtime, 'docker')
     assert.equal(doc.vm.allow_tcg, false)

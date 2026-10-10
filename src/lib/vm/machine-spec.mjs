@@ -17,7 +17,7 @@ export const VM_CPU_MODELS = Object.freeze([
 
 export const VM_CONFIG_DEFAULTS = Object.freeze({
   default_runtime: 'docker',
-  memory: '1g',
+  memory: '512m',
   vcpus: 2,
   disk_gb: 20,
   cpu_model: 'host',
