@@ -23,7 +23,7 @@ test('normalizeVmConfig fills defaults and replaces invalid fields', () => {
     allow_tcg: 'yes',
     smbios: { manufacturer: 'Bad,Inc', product: '' },
   })
-  assert.equal(out.memory, '1g')
+  assert.equal(out.memory, '512m')
   assert.equal(out.vcpus, 2)
   assert.equal(out.disk_gb, 20)
   assert.equal(out.cpu_model, 'host')
@@ -124,11 +124,11 @@ test('resolveMachineSpec override precedence and invalid_machine', () => {
   )
 })
 
-test('slotMemory prefers the slot then routing then 1g', () => {
+test('slotMemory prefers the slot then routing then 512m', () => {
   assert.equal(slotMemory({ machine: { memory: '4g' } }, { vm: { memory: '2g' } }), '4g')
   assert.equal(slotMemory({ machine: {} }, { vm: { memory: '2g' } }), '2g')
   assert.equal(slotMemory(null, { vm: { memory: '8g' } }), '8g')
-  assert.equal(slotMemory(null, null), '1g')
+  assert.equal(slotMemory(null, null), '512m')
   assert.equal(slotMemory({ machine: { memory: 'nope' } }, { vm: { memory: '2g' } }), '2g')
 })
 

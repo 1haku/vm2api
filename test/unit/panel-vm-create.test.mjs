@@ -235,10 +235,10 @@ test('create stamps docker machine from routing defaults', async () => {
     const id = response.body?.data?.vm?.id
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${id}.json`), 'utf8'))
     assert.equal(saved.runtime.type, 'docker')
-    assert.equal(saved.machine.memory, '1g')
+    assert.equal(saved.machine.memory, '512m')
     assert.equal(saved.machine.vcpus, 2)
     assert.equal(response.body.data.vm.runtime_type, 'docker')
-    assert.equal(response.body.data.vm.machine.memory, '1g')
+    assert.equal(response.body.data.vm.machine.memory, '512m')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

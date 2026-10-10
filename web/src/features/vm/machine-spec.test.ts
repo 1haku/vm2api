@@ -18,7 +18,7 @@ describe('normalizeVmConfig', () => {
     expect(normalizeVmConfig(null)).toEqual(VM_CONFIG_DEFAULTS)
     expect(normalizeVmConfig({})).toMatchObject({
       default_runtime: 'docker',
-      memory: '1g',
+      memory: '512m',
       vcpus: 2,
       disk_gb: 20,
       cpu_model: 'host',
@@ -68,7 +68,7 @@ describe('normalizeVmConfig', () => {
       })
     ).toMatchObject({
       default_runtime: 'docker',
-      memory: '1g',
+      memory: '512m',
       vcpus: 2,
       disk_gb: 20,
       cpu_model: 'host',
@@ -136,7 +136,7 @@ describe('createMachinePayload', () => {
         vcpus: 2,
         diskGb: 20,
       }).machine.memory
-    ).toBe('1g')
+    ).toBe('512m')
   })
 })
 

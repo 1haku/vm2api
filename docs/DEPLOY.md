@@ -28,7 +28,7 @@ VM2API_DB_SECRET='再一串'
 
 不是一个父容器里多个子进程。
 
-槽位默认内存上限为 `1g`，在面板「规格」或 `routing.json` 的 `vm.memory` 配置（`256m` / `512m` / `1g` / `2g` / `4g` / `8g` / `16g`）。创建时可按槽覆盖，结果写在该槽 `vm.machine.memory`。已不再读取 `KIN_VM_MEMORY`。低于 1G 时，常驻 native host 与临时官方 CLI 同时运行可能 OOM；额度 API 探测本身不应额外启动推理 CLI。已有容器不会因控制面升级自动改内存，可在核对宿主余量后使用 `docker update --memory 1g --memory-swap 1g kin-<槽>`，不重建容器。
+槽位默认内存上限为 `512m`，在面板「规格」或 `routing.json` 的 `vm.memory` 配置（`256m` / `512m` / `1g` / `2g` / `4g` / `8g` / `16g`）。创建时可按槽覆盖，结果写在该槽 `vm.machine.memory`。已不再读取 `KIN_VM_MEMORY`。低于 1G 时，常驻 native host 与临时官方 CLI 同时运行可能 OOM；额度 API 探测本身不应额外启动推理 CLI。已有容器不会因控制面升级自动改内存，可在核对宿主余量后使用 `docker update --memory 1g --memory-swap 1g kin-<槽>`，不重建容器。
 
 KVM 槽需要宿主 `/dev/kvm` 可读写（控制面在容器内时，用一次 `--device /dev/kvm` 的探测容器确认）。没有 KVM 时不要在生产打开 `vm.allow_tcg`：那是 TCG 软件模拟，仅供测试。
 

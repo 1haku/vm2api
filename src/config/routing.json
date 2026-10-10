@@ -208,7 +208,7 @@
   },
   "vm": {
     "default_runtime": "docker",
-    "memory": "1g",
+    "memory": "512m",
     "vcpus": 2,
     "disk_gb": 20,
     "cpu_model": "host",
