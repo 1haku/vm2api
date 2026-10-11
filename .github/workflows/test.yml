@@ -1,4 +1,4 @@
-# PR/main gate: Node + Go + prebuilt amd64 ELFs + web + native ARM64 deployment.
+# PR/main gate: Node + Go + pinned amd64 payload ELFs + web + native ARM64 deployment.
 name: ci
 
 on:
@@ -25,12 +25,20 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: package-lock.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: worker/go.sum
       - run: npm ci
       - name: format-check
         run: npx biome format
       - name: syntax-check Node source and scripts
         run: |
           find src scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check
+      - name: slot payloads and egress helper used by the unit tests
+        run: |
+          npm run fetch:payload
+          npm run build:egress
       - run: npm run test:unit
       - name: ARM64 host preparation and rollback tests
         run: python3 -m unittest discover -s test/deploy -v
@@ -98,13 +106,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: prebuilt linux amd64 ELFs
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: pinned linux amd64 payload ELFs
         run: |
-          for b in bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel bin/kin-oauth-auth share/wrap-cli/kin-kernel.bin share/wrap-cli/cli-node share/wrap-cli/cc-node share/crag/kin-kernel; do
-            test -f "$b"
+          node scripts/fetch-payload.mjs
+          node scripts/fetch-payload.mjs --check
+          for b in bin/kin-kernel bin/kin-codex-kernel bin/kin-oauth-auth share/wrap-cli/kin-kernel.bin share/wrap-cli/cli-node share/wrap-cli/cc-node share/crag/kin-kernel; do
             file "$b" | grep -q 'ELF 64-bit LSB .*x86-64'
           done
-          cmp bin/kin-kernel share/wrap-cli/kin-kernel.bin
 
   web:
     runs-on: ubuntu-latest

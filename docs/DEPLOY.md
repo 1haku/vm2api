@@ -81,7 +81,9 @@ cd /opt/vm2api && cp .env.example .env && chmod 600 .env
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-一键脚本对应 `--from-source`；目录里有 `.git` 时 `upgrade` 自动走源码分支。二进制在仓内 `bin/`，必须 **755**。
+一键脚本对应 `--from-source`；目录里有 `.git` 时 `upgrade` 自动走源码分支。仓库只有源码：镜像构建内编控制台与 Go helper，并按 `deploy/payload.json` 从 payload Release 下载、校验 kernel / CLI，构建机要能访问 GitHub。镜像入口再把它们写进挂载的 `bin/` 与 `share/`。
+
+2026-10-11 起仓库历史已重写以移除构建产物，所有 tag 的提交号都变了。旧的源码安装用新版 `deploy/install.sh upgrade`（脚本已改为 `git fetch --force --tags`），不要用旧面板的一键更新做这次迁移。
 
 升级到 **v1.2.22** 见下面「已部署机升级到 1.2.22」。更新控制面和槽内 kernel，但不要 `docker rm` 槽。
 
@@ -179,11 +181,11 @@ location / {
 
 ## 本机 Node（备选）
 
-仓内已有 `bin/kin-*`。还要 `npm ci`、`pnpm -C web install --frozen-lockfile && npm run build:web`，以及占位 `vms/active.json`。单元：[deploy/vm2api.service](deploy/vm2api.service)。细节见 [BUILD.md](BUILD.md)。
+`npm run fetch:payload` 拉 `bin/kin-{kernel,codex-kernel,oauth-auth}` 与 `share/`；`npm run build:egress && npm run build:worker`；`npm ci`、`pnpm -C web install --frozen-lockfile && npm run build:web`；以及占位 `vms/active.json`。单元：[deploy/vm2api.service](deploy/vm2api.service)。细节见 [BUILD.md](BUILD.md)。
 
 ## 一键安装 / 更新
 
-`deploy/install.sh` 默认拉 ghcr 预构建镜像，不在目标机编译。控制台是仓内 `web/dist`，打进镜像，不再在镜像构建里跑 `pnpm build`。`--from-source` 也只拷贝这份预编译产物。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。
+`deploy/install.sh` 默认拉 ghcr 预构建镜像，不在目标机编译，只下载 `docker-compose.yml`、`.env.example`、`VERSION`、`CHANGELOG.md`、`deploy/install.sh`（ARM64 另加 `deploy/prepare-arm64.py`）。`--from-source` 在目标机按 `Dockerfile` 多阶段构建：编 `web/dist` 与 Go helper，按 `deploy/payload.json` 下载 payload。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。
 
 ### 两类安装错误
 
