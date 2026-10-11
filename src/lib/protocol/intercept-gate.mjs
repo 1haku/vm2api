@@ -98,8 +98,8 @@ export function commitProtocolBlock(decision, { repo, devices, policy, requestId
   }
 }
 
-function pass(by) {
-  return { action: 'pass', intercept: gateVerdict({ kind: 'pass', by }) }
+function pass(by, keyword = '') {
+  return { action: 'pass', intercept: gateVerdict({ kind: 'pass', by, keyword }) }
 }
 
 function block(fields) {
@@ -266,7 +266,7 @@ export async function evaluateProtocolIntercept({
             ? 'regex'
             : 'unchecked'
           : 'fail-open'
-    return pass(by)
+    return pass(by, verdict.reason === 'unavailable' ? verdict.detail || '' : '')
   }
 
   return pass(scanned ? 'regex' : 'unchecked')
