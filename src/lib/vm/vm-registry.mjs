@@ -400,6 +400,13 @@ export function setActiveVm(projectRoot, id) {
   atomicWriteJson(file, { active_vm: id, updated_at: new Date().toISOString() })
 }
 
+/** Drop the active pointer. Used when the last slot is deleted. */
+export function clearActiveVm(projectRoot) {
+  try {
+    fs.rmSync(path.join(projectRoot, 'vms', 'active.json'), { force: true })
+  } catch {}
+}
+
 /** Statuses that mean the slot is actually down — not a soft UI pause. */
 const HARD_UNAVAILABLE = new Set(['stopped', 'dead', 'error', 'disabled'])
 

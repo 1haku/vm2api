@@ -70,6 +70,14 @@ export function removeVmFromDb(id) {
   return r.remove(id)
 }
 
+/** Forget settings.active_vm so startup reconcile does not rewrite active.json. */
+export function clearActiveVmFromDb() {
+  const r = repo()
+  if (!r) return false
+  r.clearActiveVmId()
+  return true
+}
+
 /**
  * Startup reconcile:
  *   - file newer than DB row (or row missing) → upsert from file

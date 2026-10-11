@@ -48,6 +48,60 @@ export function readRoutingConfigFile(projectRoot = PROJECT) {
   }
 }
 
+function readActiveVmRecord(projectRoot) {
+  try {
+    const active = JSON.parse(fs.readFileSync(path.join(projectRoot, 'vms', 'active.json'), 'utf8'))
+    const id = active?.active_vm
+    if (!id) return null
+    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'vms', `${id}.json`), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function snapshotVm(vm, project) {
+  if (!vm?.id) {
+    return {
+      id: null,
+      name: null,
+      email: null,
+      account_uuid: null,
+      org_uuid: null,
+      has_access: false,
+      proxy: null,
+      has_refresh: false,
+      expires_at: null,
+      refresh_error: null,
+      max_concurrency: 2,
+      claude_code_version: 'unknown',
+      timezone: 'UTC',
+      locale: 'en_US.UTF-8',
+      kernel: null,
+      seed_policy: null,
+      path: null,
+    }
+  }
+  return {
+    id: vm.id,
+    name: vm.name,
+    email: vm.claude?.email,
+    account_uuid: vm.claude?.account_uuid || vm.id,
+    org_uuid: vm.claude?.org_uuid || null,
+    has_access: !!(vm.claude?.has_access || vm.claude?.access_token),
+    proxy: vm.proxy || null,
+    has_refresh: !!(vm.claude?.has_refresh || vm.claude?.refresh_token),
+    expires_at: vm.claude?.expires_at,
+    refresh_error: vm.claude?.refresh_error || null,
+    max_concurrency: vm.policy?.maxConcurrency || 2,
+    claude_code_version: vm.claude_code_version || 'unknown',
+    timezone: vm.timezone || 'UTC',
+    locale: vm.locale || 'en_US.UTF-8',
+    kernel: vm.kernel || null,
+    seed_policy: vm.seed_policy || null,
+    path: path.join(project, 'vms', `${vm.id}.json`),
+  }
+}
+
 export function loadConfig() {
   const keyFile = path.join(ROOT, 'config', 'test.key')
   const apiKey =
@@ -56,8 +110,7 @@ export function loadConfig() {
     (fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8').trim() : null)
   if (!apiKey) throw new Error('VM2API_API_KEY not set')
 
-  const active = JSON.parse(fs.readFileSync(path.join(PROJECT, 'vms', 'active.json'), 'utf8'))
-  const vm = JSON.parse(fs.readFileSync(path.join(PROJECT, 'vms', `${active.active_vm}.json`), 'utf8'))
+  const vm = readActiveVmRecord(PROJECT)
 
   const port = Number(process.env.PORT || 8787)
   const host = process.env.HOST || '0.0.0.0'
@@ -94,25 +147,7 @@ export function loadConfig() {
     },
     // Admin/status snapshot of the *active* VM only.
     // Inference must use buildExecutionContext() — never this object.
-    vm: {
-      id: vm.id,
-      name: vm.name,
-      email: vm.claude?.email,
-      account_uuid: vm.claude?.account_uuid || vm.id,
-      org_uuid: vm.claude?.org_uuid || null,
-      has_access: !!(vm.claude?.has_access || vm.claude?.access_token),
-      proxy: vm.proxy || null,
-      has_refresh: !!(vm.claude?.has_refresh || vm.claude?.refresh_token),
-      expires_at: vm.claude?.expires_at,
-      refresh_error: vm.claude?.refresh_error || null,
-      max_concurrency: vm.policy?.maxConcurrency || 2,
-      claude_code_version: vm.claude_code_version || 'unknown',
-      timezone: vm.timezone || 'UTC',
-      locale: vm.locale || 'en_US.UTF-8',
-      kernel: vm.kernel || null,
-      seed_policy: vm.seed_policy || null,
-      path: path.join(PROJECT, 'vms', `${vm.id}.json`),
-    },
+    vm: snapshotVm(vm, PROJECT),
     paths: {
       root: ROOT,
       project: PROJECT,
@@ -134,35 +169,15 @@ function loadInterceptRules(file) {
 }
 
 export function hydrateVmCfg(cfg, vm, projectRoot = cfg.paths?.project) {
-  if (!cfg || !vm) return cfg
-  const root = projectRoot || path.dirname(path.dirname(cfg.vm?.path || ''))
-  cfg.vm = {
-    id: vm.id,
-    name: vm.name,
-    email: vm.claude?.email,
-    account_uuid: vm.claude?.account_uuid || vm.id,
-    org_uuid: vm.claude?.org_uuid || null,
-    has_access: !!(vm.claude?.has_access || vm.claude?.access_token),
-    proxy: vm.proxy || null,
-    has_refresh: !!(vm.claude?.has_refresh || vm.claude?.refresh_token),
-    expires_at: vm.claude?.expires_at,
-    refresh_error: vm.claude?.refresh_error || null,
-    max_concurrency: vm.policy?.maxConcurrency || 2,
-    claude_code_version: vm.claude_code_version || 'unknown',
-    timezone: vm.timezone || 'UTC',
-    locale: vm.locale || 'en_US.UTF-8',
-    kernel: vm.kernel || null,
-    seed_policy: vm.seed_policy || null,
-    path: path.join(root, 'vms', `${vm.id}.json`),
-  }
+  if (!cfg) return cfg
+  const root = projectRoot || path.dirname(path.dirname(cfg.vm?.path || '')) || ''
+  cfg.vm = snapshotVm(vm, root)
   return cfg
 }
 
 export function reloadActiveVm(cfg) {
   const project = cfg.paths.project
-  const id = JSON.parse(fs.readFileSync(path.join(project, 'vms', 'active.json'), 'utf8')).active_vm
-  const vm = JSON.parse(fs.readFileSync(path.join(project, 'vms', `${id}.json`), 'utf8'))
-  return hydrateVmCfg(cfg, vm, project)
+  return hydrateVmCfg(cfg, readActiveVmRecord(project), project)
 }
 
 export function saveVmPatch(vmPath, patch) {

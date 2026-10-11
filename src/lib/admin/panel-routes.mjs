@@ -114,6 +114,7 @@ import {
   summarizeVm,
   getActiveVmId,
   setActiveVm,
+  clearActiveVm,
   setVmSchedulable,
   bindVmProxy,
   adoptVmProxyBinding,
@@ -159,7 +160,7 @@ import {
   startHostUpgrade,
 } from './release.mjs'
 import { downloadReleaseKernel, kernelReleaseHttpStatus } from './release-kernel.mjs'
-import { removeVmFromDb } from '../vm/vm-db-sync.mjs'
+import { clearActiveVmFromDb, removeVmFromDb } from '../vm/vm-db-sync.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
 import { reloadActiveVm } from '../core/config.mjs'
 import {
@@ -2553,7 +2554,7 @@ export function createPanelHandler(ctx) {
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
         if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         const active = getActiveVmId(cfg.paths.project)
-        if (active === id) {
+        if (active === id && listVms(cfg.paths.project).some((vm) => vm.id !== id)) {
           return json(res, 409, { ok: false, error: { message: 'cannot delete active VM, switch active first' } })
         }
         const vm = getVm(cfg.paths.project, id)
@@ -2579,6 +2580,15 @@ export function createPanelHandler(ctx) {
           fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
         } catch {}
         fs.unlinkSync(vmPath)
+        if (active === id) {
+          clearActiveVm(cfg.paths.project)
+          try {
+            clearActiveVmFromDb()
+          } catch {}
+          try {
+            reloadActiveVm(cfg)
+          } catch {}
+        }
         // drop the DB credential mirror row too
         try {
           removeVmFromDb(id)
