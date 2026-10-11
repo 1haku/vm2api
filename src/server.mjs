@@ -88,8 +88,8 @@ import {
 import { normalizeCredentialMode } from './lib/oauth/credential-mode.mjs'
 import { ensureWorkerCredential } from './lib/transport/go-worker-client.mjs'
 import { stopAllRustKernels } from './lib/transport/rust-kernel-supervisor.mjs'
-import { createRespond } from './lib/http/respond.mjs'
-import { tryServeWebDist } from './lib/http/web-dist.mjs'
+import { createRespond, parseRequestUrl } from './lib/http/respond.mjs'
+import { isConsoleEntry, tryServeWebDist } from './lib/http/web-dist.mjs'
 import { createRoutingRuntime } from './lib/admin/routing-runtime.mjs'
 import { createImportCommit } from './lib/oauth/import-commit.mjs'
 import { createHandleProtocol } from './lib/protocol/handle-protocol.mjs'
@@ -151,6 +151,9 @@ if (legacyImport?.imported) {
 const vmSync = initVmDbSync(cfg.paths.project)
 if (vmSync.upserted || vmSync.rebuilt) {
   console.log(`[db] vm mirror reconciled: upserted=${vmSync.upserted} rebuilt=${vmSync.rebuilt}`)
+}
+if (vmSync.proxy_cli_repaired) {
+  console.log(`[vm] repaired proxy_cli_enabled on ${vmSync.proxy_cli_repaired} slot(s)`)
 }
 
 // --- P3 sticky + quota ---
@@ -451,6 +454,7 @@ credentialRefreshMonitor = createCredentialRefreshMonitor({
 kernelWatchdog = createKernelWatchdog({
   config: routingConfig.kernel_watchdog,
   listTargets: () => listVms(cfg.paths.project),
+  getRouting: () => routingConfig,
   homeDirFor: (vm) => path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'),
   ensureTelemetry: (vm) => ensureTelemetrySidecar({ projectRoot: cfg.paths.project, vm }),
   onFault: (vm, reason) => {
@@ -953,6 +957,7 @@ const handlePanel = createPanelHandler({
   refreshWorkerCredentialForVm,
   fetchWorkerModels,
   clusterRoutes,
+  clusterManager,
   slotShell,
 })
 
@@ -968,7 +973,10 @@ const server = http.createServer(async (req, res) => {
       return res.end()
     }
 
-    const url = new URL(req.url || '/', `http://${req.headers.host}`)
+    const url = parseRequestUrl(req)
+    if (!url) {
+      return json(res, 400, { error: { message: 'Invalid URL', type: 'invalid_request' } })
+    }
     const p = url.pathname
 
     if (isTelemetryPath(p)) {
@@ -1027,7 +1035,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && tryServeWebDist(res, cfg.paths.project, p)) return
-    if (req.method === 'GET' && (p === '/console' || p === '/console/')) {
+    if (req.method === 'GET' && isConsoleEntry(p)) {
       return json(res, 404, { error: { message: 'console not found; run pnpm -C web build' } })
     }
 
