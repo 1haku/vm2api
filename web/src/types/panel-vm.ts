@@ -429,11 +429,31 @@ export type PoolSeatLive = {
   seats_grace: number
   queue_depth: number
   conc_waiting: number
+  /** 正在这台 VM 上执行的请求数（含无席位探测与 pin）。 */
+  inflight?: number
 }
 
 /** `GET /api/panel/pool/stream` 的 `event: seats` 负载。 */
 export type PoolSeatSnapshot = PoolQueueSummary & {
   seats: Record<string, PoolSeatLive>
+  ts: number
+}
+
+/** 单台 VM 绑定的 SOCKS5 实时健康，随每次探测推送。 */
+export type PoolProxyLive = Pick<
+  VmProxySnap,
+  | 'id'
+  | 'status'
+  | 'enabled'
+  | 'blocked_reason'
+  | 'latency_ms'
+  | 'last_error'
+  | 'last_probe_at'
+>
+
+/** `GET /api/panel/pool/stream` 的 `event: proxy` 负载；键为 VM id。 */
+export type PoolProxySnapshot = {
+  proxies: Record<string, PoolProxyLive>
   ts: number
 }
 

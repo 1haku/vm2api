@@ -336,6 +336,8 @@ export class PoolScheduler extends EventEmitter {
     this.lastStickyCleared = false
     this.inflight = new Map()
     this.inflightFamily = new Map()
+    /** vmId → live reservations; mirrors `inflight` (per account) for the panel. */
+    this.vmInflight = new Map()
     this.waiters = new Map()
     this.healthCache = new Map()
     this.lastUsed = new Map()
@@ -1421,6 +1423,7 @@ export class PoolScheduler extends EventEmitter {
     }
     this.inflight.set(candidate.accountId, requestInflight + 1)
     this.bumpFamily(candidate.accountId, family, 1)
+    this.bumpVmInflight(candidate.vmId, 1)
     let released = false
     return {
       reserved: true,
@@ -1432,12 +1435,23 @@ export class PoolScheduler extends EventEmitter {
         if (next === 0) this.inflight.delete(candidate.accountId)
         else this.inflight.set(candidate.accountId, next)
         this.bumpFamily(candidate.accountId, family, -1)
+        this.bumpVmInflight(candidate.vmId, -1)
         this.accountQuota?.release?.(candidate.accountId)
         if (circuitHold?.probe) this.unitCircuit?.releaseProbe?.(candidate.accountId)
         this.planner.pump(candidate.vmId)
         this.notifyCapacity(candidate.accountId)
       },
     }
+  }
+
+  /** Live request count per VM for the panel seat stream; every change pushes a frame. */
+  bumpVmInflight(vmId, delta) {
+    if (!vmId) return
+    const id = String(vmId)
+    const next = Math.max(0, (this.vmInflight.get(id) || 0) + delta)
+    if (next === 0) this.vmInflight.delete(id)
+    else this.vmInflight.set(id, next)
+    this.emit('change')
   }
 
   markSuccess(candidate, { workerStatus = null, countUsage = true } = {}) {
@@ -1800,25 +1814,28 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /**
-   * Seats and queues per VM for panel rows and the seat stream. `queue_depth`
-   * counts every request waiting on that VM (seat, concurrency, cooldown/RPM);
-   * `conc_waiting` is the concurrency share of it.
+   * Seats, queues and live requests per VM for panel rows and the seat stream.
+   * `queue_depth` counts every request waiting on that VM (seat, concurrency,
+   * cooldown/RPM); `conc_waiting` is the concurrency share of it; `inflight`
+   * is requests holding a reservation on it right now (seatless and pinned too).
    */
   seatSnapshot() {
     const { seats, global_queue_depth } = this.planner.snapshot()
+    const row = (vmId) =>
+      (seats[vmId] ||= {
+        seats_used: 0,
+        seats_max: this.planner.caps.get(vmId) || 0,
+        seats_grace: 0,
+        queue_depth: 0,
+        conc_waiting: 0,
+      })
     for (const bucket of this.waiters.values()) {
       for (const entry of bucket.values()) {
-        if (!entry?.vmId) continue
-        const row = (seats[entry.vmId] ||= {
-          seats_used: 0,
-          seats_max: this.planner.caps.get(entry.vmId) || 0,
-          seats_grace: 0,
-          queue_depth: 0,
-          conc_waiting: 0,
-        })
-        row.queue_depth += 1
+        if (entry?.vmId) row(entry.vmId).queue_depth += 1
       }
     }
+    for (const entry of Object.values(seats)) entry.inflight = 0
+    for (const [vmId, count] of this.vmInflight) row(vmId).inflight = count
     return { seats, global_queue_depth, queue_max: this.config.queue_max }
   }
 }

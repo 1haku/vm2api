@@ -461,10 +461,15 @@ test('seat stream frames carry per-VM seats, global queue and queue_max', async 
   assert.ok(changes > 0)
   const last = JSON.parse(frames.at(-1).split('data: ')[1])
   assert.equal(last.seats['vm-01'].seats_used, 1)
+  assert.equal(last.seats['vm-01'].inflight, 1)
   assert.equal(last.global_queue_depth, 0)
   assert.equal(last.queue_max, 50)
   assert.equal(Object.hasOwn(last, 'holds'), false)
+  const before = frames.length
   held.release()
+  await waitFor(() => frames.length > before)
+  const after = JSON.parse(frames.at(-1).split('data: ')[1])
+  assert.equal(after.seats['vm-01']?.inflight ?? 0, 0, 'release pushes a frame with the request gone')
   req.emit('close')
 })
 

@@ -66,6 +66,7 @@ import {
   vmSchedulableProps,
 } from '@/features/vm/schedulable-switch'
 import { SeedPolicyCard } from '@/features/vm/seed-policy-card'
+import { usePoolSeatStream } from '@/features/vm/use-pool-seat-stream'
 import { useVmTestChat } from '@/features/vm/use-vm-test-chat'
 
 function postVm<T = unknown>(id: string, path: string, body?: unknown) {
@@ -84,6 +85,7 @@ export function VmDetailPage() {
   const detail = useQuery(vmQueryOptions(id))
   const seed = useQuery(vmSeedQueryOptions(id))
   const routing = useQuery(routingQueryOptions())
+  usePoolSeatStream()
 
   const [tab, setTab] = useState('overview')
 
