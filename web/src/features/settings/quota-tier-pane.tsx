@@ -326,7 +326,9 @@ function ClaudeGates({
           </div>
           <Switch
             checked={quota.guard_large_cold !== false}
-            onCheckedChange={(guard_large_cold) => onQuotaChange({ guard_large_cold })}
+            onCheckedChange={(guard_large_cold) =>
+              onQuotaChange({ guard_large_cold })
+            }
           />
         </div>
         <SliderSetting
@@ -346,14 +348,18 @@ function ClaudeGates({
           id='claude-large-cold-tokens'
           label='大额冷缓存阈值'
           desc='预估未命中缓存 token（含 max_tokens）达到此值视为大额。默认 10 万：高于普通一轮，低于现场 50 万缓存写入样本。'
-          value={Math.round(numberOf(quota.large_cold_uncached_tokens, 100000) / 1000)}
+          value={Math.round(
+            numberOf(quota.large_cold_uncached_tokens, 100000) / 1000
+          )}
           min={20}
           max={500}
           step={10}
           unit='k'
           fallback={100}
           onChange={(value) =>
-            onQuotaChange({ large_cold_uncached_tokens: Math.round(value) * 1000 })
+            onQuotaChange({
+              large_cold_uncached_tokens: Math.round(value) * 1000,
+            })
           }
         />
       </div>
@@ -773,10 +779,18 @@ export function QuotaTierPane({
           block_on_5h: draftQuota.block_on_5h !== false,
           block_on_7d: draftQuota.block_on_7d !== false,
           guard_large_cold: draftQuota.guard_large_cold !== false,
-          critical_band: Math.min(0.15, Math.max(0.01, numberOf(draftQuota.critical_band, 0.05))),
+          critical_band: Math.min(
+            0.15,
+            Math.max(0.01, numberOf(draftQuota.critical_band, 0.05))
+          ),
           large_cold_uncached_tokens: Math.min(
             500000,
-            Math.max(20000, Math.round(numberOf(draftQuota.large_cold_uncached_tokens, 100000)))
+            Math.max(
+              20000,
+              Math.round(
+                numberOf(draftQuota.large_cold_uncached_tokens, 100000)
+              )
+            )
           ),
           weekly_split: {
             ...weekly,
