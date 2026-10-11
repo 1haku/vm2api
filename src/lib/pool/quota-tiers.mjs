@@ -9,6 +9,8 @@
  * weekly_safety_ratio; both are written back so old readers keep working.
  */
 
+import { GATE_OPEN, gateZone, quotaGateOf } from './quota-gate.mjs'
+
 export const TIER_KEYS = ['default', 'pro', 'max']
 
 export const DEFAULT_TIER_POLICIES = {
@@ -125,12 +127,17 @@ function utilRatio(value) {
   return n > 1.5 ? n / 100 : n
 }
 
+/** Draining or gated on 5h/7d (quota-gate.mjs): the account is at or near its line. */
 export function isNearLimit(acc, policy) {
   const p = policy || resolveTierPolicy({}, accountTierKey(acc))
   const limit5 = Number(p.limit_5h ?? p.safety_ratio ?? 0.85)
   const limit7 = Number(p.limit_7d ?? p.weekly_safety_ratio ?? 0.8)
+  const gate = quotaGateOf(p)
   const u = acc?.unified || {}
   const w5 = u.official?.['5h'] || u['5h'] || {}
   const w7 = u.official?.['7d'] || u['7d'] || {}
-  return utilRatio(w5.utilization) >= limit5 || utilRatio(w7.utilization) >= limit7
+  return (
+    gateZone(utilRatio(w5.utilization), limit5, gate) !== GATE_OPEN ||
+    gateZone(utilRatio(w7.utilization), limit7, gate) !== GATE_OPEN
+  )
 }

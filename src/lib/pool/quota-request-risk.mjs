@@ -7,8 +7,6 @@
  */
 import { peekCachePrefix } from '../protocol/cache-prefix.mjs'
 
-/** Width below the configured line that still evaluates per-request risk. */
-export const DEFAULT_CRITICAL_BAND = 0.05
 /**
  * 100k uncached tokens: well above a normal turn (usually <10k new tokens)
  * and well below the #342 sample (514k cache-write). Includes max_tokens so a
@@ -18,12 +16,6 @@ export const DEFAULT_LARGE_COLD_UNCACHED_TOKENS = 100_000
 /** Unknown images are treated as uncached vision tiles. */
 const IMAGE_TOKENS = 1600
 const IMAGE_TYPES = new Set(['image', 'input_image', 'image_url'])
-
-export function criticalBandOf(quota = {}) {
-  const n = Number(quota?.critical_band)
-  if (Number.isFinite(n) && n >= 0 && n <= 0.5) return n
-  return DEFAULT_CRITICAL_BAND
-}
 
 export function largeColdThresholdOf(quota = {}) {
   const n = Number(quota?.large_cold_uncached_tokens)

@@ -9,6 +9,7 @@
  * Persistence: `proxies` table + `settings.proxy_pool_config`.
  * Working set stays in memory (probe loop mutates it); save() writes through.
  */
+import { EventEmitter } from 'node:events'
 import net from 'node:net'
 import crypto from 'node:crypto'
 import { resolveStoreDb } from '../db/database.mjs'
@@ -292,7 +293,8 @@ export function parseSocks5Line(line) {
   return null
 }
 
-export class ProxyPool {
+/** Emits 'change' whenever proxy health or bindings may have moved (panel live stream). */
+export class ProxyPool extends EventEmitter {
   constructor({
     dataDir,
     db,
@@ -304,6 +306,9 @@ export class ProxyPool {
     geoLookup,
     geoV6Lookup,
   } = {}) {
+    super()
+    // One listener per open panel stream.
+    this.setMaxListeners(100)
     this.db = resolveStoreDb({ db, dataDir })
     this.repo = new ProxiesRepo(this.db)
     this.onDisableVm = onDisableVm // (vmId, reason, proxyId) => void
@@ -352,6 +357,28 @@ export class ProxyPool {
         bound_vm_id: encodeBoundVmIds(boundVmIdsOf(p)),
       })),
     )
+    this.emit('change')
+  }
+
+  /**
+   * Live health per bound VM for the panel stream: what a VM row shows next to
+   * its SOCKS5 chip, refreshed on every probe instead of the list poll.
+   */
+  liveStatusByVm() {
+    const out = {}
+    for (const p of this.state.proxies) {
+      const view = {
+        id: p.id,
+        status: p.status ?? null,
+        enabled: p.enabled ?? null,
+        blocked_reason: proxyBlockedReason(p, this.state.config.ipv6_enabled) || null,
+        latency_ms: p.latency_ms ?? null,
+        last_error: p.last_error || null,
+        last_probe_at: p.last_probe_at || null,
+      }
+      for (const vmId of boundVmIdsOf(p)) out[vmId] = view
+    }
+    return out
   }
 
   bindLimit() {
@@ -1139,7 +1166,7 @@ export class ProxyPool {
     return p ? validTimezone(p.geo_timezone) : ''
   }
 
-  _applyProbeResult(p, result, { cascade = true } = {}) {
+  _applyProbeResultInner(p, result, { cascade = true } = {}) {
     // Disabled by policy is not a failed probe and must not damage health/history.
     if (result.scope === 'policy' || proxyBlockedReason(p, this.state.config.ipv6_enabled)) return
     p.last_probe_at = new Date().toISOString()
@@ -1171,6 +1198,11 @@ export class ProxyPool {
       p.status = 'dead'
       if (cascade) this._cascadeDisableVm(p, `proxy_probe_failed:${p.last_error}`)
     }
+  }
+
+  _applyProbeResult(p, result, opts = {}) {
+    this._applyProbeResultInner(p, result, opts)
+    this.emit('change')
   }
 
   startScheduler() {

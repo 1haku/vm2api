@@ -186,13 +186,13 @@ export type Vm = {
   auth_scheme?: string
   availability?: {
     /**
-     * 后端 `availability.mjs` 实际产出 6 种：
-     * `none` / `bad` / `off` / `quota` / `cool` / `ok`。
-     * 此前只声明了 5 种（含后端根本不返回的 `warn`/`caution`），
-     * 导致 `off` 被误归类、「关闭调用」筛选恒为空。
+     * 后端 `availability.mjs` 实际产出 7 种：
+     * `none` / `bad` / `off` / `quota` / `cool` / `drain` / `ok`。
+     * `drain`：5h/7d 进入闸线前 `critical_band` 到闸线 + `gate_overshoot` 之间，
+     * 仍接单（一次一个），但不再是单纯的「可用」。
      * 注意 `off` 的 `usable` 为 false，判断顺序上必须先于 `!usable`。
      */
-    key: 'ok' | 'none' | 'bad' | 'off' | 'quota' | 'cool'
+    key: 'ok' | 'none' | 'bad' | 'off' | 'quota' | 'cool' | 'drain'
     usable: boolean
     text?: string
     reason?: string
@@ -429,11 +429,31 @@ export type PoolSeatLive = {
   seats_grace: number
   queue_depth: number
   conc_waiting: number
+  /** 正在这台 VM 上执行的请求数（含无席位探测与 pin）。 */
+  inflight?: number
 }
 
 /** `GET /api/panel/pool/stream` 的 `event: seats` 负载。 */
 export type PoolSeatSnapshot = PoolQueueSummary & {
   seats: Record<string, PoolSeatLive>
+  ts: number
+}
+
+/** 单台 VM 绑定的 SOCKS5 实时健康，随每次探测推送。 */
+export type PoolProxyLive = Pick<
+  VmProxySnap,
+  | 'id'
+  | 'status'
+  | 'enabled'
+  | 'blocked_reason'
+  | 'latency_ms'
+  | 'last_error'
+  | 'last_probe_at'
+>
+
+/** `GET /api/panel/pool/stream` 的 `event: proxy` 负载；键为 VM id。 */
+export type PoolProxySnapshot = {
+  proxies: Record<string, PoolProxyLive>
   ts: number
 }
 

@@ -1,7 +1,8 @@
-import type { PoolSeatSnapshot, Vm } from '@/types/panel-vm'
+import type { PoolProxySnapshot, PoolSeatSnapshot, Vm } from '@/types/panel-vm'
 import { describe, expect, it } from 'vitest'
 import {
   mergePoolQueue,
+  mergeProxyVm,
   mergeSeatSnapshot,
   parseSseFrames,
 } from './use-pool-seat-stream'
@@ -31,6 +32,7 @@ describe('seat snapshot merge', () => {
     seats_grace: 1,
     queue_depth: 3,
     conc_waiting: 2,
+    inflight: 1,
   } as Vm
   const codex = { id: 'vm-2', seats_max: null, seats_used: null } as Vm
   const snap = (seats: PoolSeatSnapshot['seats']): PoolSeatSnapshot => ({
@@ -48,6 +50,7 @@ describe('seat snapshot merge', () => {
       seats_grace: 0,
       queue_depth: 0,
       conc_waiting: 0,
+      inflight: 0,
     })
     expect(nextCodex).toBe(codex)
   })
@@ -59,6 +62,7 @@ describe('seat snapshot merge', () => {
       seats_grace: 1,
       queue_depth: 2,
       conc_waiting: 1,
+      inflight: 2,
     }
     const [next] = mergeSeatSnapshot([claude], snap({ 'vm-1': live }))
     expect(next).toMatchObject(live)
@@ -71,9 +75,49 @@ describe('seat snapshot merge', () => {
       seats_grace: 1,
       queue_depth: 3,
       conc_waiting: 2,
+      inflight: 1,
     }
     const [next] = mergeSeatSnapshot([claude], snap({ 'vm-1': live }))
     expect(next).toBe(claude)
+  })
+})
+
+describe('proxy health merge', () => {
+  const vm = {
+    id: 'vm-1',
+    proxy: { id: 'px-1', host: '1.2.3.4', status: 'ok', latency_ms: 80 },
+  } as Vm
+  const frame = (proxies: PoolProxySnapshot['proxies']): PoolProxySnapshot => ({
+    proxies,
+    ts: 1,
+  })
+
+  it('applies live health for the same bound proxy', () => {
+    const next = mergeProxyVm(
+      vm,
+      frame({
+        'vm-1': {
+          id: 'px-1',
+          status: 'dead',
+          enabled: false,
+          latency_ms: 80,
+          last_error: 'timeout',
+        },
+      })
+    )
+    expect(next.proxy).toMatchObject({
+      id: 'px-1',
+      host: '1.2.3.4',
+      status: 'dead',
+      last_error: 'timeout',
+    })
+  })
+
+  it('ignores a frame for a different proxy or a missing VM', () => {
+    expect(
+      mergeProxyVm(vm, frame({ 'vm-1': { id: 'px-2', status: 'dead' } }))
+    ).toBe(vm)
+    expect(mergeProxyVm(vm, frame({}))).toBe(vm)
   })
 })
 

@@ -39,6 +39,7 @@ import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { socksProxyFamily, normalizeSocksHost } from '../vm/socks-address.mjs'
 import { accountTierKey, isNearLimit, normalizeTiers, resolveTierPolicy } from '../pool/quota-tiers.mjs'
 import { applyVmQuotaConfig, applyVmQuotaPolicy, vmQuotaOverrideOf, vmQuotaView } from '../pool/vm-quota-override.mjs'
+import { GATE_OPEN, gatePolicyFields, gateZone, quotaGateOf } from '../pool/quota-gate.mjs'
 import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders, isOfficialWindowLimited } from '../pool/quota-window.mjs'
 import { hardBlockOf } from '../pool/rate-limit-service.mjs'
@@ -1075,17 +1076,20 @@ export async function buildProbeOne({
     lastProbe: qAfter.last_probe,
     probeSource: qAfter.probe_source,
     quota: qAfter,
-    policy: applyVmQuotaPolicy(
-      resolveTierPolicy(
-        {
-          tiers: accountQuota?.tiers,
-          quota: accountQuota?.config,
-          concurrency: accountQuota?.concurrency,
-        },
-        tier,
+    policy: {
+      ...applyVmQuotaPolicy(
+        resolveTierPolicy(
+          {
+            tiers: accountQuota?.tiers,
+            quota: accountQuota?.config,
+            concurrency: accountQuota?.concurrency,
+          },
+          tier,
+        ),
+        vmQuotaOverrideOf(vm),
       ),
-      vmQuotaOverrideOf(vm),
-    ),
+      ...gatePolicyFields(applyVmQuotaConfig(accountQuota?.config || {}, vmQuotaOverrideOf(vm))),
+    },
   })
   const data = {
     vm_id: id,
@@ -1627,9 +1631,12 @@ function enrichVm(v, accountQuota, active, extras = {}) {
         },
         tierKey,
       )
-  const policy = isCodex ? openAIGlobalPolicy : applyVmQuotaPolicy(inheritedPolicy, quotaOverride)
+  const policy = isCodex
+    ? openAIGlobalPolicy
+    : { ...applyVmQuotaPolicy(inheritedPolicy, quotaOverride), ...gatePolicyFields(vmQuotaConfig) }
   const safety = Number(policy.limit_5h ?? policy.safety_ratio ?? 0.85)
   const weeklySafety = Number(policy.limit_7d ?? policy.weekly_safety_ratio ?? 0.8)
+  const quotaGate = quotaGateOf(policy)
   // Codex keeps its own conversation window (vm max_sessions); Claude rows report planner seats.
   const codexSessions = isCodex
     ? accountQuota?.sessions?.snapshot?.(acc?.account_id || v.account_uuid || v.id, {
@@ -1844,13 +1851,16 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     seats_grace: isCodex ? null : Number(seatRow?.seats_grace) || 0,
     queue_depth: isCodex ? null : Number(seatRow?.queue_depth) || 0,
     conc_waiting: isCodex ? null : Number(seatRow?.conc_waiting) || 0,
-    inflight: isCodex ? openAIRuntimeSignals(v.id).inFlight : (acc?.inflight ?? 0),
+    inflight: isCodex ? openAIRuntimeSignals(v.id).inFlight : Number(seatRow?.inflight ?? acc?.inflight ?? 0),
     requests: acc?.requests ?? v.stats?.requests ?? 0,
     tokens_in: acc?.tokens_in ?? 0,
     tokens_out: acc?.tokens_out ?? 0,
     cache_read_tokens: acc?.cache_read_tokens || 0,
     cache_creation_tokens: acc?.cache_creation_tokens || 0,
-    near_limit: (u5 != null && u5 >= safety) || (u7 != null && u7 >= weeklySafety),
+    near_limit: isCodex
+      ? (u5 != null && u5 >= safety) || (u7 != null && u7 >= weeklySafety)
+      : (u5 != null && gateZone(u5, safety, quotaGate) !== GATE_OPEN) ||
+        (u7 != null && gateZone(u7, weeklySafety, quotaGate) !== GATE_OPEN),
     fingerprint: v.fingerprint || null,
     runtime: v.runtime || null,
     ip: v.ip || v.runtime?.ip || null,
