@@ -122,7 +122,7 @@ import {
   pinConversationCacheTtl,
   resolveCacheTtl,
 } from './cache-ttl.mjs'
-import { describeCacheContinuity, trackCachePrefix } from './cache-prefix.mjs'
+import { confirmCachePrefix, describeCacheContinuity, trackCachePrefix } from './cache-prefix.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
 import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
@@ -1020,8 +1020,10 @@ export function createHandleProtocol(deps) {
     // Cache lives per account; a failover to another account starts cold by design.
     const noteCachePrefix = (selected, sessionId, body) => {
       if (!sessionId) return
-      const prefix = trackCachePrefix(`${selected.accountId}:${sessionId}`, body)
+      const key = `${selected.accountId}:${sessionId}`
+      const prefix = trackCachePrefix(key, body)
       logBag.cache_prefix = prefix
+      logBag.cache_prefix_key = key
       if (!prefix?.break) return
       const where = prefix.break.section === 'messages' ? `messages[${prefix.break.index}]` : prefix.break.section
       console.warn(`[cache-prefix] request ${logCtx.request_id} turn ${prefix.turn} broke at ${where}`)
@@ -1044,6 +1046,10 @@ export function createHandleProtocol(deps) {
         ownerScope,
         keyScope,
         countUsage: !healthReal,
+        quotaRequest: {
+          body: canonicalBody,
+          sessionId: outboundSessionId || callerSession || stickyKey,
+        },
         stream: upstreamStream,
         deliveryMode,
         signal: clientAbort.signal,
@@ -1331,6 +1337,9 @@ export function createHandleProtocol(deps) {
     }
 
     result = acceptAssistantHop(result)
+    if (result?.finalState === 'verified' && logBag.cache_prefix_key) {
+      confirmCachePrefix(logBag.cache_prefix_key)
+    }
     logBag.vm_id = result?.vmId || null
     logBag.account_id = result?.accountId || null
     logBag.final_account_id = result?.accountId || null
