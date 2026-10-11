@@ -13,6 +13,7 @@
 - 面板一键更新会识别当前 Compose 项目，用独立助手重建并 `--force-recreate` 控制面，轮询健康、启动时版本和此前健康槽位的内核鉴权后再报告成功；不再只改磁盘 `VERSION` 就显示「已是最新」。无法识别实际服务时返回 `409` 并给出宿主机命令。升级到本版本这一次仍由旧版助手执行，新流程从下一次更新起生效；验收失败不会自动回滚，会保留失败状态与助手日志（#331）。
 - 控制面调用内核同时发送 `X-Kin-Internal-Token` 和 `x-internal-token`，兼容 1.3.120 前后的槽内核、源码内核和 api-kernel（#331）。
 - Codex Responses Lite（`gpt-6-astra` + `reasoning.context=all_turns`）累计加密推理历史超过 128 KiB 时，上游会在出字前返回结构化 `server_error`；网关原先只读 `error.status`，把外层 `status: 500` 落成 502。同一槽保留最新连续推理历史（上限 120 KiB）再试一次，并把上游 500 如实报成 500（#334，基于 @OneB1ank 的 #335）。`KIN_CODEX_REASONING_HISTORY_FALLBACK=0` 可关闭该恢复。
+- 租户（`user`）在自己的槽位上点「查询额度」「使用重置券」「Claude 限额查询 / 重置」，以及对自己的密钥「清零」「轮换」不再返回 403。之前前端按钮已对租户开放，但权限白名单漏了这些接口；归属校验不变，访问他人的槽位或密钥仍返回 404（#351）。
 
 已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。启动时自动把「已绑定出口但 `proxy_cli_enabled=false`」的槽位修好。不要覆盖 `routing.json`：若其中明确写了 `eager_tool_streaming: false`，升级后仍关闭，需在面板「重试与切号」打开；新配置项 `routing.quota.guard_large_cold` / `critical_band` / `large_cold_uncached_tokens` 缺省即生效。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。不要覆盖 `vms/`、`data/`、`.env`。
 
