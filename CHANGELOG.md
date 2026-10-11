@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 5h/7d 闸线临近时（默认闸线下 5 个百分点）会按本请求规模准入：小请求或已确认缓存热请求仍可走；预估大额冷缓存（默认 10 万未命中 token，含 `max_tokens`）不再打到只剩约 1 个百分点余量的账号，先改选其他有余量账号，全池都在临界区则本地 429 `quota_guard_request_too_large`，不打上游。已达闸线仍拦截普通请求。粘性/占席请求同样过闸。临界区内成功结算后，读数未刷新前下一笔大请求也会被挡住；失败或取消释放预留。闸是尽力保护，不把美元换成官方百分比，也不截短上下文。设置「配额」可改临界带宽与阈值，默认开启。(#342)
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。新配置项写进 `routing.quota`（`guard_large_cold` / `critical_band` / `large_cold_uncached_tokens`），缺省即生效，不必改 `routing.json`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.137 — 2026-10-11
 
 - 首次安装后按脚本打开 `http://<ip>:8787/cc#/login` 不再 404。`/cc` 与 `/cc/` 和控制台 `index.html` 一样下发，且 `no-store`。Host 是未加括号的 IPv6 或非 ASCII 名字时不再在进路由前 500，路径照常路由；路径里的非法 `%` 不再冒泡成 500。
