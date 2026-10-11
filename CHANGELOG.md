@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.141 — 2026-10-11
 
 - 「仅允许 Claude Code 家族请求」开启时，拦截提前到健康探测之前。此前像健康探测的第三方短请求（如 `hi`）会被探测缓存答出 200，或在探测 fail-closed 时得到 503 `health_unavailable`，而不是 403 `claude_code_only`。官方 Claude Code 的探测请求不受影响。
 
