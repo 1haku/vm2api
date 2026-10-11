@@ -239,6 +239,15 @@ function logsOwner(req, u) {
   return panelIdentity(req).role === 'user' ? req.panelUserId : u.searchParams.get('user_id') || null
 }
 
+function clusterNodesOf(ctx) {
+  try {
+    const list = ctx.clusterManager?.list?.()
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
 /** Scrolling-log query string → `UsageLogsView` filters. Empty strings are dropped. */
 function usageLogFilters(req, u) {
   const get = (k) => {
@@ -1679,6 +1688,7 @@ export function createPanelHandler(ctx) {
             requestLog,
             poolScheduler: ctx.poolScheduler,
             proxyPool,
+            clusterNodes: clusterNodesOf(ctx),
           }),
         )
       }
@@ -1696,6 +1706,7 @@ export function createPanelHandler(ctx) {
             requestLog,
             role: ident.role,
             ownerUserId: ident.role === 'user' ? req.panelUserId : null,
+            clusterNodes: clusterNodesOf(ctx),
           }),
         )
       }
@@ -2011,6 +2022,7 @@ export function createPanelHandler(ctx) {
       // GET /api/panel/vms/:id
       if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+$/.test(p)) {
         const id = p.split('/').pop()
+        const ident = panelIdentity(req)
         const result = await panel.buildVmDetail({
           cfg,
           accountQuota,
@@ -2020,6 +2032,8 @@ export function createPanelHandler(ctx) {
           requestLog,
           proxyPool,
           kernelHealth: panelKernelHealth,
+          clusterNodes: clusterNodesOf(ctx),
+          role: ident.role,
         })
         if (result.status) return json(res, result.status, result.body)
         return json(res, 200, result)
@@ -2277,6 +2291,8 @@ export function createPanelHandler(ctx) {
           requestLog,
           proxyPool,
           kernelHealth: panelKernelHealth,
+          clusterNodes: clusterNodesOf(ctx),
+          role: panelIdentity(req).role,
         })
         if (slotPolicyResult && detail?.data) {
           detail.data.engine_switch = {
@@ -3233,7 +3249,11 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             vm: panel.publicVmBootView(summarizeVm(saved, cfg.paths.project, ctx.routingConfig)),
-            allocated_proxy: panel.publicAllocatedProxy(proxyPool, allocated),
+            allocated_proxy: panel.publicAllocatedProxy(proxyPool, allocated, {
+              nodeId: saved.node_id || nodeId || null,
+              role: ident.role,
+              nodes: clusterNodesOf(ctx),
+            }),
             ...(startError ? { start_error: startError } : {}),
             ...(proxyError ? { proxy_error: proxyError } : {}),
           }),
@@ -3269,7 +3289,11 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             vm: panel.publicVmBootView(summarizeVm(vm, cfg.paths.project, ctx.routingConfig)),
-            allocated_proxy: panel.publicAllocatedProxy(proxyPool, bound),
+            allocated_proxy: panel.publicAllocatedProxy(proxyPool, bound, {
+              nodeId: vm.node_id || null,
+              role: panelIdentity(req).role,
+              nodes: clusterNodesOf(ctx),
+            }),
             runtime: panel.publicRuntimeView(vm.runtime) || GATEWAY_CAPABILITIES.runtime,
             kernel: GATEWAY_CAPABILITIES.kernel,
             boot: panel.publicSlotBoot(boot),
@@ -4346,7 +4370,12 @@ export function createPanelHandler(ctx) {
       // ---- Proxy Pool ----
       if (req.method === 'GET' && p === '/api/panel/proxies') {
         const ident = panelIdentity(req)
-        const snap = ident.role === 'user' ? proxyPool.snapshot({ ownerUserId: req.panelUserId }) : proxyPool.snapshot()
+        const snap = proxyPool.panelSnapshot({
+          role: ident.role,
+          ownerUserId: ident.role === 'user' ? req.panelUserId : undefined,
+          vms: listVms(cfg.paths.project, ctx.routingConfig),
+          nodes: clusterNodesOf(ctx),
+        })
         if (ident.role !== 'admin') delete snap.config.dns_primary
         return json(res, 200, panel.ok(snap))
       }
