@@ -105,6 +105,8 @@ export type PolicyRule = {
 export type JevInterceptConfig = {
   enabled: boolean
   hard_regex_enabled: boolean
+  /** GPT / Codex 请求是否过拦截关卡，默认 false。 */
+  openai_platform_enabled: boolean
   provider: 'jev' | 'laya' | 'modernbert'
   providers?: {
     id: string
@@ -122,6 +124,7 @@ export type JevInterceptConfig = {
     max_state_chars: number
     expand_base64: boolean
     strip_reminders: boolean
+    openai_platform_enabled: boolean
     timeout_ms: number
   }
   base_url: string

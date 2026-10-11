@@ -41,6 +41,7 @@ function ruleKey(rules: PolicyRule[] = []) {
 
 type Draft = {
   hard_regex_enabled: boolean
+  openai_platform_enabled: boolean
   expand_base64: boolean
   strip_reminders: boolean
   rules: PolicyRule[]
@@ -50,6 +51,7 @@ type Draft = {
 function draftOf(data: JevInterceptConfig): Draft {
   return {
     hard_regex_enabled: data.hard_regex_enabled,
+    openai_platform_enabled: data.openai_platform_enabled === true,
     expand_base64: data.expand_base64 !== false,
     strip_reminders: data.strip_reminders !== false,
     rules: data.rules || [],
@@ -95,6 +97,7 @@ export function HardRegexSettings({
     !!draft &&
     !!saved &&
     (draft.hard_regex_enabled !== saved.hard_regex_enabled ||
+      draft.openai_platform_enabled !== saved.openai_platform_enabled ||
       draft.expand_base64 !== saved.expand_base64 ||
       draft.strip_reminders !== saved.strip_reminders ||
       ruleKey(draft.rules) !== ruleKey(saved.rules) ||
@@ -106,6 +109,7 @@ export function HardRegexSettings({
       if (!draft) throw new Error('没有可保存的配置')
       const body: Record<string, unknown> = {
         hard_regex_enabled: draft.hard_regex_enabled,
+        openai_platform_enabled: draft.openai_platform_enabled,
         expand_base64: draft.expand_base64,
         strip_reminders: draft.strip_reminders,
         patterns: linesOf(draft.patterns),
@@ -155,6 +159,17 @@ export function HardRegexSettings({
               checked={draft.hard_regex_enabled}
               onCheckedChange={(v) =>
                 setDraft({ ...draft, hard_regex_enabled: v })
+              }
+            />
+          </ToggleItem>
+          <ToggleItem
+            label='OpenAI 平台'
+            desc='GPT / Codex 请求默认不过关卡；开启后与 Claude 走同一套硬正则、拒答缓存与决策模型'
+          >
+            <Switch
+              checked={draft.openai_platform_enabled}
+              onCheckedChange={(v) =>
+                setDraft({ ...draft, openai_platform_enabled: v })
               }
             />
           </ToggleItem>

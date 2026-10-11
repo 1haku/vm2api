@@ -38,6 +38,7 @@ const PASS_LABEL = {
   regex: '正则未命中',
   'fail-open': '模型故障放行',
   unchecked: '未检查',
+  platform: 'OpenAI 平台未接入',
   unknown: '未记录',
 }
 
