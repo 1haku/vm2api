@@ -96,6 +96,41 @@ test('new logs and statistics remain caller-scoped after key and slot ownership 
     assert.equal(all.json.data.logs.filter((row) => ids.includes(row.userId)).length, 2)
     const unauthenticated = await fetch(gw.baseUrl + '/api/panel/statistics')
     assert.equal(unauthenticated.status, 401)
+    // Tenant stats must exclude global errors/IPs and global sticky attempts,
+    // even if a caller supplies another user's filter after a key transfer.
+    const before = await api(gw, 'GET', '/api/panel/request-logs/stats', { headers: sessions[0] })
+    const stickyBefore = before.json.window.sticky
+    const now = new Date().toISOString()
+    for (const [id, owner, ip] of [
+      ['scope-a', ids[0], '192.0.2.1'],
+      ['scope-b', ids[1], '198.51.100.2'],
+      ['scope-anon', null, '203.0.113.3'],
+    ]) {
+      db.prepare(
+        'INSERT INTO usage_logs(id,request_id,user_id,created_at,status,error_code,error_message,ip_address) VALUES(?,?,?,?,?,?,?,?)',
+      ).run(id, id, owner, now, 401, 'invalid_api_key', id, ip)
+      db.prepare('INSERT INTO request_attempts(request_id,attempt_no,selection_reason,started_at) VALUES(?,?,?,?)').run(
+        id,
+        1,
+        'sticky',
+        now,
+      )
+    }
+    const ownStats = await api(gw, 'GET', `/api/panel/request-logs/stats?user_id=${ids[1]}`, { headers: sessions[0] })
+    assert.equal(ownStats.status, 200, ownStats.text)
+    assert.equal(ownStats.json.totals, null)
+    assert.equal(ownStats.json.config, null)
+    assert.equal(ownStats.json.window.sticky.selections, stickyBefore.selections + 1)
+    assert.equal(ownStats.json.window.sticky.hits, stickyBefore.hits + 1)
+    assert.deepEqual(
+      ownStats.json.window.error_collection.ingress_hits.map((row) => row.ip),
+      ['192.0.2.1'],
+    )
+    assert.doesNotMatch(JSON.stringify(ownStats.json), /scope-b|scope-anon|198\.51\.100\.2|203\.0\.113\.3/)
+    const adminStatsAll = await api(gw, 'GET', '/api/panel/request-logs/stats')
+    assert.ok(adminStatsAll.json.totals)
+    assert.ok(adminStatsAll.json.config)
+    assert.equal(adminStatsAll.json.window.error_collection.ingress_hits.length, 3)
   } finally {
     db?.close()
     await gw.stop()

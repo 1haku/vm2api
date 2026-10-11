@@ -1012,3 +1012,27 @@ test('debug response body masks credentials that fit inside the capture window',
   assert.doesNotMatch(body, /ABCDEFGH12345678/)
   assert.match(body, /REDACTED/)
 })
+
+test('slot ownership is snapshotted but tenant access remains attached to the recorded caller', () => {
+  const store = tmpStore()
+  store.db.exec(`
+    INSERT INTO users (id, email, username, password_hash) VALUES ('alice', 'a@x', 'alice', 'x'), ('bob', 'b@x', 'bob', 'x');
+    INSERT INTO vms (id, name, vm_json) VALUES ('vm-a', 'Slot A', '{}');
+  `)
+  logOne(store, { user_id: 'bob', vm_id: 'vm-a', error_code: 'upstream_error', status: 500 })
+  store.db.exec(`UPDATE vms SET owner_user_id = 'alice', origin = 'admin_assigned' WHERE id = 'vm-a'`)
+  const testChat = logOne(store, { api_key_kind: 'master', vm_id: 'vm-a', error_code: 'upstream_error', status: 500 })
+
+  const mine = store.queryNormal({ owner_user_id: 'alice' })
+  assert.deepEqual(mine.items, [])
+  assert.equal(
+    store.db.prepare('SELECT vm_owner_user_id FROM usage_logs WHERE request_id=?').get(testChat.request_id)
+      .vm_owner_user_id,
+    'alice',
+  )
+  assert.deepEqual(
+    store.windowStats({ owner_user_id: 'alice' }).error_collection.recent.map((r) => r.request_id),
+    [],
+  )
+  assert.equal(store.queryNormal({}).total, 2)
+})

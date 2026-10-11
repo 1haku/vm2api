@@ -507,6 +507,7 @@ export class RequestLogStore {
       // sub2api ownership + billing columns
       user_id: extra.user_id ?? null,
       subscription_id: extra.subscription_id ?? null,
+      vm_owner_user_id: this.repo.vmOwnerOf(extra.vm_id),
       group_id: extra.group_id ?? 1,
       rate_multiplier: Number.isFinite(Number(extra.rate_multiplier)) ? Number(extra.rate_multiplier) : 1,
       ...costColumnsFromUsage(

@@ -30,6 +30,7 @@ export function subscriptionSnapshot(db) {
             reasoning_effort: row.reasoning_effort ?? null,
             outbound_session_id: row.outbound_session_id ?? null,
             intercept: row.intercept ?? null,
+            vm_owner_user_id: row.vm_owner_user_id ?? null,
           }
         if (table === 'proxies') {
           const normalized = { ...row, label: row.label ?? null, domain_forward: row.domain_forward ?? 0 }
