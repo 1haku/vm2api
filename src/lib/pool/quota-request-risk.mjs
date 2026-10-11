@@ -35,6 +35,16 @@ export function guardLargeColdEnabled(quota = {}) {
   return quota?.guard_large_cold !== false
 }
 
+/** Test spy: cache misses are real body walks. Hits reuse WeakMap / quotaRequest. */
+export const promptEstimateStats = { misses: 0, hits: 0 }
+
+export function resetPromptEstimateStats() {
+  promptEstimateStats.misses = 0
+  promptEstimateStats.hits = 0
+}
+
+const promptTokenCache = new WeakMap()
+
 /** CJK ≈ 1 token/char; other text chars/3 so the uncached estimate leans high. */
 export function estimateTextTokens(text) {
   const s = String(text || '')
@@ -70,17 +80,43 @@ function estimateValue(value, depth = 0) {
   return n
 }
 
-export function estimatePromptTokens(body) {
-  if (!body || typeof body !== 'object') return 0
-  return estimateValue(body.system) + estimateValue(body.messages) + estimateValue(body.tools)
-}
-
 function lastUserMessage(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]?.role === 'user') return messages[i]
   }
   return null
+}
+
+function cachedPromptParts(body, quotaRequest = null) {
+  if (quotaRequest?._promptParts) {
+    promptEstimateStats.hits += 1
+    return quotaRequest._promptParts
+  }
+  if (!body || typeof body !== 'object') {
+    const empty = { prompt: 0, lastUser: 0, maxOut: 0 }
+    if (quotaRequest) quotaRequest._promptParts = empty
+    return empty
+  }
+  let parts = promptTokenCache.get(body)
+  if (parts) {
+    promptEstimateStats.hits += 1
+    if (quotaRequest) quotaRequest._promptParts = parts
+    return parts
+  }
+  promptEstimateStats.misses += 1
+  parts = {
+    prompt: estimateValue(body.system) + estimateValue(body.messages) + estimateValue(body.tools),
+    lastUser: estimateValue(lastUserMessage(body)),
+    maxOut: Math.max(0, Math.floor(Number(body.max_tokens) || 0)),
+  }
+  promptTokenCache.set(body, parts)
+  if (quotaRequest) quotaRequest._promptParts = parts
+  return parts
+}
+
+export function estimatePromptTokens(body, quotaRequest = null) {
+  return cachedPromptParts(body, quotaRequest).prompt
 }
 
 /**
@@ -101,31 +137,25 @@ export function cacheColdForAccount({ accountId = null, sessionId = null, body =
 
 export function estimateRequestRisk(
   body,
-  { accountId = null, sessionId = null, now = Date.now(), threshold = DEFAULT_LARGE_COLD_UNCACHED_TOKENS } = {},
+  {
+    accountId = null,
+    sessionId = null,
+    now = Date.now(),
+    threshold = DEFAULT_LARGE_COLD_UNCACHED_TOKENS,
+    quotaRequest = null,
+  } = {},
 ) {
-  if (!body || typeof body !== 'object') {
-    return {
-      estimatedPromptTokens: 0,
-      maxTokens: 0,
-      uncachedTokens: 0,
-      cold: true,
-      coldReason: 'unknown',
-      largeCold: false,
-      model: null,
-    }
-  }
-  const prompt = estimatePromptTokens(body)
-  const maxOut = Math.max(0, Math.floor(Number(body.max_tokens) || 0))
+  const parts = cachedPromptParts(body, quotaRequest)
   const cache = cacheColdForAccount({ accountId, sessionId, body, now })
-  const uncached = cache.cold ? prompt + maxOut : estimateValue(lastUserMessage(body)) + maxOut
+  const uncached = cache.cold ? parts.prompt + parts.maxOut : parts.lastUser + parts.maxOut
   return {
-    estimatedPromptTokens: prompt,
-    maxTokens: maxOut,
+    estimatedPromptTokens: parts.prompt,
+    maxTokens: parts.maxOut,
     uncachedTokens: uncached,
     cold: cache.cold,
     coldReason: cache.reason,
     largeCold: cache.cold && uncached >= threshold,
-    model: body.model || null,
+    model: body?.model || null,
   }
 }
 
@@ -138,5 +168,6 @@ export function resolveRequestRisk(opts = {}, accountId, quota = {}) {
     sessionId: req.sessionId,
     now: req.now,
     threshold: largeColdThresholdOf(quota),
+    quotaRequest: req,
   })
 }
