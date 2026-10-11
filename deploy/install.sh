@@ -529,7 +529,8 @@ checkout_tag() {
   fi
   ensure_git_safe
   info "fetch tags"
-  git fetch --tags origin
+  # History was rewritten once to drop build artifacts; --force lets old clones take the new tags.
+  git fetch --force --tags origin
   if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null && \
      ! git rev-parse -q --verify "origin/${tag}" >/dev/null && \
      ! git cat-file -t "${tag}" >/dev/null 2>&1; then
@@ -560,7 +561,7 @@ fresh_clone() {
     || git clone "https://github.com/${GITHUB_REPO}.git" "${INSTALL_DIR}"
   cd "${INSTALL_DIR}"
   ensure_git_safe
-  git fetch --tags origin
+  git fetch --force --tags origin
   git checkout -f "$tag"
   chmod 755 bin/kin-* 2>/dev/null || true
 }
