@@ -116,6 +116,8 @@ import {
   setActiveVm,
   setVmSchedulable,
   bindVmProxy,
+  adoptVmProxyBinding,
+  patchVmRecord,
   vmHasClaudeCredential,
   persistAllowedModels,
   persistSlotEnginePolicy,
@@ -329,7 +331,15 @@ async function commitImportedCodexVm({
     sessionsOverride: wasCodex && preservePin('maxSessions', 'sessionsOverride'),
   }
   stampVmKind(existing)
-  atomicWriteJson(vmPath, existing, { mode: 0o600 })
+  const writtenCodex = patchVmRecord(cfg.paths.project, existing.id, (vm) => {
+    vm.platform = existing.platform
+    vm.family = existing.family
+    vm.codex_kernel = existing.codex_kernel
+    vm.codex = existing.codex
+    vm.policy = existing.policy
+    stampVmKind(vm)
+  })
+  if (writtenCodex) Object.assign(existing, writtenCodex)
   let catalog = null
   try {
     catalog = await syncCodexCatalog({
@@ -456,15 +466,14 @@ export function createPanelHandler(ctx) {
       vm = getVm(cfg.paths.project, id) || vm
       if (!boot?.ok) {
         startError = boot?.error || boot?.reason || 'runtime start failed'
-        vm.status = 'error'
-        vm.schedulable = false
-        vm.schedule_disabled_reason = String(startError).slice(0, 240)
-        vm.updated_at = new Date().toISOString()
-        atomicWriteJson(path.join(cfg.paths.project, 'vms', `${id}.json`), vm, { mode: 0o600 })
+        vm =
+          patchVmRecord(cfg.paths.project, id, {
+            status: 'error',
+            schedulable: false,
+            schedule_disabled_reason: String(startError).slice(0, 240),
+          }) || vm
       } else {
-        vm.status = 'running'
-        vm.updated_at = new Date().toISOString()
-        atomicWriteJson(path.join(cfg.paths.project, 'vms', `${id}.json`), vm, { mode: 0o600 })
+        vm = patchVmRecord(cfg.paths.project, id, { status: 'running' }) || vm
       }
     }
     vm = getVm(cfg.paths.project, id) || vm
@@ -2565,7 +2574,7 @@ export function createPanelHandler(ctx) {
           if (!gone.ok) {
             return json(res, 500, { ok: false, error: { message: gone.error || 'destroy failed', code: gone.code } })
           }
-          const { vm } = recreateVmFiles(cfg.paths.project, prev)
+          let { vm } = recreateVmFiles(cfg.paths.project, prev)
           try {
             invalidateLiveCredentialCache()
           } catch {}
@@ -2574,16 +2583,17 @@ export function createPanelHandler(ctx) {
               const allocated = proxyPool.allocateForVm(id)
               if (allocated) {
                 bindVmProxy(cfg.paths.project, id, proxyPool.getProxyForVm(id))
-                const bound = getVm(cfg.paths.project, id)
-                if (bound?.proxy) vm.proxy = bound.proxy
+                adoptVmProxyBinding(vm, getVm(cfg.paths.project, id))
               }
             } catch {}
           }
           if (!hasBoundExit(vm.proxy)) {
-            vm.status = 'stopped'
-            vm.schedulable = false
-            vm.schedule_disabled_reason = 'slot SOCKS5 proxy is required'
-            atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            vm =
+              patchVmRecord(cfg.paths.project, id, {
+                status: 'stopped',
+                schedulable: false,
+                schedule_disabled_reason: 'slot SOCKS5 proxy is required',
+              }) || vm
             return json(res, 409, {
               ok: false,
               error: { code: 'proxy_required', message: 'No healthy SOCKS5 is available for this VM' },
@@ -2593,11 +2603,12 @@ export function createPanelHandler(ctx) {
           }
           const boot = await startSlotReady(vm, cfg.paths.project, { recreate: true, routing: ctx.routingConfig })
           if (!boot.ok) {
-            vm.status = 'stopped'
-            vm.schedulable = false
-            vm.schedule_disabled_reason = boot.error || 'runtime start failed'
-            vm.updated_at = new Date().toISOString()
-            atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            vm =
+              patchVmRecord(cfg.paths.project, id, {
+                status: 'stopped',
+                schedulable: false,
+                schedule_disabled_reason: boot.error || 'runtime start failed',
+              }) || vm
             if (gone.action !== 'absent') {
               return json(res, 500, {
                 ok: false,
@@ -2617,11 +2628,12 @@ export function createPanelHandler(ctx) {
               }),
             )
           }
-          vm.status = 'running'
-          vm.schedulable = false
-          vm.schedule_disabled_reason = 'no_credential'
-          vm.updated_at = new Date().toISOString()
-          atomicWriteJson(vmPath, vm, { mode: 0o600 })
+          vm =
+            patchVmRecord(cfg.paths.project, id, {
+              status: 'running',
+              schedulable: false,
+              schedule_disabled_reason: 'no_credential',
+            }) || vm
           return json(
             res,
             200,
@@ -3177,7 +3189,7 @@ export function createPanelHandler(ctx) {
           }
           if (allocated) {
             bindVmProxy(cfg.paths.project, id, proxyPool.getProxyForVm(id))
-            vm.proxy = getVm(cfg.paths.project, id)?.proxy || vm.proxy
+            adoptVmProxyBinding(vm, getVm(cfg.paths.project, id))
           }
         }
         // vm is written again below; carry the exit's zone so that write keeps it.
@@ -3203,21 +3215,17 @@ export function createPanelHandler(ctx) {
           if (!boot.ok) {
             // Slot JSON is already on disk. 500 here makes the console treat
             // create as a no-op, so the new row never refetches into the list.
-            vm.status = 'error'
-            vm.schedulable = false
-            vm.schedule_disabled_reason = boot.error || 'runtime start failed'
-            vm.updated_at = new Date().toISOString()
-            atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            patchVmRecord(cfg.paths.project, id, {
+              status: 'error',
+              schedulable: false,
+              schedule_disabled_reason: boot.error || 'runtime start failed',
+            })
             startError = boot.error || 'runtime start failed'
           } else {
-            vm.status = 'running'
-            vm.updated_at = new Date().toISOString()
-            atomicWriteJson(vmPath, vm, { mode: 0o600 })
+            patchVmRecord(cfg.paths.project, id, { status: 'running' })
           }
         } else if (startNow) {
-          vm.status = 'stopped'
-          vm.updated_at = new Date().toISOString()
-          atomicWriteJson(vmPath, vm, { mode: 0o600 })
+          patchVmRecord(cfg.paths.project, id, { status: 'stopped' })
         }
         const saved = getVm(cfg.paths.project, id) || vm
         return json(
@@ -3249,16 +3257,13 @@ export function createPanelHandler(ctx) {
         vm = getVm(cfg.paths.project, id) || vm
         const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
         if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
-        vm.status = 'running'
-        if (vmHasClaudeCredential(vm)) {
-          vm.schedulable = true
-          vm.schedule_disabled_reason = null
-        } else {
-          vm.schedulable = false
-          vm.schedule_disabled_reason = 'no_credential'
-        }
-        vm.updated_at = new Date().toISOString()
-        atomicWriteJson(vmPath, vm, { mode: 0o600 })
+        const hasCred = vmHasClaudeCredential(vm)
+        vm =
+          patchVmRecord(cfg.paths.project, id, {
+            status: 'running',
+            schedulable: hasCred,
+            schedule_disabled_reason: hasCred ? null : 'no_credential',
+          }) || vm
         return json(
           res,
           200,
