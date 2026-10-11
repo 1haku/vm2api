@@ -7,6 +7,7 @@
 ## 1.3.147 — 2026-10-12
 
 - GPT / Codex（OpenAI 平台模型）请求默认不过拦截关卡，日志记 `intercept.by = platform`（风控页「OpenAI 平台未接入」）。风控 → 硬正则新增「OpenAI 平台」开关（`jev_intercept.openai_platform_enabled`，默认关）；开启后与 Claude 走同一套硬正则、拒答缓存与决策模型，蒸馏规则仍不扫 OpenAI 平台。之前 Responses 形态的 `input` 取不到用户文本（#368），GPT 请求事实上从未被检查；修好取文本后若直接生效，Codex 放在 user 轮次的 AGENTS.md 会被硬正则误拦并封设备，所以改为显式开启。非布尔值 PUT 400。
+- 换票结束于 Claude Code bootstrap（`entrypoint=claude-code&model=claude-opus-5-5`），不再 PATCH 账号 Grove / Help improve Claude。bootstrap 去掉 vscode 字段。需重编本地 `bin/kin-oauth-auth`。
 - Responses / Codex 形态的 `input`（`message → content → input_text`）与 `instructions` 现在进入硬正则、决策模型和蒸馏的取文本（#369，@jxb412）。
 
 已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
