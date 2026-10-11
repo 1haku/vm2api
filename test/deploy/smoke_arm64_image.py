@@ -2,7 +2,6 @@
 """Check a candidate image without mounting credentials or the Docker socket."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -11,7 +10,6 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 PROGRAM = r'''
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,9 +37,7 @@ def elf(path, machine, static=False):
 
 for name in ('kin-worker', 'kin-egress'):
     elf(root / 'image-bin' / name, 183, static=True)
-    payload = root / 'cluster-bin-amd64' / name
-    elf(payload, 62)
-    assert hashlib.sha256(payload.read_bytes()).hexdigest() == expected[name], payload
+    elf(root / 'cluster-bin-amd64' / name, 62, static=True)
 elf(Path('/usr/local/bin/docker'), 183, static=True)
 subprocess.run(['docker', '--version'], check=True, timeout=10)
 for name in ('kin-kernel', 'kin-codex-kernel', 'kin-oauth-auth'):
@@ -85,7 +81,7 @@ finally:
     except subprocess.TimeoutExpired:
         server.kill()
         server.wait(timeout=5)
-print('PASS: native control plane, amd64 payload hashes, QEMU CLI, entrypoint refresh, health and console')
+print('PASS: native control plane, amd64 cluster helpers, QEMU CLI, entrypoint refresh, health and console')
 '''
 
 
@@ -94,8 +90,6 @@ def main():
     parser.add_argument("image")
     args = parser.parse_args()
     expected = {"version": (ROOT / "VERSION").read_text().strip()}
-    for name in ("kin-worker", "kin-egress"):
-        expected[name] = hashlib.sha256((ROOT / "bin" / name).read_bytes()).hexdigest()
     name = "vm2api-arm64-smoke-" + uuid.uuid4().hex[:12]
     try:
         subprocess.run(["docker", "run", "--name", name, "--platform", "linux/arm64",

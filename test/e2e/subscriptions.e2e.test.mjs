@@ -6,6 +6,45 @@ import { classifierFixture } from '../fixtures/auto-mode.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 
+test('Claude Code only rejection releases the subscription reservation and disabling it restores access', async () => {
+  const gw = await startGateway()
+  try {
+    const user = await api(gw, 'POST', '/api/panel/users', {
+      body: { username: 'cc-only-subscriber', password: 'test-password-123', role: 'user' },
+    })
+    const userId = user.json.data.item.id
+    const provision = await api(gw, 'POST', '/api/panel/subscriptions/provision', {
+      body: {
+        plan: { name: 'CC only plan', platform: 'claude', vm_ids: ['vm-sim-01'], daily_limit_usd: 30 },
+        user_ids: [userId],
+      },
+    })
+    assert.equal(provision.status, 200, provision.text)
+    const sub = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.user_id === userId)
+    const key = await api(gw, 'POST', '/api/panel/api-keys', {
+      body: { name: 'cc-only', user_id: userId, group_id: sub.group_id },
+    })
+    assert.equal(key.status, 201, key.text)
+    const headers = { authorization: `Bearer ${key.json.item.key}` }
+    const body = { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }], max_tokens: 8 }
+    const enabled = await api(gw, 'PUT', '/api/panel/routing', { body: { compatibility: { claude_code_only: true } } })
+    assert.equal(enabled.status, 200, enabled.text)
+    const denied = await api(gw, 'POST', '/v1/messages', { headers, body })
+    assert.equal(denied.status, 403, denied.text)
+    assert.equal(denied.json.error.code, 'claude_code_only')
+    const after = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === sub.id)
+    assert.equal(after.pending_cost, 0)
+    assert.equal(after.daily_used, 0)
+    const disabled = await api(gw, 'PUT', '/api/panel/routing', {
+      body: { compatibility: { claude_code_only: false } },
+    })
+    assert.equal(disabled.status, 200, disabled.text)
+    assert.equal((await api(gw, 'POST', '/v1/messages', { headers, body })).status, 200)
+  } finally {
+    await gw.stop()
+  }
+})
+
 test('named pools preserve subscription admission and release reservations when disabled or empty', async () => {
   const gw = await startGateway()
   try {

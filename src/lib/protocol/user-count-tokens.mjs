@@ -15,6 +15,11 @@ import {
   isOfficialClaudeCodeTraffic,
   isProxiedOfficialClaudeCode,
 } from '../identity/crs-persona.mjs'
+import {
+  claudeCodeOnlyError,
+  claudeCodeOnlyFromRouting,
+  isClaudeCodeFamilyRequest,
+} from '../identity/claude-code-only.mjs'
 import { canCountTokens, canOfficialUsage, credentialModeOfVm, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
@@ -249,6 +254,15 @@ export async function handleUserCountTokens(req, res, deps) {
   }
   const parsed = parseCountTokensBody(inbound)
   if (!parsed.ok) return json(res, parsed.error.status, parsed.error.body)
+  const routing = typeof deps.getRoutingConfig === 'function' ? deps.getRoutingConfig() : null
+  if (
+    claudeCodeOnlyFromRouting(routing) &&
+    detectInboundPlatform(parsed.body.model).platform === 'anthropic' &&
+    !isClaudeCodeFamilyRequest(req?.headers || {}, inbound, { routing, countTokens: true })
+  ) {
+    const err = claudeCodeOnlyError()
+    return json(res, err.status, err.body)
+  }
   const blocked = await blockCountTokensBeforeHop(req, parsed.body, deps)
   if (blocked) return json(res, blocked.status, blocked.body)
   const peeked = await peekCurrentAccount({

@@ -11,7 +11,9 @@ for (const [file, expected] of Object.entries(manifest.files)) {
     ? file.replace('image-bin/', 'bin/')
     : file.startsWith('image-wrap-cli/')
       ? file.replace('image-wrap-cli/', 'share/wrap-cli/')
-      : file
+      : file.startsWith('image-crag/')
+        ? file.replace('image-crag/', 'share/crag/')
+        : file
   assert.equal(
     crypto.createHash('sha256').update(fs.readFileSync(actual)).digest('hex'),
     expected,

@@ -111,6 +111,11 @@ import {
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
 } from '../identity/crs-persona.mjs'
+import {
+  claudeCodeOnlyError,
+  claudeCodeOnlyFromRouting,
+  isClaudeCodeFamilyRequest,
+} from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
 import { createAnthropicStreamTracker, isRecoverableTruncation } from './stream-truncation.mjs'
 import {
@@ -542,6 +547,21 @@ export function createHandleProtocol(deps) {
     if (!admitManagedRequest(req, res, logCtx, logBag, inbound)) return
 
     const fp = fingerprintRequest(req, inbound)
+    // Before the health probe: its synthesized or fail-closed replies would otherwise answer
+    // probe-shaped third-party traffic. Official Claude Code only ever speaks Messages, so other
+    // inbound protocols on a Claude model are third-party by construction.
+    const routingNow = getRouting()
+    if (
+      claudeCodeOnlyFromRouting(routingNow) &&
+      detectInboundPlatform(inbound?.model).platform === 'anthropic' &&
+      !(protocol === 'anthropic.messages' && isClaudeCodeFamilyRequest(req.headers, inbound, { routing: routingNow }))
+    ) {
+      stats.errors++
+      const errorResult = claudeCodeOnlyError()
+      logBag.error_code = ErrorCode.CLAUDE_CODE_ONLY
+      logBag.error_message = errorResult.body?.error?.message || null
+      return json(res, errorResult.status, errorResult.body)
+    }
     const healthDecision = req.subscriptionAdmission
       ? null
       : getHealthMonitor()?.decide?.(req.headers, inbound, protocol)

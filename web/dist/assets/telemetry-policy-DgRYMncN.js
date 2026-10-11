@@ -1,1 +1,0 @@
-function e(e){return e?.telemetry_disabled===!1}function t(e){return{telemetry_disabled:!e,disable_nonessential_traffic:e,do_not_track:!e}}function n(t,n){return!t||typeof t!=`object`?n??null:{...n||{},enabled:e(t)}}export{t as n,n as r,e as t};

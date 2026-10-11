@@ -34,6 +34,7 @@ const unit = [
   'session-oauth-seam',
   'credential-mode',
   'claude-setup-token',
+  'claude-code-only',
   'claude-reset-credits',
   'auto-mode',
   'haiku-55-policy',

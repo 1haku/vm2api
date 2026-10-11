@@ -36,6 +36,8 @@ v6 合入上游 `362caf9`（1.3.96，包含 1.3.95、OAuth 本地出口、Arch �
 
 ## 合并上游
 
+合入正式版 `v1.3.141`（`0cb962ae`，含 1.3.140）：上游清理了全部历史中的生成文件，先核验旧 `aca9a0d` 与重写后 `1f58b546` 的源码一致，再以保留现有树的合并接入重写历史，随后正常合并；不改写 fork main 或旧标签。当前树停止跟踪 ELF 与 web/dist，旧 fork 提交保持可恢复。定制镜像按 web/pnpm-lock.yaml 构建并测试控制台、从 Go 源码构建助手，闭源组件按 deploy/payload.json 的大小和 SHA256 下载，清单同时验证 crag 与 payload manifest。发布归档只含源码，部署无需本地构建产物。新增仅 Claude Code 客户端开关默认关；拒绝请求仍释放订阅预留，保留全部额度和权限定制。无数据库迁移。
+
 合入正式版 `v1.3.139`（`aca9a0d`）：请求统计的错误集合、入站失败/IP 和粘性命中按用户过滤，普通用户不返回全站 totals/config。继承迁移 036 与槽位属主快照写入；定制版仍只按记录中的调用 user_id 授权，不因密钥转移或槽位归属扩大可见范围。旧日志属主快照保持 NULL；升级预检仅将该新增可空列与缺失视为等价，非空历史修改仍拒绝。无前端或二进制变更；保留订阅预留修复和零价审批模型。
 
 合入正式版 `v1.3.138`（`f2a42e4`，含 1.3.137）：修复 `/cc` 控制台入口、继承全局引擎的看门狗、停止槽守护、代理重绑/绑定标志、消息级 effort 与 Codex 推理历史恢复；加入官方配额临界区的大请求保护，并保留订阅美元额度预留为独立限制。继承控制面升级验收机制，但订阅定制镜像仍在任何网络或宿主操作前拒绝官方一键升级。保留用户归属、账号池/订阅交集、预留修复、审批零价及 1g 规格。无数据库迁移与二进制变更；配置中显式关闭的 eager_tool_streaming 保持原值。
@@ -83,7 +85,7 @@ v7 增加用户总并发、用户总 RPM、订阅分组总 RPM 和分组内每�
 1.3.98 定制安全修复：根路径重定向登录页，`/health` 与 `/healthz` 仅公开最小存活状态。原详细状态移到管理员接口 `/api/panel/service-status`，`/v1/meta` 增加管理员鉴权，个人 API Key 不能访问两者。GET/HEAD 的匿名、非法凭据、普通用户、运维、管理员会话和 Master Key 都纳入发布回归；数据库与前端资源未修改。
 
 1. 保存当前修改，并给线上版本保留标签及数据库备份。
-2. `git fetch upstream` 和 `git fetch origin` 后，从最新定制 `main` 创建临时合并分支，例如 `git switch -c codex/merge-upstream main`，再 `git merge upstream/main`。若 `origin/main` 有其他人的新提交，先合并这些提交，不强推覆盖。
+2. `git fetch --no-tags upstream main:refs/remotes/upstream/main` 和 `git fetch --no-tags origin` 后，从最新定制 `main` 创建临时合并分支，例如 `git switch -c codex/merge-upstream main`，再 `git merge upstream/main`。上游重写历史后旧标签需保留，不使用强制覆盖标签；需要查验发布号时读取远程标签并放入独立引用。若 `origin/main` 有其他人的新提交，先合并这些提交，不强推覆盖。
 3. 检查冲突，重点复核鉴权、请求路由、记账、数据库和前端导航。定制边界主要在 `panel-subscriptions.mjs`、`subscriptions-repo.mjs`、`custom-migrations`、`web/src/features/subscriptions`，但请求鉴权和计费也修改了核心调用链，不能只保留这几个目录就假定合并正确。
 4. 运行相关后端测试与前端测试，执行 TypeScript 检查和 Vite 构建。确认普通用户不能跨用户读数据，撤销订阅立即阻止密钥调用，失败的向导提交不留下半成品。
 5. 使用 `deploy/Dockerfile.subscriptions` 完整构建：从当前 lockfile 安装 Node 依赖，在 Go 构建阶段执行竞态测试并编译 worker/egress，复制当前提交的内核及 wrap-cli 资产。其余内核二进制仍采用上游仓库预编译资产，升级时需复核来源。镜像生成文件 SHA256 清单，发布后核对实际挂载目录内的二进制、前端和迁移文件。基础镜像标签可变，严格重现历史构建应使用保存的镜像 ID/镜像本身，或将基础镜像固定到 digest。

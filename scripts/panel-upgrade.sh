@@ -87,7 +87,8 @@ if [ -d .git ]; then
   export GIT_TERMINAL_PROMPT=0
   command -v git >/dev/null || apk add --no-cache git >/dev/null
   git config --global --add safe.directory "$ROOT"
-  git fetch --tags origin
+  # History was rewritten once to drop build artifacts; --force lets old clones take the new tags.
+  git fetch --force --tags origin
   # Routing and interception rules are tracked defaults but live operator config.
   CONFIG_BACKUP=$(mktemp -d)
   if [ -d src/config ]; then cp -a src/config "$CONFIG_BACKUP/config"; fi
@@ -106,7 +107,10 @@ if [ -d .git ]; then
   chmod 755 bin/kin-* 2>/dev/null || true
   grep -q '^!CHANGELOG.md$' .dockerignore 2>/dev/null || printf '\n!CHANGELOG.md\n' >> .dockerignore
   if [ "$ARCH" = amd64 ]; then
-    COMPOSE_FILE_LIST="$COMPOSE_FILE_LIST:$ROOT/docker-compose.build.yml"
+    case ":$COMPOSE_FILE_LIST:" in
+      *":$ROOT/docker-compose.build.yml:"*) ;;
+      *) COMPOSE_FILE_LIST="$COMPOSE_FILE_LIST:$ROOT/docker-compose.build.yml" ;;
+    esac
   fi
   compose build vm2api
 else
