@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- GPT 槽的容器不再循环重启。GPT 槽的 Codex 内核跑在宿主机上，但容器的主进程一直是 Claude 的 `kin-kernel`：它没有 Claude 凭证，等不到 20 个 CLI 槽就在约 4 分钟后退出，`--restart unless-stopped` 再拉起，线上两个 GPT 槽已各重启 1376 次（每次都起一遍 cli-node）。现在 GPT 槽容器的主进程是 `sleep infinity`，带 `kin.vm.role=codex` 标签；没有 `kernel.sock` 也算存活，重载不会再把它删掉重建。没有这个标签的旧 GPT 容器在下一次重载 / 启动时重建一次。Claude 槽不受影响。
+
+已部署机升级：更新 Node 控制面，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。已有的 GPT 槽要各重载一次（面板「重载」或 `POST /api/panel/vms/<id>/reload`），容器会重建一次、容器 ID 改变；宿主机上的 Codex 内核和凭证不受影响。
+
 ## 1.3.145 — 2026-10-11
 
 - 5h/7d 闸改成三段，调度和控制台用同一套判断：闸线下 `critical_band`（默认 5%）到闸线上 `gate_overshoot`（新，默认 5%，0–10%，设置 → 配额可改）为「临近闸线」；达到闸线 + 超出量才算闸上、让出席位换 VM。之前临近闸线时同一会话的第二个并发会被拒，预调度随即释放席位、把会话挪到别的 VM（余量还在却切 VM）；现在第二个并发在原 VM 排队，一次只跑一个，不换 VM。新会话优先开到正常 VM，没有时才开在临近闸线的 VM 上，用量过了闸线就不再开新席位。大额冷请求保护（#350）不变，作用范围随临近闸线区一起延伸到超出量。
