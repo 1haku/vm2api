@@ -492,6 +492,89 @@ describe('unit circuit', () => {
     })
     expect(poolStatus(vm).key).toBe('off')
   })
+
+  it('quota limit and gate win over an open circuit', () => {
+    const open = circuit({
+      state: 'open',
+      failures: 3,
+      open_until: Date.now() + 5000,
+    })
+    const hard = liveVm({
+      schedule_state: 'restricted',
+      restriction_reason: 'quota_7d_header',
+      availability: {
+        key: 'quota',
+        usable: true,
+        text: '7d 限制',
+        reason: 'quota_7d_header',
+      },
+      circuit: open,
+    })
+    expect(poolStatus(hard)).toMatchObject({ key: 'quota', text: '7d 限制' })
+    const gate = liveVm({
+      schedule_state: 'restricted',
+      restriction_reason: 'quota_5h_safety',
+      availability: {
+        key: 'quota',
+        usable: true,
+        text: '5h 限制',
+        reason: 'quota_5h_safety',
+      },
+      circuit: open,
+    })
+    expect(poolStatus(gate)).toMatchObject({ key: 'quota', text: '5h 限制' })
+  })
+
+  it('open circuit wins over near-gate and seats full', () => {
+    const vm = liveVm({
+      availability: { key: 'drain', usable: true, text: '7d 临近闸线' },
+      seats_used: 4,
+      seats_max: 4,
+      circuit: circuit({
+        state: 'open',
+        failures: 3,
+        open_until: Date.now() + 5000,
+      }),
+    })
+    expect(poolStatus(vm).key).toBe('circuit')
+  })
+})
+
+describe('near-gate and seats-full are not restrictions', () => {
+  it('paints near-gate as caution, keeps it in the pool group', () => {
+    const vm = liveVm({
+      schedule_state: 'on',
+      availability: { key: 'drain', usable: true, text: '7d 临近闸线' },
+    })
+    expect(poolStatus(vm)).toMatchObject({
+      key: 'drain',
+      text: '7d 临近闸线',
+      cls: 'caution',
+    })
+    expect(accountStatus(vm).cls).toBe('caution')
+    expect(fleetGroup(vm)).toBe('pool')
+  })
+
+  it('shows seats full last and keeps the VM in the pool group', () => {
+    const full = liveVm({
+      schedule_state: 'on',
+      availability: { key: 'ok', usable: true, text: '可用' },
+      seats_used: 4,
+      seats_max: 4,
+    })
+    expect(poolStatus(full)).toMatchObject({ key: 'seats', text: '席位满' })
+    expect(fleetGroup(full)).toBe('pool')
+    expect(poolStatus({ ...full, seats_used: 3 }).key).toBe('pool')
+    const drainFull = {
+      ...full,
+      availability: {
+        key: 'drain' as const,
+        usable: true,
+        text: '5h 临近闸线',
+      },
+    }
+    expect(poolStatus(drainFull).key).toBe('drain')
+  })
 })
 
 describe('GPT plan label follows OpenAI plan_type', () => {
