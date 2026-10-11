@@ -53,7 +53,7 @@ test('Claude Code family recognition: official, proxied, probes, and spoofed UA'
 
 const REACHED = new Error('reached-scheduler')
 
-function protocolHarness({ routing, body }) {
+function protocolHarness({ routing, body, healthMonitor }) {
   const response = { headersSent: false, on() {}, once() {}, off() {}, write() {}, end() {} }
   const stats = { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 }
   const handler = createHandleProtocol({
@@ -85,12 +85,13 @@ function protocolHarness({ routing, body }) {
     stats,
     getRoutingConfig: () => routing,
     groupsRepo: { rateMultiplier: () => 1 },
+    getHealthMonitor: () => healthMonitor,
   })
   return { handler, response }
 }
 
-async function runProtocol({ routing, body, ua, protocol = 'anthropic.messages' }) {
-  const { handler, response } = protocolHarness({ routing, body })
+async function runProtocol({ routing, body, ua, protocol = 'anthropic.messages', healthMonitor }) {
+  const { handler, response } = protocolHarness({ routing, body, healthMonitor })
   const req = {
     method: 'POST',
     url: '/v1/messages',
@@ -115,6 +116,22 @@ test('switch on: third-party Claude requests are 403 before any account is picke
   // Official Claude Code never uses the OpenAI Chat entry, even with its UA.
   const chat = await runProtocol({ routing: ON, body: OFFICIAL_BODY, ua: CLI_UA, protocol: 'openai.chat' })
   assert.deepEqual(chat, { reached: false, status: 403, code: 'claude_code_only' })
+})
+
+test('switch on: probe-shaped third-party traffic is refused before the health probe can answer it', async () => {
+  const seen = []
+  const healthMonitor = {
+    decide: () => {
+      seen.push('decide')
+      return { action: 'fail', via: 'health-fail', snapshot: {} }
+    },
+  }
+  const blocked = await runProtocol({ routing: ON, body: THIRD_PARTY_BODY, ua: 'axios/1.7', healthMonitor })
+  assert.deepEqual(blocked, { reached: false, status: 403, code: 'claude_code_only' })
+  assert.deepEqual(seen, [])
+  // Official Claude Code still goes through the health probe as before.
+  const official = await runProtocol({ routing: ON, body: OFFICIAL_BODY, ua: CLI_UA, healthMonitor })
+  assert.equal(official.code, 'health_unavailable')
 })
 
 test('switch on: official Claude Code reaches the scheduler', async () => {

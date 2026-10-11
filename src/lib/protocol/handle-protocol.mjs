@@ -495,6 +495,21 @@ export function createHandleProtocol(deps) {
     logBag.reasoning_effort = reasoningEffortOf(inbound)
 
     const fp = fingerprintRequest(req, inbound)
+    // Before the health probe: its synthesized or fail-closed replies would otherwise answer
+    // probe-shaped third-party traffic. Official Claude Code only ever speaks Messages, so other
+    // inbound protocols on a Claude model are third-party by construction.
+    const routingNow = getRouting()
+    if (
+      claudeCodeOnlyFromRouting(routingNow) &&
+      detectInboundPlatform(inbound?.model).platform === 'anthropic' &&
+      !(protocol === 'anthropic.messages' && isClaudeCodeFamilyRequest(req.headers, inbound, { routing: routingNow }))
+    ) {
+      stats.errors++
+      const errorResult = claudeCodeOnlyError()
+      logBag.error_code = ErrorCode.CLAUDE_CODE_ONLY
+      logBag.error_message = errorResult.body?.error?.message || null
+      return json(res, errorResult.status, errorResult.body)
+    }
     const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
     if (healthDecision?.action === 'fail') {
       stats.requests++
@@ -605,20 +620,6 @@ export function createHandleProtocol(deps) {
       logBag.error_code = ErrorCode.KEY_GROUP_MISMATCH
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, 403, errorResult.body)
-    }
-    // Official Claude Code only ever speaks Messages, so other inbound protocols on a
-    // Claude model are third-party by construction.
-    const routingNow = getRouting()
-    if (
-      platform.platform === 'anthropic' &&
-      claudeCodeOnlyFromRouting(routingNow) &&
-      !(protocol === 'anthropic.messages' && isClaudeCodeFamilyRequest(req.headers, inbound, { routing: routingNow }))
-    ) {
-      stats.errors++
-      const errorResult = claudeCodeOnlyError()
-      logBag.error_code = ErrorCode.CLAUDE_CODE_ONLY
-      logBag.error_message = errorResult.body?.error?.message || null
-      return json(res, errorResult.status, errorResult.body)
     }
     // Codex returns before conversion. Distill does not apply to OpenAI platform models.
     // Refusal still scans here so a cached refusal never reaches a slot.
