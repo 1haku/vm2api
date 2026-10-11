@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events'
 import { PoolScheduler, normalizePoolRouting } from '../../src/lib/pool/pool-scheduler.mjs'
 import { SeatPlanner, budgetAllows, rankSeatCandidates } from '../../src/lib/pool/seat-planner.mjs'
 import { servePoolSeatStream } from '../../src/lib/admin/pool-seat-stream.mjs'
+import { AccountQuota } from '../../src/lib/pool/account-quota.mjs'
 
 const MODEL = 'claude-test'
 
@@ -489,9 +490,104 @@ test('seat stream frames carry per-VM seats, global queue and queue_max', async 
   assert.ok(changes > 0)
   const last = JSON.parse(frames.at(-1).split('data: ')[1])
   assert.equal(last.seats['vm-01'].seats_used, 1)
+  assert.equal(last.seats['vm-01'].inflight, 1)
   assert.equal(last.global_queue_depth, 0)
   assert.equal(last.queue_max, 50)
   assert.equal(Object.hasOwn(last, 'holds'), false)
+  const before = frames.length
   held.release()
+  await waitFor(() => frames.length > before)
+  const after = JSON.parse(frames.at(-1).split('data: ')[1])
+  assert.equal(after.seats['vm-01']?.inflight ?? 0, 0, 'release pushes a frame with the request gone')
   req.emit('close')
+})
+
+function gatedQuota(root) {
+  const tier = { limit_5h: 0.8, limit_7d: 0.8, max_concurrency: 4 }
+  return new AccountQuota({
+    dataDir: fs.mkdtempSync(path.join(root, 'quota-')),
+    config: {
+      quota: { block_on_5h: true, block_on_7d: true, critical_band: 0.05, gate_overshoot: 0.05 },
+      tiers: { default: tier, pro: tier, max: tier },
+    },
+  })
+}
+
+function gatedSetup(t, specs) {
+  const root = project(specs)
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const quota = gatedQuota(root)
+  const pool = new PoolScheduler({
+    projectRoot: root,
+    runtimeRepo: new RuntimeRepo(),
+    accountQuota: quota,
+    workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
+    config: { seat_grace_ms: 30000 },
+  })
+  pool.config.sticky_wait_timeout_ms = 2000
+  pool.config.fallback_wait_timeout_ms = 2000
+  return { pool, quota }
+}
+
+function setUtil5h(quota, accountId, value) {
+  quota.ingestHeaders(accountId, {
+    'anthropic-ratelimit-unified-5h-utilization': String(value),
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+  })
+}
+
+test('near the gate a seated device waits on its home, one call at a time, and never moves', async (t) => {
+  const { pool, quota } = gatedSetup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 4 } },
+    { id: 'vm-02', policy: { sessionSlots: 4 } },
+  ])
+  const first = await seat(pool, 'dev', { deviceVmId: 'vm-01' })
+  assert.equal(first.vmId, 'vm-01')
+  // 76% of an 80% line: inside the 5-point band, below the line.
+  setUtil5h(quota, first.accountId, 0.76)
+  const second = seat(pool, 'dev')
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('dev')))
+  assert.equal(quota.inflight.get(first.accountId), 1, 'the second call does not run beside the first')
+  first.release()
+  const got = await second
+  assert.equal(got.ok, true)
+  assert.equal(got.vmId, 'vm-01')
+  assert.equal(got.seatMoved, false)
+  // Past the line but inside the overshoot, the seated device still runs here.
+  got.release()
+  setUtil5h(quota, first.accountId, 0.83)
+  const third = await seat(pool, 'dev', { allowWait: false })
+  assert.equal(third.vmId, 'vm-01')
+  assert.equal(third.seatMoved, false)
+  third.release()
+})
+
+test('at line plus overshoot a seated device leaves and its old seat frees at once', async (t) => {
+  const { pool, quota } = gatedSetup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 4 } },
+    { id: 'vm-02', policy: { sessionSlots: 4 } },
+  ])
+  const first = await seat(pool, 'dev', { deviceVmId: 'vm-01' })
+  first.release()
+  setUtil5h(quota, first.accountId, 0.85)
+  const moved = await seat(pool, 'dev', { allowWait: false })
+  assert.equal(moved.ok, true)
+  assert.equal(moved.vmId, 'vm-02')
+  assert.equal(moved.seatMoved, true)
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  moved.release()
+})
+
+test('a new device takes an open VM before a draining one, and a draining one when nothing else is open', async (t) => {
+  const { pool, quota } = gatedSetup(t, [
+    { id: 'vm-01', policy: { sessionSlots: 1 } },
+    { id: 'vm-02', policy: { sessionSlots: 1 } },
+  ])
+  setUtil5h(quota, 'account-1', 0.78)
+  const fresh = await seat(pool, 'new', { deviceVmId: 'vm-01', allowWait: false })
+  assert.equal(fresh.vmId, 'vm-02', 'sticky home in the band does not beat an open VM')
+  const last = await seat(pool, 'other', { allowWait: false })
+  assert.equal(last.vmId, 'vm-01', 'the draining VM still takes a device when it is the only seat left')
+  fresh.release()
+  last.release()
 })

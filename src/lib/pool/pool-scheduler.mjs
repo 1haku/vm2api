@@ -48,6 +48,7 @@ import {
 } from '../transport/rust-kernel-client.mjs'
 import { resolveSessionSlots } from '../vm/slot-engine.mjs'
 import { SeatPlanner, rankSeatCandidates } from './seat-planner.mjs'
+import { GATE_DRAINING } from './quota-gate.mjs'
 
 const WAIT_TIMEOUT_MIN_MS = 1000
 const WAIT_TIMEOUT_MAX_MS = 120000
@@ -269,7 +270,8 @@ function stickyShouldWait(waitReason, cooldownReason = null) {
     waitReason === 'fable_concurrency' ||
     waitReason === 'rpm_limit' ||
     waitReason === 'slot_busy' ||
-    waitReason === 'circuit_probe'
+    waitReason === 'circuit_probe' ||
+    waitReason === 'quota_band_inflight'
   ) {
     return true
   }
@@ -285,6 +287,8 @@ const LIVE_RECHECKED_WAITS = new Set([
   'rpm_limit',
   'slot_busy',
   'circuit_probe',
+  // Near the 5h/7d gate one call runs at a time; reserve() → tryAcquire re-reads it.
+  'quota_band_inflight',
 ])
 
 function grantable(candidate) {
@@ -336,6 +340,8 @@ export class PoolScheduler extends EventEmitter {
     this.lastStickyCleared = false
     this.inflight = new Map()
     this.inflightFamily = new Map()
+    /** vmId → live reservations; mirrors `inflight` (per account) for the panel. */
+    this.vmInflight = new Map()
     this.waiters = new Map()
     this.healthCache = new Map()
     this.lastUsed = new Map()
@@ -695,15 +701,21 @@ export class PoolScheduler extends EventEmitter {
     }
   }
 
-  /** Candidates that can take a brand-new seat right now without passing anyone queued for it. */
+  /**
+   * VMs that can take a brand-new seat right now without passing anyone
+   * queued for it. A VM near its 5h/7d gate (draining) is a last resort: it
+   * only takes a new device when no open VM can.
+   */
   openableCandidates(candidates, avoided = () => false) {
-    return candidates.filter(
+    const openable = candidates.filter(
       (candidate) =>
         !avoided(candidate) &&
         this.isReservable(candidate) &&
         this.planner.canOpen(candidate.vmId, candidate.seatCap, candidate.headroom) &&
         !this.planner.hasSeatWaiters(candidate.vmId),
     )
+    const open = openable.filter((candidate) => !candidate.draining)
+    return open.length ? open : openable
   }
 
   /** Sticky VMs first (family, device, session), then the configured strategy. */
@@ -916,6 +928,7 @@ export class PoolScheduler extends EventEmitter {
         maxConcurrency,
         seatCap,
         headroom: eligibility.headroom ?? null,
+        draining: eligibility.gateZone === GATE_DRAINING,
         account: eligibility.account || null,
         loadRatio: (inflight + this.waiterCount(accountId)) / maxConcurrency,
         lastUsedAt: this.lastUsed.get(accountId) || state?.last_used_at || 0,
@@ -1098,13 +1111,16 @@ export class PoolScheduler extends EventEmitter {
       const familyInflight = this.familyInflight(accountId, FABLE_FAMILY_KEY)
       if (familyInflight >= fableCap) markWait('fable_concurrency')
     }
+    let gateZone = null
     if (this.accountQuota && !pinned) {
       const quotaGate = this.accountQuota.canAccept(accountId, { tier: vmTierOf(vm), quotaRequest })
       if (!quotaGate.ok) {
         if (quotaGate.reason === 'concurrency_limit') markWait('concurrency_limit')
         else if (quotaGate.reason === 'rpm_limit') markWait('rpm_limit', quotaGate.detail?.reset_at)
+        else if (quotaGate.reason === 'quota_band_inflight') markWait('quota_band_inflight')
         else return { ok: false, reason: quotaGate.reason || 'quota_gate' }
       }
+      gateZone = this.accountQuota.gateZoneOf?.(accountId, { tier: vmTierOf(vm) }) || null
     }
     // A sticky preference must not bypass exhausted kernel recovery.
     if (kernelFaults.has(vm.id)) return { ok: false, reason: 'kernel_faulted' }
@@ -1113,7 +1129,7 @@ export class PoolScheduler extends EventEmitter {
     } else if (workerStatus && rustKernelProcessUp(workerStatus) && !rustKernelReachable(workerStatus)) {
       return { ok: false, reason: 'worker_unhealthy' }
     }
-    return { ok: true, account, workerStatus, busy, availableAt, waitReason, headroom }
+    return { ok: true, account, workerStatus, busy, availableAt, waitReason, headroom, gateZone }
   }
 
   executionContext(vm, accountId) {
@@ -1411,6 +1427,7 @@ export class PoolScheduler extends EventEmitter {
     }
     this.inflight.set(candidate.accountId, requestInflight + 1)
     this.bumpFamily(candidate.accountId, family, 1)
+    this.bumpVmInflight(candidate.vmId, 1)
     let released = false
     return {
       reserved: true,
@@ -1422,12 +1439,23 @@ export class PoolScheduler extends EventEmitter {
         if (next === 0) this.inflight.delete(candidate.accountId)
         else this.inflight.set(candidate.accountId, next)
         this.bumpFamily(candidate.accountId, family, -1)
+        this.bumpVmInflight(candidate.vmId, -1)
         this.accountQuota?.release?.(candidate.accountId)
         if (circuitHold?.probe) this.unitCircuit?.releaseProbe?.(candidate.accountId)
         this.planner.pump(candidate.vmId)
         this.notifyCapacity(candidate.accountId)
       },
     }
+  }
+
+  /** Live request count per VM for the panel seat stream; every change pushes a frame. */
+  bumpVmInflight(vmId, delta) {
+    if (!vmId) return
+    const id = String(vmId)
+    const next = Math.max(0, (this.vmInflight.get(id) || 0) + delta)
+    if (next === 0) this.vmInflight.delete(id)
+    else this.vmInflight.set(id, next)
+    this.emit('change')
   }
 
   markSuccess(candidate, { workerStatus = null, countUsage = true } = {}) {
@@ -1790,25 +1818,28 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /**
-   * Seats and queues per VM for panel rows and the seat stream. `queue_depth`
-   * counts every request waiting on that VM (seat, concurrency, cooldown/RPM);
-   * `conc_waiting` is the concurrency share of it.
+   * Seats, queues and live requests per VM for panel rows and the seat stream.
+   * `queue_depth` counts every request waiting on that VM (seat, concurrency,
+   * cooldown/RPM); `conc_waiting` is the concurrency share of it; `inflight`
+   * is requests holding a reservation on it right now (seatless and pinned too).
    */
   seatSnapshot() {
     const { seats, global_queue_depth } = this.planner.snapshot()
+    const row = (vmId) =>
+      (seats[vmId] ||= {
+        seats_used: 0,
+        seats_max: this.planner.caps.get(vmId) || 0,
+        seats_grace: 0,
+        queue_depth: 0,
+        conc_waiting: 0,
+      })
     for (const bucket of this.waiters.values()) {
       for (const entry of bucket.values()) {
-        if (!entry?.vmId) continue
-        const row = (seats[entry.vmId] ||= {
-          seats_used: 0,
-          seats_max: this.planner.caps.get(entry.vmId) || 0,
-          seats_grace: 0,
-          queue_depth: 0,
-          conc_waiting: 0,
-        })
-        row.queue_depth += 1
+        if (entry?.vmId) row(entry.vmId).queue_depth += 1
       }
     }
+    for (const entry of Object.values(seats)) entry.inflight = 0
+    for (const [vmId, count] of this.vmInflight) row(vmId).inflight = count
     return { seats, global_queue_depth, queue_max: this.config.queue_max }
   }
 }

@@ -296,6 +296,7 @@ export function accountStatus(vm: Vm | undefined): StatusTone {
       off: '调度关',
       cool: '冷却中',
       quota: '额度限制',
+      drain: '临近闸线',
       bad: '无效凭证',
     }
     // 与 poolStatus 同口径：off 只表达调度意图，凭证死活先于它判。
@@ -310,7 +311,7 @@ export function accountStatus(vm: Vm | undefined): StatusTone {
         ? 'ok'
         : a.key === 'quota'
           ? 'warn'
-          : a.key === 'cool'
+          : a.key === 'cool' || a.key === 'drain'
             ? 'caution'
             : a.key === 'off'
               ? 'off'
@@ -490,17 +491,30 @@ function restrictionTone(vm: Vm | undefined): StatusTone | null {
   return null
 }
 
+/** 席位全占：新设备会排队，但这台 VM 照常在调度，不是受限。 */
+function seatsFullTone(vm: Vm | undefined): StatusTone | null {
+  if (!vm || vm.seats_max == null) return null
+  const max = Number(vm.seats_max) || 0
+  if (max <= 0 || (Number(vm.seats_used) || 0) < max) return null
+  return { key: 'seats', text: '席位满', cls: 'caution' }
+}
+
+/**
+ * 状态优先级：吊销/废票 → 额度上限 / 门禁（受限）→ 503 熔断 → 调度关 →
+ * 临近闸线 → 席位满 → 其余。受限与调度关互斥（后端 triad 先判调度关）。
+ * 临近闸线仍在接单，所以排在熔断之后：熔断中的槽确实不接单，要让人看见。
+ */
 export function poolStatus(vm: Vm | undefined): StatusTone {
   // 吊销 / 废票先判：它可能同时带着 off / quota 的 availability.key，照 key
   // 判会显示成「调度关」，把真正的死因盖掉。
   if (parkedGrantDeath(vm) || vmRevoked(vm)) return invalidCredTone(vm)
+  const restricted = restrictionTone(vm)
+  if (restricted) return restricted
   // 调度关优先于熔断：操作员关掉的槽不显示熔断。
   if (vm?.schedule_state !== 'off') {
     const circuit = circuitTone(vm)
     if (circuit) return circuit
   }
-  const restricted = restrictionTone(vm)
-  if (restricted) return restricted
   if (vm?.schedule_state === 'off') {
     if (!vm.has_token) return { key: 'none', text: '无凭证', cls: 'none' }
     if (ticketExpiredDead(vm)) return { key: 'bad', text: '已过期', cls: 'bad' }
@@ -527,8 +541,12 @@ export function poolStatus(vm: Vm | undefined): StatusTone {
     }
     if (a.key === 'cool' || vmCooldown(vm))
       return { key: 'cool', text: a.text || '冷却中', cls: 'caution' }
+    if (a.key === 'drain')
+      return { key: 'drain', text: a.text || '临近闸线', cls: 'caution' }
     if (!a.usable) return { key: 'bad', text: a.text || '无效凭证', cls: 'bad' }
-    return { key: 'pool', text: a.text || '可用', cls: 'ok' }
+    return (
+      seatsFullTone(vm) || { key: 'pool', text: a.text || '可用', cls: 'ok' }
+    )
   }
   if (!vm?.has_token) return { key: 'none', text: '无凭证', cls: 'none' }
   const fb = vm.fable || {}
@@ -562,7 +580,7 @@ export function poolStatus(vm: Vm | undefined): StatusTone {
   if (windowWarn(vm.status_7d, u7))
     return { key: 'quota', text: '7d 警告', cls: 'caution' }
   if (isTransportProbe(vm) && !isUsageProbeOk(vm)) return transportFailTone()
-  return { key: 'pool', text: '在池', cls: 'ok' }
+  return seatsFullTone(vm) || { key: 'pool', text: '在池', cls: 'ok' }
 }
 
 /**

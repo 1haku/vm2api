@@ -1780,6 +1780,7 @@ export function createPanelHandler(ctx) {
           req,
           res,
           getScheduler: () => ctx.poolScheduler,
+          proxyPool,
           writeSSEHeaders: ctx.writeSSEHeaders,
           visibleVmIds:
             ident.role === 'user'

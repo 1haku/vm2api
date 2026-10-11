@@ -98,3 +98,49 @@ test('stream refreshes visibility on updates and frees scheduler listeners on di
   }
   assert.equal(scheduler.listenerCount('change'), 0)
 })
+
+test('proxy frames and inflight counts stay scoped and proxy listeners are released', async () => {
+  const scheduler = new EventEmitter(),
+    proxyPool = new EventEmitter()
+  let visible = new Set(['mine'])
+  scheduler.seatSnapshot = () => ({
+    seats: { mine: { inflight: 1 }, other: { inflight: 99 } },
+    global_queue_depth: 9,
+    queue_max: 50,
+  })
+  proxyPool.liveStatusByVm = () => ({ mine: { status: 'alive' }, other: { status: 'dead' } })
+  const req = new EventEmitter(),
+    res = new EventEmitter(),
+    frames = []
+  res.write = (text) => {
+    if (text.startsWith('event:')) {
+      frames.push({ type: text.split('\n')[0], data: JSON.parse(text.split('data: ')[1]) })
+      res.emit('frame')
+    }
+    return true
+  }
+  try {
+    servePoolSeatStream({
+      req,
+      res,
+      getScheduler: () => scheduler,
+      proxyPool,
+      visibleVmIds: () => visible,
+      writeSSEHeaders() {},
+      throttleMs: 1,
+    })
+    assert.deepEqual(frames[0].data.seats, { mine: { inflight: 1 } })
+    assert.equal(frames[0].data.global_queue_depth, 0)
+    assert.equal(frames[0].data.queue_max, 0)
+    assert.deepEqual(frames[1].data.proxies, { mine: { status: 'alive' } })
+    visible = new Set()
+    const next = once(res, 'frame', { signal: AbortSignal.timeout(2000) })
+    proxyPool.emit('change')
+    await next
+    assert.deepEqual(frames.at(-1).data.proxies, {})
+  } finally {
+    req.emit('close')
+  }
+  assert.equal(proxyPool.listenerCount('change'), 0)
+  assert.equal(scheduler.listenerCount('change'), 0)
+})

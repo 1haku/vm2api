@@ -16,6 +16,8 @@ import {
   slotWorkerNeedsRecreate,
   writeWorkerFiles,
   startVmRuntime,
+  slotContainerCommand,
+  CODEX_SLOT_ROLE,
 } from '../../src/lib/vm/vm-runtime.mjs'
 import { slotNetworkForVm } from '../../src/lib/vm/egress.mjs'
 
@@ -283,6 +285,33 @@ test('a running kvm runner is live even without the relay socket', (t) => {
   const kvm = { id: 'vm-01', runtime: { type: 'kvm' } }
   assert.equal(slotKernelAlive({ running: true }, paths, kvm), true)
   assert.equal(slotKernelAlive({ running: true, runtime: 'kvm' }, paths), true)
+})
+
+test('a GPT slot container idles instead of booting the Claude kernel', () => {
+  const codex = { id: 'vm-codex-01', platform: 'openai', family: 'codex', codex_kernel: true }
+  const claude = { id: 'vm-03', platform: 'anthropic' }
+  assert.deepEqual(slotContainerCommand(codex, { wrapKernel: true }), ['sleep', 'infinity'])
+  assert.deepEqual(slotContainerCommand(claude, { wrapKernel: true }), [
+    '/home/kincli/.kin/kin-kernel',
+    '--gateway-worker',
+    '--config',
+    '/run/kin/kernel.json',
+  ])
+})
+
+test('a GPT slot container is live without kernel.sock, and an old kin-kernel one is recreated once', (t) => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-alive-'))
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }))
+  const paths = { socket: path.join(runDir, 'worker.sock'), kernelSocket: path.join(runDir, 'kernel.sock') }
+  const codex = { id: 'vm-codex-01', platform: 'openai', family: 'codex', codex_kernel: true }
+  const current = { running: true, networkMode: null, role: CODEX_SLOT_ROLE }
+  assert.equal(slotKernelAlive(current, paths, codex), true)
+  assert.equal(slotWorkerNeedsRecreate(current, codex, paths), false, 'reload must not docker rm a healthy GPT slot')
+  // Created before the role label: PID 1 is kin-kernel and restarts every few minutes.
+  assert.equal(slotWorkerNeedsRecreate({ running: true, networkMode: null, role: null }, codex, paths), true)
+  // A Claude slot is unaffected by the label.
+  fs.writeFileSync(paths.kernelSocket, '')
+  assert.equal(slotWorkerNeedsRecreate({ running: true, networkMode: null }, { id: 'vm-03' }, paths), false)
 })
 
 test('writeWorkerFiles and startVmRuntime use defaults when routing.json is absent', () => {

@@ -1,6 +1,12 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { PoolQueueSummary, PoolSeatSnapshot, Vm } from '@/types/panel-vm'
+import type {
+  PoolProxySnapshot,
+  PoolQueueSummary,
+  PoolSeatSnapshot,
+  Vm,
+  VmDetailPayload,
+} from '@/types/panel-vm'
 import { panelFetch } from '@/lib/api'
 import { hasSession } from '@/lib/session'
 import { vmsListQueryOptions } from '@/features/vm/queries'
@@ -39,24 +45,54 @@ const SEAT_FIELDS = [
   'seats_grace',
   'queue_depth',
   'conc_waiting',
+  'inflight',
 ] as const
 
 /** 席位快照只覆盖 Claude 行（`seats_max` 非空）的实时字段；缺席即空闲。 */
+export function mergeSeatVm(vm: Vm, snap: PoolSeatSnapshot): Vm {
+  if (vm.seats_max == null) return vm
+  const live = snap.seats[vm.id]
+  // 缺席的 VM 只清零计数；上限不在帧里，保留列表接口给的值。
+  const next = {
+    seats_used: live?.seats_used ?? 0,
+    seats_max: live?.seats_max ?? vm.seats_max,
+    seats_grace: live?.seats_grace ?? 0,
+    queue_depth: live?.queue_depth ?? 0,
+    conc_waiting: live?.conc_waiting ?? 0,
+    inflight: live?.inflight ?? 0,
+  }
+  if (SEAT_FIELDS.every((key) => vm[key] === next[key])) return vm
+  return { ...vm, ...next }
+}
+
 export function mergeSeatSnapshot(items: Vm[], snap: PoolSeatSnapshot): Vm[] {
-  return items.map((vm) => {
-    if (vm.seats_max == null) return vm
-    const live = snap.seats[vm.id]
-    // 缺席的 VM 只清零计数；上限不在帧里，保留列表接口给的值。
-    const next = {
-      seats_used: live?.seats_used ?? 0,
-      seats_max: live?.seats_max ?? vm.seats_max,
-      seats_grace: live?.seats_grace ?? 0,
-      queue_depth: live?.queue_depth ?? 0,
-      conc_waiting: live?.conc_waiting ?? 0,
-    }
-    if (SEAT_FIELDS.every((key) => vm[key] === next[key])) return vm
-    return { ...vm, ...next }
-  })
+  return items.map((vm) => mergeSeatVm(vm, snap))
+}
+
+const PROXY_FIELDS = [
+  'status',
+  'enabled',
+  'blocked_reason',
+  'latency_ms',
+  'last_error',
+  'last_probe_at',
+] as const
+
+/** 代理帧只改同一个代理的健康字段；换绑（id 不同）等列表轮询带回新的 `proxy`。 */
+export function mergeProxyVm(vm: Vm, snap: PoolProxySnapshot): Vm {
+  const live = snap.proxies[vm.id]
+  const current = vm.proxy
+  if (!live || !current || current.id !== live.id) return vm
+  const next = {
+    status: live.status,
+    enabled: live.enabled,
+    blocked_reason: live.blocked_reason ?? null,
+    latency_ms: live.latency_ms,
+    last_error: live.last_error,
+    last_probe_at: live.last_probe_at,
+  }
+  if (PROXY_FIELDS.every((key) => current[key] === next[key])) return vm
+  return { ...vm, proxy: { ...current, ...next } }
 }
 
 /** 全局排队不挂在任何 VM 上，单独写进列表缓存的 `pool_queue`。 */
@@ -76,26 +112,56 @@ export function mergePoolQueue(
   }
 }
 
+type VmList = { items: Vm[]; pool_queue?: PoolQueueSummary }
+type Dashboard = { vms?: Vm[] }
+
 /**
- * 订阅 `/api/panel/pool/stream`，把席位/排队快照写进 VM 列表缓存。
- * EventSource 不能带 Bearer，所以用 fetch 读流；断线期间列表照常靠轮询刷新。
+ * 订阅 `/api/panel/pool/stream`，把席位/在飞/排队与代理健康写进 VM 列表、
+ * 总览和详情缓存。EventSource 不能带 Bearer，所以用 fetch 读流；断线期间
+ * 各页照常靠轮询刷新。
  */
 export function usePoolSeatStream() {
   const qc = useQueryClient()
   useEffect(() => {
-    const queryKey = vmsListQueryOptions().queryKey
+    const listKey = vmsListQueryOptions().queryKey
     const ctrl = new AbortController()
     let retry: number | undefined
 
-    const apply = (snap: PoolSeatSnapshot) => {
-      qc.setQueryData(queryKey, (prev) =>
+    const patchVms = (patch: (vm: Vm) => Vm, queue?: PoolSeatSnapshot) => {
+      qc.setQueryData<VmList>(listKey, (prev) =>
         prev
           ? {
               ...prev,
-              items: mergeSeatSnapshot(prev.items, snap),
-              pool_queue: mergePoolQueue(prev.pool_queue, snap),
+              items: prev.items.map(patch),
+              ...(queue
+                ? { pool_queue: mergePoolQueue(prev.pool_queue, queue) }
+                : {}),
             }
           : prev
+      )
+      qc.setQueriesData<Dashboard>(
+        { queryKey: ['panel', 'dashboard'] },
+        (prev) => (prev?.vms ? { ...prev, vms: prev.vms.map(patch) } : prev)
+      )
+      // 详情页 `['panel','vm',id]`；子查询（seed / credential …）键更长，跳过。
+      qc.setQueriesData<VmDetailPayload>(
+        {
+          queryKey: ['panel', 'vm'],
+          predicate: (query) => query.queryKey.length === 3,
+        },
+        (prev) => {
+          const vm = prev?.vm as Vm | undefined
+          if (!prev || !vm?.id) return prev
+          const next = patch(vm)
+          if (next === vm) return prev
+          return {
+            ...prev,
+            vm: next,
+            ...(prev.proxy && next.proxy !== vm.proxy
+              ? { proxy: { ...prev.proxy, ...next.proxy } }
+              : {}),
+          }
+        }
       )
     }
 
@@ -118,9 +184,14 @@ export function usePoolSeatStream() {
           const parsed = parseSseFrames(buffer + value)
           buffer = parsed.rest
           for (const frame of parsed.frames) {
-            if (frame.event !== 'seats') continue
             try {
-              apply(JSON.parse(frame.data) as PoolSeatSnapshot)
+              if (frame.event === 'seats') {
+                const snap = JSON.parse(frame.data) as PoolSeatSnapshot
+                patchVms((vm) => mergeSeatVm(vm, snap), snap)
+              } else if (frame.event === 'proxy') {
+                const snap = JSON.parse(frame.data) as PoolProxySnapshot
+                patchVms((vm) => mergeProxyVm(vm, snap))
+              }
             } catch {
               // 单帧损坏只丢这一帧，下一次变化会再推完整快照。
             }

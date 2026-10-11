@@ -100,7 +100,7 @@ test('canAccept uses per-tier 5h and weekly lines', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
     config: {
-      quota: { block_on_5h: true, block_on_7d: true },
+      quota: { block_on_5h: true, block_on_7d: true, gate_overshoot: 0 },
       tiers: {
         default: { max_concurrency: 2, safety_ratio: 0.85, weekly_safety_ratio: 0.8, warn_ratio: 0.75 },
         pro: { max_concurrency: 2, safety_ratio: 0.85, weekly_safety_ratio: 0.8, warn_ratio: 0.75 },
@@ -129,7 +129,8 @@ test('reloadConfig picks up saved weekly line without process restart shape', ()
   const q = new AccountQuota({ dataDir: tmpDir(), config: {} })
   q.ensure({ account_id: 'p' })
   q.setAccountTier('p', 'pro')
-  q.ingestHeaders('p', { 'anthropic-ratelimit-unified-7d-utilization': '0.82' })
+  // Pro default 7d line 0.80 + default 0.05 overshoot.
+  q.ingestHeaders('p', { 'anthropic-ratelimit-unified-7d-utilization': '0.86' })
   assert.equal(q.canAccept('p').reason, 'quota_7d_safety')
   q.reloadConfig({
     quota: { block_on_5h: true, block_on_7d: true },
@@ -197,7 +198,7 @@ test('saving Pro 5h=80% lands on policyFor limit_5h', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
     config: {
-      quota: { block_on_5h: true, block_on_7d: true },
+      quota: { block_on_5h: true, block_on_7d: true, gate_overshoot: 0 },
       tiers: normalizeTiers({
         pro: { limit_5h: 0.8, limit_7d: 0.8, max_concurrency: 2 },
       }),
@@ -210,7 +211,7 @@ test('saving Pro 5h=80% lands on policyFor limit_5h', () => {
   assert.equal(q.canAccept('pro-80').reason, 'quota_5h_safety')
 })
 
-test('Pro 95% blocks at the line and refuses a second in-flight call inside 5 points', () => {
+test('Pro 95% runs one call at a time from 90% and blocks at line + overshoot', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
     config: {
@@ -228,10 +229,15 @@ test('Pro 95% blocks at the line and refuses a second in-flight call inside 5 po
   })
   assert.equal(q.canAccept('pro-95').ok, true)
   q.inflight.set('pro-95', 1)
-  assert.equal(q.canAccept('pro-95').reason, 'quota_5h_safety')
+  assert.equal(q.canAccept('pro-95').reason, 'quota_band_inflight')
   q.inflight.set('pro-95', 0)
   q.ingestHeaders('pro-95', {
     'anthropic-ratelimit-unified-5h-utilization': '0.96',
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+  })
+  assert.equal(q.canAccept('pro-95').ok, true, 'past the line but inside the 5% overshoot')
+  q.ingestHeaders('pro-95', {
+    'anthropic-ratelimit-unified-5h-utilization': '1',
     'anthropic-ratelimit-unified-5h-status': 'allowed',
   })
   assert.equal(q.canAccept('pro-95').reason, 'quota_5h_safety')

@@ -56,6 +56,8 @@ const unit = [
   'handle-codex-reasoning-history',
   'mid-convo-effort',
   'quota-critical-band',
+  'account-quota',
+  'panel-cred-status',
   'proxy-cli-enabled',
   'local-proxy-nodes',
   'release',

@@ -20,6 +20,7 @@
     "block_on_5h": true,
     "block_on_7d": true,
     "critical_band": 0.05,
+    "gate_overshoot": 0.05,
     "large_cold_uncached_tokens": 100000,
     "guard_large_cold": true,
     "weekly_split": {

@@ -316,6 +316,21 @@ function ClaudeGates({
         </div>
       </div>
       <div className='space-y-3 rounded-lg border p-3'>
+        <SliderSetting
+          id='claude-gate-overshoot'
+          label='闸线超出量'
+          desc='已入座的会话可以越过闸线继续跑这么多，再让出这台 VM；从「闸线 − 临界带宽」起就不再优先给新会话开席位，且同一账号一次只跑一个请求（读数滞后于在飞请求）。0 表示到闸线即切。'
+          value={Math.round(numberOf(quota.gate_overshoot, 0.05) * 100)}
+          min={0}
+          max={10}
+          step={1}
+          format={(value) => `${value}%`}
+          fallback={5}
+          presets={[0, 3, 5]}
+          onChange={(value) => onQuotaChange({ gate_overshoot: value / 100 })}
+        />
+      </div>
+      <div className='space-y-3 rounded-lg border p-3'>
         <div className='flex items-center justify-between gap-4'>
           <div>
             <Label>临界区大额冷请求保护</Label>
@@ -334,7 +349,7 @@ function ClaudeGates({
         <SliderSetting
           id='claude-critical-band'
           label='临界带宽'
-          desc='闸线下这一段会按单笔冷缓存风险判断，而不是只看出途并发。'
+          desc='闸线下这一段与超出量一起构成临近闸线区：一次只跑一个请求，并按单笔冷缓存风险判断。'
           value={Math.round(numberOf(quota.critical_band, 0.05) * 100)}
           min={1}
           max={15}
@@ -782,6 +797,10 @@ export function QuotaTierPane({
           critical_band: Math.min(
             0.15,
             Math.max(0.01, numberOf(draftQuota.critical_band, 0.05))
+          ),
+          gate_overshoot: Math.min(
+            0.1,
+            Math.max(0, numberOf(draftQuota.gate_overshoot, 0.05))
           ),
           large_cold_uncached_tokens: Math.min(
             500000,
