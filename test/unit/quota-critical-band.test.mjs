@@ -10,6 +10,8 @@ import {
   estimatePromptTokens,
   estimateRequestRisk,
   DEFAULT_LARGE_COLD_UNCACHED_TOKENS,
+  promptEstimateStats,
+  resetPromptEstimateStats,
 } from '../../src/lib/pool/quota-request-risk.mjs'
 import {
   clearCachePrefixSessions,
@@ -316,4 +318,26 @@ test('quota_guard_request_too_large stays a 429 and is not rewritten to pool_una
   const rewritten = rewritePoolErrorForClient(mapped, mapped.body)
   assert.equal(rewritten.status, 429)
   assert.equal(rewritten.body.error.code, 'quota_guard_request_too_large')
+})
+
+test('prompt estimate is skipped below the band and walked once for in-band accounts', () => {
+  resetPromptEstimateStats()
+  const q = quota()
+  setUtil(q, 'low', { u5: 0.5, u7: 0.2 })
+  setUtil(q, 'band-a', { u5: 0.79 })
+  setUtil(q, 'band-b', { u5: 0.76 })
+  const body = {
+    model: 'claude-opus-4-5',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: 'word '.repeat(200) }],
+    tools: [{ name: 'Read', description: 'read a file', input_schema: { type: 'object' } }],
+  }
+  const quotaRequest = { body, sessionId: 'sess-1' }
+  assert.equal(q.canAccept('low', { quotaRequest }).ok, true)
+  assert.equal(promptEstimateStats.misses, 0)
+  q.canAccept('band-a', { quotaRequest })
+  q.canAccept('band-b', { quotaRequest })
+  q.tryAcquire('band-a', { quotaRequest })
+  assert.equal(promptEstimateStats.misses, 1)
+  q.release('band-a')
 })

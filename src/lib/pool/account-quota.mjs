@@ -638,40 +638,45 @@ export class AccountQuota {
         }
       }
     }
-
-    const risk = resolveRequestRisk({ requestRisk, quotaRequest }, accountId, quotaConfig)
     const stale = this.staleSettled.get(accountId) || 0
-    const tooLarge = this._requestTooLargeInBand({
-      quotaConfig,
-      u5,
-      u7,
-      ratio,
-      weeklyRatio,
-      band,
-      risk,
-      stale,
-    })
-    if (tooLarge) {
-      return {
-        ok: false,
-        reason: 'quota_guard_request_too_large',
-        detail: {
-          utilization_5h: u5,
-          utilization_7d: u7,
-          limit_5h: ratio,
-          limit_7d: weeklyRatio,
-          band,
-          stale_settled: stale,
-          inflight,
-          estimated_prompt_tokens: risk?.estimatedPromptTokens ?? null,
-          uncached_tokens: risk?.uncachedTokens ?? null,
-          cold: risk?.cold ?? null,
-          cold_reason: risk?.coldReason ?? null,
-          reset_5h: w5.reset,
-          reset_7d: w7.reset,
-          message:
-            '临近额度闸线，本请求预估未命中缓存过大。Near the quota safety line, this large uncached request is not eligible on this account.',
-        },
+    const in5 = quotaConfig.block_on_5h && inCriticalBand(u5, ratio, band)
+    const in7 = quotaConfig.block_on_7d && inCriticalBand(u7, weeklyRatio, band)
+    if (guardLargeColdEnabled(quotaConfig) && (in5 || in7)) {
+      const risk = resolveRequestRisk({ requestRisk, quotaRequest }, accountId, quotaConfig)
+      const tooLarge = this._requestTooLargeInBand({
+        quotaConfig,
+        u5,
+        u7,
+        ratio,
+        weeklyRatio,
+        band,
+        risk,
+        stale,
+        in5,
+        in7,
+      })
+      if (tooLarge) {
+        return {
+          ok: false,
+          reason: 'quota_guard_request_too_large',
+          detail: {
+            utilization_5h: u5,
+            utilization_7d: u7,
+            limit_5h: ratio,
+            limit_7d: weeklyRatio,
+            band,
+            stale_settled: stale,
+            inflight,
+            estimated_prompt_tokens: risk?.estimatedPromptTokens ?? null,
+            uncached_tokens: risk?.uncachedTokens ?? null,
+            cold: risk?.cold ?? null,
+            cold_reason: risk?.coldReason ?? null,
+            reset_5h: w5.reset,
+            reset_7d: w7.reset,
+            message:
+              '临近额度闸线，本请求预估未命中缓存过大。Near the quota safety line, this large uncached request is not eligible on this account.',
+          },
+        }
       }
     }
 
@@ -781,7 +786,7 @@ export class AccountQuota {
     )
   }
 
-  _requestTooLargeInBand({ quotaConfig, u5, u7, ratio, weeklyRatio, band, risk, stale }) {
+  _requestTooLargeInBand({ quotaConfig, u5, u7, ratio, weeklyRatio, band, risk, stale, in5 = null, in7 = null }) {
     if (!guardLargeColdEnabled(quotaConfig) || !risk) return false
     const threshold = largeColdThresholdOf(quotaConfig)
     const uncached = Number(risk.uncachedTokens) || 0
@@ -790,9 +795,9 @@ export class AccountQuota {
     const coldLarge = risk.largeCold === true || (risk.cold !== false && uncached >= threshold)
     const staleLarge = stale > 0 && large
     if (!coldLarge && !staleLarge) return false
-    const in5 = quotaConfig.block_on_5h && inCriticalBand(u5, ratio, band)
-    const in7 = quotaConfig.block_on_7d && inCriticalBand(u7, weeklyRatio, band)
-    return in5 || in7
+    const band5 = in5 == null ? quotaConfig.block_on_5h && inCriticalBand(u5, ratio, band) : in5
+    const band7 = in7 == null ? quotaConfig.block_on_7d && inCriticalBand(u7, weeklyRatio, band) : in7
+    return band5 || band7
   }
 
   _observeUtil(accountId, { u5 = null, u7 = null, source = 'headers' } = {}) {
