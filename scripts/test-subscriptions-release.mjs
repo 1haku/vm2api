@@ -21,6 +21,7 @@ const unit = [
   'panel-public-boot',
   'vm-recreate',
   'panel-vm-create',
+  'panel-vm-delete',
   'panel-users',
   'custom-migrations',
   'panel-acl',

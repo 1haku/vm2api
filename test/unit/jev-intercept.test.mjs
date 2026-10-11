@@ -248,7 +248,9 @@ test('model failure fails open', async () => {
     },
   })
   assert.equal(decision.action, 'pass')
-  assert.equal(JSON.parse(decision.intercept).by, 'fail-open')
+  const intercept = JSON.parse(decision.intercept)
+  assert.equal(intercept.by, 'fail-open')
+  assert.equal(intercept.keyword, '网络异常')
 })
 
 test('content-policy error codes are refusals; generic api errors are not', () => {
@@ -579,4 +581,90 @@ test('fail closed blocks when every key is down', async () => {
   )
   assert.equal(verdict.action, 'block')
   assert.equal(verdict.reason, 'unavailable')
+  assert.equal(verdict.detail, '上游 500')
+})
+
+test('api_keys accepts 999 and rejects 1000', () => {
+  const keys = Array.from({ length: 999 }, (_, i) => `k${i}`)
+  assert.equal(validateJevPatch({ api_keys: keys }).length, 0)
+  assert.equal(normalizeJevConfig({ api_keys: keys }).api_keys.length, 999)
+  assert.equal(validateJevPatch({ api_keys: [...keys, 'extra'] }).length, 1)
+})
+
+test('401 retires that key until the key list is saved again', async () => {
+  const cfg = {
+    enabled: true,
+    base_url: 'http://auth.example/v1',
+    api_keys: ['k-auth-retire', 'k-ok-retire'],
+    dedup_sec: 0,
+    timeout_ms: 500,
+  }
+  await classifyJev('retire-auth-1', { ...cfg, api_keys: ['k-auth-retire'] }, async () => ({ ok: false, status: 401 }))
+  const second = []
+  const verdict = await classifyJev('retire-auth-2', cfg, async (_url, init) => {
+    second.push(init.headers.authorization)
+    return { ok: true, json: async () => ({ answers: { safety: { noul: 0.9 } } }) }
+  })
+  assert.deepEqual(second, ['Bearer k-ok-retire'])
+  assert.equal(verdict.reason, 'safe')
+
+  const settings = {
+    value: null,
+    get: () => settings.value,
+    set(_key, value) {
+      settings.value = value
+    },
+  }
+  assert.equal(applyJevPatch(settings, { api_keys: ['k-auth-retire'], base_url: cfg.base_url, enabled: true }).ok, true)
+  let retried = 0
+  await classifyJev('retire-auth-3', { ...cfg, api_keys: ['k-auth-retire'] }, async () => {
+    retried += 1
+    return { ok: false, status: 401 }
+  })
+  assert.equal(retried, 1)
+})
+
+test('a network error does not retire the key and still tries the other host', async () => {
+  const cfg = {
+    enabled: true,
+    base_url: 'https://api.typesafe.ai',
+    api_keys: ['net-key'],
+    dedup_sec: 0,
+    timeout_ms: 500,
+    fail_open: true,
+  }
+  let calls = 0
+  const fetchImpl = async () => {
+    calls += 1
+    throw new Error('down')
+  }
+  const first = await classifyJev('net-keep-1', cfg, fetchImpl)
+  const second = await classifyJev('net-keep-2', cfg, fetchImpl)
+  assert.equal(first.detail, '网络异常')
+  assert.equal(second.detail, '网络异常')
+  assert.equal(calls, 2)
+
+  let proved = false
+  const both = {
+    ...cfg,
+    api_keys: [
+      'https://api.typesafe.ai k-down-a',
+      'https://api.typesafe.ai k-down-b',
+      'https://pool.futureppo.top/v1/systemone k-up',
+    ],
+  }
+  for (let i = 0; i < 16 && !proved; i++) {
+    const seen = []
+    const verdict = await classifyJev(`failover-${i}`, both, async (url, init) => {
+      seen.push(`${url} ${init.headers.authorization}`)
+      if (String(url).includes('typesafe')) throw new Error('timeout')
+      return { ok: true, json: async () => ({ answers: { safety: { noul: 0.2 } } }) }
+    })
+    if (!String(seen[0]).includes('typesafe')) continue
+    assert.equal(seen.filter((line) => line.includes('typesafe')).length, 1)
+    assert.equal(seen[1], 'https://pool.futureppo.top/v1/systemone Bearer k-up')
+    assert.equal(verdict.action, 'block')
+    proved = true
+  }
+  assert.equal(proved, true)
 })

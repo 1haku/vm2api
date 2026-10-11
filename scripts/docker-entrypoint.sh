@@ -15,7 +15,7 @@ if [ -d /opt/vm2api/image-config ]; then
   done
 fi
 
-# Only bootstrap a genuinely new inventory. Deleted slots must stay deleted.
+# Validate existing inventory; an empty fleet stays empty.
 node /opt/vm2api/scripts/initialize-slot-inventory.mjs "$ROOT"
 
 ensure_bin() {

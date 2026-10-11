@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { atomicWriteJson, isValidVmId, listVmRecordFiles } from './vm-file.mjs'
 
 // Bootstrap a new installation, never fill holes in an existing slot inventory.
@@ -27,19 +28,21 @@ export function initializeSlotInventory(projectRoot, dbPath = path.join(projectR
     atomicWriteJson(activeFile, { active_vm: id, updated_at: new Date().toISOString() })
     return { action: 'restored-pointer', id }
   }
-  if (hasActive || files.length || fs.existsSync(dbPath)) {
+  let databaseHasSlots = false
+  if (fs.existsSync(dbPath)) {
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      // A valid initialized database with no slots is legitimate after deletion.
+      // Missing schema or a corrupt file must not be mistaken for an empty fleet.
+      databaseHasSlots = !!db.prepare('SELECT 1 FROM vms LIMIT 1').get()
+    } finally {
+      db.close()
+    }
+  }
+  if (hasActive || files.length || databaseHasSlots) {
     throw new Error(
       'Existing installation has no valid slot record; restore its inventory before starting. No default slot was created.',
     )
   }
-  const id = 'vm-01'
-  atomicWriteJson(path.join(dir, `${id}.json`), {
-    id,
-    name: id,
-    status: 'stopped',
-    schedulable: false,
-    policy: { maxConcurrency: 2 },
-  })
-  atomicWriteJson(activeFile, { active_vm: id })
-  return { action: 'initialized', id }
+  return { action: 'empty', id: null }
 }

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { initializeSlotInventory } from '../../src/lib/vm/initialize-inventory.mjs'
+import { createDatabase } from '../../src/lib/db/database.mjs'
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-inventory-'))
@@ -20,13 +21,13 @@ function fixture(t) {
   }
 }
 
-test('fresh installation initializes the legacy default once', (t) => {
+test('fresh installation and intentionally empty database never seed a placeholder', (t) => {
   const f = fixture(t)
-  assert.deepEqual(initializeSlotInventory(f.root), { action: 'initialized', id: 'vm-01' })
-  assert.equal(JSON.parse(f.read('vm-01.json')).schedulable, false)
-  const original = f.read('vm-01.json')
-  assert.equal(initializeSlotInventory(f.root).action, 'preserved')
-  assert.equal(f.read('vm-01.json'), original)
+  assert.deepEqual(initializeSlotInventory(f.root), { action: 'empty', id: null })
+  const db = createDatabase({ dataDir: path.join(f.root, 'data') })
+  db.close()
+  assert.deepEqual(initializeSlotInventory(f.root), { action: 'empty', id: null })
+  assert.equal(f.hasDefault(), false)
 })
 
 test('deleted default stays absent across repeated starts; credentials and active pointer stay intact', (t) => {
@@ -68,7 +69,9 @@ test('never replaces corrupt or empty existing inventory with a fresh default', 
 test('an existing database prevents treating lost slot files as a new installation', (t) => {
   const f = fixture(t)
   const db = path.join(f.root, 'custom.db')
-  fs.writeFileSync(db, '')
+  const connection = createDatabase({ dbPath: db })
+  connection.prepare("INSERT INTO vms(id,name,vm_json) VALUES('lost','lost','{}')").run()
+  connection.close()
   assert.throws(() => initializeSlotInventory(f.root, db), /No default slot was created/)
   assert.equal(f.hasDefault(), false)
 })
@@ -92,7 +95,9 @@ test('startup CLI honors a custom data directory and fails without creating a sl
   const f = fixture(t)
   const dataDir = path.join(f.root, 'custom-data')
   fs.mkdirSync(dataDir)
-  fs.writeFileSync(path.join(dataDir, 'kin.db'), '')
+  const db = createDatabase({ dataDir })
+  db.prepare("INSERT INTO vms(id,name,vm_json) VALUES('lost','lost','{}')").run()
+  db.close()
   const result = spawnSync(
     process.execPath,
     [fileURLToPath(new URL('../../scripts/initialize-slot-inventory.mjs', import.meta.url)), f.root],

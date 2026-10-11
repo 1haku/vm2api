@@ -29,6 +29,7 @@ function linesOf(text: string) {
     .filter(Boolean)
 }
 
+const KEY_MAX = 999
 const PROVIDERS = [
   {
     id: 'jev' as const,
@@ -122,7 +123,7 @@ export function ModelSettings({
         max_state_chars: Number(draft.max_state_chars ?? 16000),
         questions: draft.question_bank || [],
       }
-      const keys = linesOf(keysText).slice(0, 8)
+      const keys = linesOf(keysText).slice(0, KEY_MAX)
       if (clearKey) body.api_keys = []
       else if (keys.length) body.api_keys = keys
       else if (apiKey.trim()) body.api_key = apiKey.trim()
@@ -381,8 +382,8 @@ export function ModelSettings({
             title='多把 Key'
             meta={
               draft.api_key_count
-                ? `已存 ${draft.api_key_count} 把，失败后轮换`
-                : '最多 8 把'
+                ? `已存 ${draft.api_key_count} 把，401/429/529 不再调度`
+                : `最多 ${KEY_MAX} 把`
             }
           >
             <div className='space-y-3'>
@@ -391,7 +392,7 @@ export function ModelSettings({
                 rows={3}
                 className='font-mono text-xs'
                 value={keysText}
-                placeholder='一行一把。填写后保存会整表替换'
+                placeholder='一行一把。URL 空格 Key 打到该地址，否则用上面的模型地址'
                 onChange={(e) => {
                   setKeysText(e.target.value)
                   if (e.target.value.trim()) setClearKey(false)
