@@ -4456,11 +4456,14 @@ export function createPanelHandler(ctx) {
           const type = status === 404 ? 'not_found_error' : 'invalid_request_error'
           return json(res, status, { ok: false, error: { type, code: result.error, message: result.error } })
         }
-        // Hostname mode is inside kin-egress. Restart that helper only; the
-        // slot workers keep the same bridge and do not need a reload.
+        // Hostname mode and SOCKS upstream both live inside kin-egress.
+        // Domain-forward-only: restart the helper; slots keep the same bridge.
+        // Same-id connection change: network name is unchanged so reload would
+        // only docker restart — the helper must pick up the new proxy_url or
+        // transparent traffic keeps the old exit.
         let egress = null
         if (
-          result.domain_forward_changed &&
+          (result.domain_forward_changed || result.connection_changed) &&
           egressEnabled() &&
           process.env.KIN_CRS_MOCK !== '1' &&
           (result.proxy.bound_vm_ids || []).length
