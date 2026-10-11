@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 工具参数流式下发 `failover.eager_tool_streaming` 改为默认开启：未配置时给自定义工具加 `eager_input_streaming`，避免 Claude Code 经中转写大文件时静默触发 180 秒空闲超时。显式 `false` 仍关闭。已部署且 `routing.json` 里写了 `eager_tool_streaming: false` 的机器保持关闭，请到面板「重试与切号」打开（#339）。
+- 请求日志列表把 HTTP 200 但 `final_state=incomplete` 的条目从绿色成功改成橙色未完成样式，悬停显示 `error_code`，避免把已提交却未写完的流当成成功（#339）。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。不要覆盖 `routing.json`：若其中明确写了 `eager_tool_streaming: false`，升级后仍关闭，需在面板「重试与切号」打开。无迁移、无新依赖，不必 `wrap-cli/sync`，二进制不变。不要覆盖 `vms/`、`data/`、`.env`。
+
 ## 1.3.137 — 2026-10-11
 
 - 首次安装后按脚本打开 `http://<ip>:8787/cc#/login` 不再 404。`/cc` 与 `/cc/` 和控制台 `index.html` 一样下发，且 `no-store`。Host 是未加括号的 IPv6 或非 ASCII 名字时不再在进路由前 500，路径照常路由；路径里的非法 `%` 不再冒泡成 500。
