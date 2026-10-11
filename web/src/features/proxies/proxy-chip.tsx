@@ -72,11 +72,15 @@ export function ProxyChip({
               IPv6 已关闭
             </span>
           ) : null}
+          {compact && !blocked && vm.proxy && proxyIsLocal(vm.proxy) ? (
+            // local 出口只有一条共用记录：必须写明是哪台 VPS 的本机出口。
+            <span className='truncate text-[11px]'>{host}</span>
+          ) : null}
           {lat != null ? (
             <span className='field-metric shrink-0 text-[11px] tabular-nums'>
               {latencyDigits(lat)}
             </span>
-          ) : compact && !blocked && !nodeLocal ? (
+          ) : compact && !blocked && !(vm.proxy && proxyIsLocal(vm.proxy)) ? (
             <span className='text-[11px]'>{tone === 'ok' ? '通' : '未测'}</span>
           ) : null}
         </>
