@@ -121,3 +121,25 @@ test('excludeErrorClassSql hides ingress auth without dropping oauth credential 
   assert.match(sql, /IFNULL\(error_code/)
   assert.match(sql, /upstream_auth_error/)
 })
+
+test('default auth mute keeps policy 403s that already name a non-auth class', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE logs (status INTEGER, error_code TEXT, vm_id TEXT)')
+  const insert = db.prepare('INSERT INTO logs VALUES (?, ?, ?)')
+  for (const row of [
+    [401, 'invalid_api_key', null],
+    [403, null, null],
+    [403, 'claude_code_only', null],
+    [403, 'key_group_mismatch', null],
+    [403, 'distill_blocked', null],
+    [401, 'upstream_auth_error', null],
+  ]) {
+    insert.run(...row)
+  }
+  const kept = db
+    .prepare(`SELECT error_code FROM logs WHERE ${excludeErrorClassSql('auth')}`)
+    .all()
+    .map((r) => r.error_code)
+  assert.deepEqual(kept.sort(), ['claude_code_only', 'distill_blocked', 'key_group_mismatch', 'upstream_auth_error'])
+})

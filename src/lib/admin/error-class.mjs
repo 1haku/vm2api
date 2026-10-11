@@ -170,6 +170,19 @@ export function ingressAuthSql() {
   )`
 }
 
+/**
+ * The muted `auth` class, matching `classifyRequestError`: a slotless 401/403 is ingress auth
+ * unless its code already names another class. Policy refusals (claude_code_only,
+ * key_group_mismatch, distill_blocked…) are 403s too and must stay visible.
+ */
+function mutedAuthSql() {
+  const classified = Object.keys(CODE_MAP)
+    .filter((code) => CODE_MAP[code] !== 'auth')
+    .map((code) => `'${code}'`)
+    .join(',')
+  return `(${ingressAuthSql()} AND IFNULL(error_code, '') NOT IN (${classified}))`
+}
+
 export function excludeErrorClassSql(classes) {
   const list = Array.isArray(classes)
     ? classes
@@ -179,7 +192,7 @@ export function excludeErrorClassSql(classes) {
         .filter(Boolean)
   const parts = []
   for (const id of list) {
-    if (id === 'auth') parts.push(`NOT (${ingressAuthSql()})`)
+    if (id === 'auth') parts.push(`NOT ${mutedAuthSql()}`)
   }
   return parts.length ? `(${parts.join(' AND ')})` : ''
 }

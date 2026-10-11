@@ -47,8 +47,8 @@ if ! docker compose up -d --no-deps --pull never vm2api; then
   exit 1
 fi
 ready=0
-for attempt in $(seq 1 30); do
-  if docker exec vm2api node --input-type=module -e 'const r=await fetch("http://127.0.0.1:"+(process.env.PORT||8787)+"/health");if(!r.ok)process.exit(1)' >/dev/null 2>&1; then ready=1; break; fi
+for attempt in $(seq 1 120); do
+  if docker exec vm2api node --input-type=module -e 'const r=await fetch("http://127.0.0.1:"+(process.env.PORT||8787)+"/health",{signal:AbortSignal.timeout(2000)});if(!r.ok)process.exit(1)' >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 if [ "$ready" != 1 ]; then echo "Health check failed; rollback backup: $BACKUP" >&2; exit 1; fi
