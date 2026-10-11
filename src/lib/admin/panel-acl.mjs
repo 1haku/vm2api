@@ -188,10 +188,6 @@ function userVmPathAllowed(method, path) {
       rest === 'count-tokens' ||
       rest === 'start' ||
       rest === 'stop' ||
-      rest === 'openai-quota/refresh' ||
-      rest === 'openai-quota/reset' ||
-      rest === 'claude-reset/query' ||
-      rest === 'claude-reset/redeem' ||
       rest.startsWith('oauth/')
     )
   }

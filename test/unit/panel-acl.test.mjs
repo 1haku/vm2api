@@ -64,14 +64,18 @@ test('user can manage owned vm/proxy/key surfaces and nothing else', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/update', 'user').ok, false)
 })
 
-test('user can query quota and redeem reset credits on owned vms and keys', () => {
-  const allowed = [
+test('users can reset own key counters while account quota operations remain administrator-only', () => {
+  const accountActions = [
     '/api/panel/vms/vm-01/openai-quota/refresh',
     '/api/panel/vms/vm-01/openai-quota/reset',
     '/api/panel/vms/vm-01/claude-reset/query',
     '/api/panel/vms/vm-01/claude-reset/redeem',
-    '/api/panel/api-keys/key_a/reset-quota',
   ]
+  for (const p of accountActions) {
+    assert.equal(authorizePanelRoute('POST', p, 'admin').ok, true)
+    for (const role of ['user', 'super']) assert.equal(authorizePanelRoute('POST', p, role).ok, false)
+  }
+  const allowed = ['/api/panel/api-keys/key_a/reset-quota']
   for (const p of allowed) {
     assert.equal(authorizePanelRoute('POST', p, 'user').ok, true, `user POST ${p}`)
     assert.equal(authorizePanelRoute('GET', p, 'user').ok, false, `user GET ${p}`)

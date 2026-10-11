@@ -7,6 +7,12 @@ import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import { clearReleaseCache } from '../../src/lib/admin/release.mjs'
 
 test('panel version remains the loaded backend version until a new handler boots', async (t) => {
+  const marker = process.env.VM2API_CUSTOM_BUILD
+  delete process.env.VM2API_CUSTOM_BUILD
+  t.after(() => {
+    if (marker === undefined) delete process.env.VM2API_CUSTOM_BUILD
+    else process.env.VM2API_CUSTOM_BUILD = marker
+  })
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-panel-update-'))
   clearReleaseCache()
   t.mock.method(globalThis, 'fetch', async () => ({

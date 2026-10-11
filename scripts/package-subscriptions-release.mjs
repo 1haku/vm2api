@@ -22,6 +22,8 @@ execFileSync('git', [
   'docker/kin-kvm',
   'web/dist',
   'web/src',
+  'web/vite.config.ts',
+  'docker-compose.yml',
   'deploy',
   'package.json',
   'package-lock.json',
