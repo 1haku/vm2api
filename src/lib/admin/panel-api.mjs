@@ -363,6 +363,9 @@ export function validatePersonaRoutingPatch(body = {}) {
   if (compat.cache_ttl != null && !['5m', '1h'].includes(String(compat.cache_ttl).trim())) {
     problems.push(`cache_ttl 必须是 5m / 1h，收到 ${compat.cache_ttl}`)
   }
+  if (compat.claude_code_only != null && typeof compat.claude_code_only !== 'boolean') {
+    problems.push('claude_code_only 必须是布尔')
+  }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints
     if (typeof bp !== 'object' || Array.isArray(bp)) {

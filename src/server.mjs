@@ -1038,6 +1038,7 @@ const server = http.createServer(async (req, res) => {
         stickyRouter,
         accountQuota,
         getPoolScheduler: () => poolScheduler,
+        getRoutingConfig: () => routingConfig,
       })
     }
 

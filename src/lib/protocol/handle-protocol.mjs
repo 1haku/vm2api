@@ -108,6 +108,11 @@ import {
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
 } from '../identity/crs-persona.mjs'
+import {
+  claudeCodeOnlyError,
+  claudeCodeOnlyFromRouting,
+  isClaudeCodeFamilyRequest,
+} from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
 import { createAnthropicStreamTracker, isRecoverableTruncation } from './stream-truncation.mjs'
 import {
@@ -600,6 +605,20 @@ export function createHandleProtocol(deps) {
       logBag.error_code = ErrorCode.KEY_GROUP_MISMATCH
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, 403, errorResult.body)
+    }
+    // Official Claude Code only ever speaks Messages, so other inbound protocols on a
+    // Claude model are third-party by construction.
+    const routingNow = getRouting()
+    if (
+      platform.platform === 'anthropic' &&
+      claudeCodeOnlyFromRouting(routingNow) &&
+      !(protocol === 'anthropic.messages' && isClaudeCodeFamilyRequest(req.headers, inbound, { routing: routingNow }))
+    ) {
+      stats.errors++
+      const errorResult = claudeCodeOnlyError()
+      logBag.error_code = ErrorCode.CLAUDE_CODE_ONLY
+      logBag.error_message = errorResult.body?.error?.message || null
+      return json(res, errorResult.status, errorResult.body)
     }
     // Codex returns before conversion. Distill does not apply to OpenAI platform models.
     // Refusal still scans here so a cached refusal never reaches a slot.
