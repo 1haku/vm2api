@@ -285,6 +285,7 @@ export function defaultJevConfig() {
   return {
     enabled: false,
     hard_regex_enabled: true,
+    openai_platform_enabled: false,
     provider: 'jev',
     base_url: '',
     api_key: '',
@@ -384,6 +385,7 @@ export function normalizeJevConfig(raw) {
   return {
     enabled: raw.enabled === true,
     hard_regex_enabled: raw.hard_regex_enabled !== false,
+    openai_platform_enabled: raw.openai_platform_enabled === true,
     provider: providerOf(raw.provider).id,
     base_url: String(raw.base_url || '')
       .trim()
@@ -417,6 +419,7 @@ export function publicJevConfig(cfg) {
   return {
     enabled: c.enabled,
     hard_regex_enabled: c.hard_regex_enabled,
+    openai_platform_enabled: c.openai_platform_enabled,
     provider: c.provider,
     providers: POLICY_PROVIDERS.map((item) => ({ ...item })),
     base_url: c.base_url,
@@ -452,6 +455,7 @@ export function publicJevConfig(cfg) {
       max_state_chars: 16000,
       expand_base64: true,
       strip_reminders: true,
+      openai_platform_enabled: false,
       timeout_ms: TIMEOUT_DEFAULT,
     },
     categories: [...JEV_CATEGORIES, 'custom'],
@@ -540,7 +544,7 @@ export function validateJevPatch(body = {}) {
     const n = Number(body.max_state_chars)
     if (!Number.isInteger(n) || n < 256 || n > 64000) problems.push('max_state_chars 必须是 256–64000 的整数')
   }
-  for (const key of ['block_if_below', 'fail_open', 'expand_base64', 'strip_reminders']) {
+  for (const key of ['block_if_below', 'fail_open', 'expand_base64', 'strip_reminders', 'openai_platform_enabled']) {
     if (Object.hasOwn(body, key) && typeof body[key] !== 'boolean') problems.push(`${key} 必须是布尔`)
   }
   if (Object.hasOwn(body, 'safety_instruction') && typeof body.safety_instruction !== 'string') {
