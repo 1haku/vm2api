@@ -351,8 +351,9 @@ async function admitCodexCandidate(projectRoot, req, opts, { deadline, signal })
 }
 
 // Observed with gpt-6-astra + Responses Lite, not a documented upstream limit.
+// Keep the model gate tight until another Lite model shows the same 128 KiB failure.
 // Retry only a failed full-history attempt, keeping the newest reasoning suffix.
-function reasoningHistoryFallback(args, result) {
+export function reasoningHistoryFallback(args, result) {
   if (process.env.KIN_CODEX_REASONING_HISTORY_FALLBACK === '0') return null
   const body = args.body
   const error = result?.body?.error || result?.body?.response?.error
@@ -683,7 +684,10 @@ export async function handleCodexProtocol({
         }
         ingestCodexHop(projectRoot, vm.id, result, Date.now(), normalizeCodexRouting(routing.codex).quota)
         if (result?.transport_retried) logBag.transport_retried = true
-        if (result?.reasoning_history_retried) logBag.attempt_count += 1
+        if (result?.reasoning_history_retried) {
+          logBag.attempt_count += 1
+          logBag.reasoning_history_retried = true
+        }
         last = result
         const hopUsage = result.usage || result.body?.usage || result.body?.response?.usage || null
         const usage = preferUsage(hopUsage, streamedUsage)

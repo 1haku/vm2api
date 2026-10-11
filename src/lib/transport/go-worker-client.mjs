@@ -293,7 +293,8 @@ export function semanticStatusForStreamError(errorBody) {
   const message = String(errorBody?.error?.message || errorBody?.message || '')
   if (isPlanLimitMessage(message)) return 429
   // The kernel names the status the job failed with; older kernels did not.
-  const explicit = Number(errorBody?.error?.status)
+  // Codex Responses Lite error events put it on the outer object (`{type,status,error}`).
+  const explicit = Number(errorBody?.error?.status ?? errorBody?.status)
   if (explicit >= 400 && explicit < 600) return explicit
   if (type === 'rate_limit_error') return 429
   if (type === 'overloaded_error') return 529

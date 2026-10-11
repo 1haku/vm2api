@@ -12,6 +12,7 @@ import {
   usageFromSseEvent,
   isDownstreamCommitEvent,
   restoreUncommittedHop,
+  semanticStatusForStreamError,
 } from '../../src/lib/transport/go-worker-client.mjs'
 import { extractOpenaiUsage } from '../../src/lib/protocol/openai-usage.mjs'
 import { callRustKernel, rustKernelHealth } from '../../src/lib/transport/rust-kernel-client.mjs'
@@ -70,6 +71,58 @@ test('a coded kernel stream error keeps its code and the status it names', () =>
   })
   assert.equal(limited.status, 429)
   assert.equal(limited.headers['retry-after'], '42')
+})
+
+test('semanticStatusForStreamError reads outer Codex status 500 instead of defaulting to 502', () => {
+  assert.equal(
+    semanticStatusForStreamError({
+      type: 'error',
+      status: 500,
+      error: {
+        type: 'server_error',
+        code: 'server_error',
+        message: 'An error occurred while processing your request...',
+      },
+    }),
+    500,
+  )
+  assert.equal(
+    semanticStatusForStreamError({
+      type: 'error',
+      error: { type: 'api_error', code: 'kernel_unavailable', status: 503, message: 'named' },
+    }),
+    503,
+  )
+  assert.equal(
+    semanticStatusForStreamError({
+      type: 'error',
+      error: { type: 'server_error', code: 'server_error', message: 'no explicit status' },
+    }),
+    502,
+  )
+})
+
+test('restoreUncommittedHop reports Codex outer status 500 rather than 502', () => {
+  const restored = restoreUncommittedHop({
+    ok: false,
+    status: 200,
+    committed: false,
+    terminalState: 'incomplete',
+    headers: {},
+    body: {
+      type: 'error',
+      status: 500,
+      error: {
+        type: 'server_error',
+        code: 'server_error',
+        message: 'An error occurred while processing your request...',
+      },
+    },
+  })
+  assert.equal(restored.status, 500)
+  assert.equal(restored.streamError, true)
+  assert.equal(restored.terminalState, 'rejected')
+  assert.equal(restored.body.error.code, 'server_error')
 })
 
 test('setup-token worker envelope is inference-only', () => {
