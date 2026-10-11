@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 日志列表默认隐藏「认证」类时，不再把无槽位的 403 策略拒绝一起藏掉：`claude_code_only`、`key_group_mismatch`、`vm_pool_unavailable`、`distill_blocked` 等已有明确分类的错误码照常显示。之前只按「无槽位 401/403」判定，这些拦截在默认视图里看不到，要勾「显示静音」才出现。入站来源统计口径不变。
+
+已部署机升级：更新 Node 控制面，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.141 — 2026-10-11
 
 - 「仅允许 Claude Code 家族请求」开启时，拦截提前到健康探测之前。此前像健康探测的第三方短请求（如 `hi`）会被探测缓存答出 200，或在探测 fail-closed 时得到 503 `health_unavailable`，而不是 403 `claude_code_only`。官方 Claude Code 的探测请求不受影响。
