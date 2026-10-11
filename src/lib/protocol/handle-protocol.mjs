@@ -843,6 +843,8 @@ export function createHandleProtocol(deps) {
         }),
       })
     }
+    // After OpenAI→Anthropic conversion so function tools already have input_schema;
+    // leftover OpenAI-shaped tools are still marked (rewrite / mixed inbound).
     ctx.body = applyEagerToolStreaming(ctx.body, getRouting())
     const personaIn = ctx.body
     if (!requestContext)
