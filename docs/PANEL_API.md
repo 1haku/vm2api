@@ -175,7 +175,17 @@ Claude PATCH `max_sessions` 返回 400 `claude_max_sessions_forbidden`；OpenAI 
 
 本地软闸在实际普通准入生效：用量达到闸线即排除账号。提高阈值或窗口有效重置后重新评估，不能清除上游硬限制、人工关闭或凭证问题；已在飞的流和对话窗口不被重建。两个窗口独立判断，一个重置不代表另一个解除。
 
-Claude `routing.quota` 另有临界区保护（默认开）：`guard_large_cold`（bool）、`critical_band`（默认 0.05，闸线下这一段）、`large_cold_uncached_tokens`（默认 100000）。用量进入 5h 或 7d 闸线下 `critical_band` 且本请求被估成大额冷缓存（首轮 / 前缀变化 / 未确认缓存，整段 prompt + `max_tokens`）时，该账号本笔不接单，调度改选其他账号；全池都在临界区则本地 HTTP 429 `quota_guard_request_too_large`，不打上游。已达闸线仍拦截普通请求。闸是尽力保护：缓存命中与最终输出无法精确预知，也不把美元换成官方百分比，更不会截短上下文。
+Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`gate_overshoot` 默认 0.05，范围 0–0.1）：
+
+| 用量 `u`（相对档位/VM 覆盖的闸线 `limit`） | 状态 | 行为 |
+|------|------|------|
+| `u < limit − critical_band` | 正常 | 照常调度 |
+| `limit − critical_band ≤ u < limit + gate_overshoot` | 临近闸线（`availability.key = drain`） | 已入座会话留在本 VM 继续；同账号一次只跑一个请求，第二个并发在本 VM 排队（不换 VM，超时 529）；新会话优先开到其他正常 VM，没有时才开在这里；用量已过闸线时不再开新席位 |
+| `u ≥ limit + gate_overshoot` | 闸上（`quota_5h_safety` / `quota_7d_safety`，受限） | 让出席位换 VM |
+
+上游 rejected / 100% / 429 冷却永远先于上表。闸线 0.95 + 默认超出量 0.05 = 1.0 时，闸上与上游满额重合。
+
+临近闸线区另有大额冷请求保护（默认开）：`guard_large_cold`（bool）、`large_cold_uncached_tokens`（默认 100000）。本请求被估成大额冷缓存（首轮 / 前缀变化 / 未确认缓存，整段 prompt + `max_tokens`）时，该账号本笔不接单，调度改选其他账号；全池都在临近闸线区则本地 HTTP 429 `quota_guard_request_too_large`，不打上游。闸是尽力保护：缓存命中与最终输出无法精确预知，也不把美元换成官方百分比，更不会截短上下文。
 
 
 `codex.quota` 为 `null`、数组、未知字段、字符串数字或超范围值，返回 400 `invalid_openai_quota`，消息定位字段，校验失败前不落盘。新增限额不接受 OpenAI 并发 0；历史存储 0 仍按原有效值 2 执行和展示。

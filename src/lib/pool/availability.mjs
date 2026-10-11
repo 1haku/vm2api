@@ -11,6 +11,7 @@ import {
   WINDOW_5H_MS,
   WINDOW_7D_MS,
 } from './quota-window.mjs'
+import { GATE_DRAINING, GATE_GATED, gateZone, quotaGateOf } from './quota-gate.mjs'
 import { DEFAULT_TIER_POLICIES } from './quota-tiers.mjs'
 import { isOfficialUsageRateLimited } from '../oauth/crs-usage-probe.mjs'
 import { expiresAtToMs } from '../oauth/oauth-credentials.mjs'
@@ -176,6 +177,7 @@ function policyOf(input = {}) {
   return {
     limit_5h: Number(p.limit_5h ?? p.safety_ratio ?? fallback.limit_5h),
     limit_7d: Number(p.limit_7d ?? p.weekly_safety_ratio ?? fallback.limit_7d),
+    gate: quotaGateOf(p),
   }
 }
 
@@ -374,7 +376,9 @@ export function evaluateAccount({
     })
   }
 
-  if (u5 >= pol.limit_5h) {
+  const z5 = gateZone(u5, pol.limit_5h, pol.gate)
+  const z7 = gateZone(u7, pol.limit_7d, pol.gate)
+  if (z5 === GATE_GATED) {
     return finish(base, {
       key: 'quota',
       text: '5h 限制',
@@ -385,7 +389,7 @@ export function evaluateAccount({
       until: resetUntilMs(w5.reset, now),
     })
   }
-  if (u7 >= pol.limit_7d) {
+  if (z7 === GATE_GATED) {
     return finish(base, {
       key: 'quota',
       text: '7d 限制',
@@ -448,6 +452,19 @@ export function evaluateAccount({
         until: coolUntil,
       })
     }
+  }
+  // Near the gate: still admitted (one call at a time, no new seats while an open
+  // VM exists), but the console must not paint it as plain 可用.
+  const drainWindow = z5 === GATE_DRAINING ? '5h' : z7 === GATE_DRAINING ? '7d' : null
+  if (drainWindow) {
+    return finish(base, {
+      key: 'drain',
+      text: `${drainWindow} 临近闸线`,
+      accept: true,
+      usable: true,
+      reason: `gate_${drainWindow}_draining`,
+      window: drainWindow,
+    })
   }
 
   return finish(base, {
@@ -549,7 +566,7 @@ export function credStatusFromAvailability(av = {}) {
       ? 'ok'
       : key === 'quota' || key === 'warn'
         ? 'warn'
-        : key === 'cool' || key === 'caution'
+        : key === 'cool' || key === 'caution' || key === 'drain'
           ? 'caution'
           : key === 'off'
             ? 'off'

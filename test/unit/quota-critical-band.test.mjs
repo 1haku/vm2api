@@ -20,6 +20,8 @@ import {
   trackCachePrefix,
 } from '../../src/lib/protocol/cache-prefix.mjs'
 import { rewritePoolErrorForClient, mapUpstreamError } from '../../src/lib/core/errors.mjs'
+import { evaluateAccount } from '../../src/lib/pool/availability.mjs'
+import { listQuotaFromHeaders } from '../../src/lib/pool/quota-window.mjs'
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kin-quota-band-'))
@@ -99,9 +101,11 @@ test('5h and 7d bands are independent', () => {
   assert.equal(q.canAccept('open', { requestRisk: largeColdRisk }).ok, true)
 })
 
-test('already at the limit still blocks ordinary requests', () => {
+test('past the line plus overshoot still blocks ordinary requests', () => {
   const q = quota()
-  setUtil(q, 'full', { u5: 0.8 })
+  setUtil(q, 'line', { u5: 0.8 })
+  assert.equal(q.canAccept('line', { requestRisk: smallRisk }).ok, true, 'at the line, inside the 5% overshoot')
+  setUtil(q, 'full', { u5: 0.85 })
   assert.equal(q.canAccept('full', { requestRisk: smallRisk }).reason, 'quota_5h_safety')
   setUtil(q, 'over', { u5: 0.99 })
   assert.equal(q.canAccept('over').reason, 'quota_5h_safety')
@@ -126,7 +130,7 @@ test('stale reading after an in-band settle blocks the next large request', () =
   q.release('stale')
   assert.equal(q.canAccept('stale', { requestRisk: smallRisk }).ok, true)
   assert.equal(q.canAccept('stale', { requestRisk: largeColdRisk }).reason, 'quota_guard_request_too_large')
-  setUtil(q, 'stale', { u5: 0.81 })
+  setUtil(q, 'stale', { u5: 0.86 })
   assert.equal(q.canAccept('stale', { requestRisk: smallRisk }).reason, 'quota_5h_safety')
 })
 
@@ -340,4 +344,52 @@ test('prompt estimate is skipped below the band and walked once for in-band acco
   q.tryAcquire('band-a', { quotaRequest })
   assert.equal(promptEstimateStats.misses, 1)
   q.release('band-a')
+})
+
+test('admission and the panel agree near the gate (vm-10: pro, 7d 90% of a 95% line)', () => {
+  const tier = { limit_5h: 0.95, limit_7d: 0.95, max_concurrency: 2 }
+  const q = new AccountQuota({
+    dataDir: tmpDir(),
+    config: {
+      quota: { block_on_5h: true, block_on_7d: true, critical_band: 0.05, gate_overshoot: 0.05 },
+      tiers: { default: tier, pro: tier, max: tier },
+    },
+  })
+  const panel = (u7) => {
+    q.ingestHeaders('vm10', {
+      'anthropic-ratelimit-unified-5h-utilization': '0.12',
+      'anthropic-ratelimit-unified-5h-status': 'allowed',
+      'anthropic-ratelimit-unified-7d-utilization': String(u7),
+      'anthropic-ratelimit-unified-7d-status': 'allowed_warning',
+    })
+    const acc = q.repo.get('vm10')
+    const now = Date.now()
+    return evaluateAccount({
+      vm: { id: 'vm-10', schedulable: true },
+      account: acc,
+      hasToken: true,
+      hasRefresh: true,
+      schedulable: true,
+      lastProbe: { ok: true, source: 'official-cc-usage', at: new Date(now).toISOString() },
+      quota: listQuotaFromHeaders(acc.unified, { now }),
+      policy: q.policyFor(acc),
+      now,
+    })
+  }
+
+  const near = panel(0.9)
+  assert.equal(near.key, 'drain', 'the console must not paint this as 可用')
+  assert.equal(near.accept, true)
+  assert.equal(q.canAccept('vm10', { requestRisk: smallRisk }).ok, true)
+  q.inflight.set('vm10', 1)
+  assert.equal(q.canAccept('vm10', { requestRisk: smallRisk }).reason, 'quota_band_inflight')
+  q.inflight.set('vm10', 0)
+
+  const open = panel(0.5)
+  assert.equal(open.key, 'ok')
+  assert.equal(q.canAccept('vm10', { requestRisk: largeColdRisk }).ok, true)
+
+  const gated = panel(1)
+  assert.equal(gated.accept, false)
+  assert.equal(q.canAccept('vm10', { requestRisk: smallRisk }).ok, false)
 })

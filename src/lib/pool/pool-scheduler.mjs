@@ -48,6 +48,7 @@ import {
 } from '../transport/rust-kernel-client.mjs'
 import { resolveSessionSlots } from '../vm/slot-engine.mjs'
 import { SeatPlanner, rankSeatCandidates } from './seat-planner.mjs'
+import { GATE_DRAINING } from './quota-gate.mjs'
 
 const WAIT_TIMEOUT_MIN_MS = 1000
 const WAIT_TIMEOUT_MAX_MS = 120000
@@ -265,7 +266,8 @@ function stickyShouldWait(waitReason, cooldownReason = null) {
     waitReason === 'fable_concurrency' ||
     waitReason === 'rpm_limit' ||
     waitReason === 'slot_busy' ||
-    waitReason === 'circuit_probe'
+    waitReason === 'circuit_probe' ||
+    waitReason === 'quota_band_inflight'
   ) {
     return true
   }
@@ -281,6 +283,8 @@ const LIVE_RECHECKED_WAITS = new Set([
   'rpm_limit',
   'slot_busy',
   'circuit_probe',
+  // Near the 5h/7d gate one call runs at a time; reserve() → tryAcquire re-reads it.
+  'quota_band_inflight',
 ])
 
 function grantable(candidate) {
@@ -691,15 +695,21 @@ export class PoolScheduler extends EventEmitter {
     }
   }
 
-  /** Candidates that can take a brand-new seat right now without passing anyone queued for it. */
+  /**
+   * VMs that can take a brand-new seat right now without passing anyone
+   * queued for it. A VM near its 5h/7d gate (draining) is a last resort: it
+   * only takes a new device when no open VM can.
+   */
   openableCandidates(candidates, avoided = () => false) {
-    return candidates.filter(
+    const openable = candidates.filter(
       (candidate) =>
         !avoided(candidate) &&
         this.isReservable(candidate) &&
         this.planner.canOpen(candidate.vmId, candidate.seatCap, candidate.headroom) &&
         !this.planner.hasSeatWaiters(candidate.vmId),
     )
+    const open = openable.filter((candidate) => !candidate.draining)
+    return open.length ? open : openable
   }
 
   /** Sticky VMs first (family, device, session), then the configured strategy. */
@@ -912,6 +922,7 @@ export class PoolScheduler extends EventEmitter {
         maxConcurrency,
         seatCap,
         headroom: eligibility.headroom ?? null,
+        draining: eligibility.gateZone === GATE_DRAINING,
         account: eligibility.account || null,
         loadRatio: (inflight + this.waiterCount(accountId)) / maxConcurrency,
         lastUsedAt: this.lastUsed.get(accountId) || state?.last_used_at || 0,
@@ -1094,13 +1105,16 @@ export class PoolScheduler extends EventEmitter {
       const familyInflight = this.familyInflight(accountId, FABLE_FAMILY_KEY)
       if (familyInflight >= fableCap) markWait('fable_concurrency')
     }
+    let gateZone = null
     if (this.accountQuota && !pinned) {
       const quotaGate = this.accountQuota.canAccept(accountId, { tier: vmTierOf(vm), quotaRequest })
       if (!quotaGate.ok) {
         if (quotaGate.reason === 'concurrency_limit') markWait('concurrency_limit')
         else if (quotaGate.reason === 'rpm_limit') markWait('rpm_limit', quotaGate.detail?.reset_at)
+        else if (quotaGate.reason === 'quota_band_inflight') markWait('quota_band_inflight')
         else return { ok: false, reason: quotaGate.reason || 'quota_gate' }
       }
+      gateZone = this.accountQuota.gateZoneOf?.(accountId, { tier: vmTierOf(vm) }) || null
     }
     // A sticky preference must not bypass exhausted kernel recovery.
     if (kernelFaults.has(vm.id)) return { ok: false, reason: 'kernel_faulted' }
@@ -1109,7 +1123,7 @@ export class PoolScheduler extends EventEmitter {
     } else if (workerStatus && rustKernelProcessUp(workerStatus) && !rustKernelReachable(workerStatus)) {
       return { ok: false, reason: 'worker_unhealthy' }
     }
-    return { ok: true, account, workerStatus, busy, availableAt, waitReason, headroom }
+    return { ok: true, account, workerStatus, busy, availableAt, waitReason, headroom, gateZone }
   }
 
   executionContext(vm, accountId) {

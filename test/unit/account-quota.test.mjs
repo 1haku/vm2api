@@ -953,7 +953,7 @@ test('persistEffectiveWindows clears leftover quota cooldown when official is un
   assert.equal(q.canAccept('acc-reconcile').ok, true)
 })
 
-test('official 0.44 allowed overwrites local 0.85 and clears quota cooldown', () => {
+test('official 0.44 allowed overwrites local 0.9 and clears quota cooldown', () => {
   const q = new AccountQuota({
     dataDir: tmpDir(),
     config: { quota: { safety_ratio: 0.85, block_on_5h: true, block_on_7d: true } },
@@ -975,7 +975,8 @@ test('official 0.44 allowed overwrites local 0.85 and clears quota cooldown', ()
   q.ingestOAuthUsage('acc-clear', {
     ok: true,
     source: 'official-cc-usage',
-    five_hour: { utilization: 0.85, status: 'allowed', resets_at: futureReset(4 * 3600_000) },
+    // 0.85 line + 0.05 default overshoot.
+    five_hour: { utilization: 0.9, status: 'allowed', resets_at: futureReset(4 * 3600_000) },
     seven_day: { utilization: 0.36, status: 'allowed' },
     probed_at: new Date().toISOString(),
   })
