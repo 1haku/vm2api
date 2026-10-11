@@ -902,6 +902,7 @@ const handlePanel = createPanelHandler({
   refreshWorkerCredentialForVm,
   fetchWorkerModels,
   clusterRoutes,
+  clusterManager,
   slotShell,
 })
 
