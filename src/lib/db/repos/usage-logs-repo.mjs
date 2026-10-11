@@ -77,6 +77,7 @@ const SUMMARY_COLUMNS = [
   'outbound_session_id',
   'reasoning_effort',
   'intercept',
+  'vm_owner_user_id',
 ]
 
 function toRow(rec) {
@@ -236,6 +237,7 @@ export class UsageLogsRepo {
       INSERT OR IGNORE INTO request_log_debug (request_id, ts, record_json) VALUES (?, ?, ?)
     `)
     this._getDebug = db.prepare('SELECT record_json FROM request_log_debug WHERE request_id = ?')
+    this._vmOwner = db.prepare('SELECT owner_user_id FROM vms WHERE id = ?')
     this._listDebug = db.prepare('SELECT record_json FROM request_log_debug ORDER BY ts DESC LIMIT ?')
     this._getByRequestId = db.prepare('SELECT * FROM usage_logs WHERE request_id = ?')
     this._debugBytes = db.prepare('SELECT COALESCE(SUM(LENGTH(record_json)), 0) AS n FROM request_log_debug')
@@ -268,6 +270,11 @@ export class UsageLogsRepo {
   insertSummary(rec) {
     this._insert.run(...toRow(rec))
     return rec
+  }
+
+  vmOwnerOf(vmId) {
+    if (!vmId) return null
+    return this._vmOwner.get(String(vmId))?.owner_user_id || null
   }
 
   /** INSERT OR IGNORE (legacy import path). @returns true when inserted */
