@@ -107,7 +107,10 @@ if [ -d .git ]; then
   chmod 755 bin/kin-* 2>/dev/null || true
   grep -q '^!CHANGELOG.md$' .dockerignore 2>/dev/null || printf '\n!CHANGELOG.md\n' >> .dockerignore
   if [ "$ARCH" = amd64 ]; then
-    COMPOSE_FILE_LIST="$COMPOSE_FILE_LIST:$ROOT/docker-compose.build.yml"
+    case ":$COMPOSE_FILE_LIST:" in
+      *":$ROOT/docker-compose.build.yml:"*) ;;
+      *) COMPOSE_FILE_LIST="$COMPOSE_FILE_LIST:$ROOT/docker-compose.build.yml" ;;
+    esac
   fi
   compose build vm2api
 else

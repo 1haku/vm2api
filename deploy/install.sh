@@ -488,12 +488,17 @@ fetch_release_files() {
 }
 
 # 安装目录写进 .env：面板一键更新的 helper 容器按它挂载宿主目录。
-# ARM64 源码安装再写 COMPOSE_FILE，让裸 docker compose（包括面板更新）也走
-# arm64 override，不会退回基础服务和 ./vms、./data。
+# 源码安装再写 COMPOSE_FILE，让裸 docker compose（包括面板更新）也按本机 checkout 构建：
+# amd64 叠 docker-compose.build.yml（基础文件只拉镜像），ARM64 叠 arm64 override，
+# 不会退回基础服务和 ./vms、./data。
 prepare_arch_env() {
   local mode="$1"
   env_set_if_empty VM2API_HOST_ROOT "${INSTALL_DIR}" || true
-  if [ "$HOST_ARCH" != arm64 ] || [ "$mode" != source ]; then
+  if [ "$mode" != source ]; then
+    return 0
+  fi
+  if [ "$HOST_ARCH" != arm64 ]; then
+    env_set_if_empty COMPOSE_FILE "docker-compose.yml:docker-compose.build.yml" || true
     return 0
   fi
   if [ ! -f "${INSTALL_DIR}/docker-compose.arm64.yml" ]; then
