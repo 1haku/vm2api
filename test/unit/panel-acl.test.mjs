@@ -74,6 +74,13 @@ test('user can query quota and redeem reset credits on owned vms and keys', () =
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/claude-reset/other', 'user').ok, false)
 })
 
+test('user can rotate owned api keys; super cannot', () => {
+  const p = '/api/panel/api-keys/key_a/rotate'
+  assert.equal(authorizePanelRoute('POST', p, 'user').ok, true)
+  assert.equal(authorizePanelRoute('GET', p, 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', p, 'super').ok, false)
+})
+
 test('usage-logs and statistics are read-only for user and super', () => {
   const paths = [
     '/api/panel/usage-logs',
