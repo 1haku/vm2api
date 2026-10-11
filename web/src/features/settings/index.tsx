@@ -25,6 +25,7 @@ import { dashboardQueryOptions } from '@/features/overview/queries'
 import { AboutPane } from '@/features/settings/about-pane'
 import { BackupPane } from '@/features/settings/backup-pane'
 import { CacheBreakpointsPane } from '@/features/settings/cache-breakpoints-pane'
+import { ClaudeCodeOnlyPane } from '@/features/settings/claude-code-only-pane'
 import { GptPane } from '@/features/settings/gpt-pane'
 import { HealthPane } from '@/features/settings/health-pane'
 import { KernelRoutingPane } from '@/features/settings/kernel-routing-pane'
@@ -106,6 +107,7 @@ export function SettingsPage() {
             messages: 'cli-hop',
           },
           detect_proxied_official_cc: detectProxiedOfficialCcFromCompat(compat),
+          claude_code_only: compat.claude_code_only === true,
           persona_rules: rules,
         }
       }
@@ -383,6 +385,15 @@ export function SettingsPage() {
                     onChange={(next) => setDraft({ ...draft, inference: next })}
                   />
                   <CacheBreakpointsPane
+                    compat={
+                      (draft.compatibility as
+                        Record<string, unknown> | undefined) || {}
+                    }
+                    onChange={(next) =>
+                      setDraft({ ...draft, compatibility: next })
+                    }
+                  />
+                  <ClaudeCodeOnlyPane
                     compat={
                       (draft.compatibility as
                         Record<string, unknown> | undefined) || {}
