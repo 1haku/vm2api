@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { atomicWriteJson, listVmRecordFiles } from './vm-file.mjs'
+import { atomicWriteJson, invalidateReadCache, listVmRecordFiles, readJsonCached } from './vm-file.mjs'
 import {
   hasAccessPresence,
   hasCredentialPresence,
@@ -44,7 +44,7 @@ export function listVms(projectRoot, routing = null) {
   return files
     .map((f) => {
       try {
-        const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
+        const raw = readJsonCached(path.join(dir, f))
         if (!raw?.id) return null
         return summarizeVm(raw, projectRoot, routing)
       } catch {
@@ -55,9 +55,7 @@ export function listVms(projectRoot, routing = null) {
 }
 
 export function getVm(projectRoot, id) {
-  const file = path.join(projectRoot, 'vms', `${id}.json`)
-  if (!fs.existsSync(file)) return null
-  return JSON.parse(fs.readFileSync(file, 'utf8'))
+  return readJsonCached(path.join(projectRoot, 'vms', `${id}.json`))
 }
 
 export function summarizeVm(vm, projectRoot = null, routing = null) {
@@ -171,8 +169,8 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
 
 export function getActiveVmId(projectRoot) {
   try {
-    const a = JSON.parse(fs.readFileSync(path.join(projectRoot, 'vms', 'active.json'), 'utf8'))
-    return a.active_vm
+    const a = readJsonCached(path.join(projectRoot, 'vms', 'active.json'))
+    return a?.active_vm ?? null
   } catch {
     return null
   }
@@ -403,9 +401,11 @@ export function setActiveVm(projectRoot, id) {
 
 /** Drop the active pointer. Used when the last slot is deleted. */
 export function clearActiveVm(projectRoot) {
+  const file = path.join(projectRoot, 'vms', 'active.json')
   try {
-    fs.rmSync(path.join(projectRoot, 'vms', 'active.json'), { force: true })
+    fs.rmSync(file, { force: true })
   } catch {}
+  invalidateReadCache(file)
 }
 
 /** Statuses that mean the slot is actually down — not a soft UI pause. */
