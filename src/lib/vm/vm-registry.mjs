@@ -18,7 +18,7 @@ import { isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
 import { manualScheduleLevelOf, parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { vmQuotaOverrideOf } from '../pool/vm-quota-override.mjs'
 import { normalizeOwnerId, vmOriginOf } from '../admin/resource-owner.mjs'
-import { normalizeVmKind } from './vm-kind.mjs'
+import { isCodexVm, normalizeVmKind } from './vm-kind.mjs'
 import { canClaudeResetCredits } from '../oauth/credential-mode.mjs'
 import { validTimezone } from '../core/timezone.mjs'
 import {
@@ -413,6 +413,22 @@ const HARD_UNAVAILABLE = new Set(['stopped', 'dead', 'error', 'disabled'])
 
 export function vmHasClaudeCredential(vm) {
   return hasCredentialPresence(vm?.claude)
+}
+
+/**
+ * Credential presence for whichever platform the slot actually runs.
+ *
+ * A GPT/Codex slot keeps its OAuth in `codex-credentials.json`; `vm.claude` only
+ * holds a stub (`refresh_error: 'credential_required'`). Probing the Claude bag
+ * therefore reports "no credential" for a perfectly healthy GPT seat, so every
+ * caller that parks what looks credential-less (slot start, proxy reload, proxy
+ * re-enable) silently drops the whole GPT pool as `no_credential`.
+ */
+export function vmHasSchedulableCredential(vm, projectRoot = null) {
+  if (!vm) return false
+  if (!isCodexVm(vm)) return vmHasClaudeCredential(vm)
+  const codex = summarizeCodexSlot(projectRoot, vm)
+  return !!(codex?.has_token || codex?.has_refresh)
 }
 
 /**

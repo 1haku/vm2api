@@ -121,6 +121,7 @@ import {
   adoptVmProxyBinding,
   patchVmRecord,
   vmHasClaudeCredential,
+  vmHasSchedulableCredential,
   persistAllowedModels,
   persistSlotEnginePolicy,
   persistVmScheduleLevel,
@@ -510,7 +511,7 @@ export function createPanelHandler(ctx) {
 
   function restoreSchedulableIfReady(vmId) {
     const vm = getVm(cfg.paths.project, vmId)
-    if (!vmHasClaudeCredential(vm)) {
+    if (!vmHasSchedulableCredential(vm, cfg.paths.project)) {
       setVmSchedulable(cfg.paths.project, vmId, false, 'no_credential')
       return
     }
@@ -3372,7 +3373,7 @@ export function createPanelHandler(ctx) {
         vm = getVm(cfg.paths.project, id) || vm
         const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
         if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
-        const hasCred = vmHasClaudeCredential(vm)
+        const hasCred = vmHasSchedulableCredential(vm, cfg.paths.project)
         vm =
           patchVmRecord(cfg.paths.project, id, {
             status: 'running',
@@ -4715,7 +4716,7 @@ export function createPanelHandler(ctx) {
           (result.proxy?.bound_vm_id ? [result.proxy.bound_vm_id] : [])) {
           const bound = getVm(cfg.paths.project, vmId)
           const reason = String(bound?.schedule_disabled_reason || '')
-          if (vmHasClaudeCredential(bound) && reason !== 'disabled' && reason !== 'stopped') {
+          if (vmHasSchedulableCredential(bound, cfg.paths.project) && reason !== 'disabled' && reason !== 'stopped') {
             setVmSchedulable(cfg.paths.project, vmId, true, null)
           }
         }
