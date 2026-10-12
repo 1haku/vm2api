@@ -250,7 +250,7 @@ Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`g
 
 上游 rejected / 100% / 429 冷却永远先于上表。闸线 0.95 + 默认超出量 0.05 = 1.0 时，闸上与上游满额重合。
 
-临近闸线区另有大额冷请求保护（默认开）：`guard_large_cold`（bool）、`large_cold_uncached_tokens`（默认 100000）。本请求被估成大额冷缓存（首轮 / 前缀变化 / 未确认缓存，整段 prompt + `max_tokens`）时，该账号本笔不接单，调度改选其他账号；全池都在临近闸线区则本地 HTTP 429 `quota_guard_request_too_large`，不打上游。闸是尽力保护：缓存命中与最终输出无法精确预知，也不把美元换成官方百分比，更不会截短上下文。
+临近闸线区另有大额冷请求保护（默认开）：`guard_large_cold`（bool）、`large_cold_uncached_tokens`（默认 100000）。比较的是边际缓存未命中的输入，不是输出上限：首轮 / 前缀变化 / 未确认缓存算整段 prompt，已确认热前缀只算最后一条 user。`max_tokens` 不计入（Claude Code 和缺省填充都是 128000，那是输出天花板，不是预计输出）。达到阈值时该账号本笔不接单，调度改选其他账号；全池都在临近闸线区则本地 HTTP 429 `quota_guard_request_too_large`，不打上游。临界区内成功结算后，下一次官方用量刷新前，下一笔同样大的未命中也不接。闸是尽力保护：缓存命中与最终输出无法精确预知，也不把美元换成官方百分比，更不会截短上下文。要拦住更小的冷写入，把 `large_cold_uncached_tokens` 调低，不要把输出上限加回去。
 
 
 `codex.quota` 为 `null`、数组、未知字段、字符串数字或超范围值，返回 400 `invalid_openai_quota`，消息定位字段，校验失败前不落盘。新增限额不接受 OpenAI 并发 0；历史存储 0 仍按原有效值 2 执行和展示。

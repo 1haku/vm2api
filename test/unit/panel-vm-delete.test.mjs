@@ -7,6 +7,9 @@ import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import { reloadActiveVm } from '../../src/lib/core/config.mjs'
 import { openDatabase, closeDatabase, getDb } from '../../src/lib/db/database.mjs'
 import { initializeSlotInventory } from '../../src/lib/vm/initialize-inventory.mjs'
+import { getVm } from '../../src/lib/vm/vm-registry.mjs'
+import { readCodexAccounts, writeCodexAccounts } from '../../src/lib/vm/codex-slot.mjs'
+import { invalidateReadCache } from '../../src/lib/vm/vm-file.mjs'
 
 function seed(root, id, { active = false } = {}) {
   const dir = path.join(root, 'vms')
@@ -131,6 +134,29 @@ test('startup reconcile does not resurrect a deleted sole active VM', async () =
   } finally {
     stopVmWatch()
     setVmWriteHook(null)
+    closeDatabase()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('deleting a slot drops cached record and credential entries', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-del-cache-'))
+  try {
+    seed(root, 'vm-02')
+    fs.mkdirSync(path.join(root, 'vms', 'vm-02'), { recursive: true })
+    writeCodexAccounts(root, 'vm-02', [{ access_token: 'stay-secret' }])
+    const recPath = path.join(root, 'vms', 'vm-02.json')
+    const credPath = path.join(root, 'vms', 'vm-02', 'codex-credentials.json')
+    assert.equal(getVm(root, 'vm-02').id, 'vm-02')
+    assert.equal(readCodexAccounts(root, 'vm-02')[0].access_token, 'stay-secret')
+    const { handlePanel, response } = handler(root)
+    await handlePanel({ method: 'DELETE' }, {}, new URL('http://localhost/api/panel/vms/vm-02'))
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    assert.equal(invalidateReadCache(recPath), false)
+    assert.equal(invalidateReadCache(credPath), false)
+    assert.equal(getVm(root, 'vm-02'), null)
+    assert.deepEqual(readCodexAccounts(root, 'vm-02'), [])
+  } finally {
     closeDatabase()
     fs.rmSync(root, { recursive: true, force: true })
   }

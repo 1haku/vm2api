@@ -225,19 +225,23 @@ export function sanitizeAnthropicBody(body, { strictPassthrough = false } = {}) 
  *   - mid-conversation role:system after a user turn is kept when the model/beta allow it
  *   - unknown roles (admin, tool, function, …) become user
  *   - empty content is dropped
- *   - content-less system / developer turns are always dropped, even with
- *     `output_config` / `clear_at`. pi parks per-turn effort on those empty
- *     turns; forwarding them makes long conversations fail upstream.
- *     Only a trailing one (nothing user/assistant after it) copies its effort
- *     onto top-level `output_config.effort`. Historical markers are discarded.
+ *   - empty system / developer turns with `output_config.effort` stay in place on
+ *     models that accept per-message effort (Opus 5.5 / 5, Sonnet 5.5, Haiku 5.5,
+ *     Fable 5.1, Mythos 5.1). Lifting that value to top-level `output_config.effort`
+ *     rewrites the cached prefix. Historical and trailing controls both stay;
+ *     top-level effort is unchanged. Other models still drop the empty turn and
+ *     copy only a trailing effort to the top-level field so they do not 400.
+ *   - empty `clear_at` / no-control system turns are still dropped
  *   - consecutive same-role turns are merged (Anthropic requires alternation),
  *     except turns that still carry per-turn controls
- *   - the first remaining turn must be user
+ *   - the first remaining turn must be user, except a leading effort-only system
+ *     control which the per-message effort beta allows as the first entry
  *   - a system turn that cannot be kept still contributes its effort the same way
  */
 export function normalizeAnthropicMessages(body, { keepMidConversationSystem = true } = {}) {
   if (!body || !Array.isArray(body.messages)) return body
 
+  const keepMessageEffort = modelSupportsPerMessageEffort(body.model)
   const systemParts = []
   const mapped = []
   let seenUser = false
@@ -251,6 +255,11 @@ export function normalizeAnthropicMessages(body, { keepMidConversationSystem = t
     const effort = messageOutputConfigEffort(message)
     if (role === 'system' || role === 'developer') {
       if (anthropicContentIsEmpty(message.content)) {
+        if (keepMessageEffort && effort) {
+          trailingEmptyEffort = null
+          mapped.push(keptAnthropicMessage(message, 'system'))
+          continue
+        }
         if (effort) trailingEmptyEffort = effort
         continue
       }
@@ -270,26 +279,28 @@ export function normalizeAnthropicMessages(body, { keepMidConversationSystem = t
     if (anthropicContentIsEmpty(message.content) && !messageHasTurnControls(message)) continue
     const nextRole = role === 'assistant' ? 'assistant' : 'user'
     if (nextRole === 'user') seenUser = true
-    // A later conversation turn means the empty system above was history.
-    trailingEmptyEffort = null
+    if (!keepMessageEffort) trailingEmptyEffort = null
     mapped.push(keptAnthropicMessage(message, nextRole))
   }
 
   const merged = mergeConsecutiveAnthropicMessages(mapped)
-  if (merged.length && merged[0].role !== 'user') {
+  if (merged.length && merged[0].role !== 'user' && !isEmptyEffortControl(merged[0])) {
     merged.unshift({ role: 'user', content: '.' })
   }
 
   body.messages = merged
   if (systemParts.length) body.system = appendSystemParts(body.system, systemParts)
-  if (trailingEmptyEffort || liftedContentEffort) applyLiftedEffort(body, trailingEmptyEffort || liftedContentEffort)
+  if (!keepMessageEffort && (trailingEmptyEffort || liftedContentEffort)) {
+    applyLiftedEffort(body, trailingEmptyEffort || liftedContentEffort)
+  }
   return body
 }
 
 /**
  * Haiku / hops without mid-conversation-system: lift leftover role=system into top-level system.
- * Content-less system turns are dropped. A trailing one's effort is copied to
- * top-level `output_config.effort`; historical markers are not.
+ * Effort-only empty system turns stay when the model accepts per-message effort.
+ * Other models drop them; a trailing one's effort is copied to top-level
+ * `output_config.effort`; historical markers are not.
  */
 export function liftMidConversationSystemMessages(body) {
   if (!body || !Array.isArray(body.messages)) return body
@@ -325,6 +336,30 @@ function messageOutputConfigEffort(message) {
   return typeof effort === 'string' && effort.trim() ? effort : null
 }
 
+function isEmptyEffortControl(message) {
+  const role = String(message?.role || '')
+    .trim()
+    .toLowerCase()
+  return (
+    (role === 'system' || role === 'developer') &&
+    anthropicContentIsEmpty(message?.content) &&
+    !!messageOutputConfigEffort(message)
+  )
+}
+
+/**
+ * Claude API / Google Cloud per-message effort (beta mid-conversation-output-config-2026-07-01):
+ * Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5.
+ * Fable 5 and other models 400 if an empty system `output_config` is forwarded.
+ */
+function modelSupportsPerMessageEffort(modelId = '') {
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\[1m\]$/i, '')
+  return /^claude-(?:(?:fable|mythos)-5[-.]1|opus-5(?:[-.]5)?|(?:sonnet|haiku)-5[-.]5)(?:-|$)/.test(id)
+}
+
 function applyLiftedEffort(body, effort) {
   if (body.output_config && typeof body.output_config === 'object') {
     body.output_config = { ...body.output_config, effort }
@@ -335,11 +370,13 @@ function applyLiftedEffort(body, effort) {
 
 /**
  * Drop content-less system / developer turns that survived an earlier pass.
- * Same trailing-effort rule as `normalizeAnthropicMessages`: a later
- * user/assistant turn discards the marker; a trailing one replaces top-level effort.
+ * Effort-only empty turns stay on models that accept per-message effort.
+ * Other models keep the trailing-effort lift: a later user/assistant turn
+ * discards the marker; a trailing one replaces top-level effort.
  */
 export function dropEmptySystemControlTurns(body) {
   if (!body || !Array.isArray(body.messages)) return body
+  const keepMessageEffort = modelSupportsPerMessageEffort(body.model)
   const messages = []
   let effort = null
   let changed = false
@@ -352,6 +389,11 @@ export function dropEmptySystemControlTurns(body) {
       .trim()
       .toLowerCase()
     if ((role === 'system' || role === 'developer') && anthropicContentIsEmpty(message.content)) {
+      if (keepMessageEffort && messageOutputConfigEffort(message)) {
+        effort = null
+        messages.push(keptAnthropicMessage(message, 'system'))
+        continue
+      }
       changed = true
       const next = messageOutputConfigEffort(message)
       if (next) effort = next
@@ -363,7 +405,7 @@ export function dropEmptySystemControlTurns(body) {
   }
   if (!changed) return body
   const out = { ...body, messages: mergeConsecutiveAnthropicMessages(messages) }
-  if (effort) applyLiftedEffort(out, effort)
+  if (!keepMessageEffort && effort) applyLiftedEffort(out, effort)
   return out
 }
 

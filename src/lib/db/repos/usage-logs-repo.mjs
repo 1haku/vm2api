@@ -14,13 +14,30 @@ import {
   calculateCost,
   emptyCostBucket,
   shanghaiDayStartIso,
-  sumCostBuckets,
+  sumCostBuckets as sumCostColumns,
   UNPRICED_MODEL,
 } from '../../admin/pricing.mjs'
 import { cacheHitStats } from '../../admin/cache-metrics.mjs'
 import { extraWindowSince, WINDOW_5H_MS, WINDOW_7D_MS } from '../../pool/quota-window.mjs'
-import { ERROR_PRED, SUCCESS_PRED, SLA_ERROR_PRED, SLA_SUCCESS_PRED, ownerPred } from './usage-log-preds.mjs'
+import {
+  ERROR_PRED,
+  SUCCESS_PRED,
+  SLA_ERROR_PRED,
+  SLA_SUCCESS_PRED,
+  ownerPred,
+  PROMPT_TOKENS_SQL,
+} from './usage-log-preds.mjs'
 import { collapseBlockKeywords, foldInterceptRows } from '../../protocol/intercept-stats.mjs'
+
+// Preserve per-row prompt denominators when aligning account quota windows.
+// Do not re-apply a single Anthropic formula on the mixed SUM (homepage/usage
+// billing). Database-page PromptCacheMetricsPanel still uses input+read+write.
+function sumCostBuckets(rows) {
+  return {
+    ...sumCostColumns(rows),
+    prompt_tokens: rows.reduce((sum, row) => sum + (Number(row.prompt_tokens) || 0), 0),
+  }
+}
 
 const SUMMARY_COLUMNS = [
   'id',
@@ -166,6 +183,7 @@ function bucketEventsSince(rows = [], sinceMs) {
       output_tokens: Number(row.output_tokens || 0),
       cache_read_tokens: Number(row.cache_read_tokens || 0),
       cache_creation_tokens: Number(row.cache_creation_tokens || 0),
+      prompt_tokens: Number(row.prompt_tokens || 0),
       input_cost: Number(row.input_cost || 0),
       output_cost: Number(row.output_cost || 0),
       cache_read_cost: Number(row.cache_read_cost || 0),
@@ -466,6 +484,7 @@ export class UsageLogsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              COALESCE(SUM(total_cost), 0) AS total_cost,
              CAST(AVG(duration_ms) AS INTEGER) AS avg_duration_ms,
              CAST(AVG(first_token_ms) AS INTEGER) AS avg_first_token_ms
@@ -485,6 +504,7 @@ export class UsageLogsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              COALESCE(SUM(input_cost), 0) AS input_cost,
              COALESCE(SUM(output_cost), 0) AS output_cost,
              COALESCE(SUM(cache_read_cost), 0) AS cache_read_cost,
@@ -563,6 +583,7 @@ export class UsageLogsRepo {
         COALESCE(SUM(output_tokens), 0) AS output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
         COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
         COALESCE(SUM(input_cost), 0) AS input_cost,
         COALESCE(SUM(output_cost), 0) AS output_cost,
         COALESCE(SUM(cache_read_cost), 0) AS cache_read_cost,
@@ -577,6 +598,7 @@ export class UsageLogsRepo {
       output_tokens: Number(row?.output_tokens || 0),
       cache_read_tokens: Number(row?.cache_read_tokens || 0),
       cache_creation_tokens: Number(row?.cache_creation_tokens || 0),
+      prompt_tokens: Number(row?.prompt_tokens || 0),
       input_cost: Number(row?.input_cost || 0),
       output_cost: Number(row?.output_cost || 0),
       cache_read_cost: Number(row?.cache_read_cost || 0),
@@ -600,6 +622,7 @@ export class UsageLogsRepo {
         COALESCE(SUM(output_tokens), 0) AS output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
         COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
         COALESCE(SUM(input_cost), 0) AS input_cost,
         COALESCE(SUM(output_cost), 0) AS output_cost,
         COALESCE(SUM(cache_read_cost), 0) AS cache_read_cost,
@@ -620,6 +643,7 @@ export class UsageLogsRepo {
       output_tokens: Number(r.output_tokens || 0),
       cache_read_tokens: Number(r.cache_read_tokens || 0),
       cache_creation_tokens: Number(r.cache_creation_tokens || 0),
+      prompt_tokens: Number(r.prompt_tokens || 0),
       input_cost: Number(r.input_cost || 0),
       output_cost: Number(r.output_cost || 0),
       cache_read_cost: Number(r.cache_read_cost || 0),
@@ -651,6 +675,7 @@ export class UsageLogsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              COALESCE(SUM(input_cost), 0) AS input_cost,
              COALESCE(SUM(output_cost), 0) AS output_cost,
              COALESCE(SUM(cache_read_cost), 0) AS cache_read_cost,
@@ -673,6 +698,7 @@ export class UsageLogsRepo {
       output_tokens: Number(r.output_tokens || 0),
       cache_read_tokens: Number(r.cache_read_tokens || 0),
       cache_creation_tokens: Number(r.cache_creation_tokens || 0),
+      prompt_tokens: Number(r.prompt_tokens || 0),
       input_cost: Number(r.input_cost || 0),
       output_cost: Number(r.output_cost || 0),
       cache_read_cost: Number(r.cache_read_cost || 0),
@@ -737,6 +763,7 @@ export class UsageLogsRepo {
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
              COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
              COALESCE(SUM(total_cost), 0) AS total_cost,
              COALESCE(SUM(duration_ms), 0) AS duration_ms_sum,
              SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END) AS duration_n
@@ -752,6 +779,7 @@ export class UsageLogsRepo {
         output_tokens: Number(r.output_tokens || 0),
         cache_read_tokens: Number(r.cache_read_tokens || 0),
         cache_creation_tokens: Number(r.cache_creation_tokens || 0),
+        prompt_tokens: Number(r.prompt_tokens || 0),
         total_cost: Number(r.total_cost || 0),
         duration_ms_sum: Number(r.duration_ms_sum || 0),
         duration_n: Number(r.duration_n || 0),
@@ -954,6 +982,7 @@ export class UsageLogsRepo {
         COALESCE(output_tokens, 0) AS output_tokens,
         COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
         COALESCE(cache_creation_tokens, 0) AS cache_creation_tokens,
+        (${PROMPT_TOKENS_SQL}) AS prompt_tokens,
         COALESCE(input_cost, 0) AS input_cost,
         COALESCE(output_cost, 0) AS output_cost,
         COALESCE(cache_read_cost, 0) AS cache_read_cost,
@@ -1068,6 +1097,7 @@ export class UsageLogsRepo {
         COALESCE(SUM(output_tokens), 0) AS output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
         COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(${PROMPT_TOKENS_SQL}), 0) AS prompt_tokens,
         COALESCE(SUM(total_cost), 0) AS total_cost
       FROM usage_logs ${where}
     `)
@@ -1083,6 +1113,7 @@ export class UsageLogsRepo {
       input_tokens: inputTokens,
       cache_read_tokens: cacheRead,
       cache_creation_tokens: cacheWrite,
+      prompt_tokens: Number(counts?.prompt_tokens || 0),
     })
     const tokens = inputTokens + outputTokens
 

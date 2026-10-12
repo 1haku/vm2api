@@ -123,6 +123,7 @@ import {
   adoptVmProxyBinding,
   patchVmRecord,
   vmHasClaudeCredential,
+  vmHasSchedulableCredential,
   persistAllowedModels,
   persistSlotEnginePolicy,
   persistVmScheduleLevel,
@@ -151,7 +152,7 @@ import {
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
 import * as panel from './panel-api.mjs'
 import { GATEWAY_CAPABILITIES } from '../vm/execution-context.mjs'
-import { withVmLock, atomicWriteJson, isValidVmId } from '../vm/vm-file.mjs'
+import { withVmLock, atomicWriteJson, isValidVmId, invalidateVmSlotReadCache } from '../vm/vm-file.mjs'
 import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
@@ -512,7 +513,7 @@ export function createPanelHandler(ctx) {
 
   function restoreSchedulableIfReady(vmId) {
     const vm = getVm(cfg.paths.project, vmId)
-    if (!vmHasClaudeCredential(vm)) {
+    if (!vmHasSchedulableCredential(vm, cfg.paths.project)) {
       setVmSchedulable(cfg.paths.project, vmId, false, 'no_credential')
       return
     }
@@ -2705,6 +2706,7 @@ export function createPanelHandler(ctx) {
           fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
         } catch {}
         fs.unlinkSync(vmPath)
+        invalidateVmSlotReadCache(cfg.paths.project, id)
         if (active === id) {
           clearActiveVm(cfg.paths.project)
           try {
@@ -3425,7 +3427,7 @@ export function createPanelHandler(ctx) {
         vm = getVm(cfg.paths.project, id) || vm
         const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
         if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
-        const hasCred = vmHasClaudeCredential(vm)
+        const hasCred = vmHasSchedulableCredential(vm, cfg.paths.project)
         vm =
           patchVmRecord(cfg.paths.project, id, {
             status: 'running',
@@ -4768,7 +4770,7 @@ export function createPanelHandler(ctx) {
           (result.proxy?.bound_vm_id ? [result.proxy.bound_vm_id] : [])) {
           const bound = getVm(cfg.paths.project, vmId)
           const reason = String(bound?.schedule_disabled_reason || '')
-          if (vmHasClaudeCredential(bound) && reason !== 'disabled' && reason !== 'stopped') {
+          if (vmHasSchedulableCredential(bound, cfg.paths.project) && reason !== 'disabled' && reason !== 'stopped') {
             setVmSchedulable(cfg.paths.project, vmId, true, null)
           }
         }
