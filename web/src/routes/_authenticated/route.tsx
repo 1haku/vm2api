@@ -11,9 +11,14 @@ import { FleetActions } from '@/features/fleet/fleet-actions'
 export const Route = createFileRoute('/_authenticated')({
   beforeLoad: ({ location }) => {
     if (!hasSession()) {
+      // Bare console entry is the public welcome; only deep links need the sign-in prompt.
+      if (location.pathname === '/') throw redirect({ to: '/welcome' })
       throw redirect({
-        to: '/login',
-        search: { redirect: location.href },
+        to: '/welcome',
+        search: {
+          login: true,
+          redirect: location.href,
+        },
       })
     }
   },
@@ -32,8 +37,8 @@ function Authenticated() {
     if (meQuery.error instanceof ApiError && meQuery.error.status === 401) {
       signOut()
       navigate({
-        to: '/login',
-        search: { redirect: undefined },
+        to: '/welcome',
+        search: { login: true },
       })
     }
   }, [meQuery.error, signOut, navigate])
