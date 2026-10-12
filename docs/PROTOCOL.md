@@ -86,7 +86,7 @@ Go worker JSON 透传，不必因人设重建 worker。
 - 缺 `context-management` beta 时剥掉 body 同名字段。
 - 缺 beta 时不带对应高级字段；短 beta 按 mimicry 集合补齐（官方路径）。
 
-模型目录权威是面板 `model_policy`（`GET/PUT /api/panel/model-policy`）。`GET /v1/models` 与 `validateOfficialModel` 读这份集合，**禁止** hop 槽位 `/internal/v1/models`。
+模型目录权威是面板 `model_policy`（`GET/PUT /api/panel/model-policy`）。`GET /v1/models` 与 `validateOfficialModel` 读这份集合，**禁止** hop 槽位 `/internal/v1/models`。`GET /v1/models` 只列出该 key 的 `group_type` 能调度的模型：`openai` 只列 GPT，`anthropic` 只列 Claude，`all` 与 master 两者都列。
 
 ## web_search
 
