@@ -75,6 +75,7 @@ function AdmissionSection({
   onCodexChange: (next: Block) => void
 }) {
   const strict = compat.claude_code_only === true
+  const relay = detectProxiedOfficialCcFromCompat(compat)
   const setClient = (key: string, allow: boolean) =>
     onCodexChange({
       ...codex,
@@ -109,6 +110,22 @@ function AdmissionSection({
               aria-label='仅允许 Claude Code 家族请求'
             />
           </SettingRow>
+          <SettingRow
+            label='识别中转来的官方 Claude Code'
+            desc={
+              relay
+                ? 'UA 被改写、但带官方计费块与合法 user_id 的请求按官方处理，准入也放行。'
+                : '已关：只认直连 Claude Code，中转流量按第三方处理。'
+            }
+          >
+            <Switch
+              checked={relay}
+              onCheckedChange={(on) =>
+                onCompatChange({ ...compat, detect_proxied_official_cc: on })
+              }
+              aria-label='识别中转来的官方 Claude Code'
+            />
+          </SettingRow>
           <div
             className={cn(
               'space-y-3 pt-3 transition-opacity duration-200',
@@ -116,7 +133,7 @@ function AdmissionSection({
             )}
           >
             <p className='text-xs text-muted-foreground'>
-              {strict ? '放行须同时满足' : '开启后放行须同时满足'}
+              {strict ? '直连放行须同时满足' : '开启后直连放行须同时满足'}
             </p>
             <ul className='grid gap-x-4 gap-y-1.5 sm:grid-cols-2'>
               {CLAUDE_CODE_FINGERPRINT.map(([name, value]) => (
@@ -141,9 +158,9 @@ function AdmissionSection({
               ))}
             </ul>
             <p className='text-xs leading-5 text-muted-foreground'>
-              中转改写过的流量、OpenAI 格式入口、健康探测（含
-              max_tokens&nbsp;1）都拒绝；count_tokens
-              只验请求头。面板测试与内部探测不受影响。
+              OpenAI 格式入口与健康探测一律拒绝。count_tokens 与 CLI 自身的
+              max_tokens&nbsp;1 配额探测不带
+              system，只验请求头。面板测试与内部探测不受影响。
             </p>
           </div>
         </RowGroup>
@@ -238,18 +255,6 @@ function ClaudeRouteSection({
               })
             }
             aria-label='启用缓存断点'
-          />
-        </SettingRow>
-        <SettingRow
-          label='识别中转来的官方 Claude Code'
-          desc='UA 被改写但带官方计费块与合法 user_id 时按官方处理。不参与准入。'
-        >
-          <Switch
-            checked={detectProxiedOfficialCcFromCompat(compat)}
-            onCheckedChange={(on) =>
-              onCompatChange({ ...compat, detect_proxied_official_cc: on })
-            }
-            aria-label='识别中转来的官方 Claude Code'
           />
         </SettingRow>
       </div>
