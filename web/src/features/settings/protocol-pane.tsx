@@ -141,9 +141,8 @@ function AdmissionSection({
               ))}
             </ul>
             <p className='text-xs leading-5 text-muted-foreground'>
-              OpenAI 格式入口与健康探测一律拒绝。count_tokens 与 CLI 自身的
-              max_tokens&nbsp;1 配额探测不带
-              system，只验请求头。面板测试与内部探测不受影响。
+              OpenAI 格式入口与健康探测一律拒绝。count_tokens 只验请求头；CLI
+              自身的 quota 探测须是固定原样。面板测试与内部探测不受影响。
             </p>
           </div>
         </RowGroup>
