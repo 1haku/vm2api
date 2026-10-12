@@ -38,6 +38,10 @@ export const PASS_REASONS: Record<string, { label: string; hint: string }> = {
   regex: { label: '正则未命中', hint: '决策模型关闭或跳过' },
   'fail-open': { label: '模型故障放行', hint: '打分失败，按失败放行出站' },
   unchecked: { label: '未检查', hint: '没有任何规则在跑' },
+  platform: {
+    label: 'OpenAI 平台未接入',
+    hint: 'GPT / Codex 请求，「OpenAI 平台」开关关闭',
+  },
   unknown: {
     label: '未经关卡',
     hint: '鉴权、请求体等错误在关卡前结束，或升级前的旧日志',

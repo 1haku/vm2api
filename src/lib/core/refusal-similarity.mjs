@@ -18,47 +18,79 @@ const STEP = 12
 const MAX_SHINGLES = 4096
 const SLOTS = 128
 
-function contentToText(content) {
+function isToolPayload(block) {
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return false
+  const type = String(block.type || '')
+  if (!type) return false
+  return type === 'tool_result' || type === 'function_call_output' || type.endsWith('_tool_result')
+}
+
+function contentToText(content, includeToolResults = true) {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
     return content
-      .map((part) => {
-        if (typeof part === 'string') return part
-        if (part && typeof part.text === 'string') return part.text
-        if (part && typeof part.content === 'string') return part.content
-        return ''
-      })
+      .map((part) => contentToText(part, includeToolResults))
       .filter(Boolean)
       .join('\n')
   }
-  if (content && typeof content.text === 'string') return content.text
+  if (!content || typeof content !== 'object') return ''
+  if (!includeToolResults && isToolPayload(content)) return ''
+  if (typeof content.text === 'string') return content.text
+  // Responses items nest their parts one level deeper: message -> content -> input_text.
+  if (typeof content.content === 'string') return content.content
+  if (Array.isArray(content.content)) return contentToText(content.content, includeToolResults)
   return ''
 }
 
-function userTexts(body) {
-  if (!body || typeof body !== 'object') return []
+/**
+ * Responses `input`: a plain string, or items whose roleless or user-role parts
+ * carry the prompt. Assistant / reasoning / tool items are skipped.
+ */
+function responsesInputTexts(input, includeToolResults = true) {
+  if (typeof input === 'string') return input ? [input] : []
+  if (!Array.isArray(input)) return []
   const out = []
-  const messages = Array.isArray(body.messages) ? body.messages : []
-  for (const message of messages) {
-    if (message?.role === 'user') {
-      const text = contentToText(message.content)
-      if (text) out.push(text)
+  for (const item of input) {
+    if (typeof item === 'string') {
+      if (item) out.push(item)
+      continue
     }
-  }
-  if (typeof body.input === 'string' && body.input) out.push(body.input)
-  else if (Array.isArray(body.input)) {
-    const text = contentToText(body.input)
+    if (!item || typeof item !== 'object') continue
+    if (!includeToolResults && isToolPayload(item)) continue
+    const role = typeof item.role === 'string' ? item.role.toLowerCase() : ''
+    if (role && role !== 'user') continue
+    const text = contentToText(item.content === undefined ? item : item.content, includeToolResults)
     if (text) out.push(text)
   }
   return out
 }
 
-/** User turns from inbound, then body, with exact repeats dropped. */
-export function refusalUserDocument(inbound, body = inbound) {
+function userTexts(body, includeToolResults = true) {
+  if (!body || typeof body !== 'object') return []
+  const out = []
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  for (const message of messages) {
+    if (message?.role === 'user') {
+      const text = contentToText(message.content, includeToolResults)
+      if (text) out.push(text)
+    }
+  }
+  out.push(...responsesInputTexts(body.input, includeToolResults))
+  return out
+}
+
+/**
+ * User turns from inbound, then body, with exact repeats dropped.
+ * Hard regex passes includeToolResults: false. Tool payloads quote the rules
+ * (issue text, command output) and are not the user's ask. Refusal similarity
+ * still sees them.
+ */
+export function refusalUserDocument(inbound, body = inbound, options = {}) {
+  const includeToolResults = options.includeToolResults !== false
   const seen = new Set()
   const parts = []
   for (const src of [inbound, body]) {
-    for (const text of userTexts(src)) {
+    for (const text of userTexts(src, includeToolResults)) {
       const norm = normalizeText(text)
       if (!norm || seen.has(norm)) continue
       seen.add(norm)
