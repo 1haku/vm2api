@@ -1,10 +1,8 @@
 /**
- * THESIS: First-install landing that proves the gateway, then walks an
- * operator from login to a copied client snippet.
- * OWN-WORLD: Panel tokens, dark-first teal, Inter, shadcn. Public chrome.
- * FIRST VIEWPORT: One sentence — 订阅号池 → 兼容 API — plus 登录 / 文档.
- * SIGNATURE: Live checklist after sign-in, copyable Claude / Codex / curl.
- * REFUSES: SaaS kicker, gradient title, fake metrics, auto-playing terminal.
+ * Public console landing. Layout and palette follow the newapi web/default
+ * home page (floating header, gradient hero with API demo, bento features,
+ * three steps, CTA); tokens are scoped by `.welcome-theme` so the console
+ * keeps its own theme. After sign-in the live setup checklist sits under the hero.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -15,9 +13,12 @@ import { meQueryOptions } from '@/features/auth/queries'
 import { WelcomeCapabilities } from './capabilities'
 import { WelcomeChecklist } from './checklist'
 import { WelcomeClientSnippets } from './client-snippets'
+import { WelcomeCta, WelcomeFooter } from './cta'
 import { WelcomeHero } from './hero'
 import { onboardingQueryOptions } from './queries'
 import { WelcomeQuickStart } from './quick-start'
+import { scrollToSection } from './scroll'
+import { WelcomeStats } from './stats'
 import { WelcomeTopBar } from './top-bar'
 
 export function WelcomePage() {
@@ -27,6 +28,8 @@ export function WelcomePage() {
   const username = useAuthStore((s) => s.user)
   const signedIn = Boolean(token)
   const [loginOpen, setLoginOpen] = useState(Boolean(search.login) && !signedIn)
+  // Set on a fresh sign-in; consumed once the checklist has data to render.
+  const scrollPending = useRef(false)
   const wasSignedIn = useRef(signedIn)
 
   const onboarding = useQuery(onboardingQueryOptions(signedIn))
@@ -37,17 +40,15 @@ export function WelcomePage() {
   }, [search.login, signedIn])
 
   useEffect(() => {
-    if (!wasSignedIn.current && signedIn) {
-      const reduce = window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches
-      document.getElementById('welcome-setup')?.scrollIntoView({
-        behavior: reduce ? 'auto' : 'smooth',
-        block: 'start',
-      })
-    }
+    if (!wasSignedIn.current && signedIn) scrollPending.current = true
     wasSignedIn.current = signedIn
   }, [signedIn])
+
+  useEffect(() => {
+    if (!scrollPending.current || !onboarding.data) return
+    scrollPending.current = false
+    scrollToSection('welcome-setup')
+  }, [onboarding.data])
 
   function setLogin(open: boolean) {
     setLoginOpen(open)
@@ -64,26 +65,28 @@ export function WelcomePage() {
     (onboarding.data?.base_url || '').replace(/\/$/, '') || location.origin
 
   return (
-    <div className='min-h-svh bg-background text-foreground'>
+    <div className='welcome-theme min-h-svh overflow-x-hidden bg-background text-foreground'>
       <WelcomeTopBar
         signedIn={signedIn}
         username={username}
         onLogin={() => setLogin(true)}
       />
       <main>
-        <WelcomeHero signedIn={signedIn} onLogin={() => setLogin(true)} />
-        <div className='flex flex-col gap-16 pb-20 sm:gap-20'>
-          {signedIn && onboarding.data ? (
-            <WelcomeChecklist
-              payload={onboarding.data}
-              views={me.data?.views}
-            />
-          ) : null}
-          <WelcomeCapabilities />
-          <WelcomeQuickStart />
-          <WelcomeClientSnippets baseUrl={base} />
-        </div>
+        <WelcomeHero
+          signedIn={signedIn}
+          baseUrl={base}
+          onLogin={() => setLogin(true)}
+        />
+        {signedIn && onboarding.data ? (
+          <WelcomeChecklist payload={onboarding.data} views={me.data?.views} />
+        ) : null}
+        <WelcomeStats />
+        <WelcomeCapabilities />
+        <WelcomeQuickStart />
+        <WelcomeClientSnippets baseUrl={base} />
+        <WelcomeCta signedIn={signedIn} onLogin={() => setLogin(true)} />
       </main>
+      <WelcomeFooter />
       <LoginDialog
         open={loginOpen}
         onOpenChange={setLogin}

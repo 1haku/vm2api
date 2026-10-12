@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { Logo } from '@/assets/logo'
 import { useAuthStore } from '@/stores/auth-store'
 import { loginRequest } from '@/lib/api'
 import { apiBase, sameOriginPanel, setApiBase } from '@/lib/session'
@@ -87,11 +88,20 @@ export function LoginDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-sm' aria-describedby='login-desc'>
-        <DialogHeader>
-          <DialogTitle>登录控制台</DialogTitle>
+      {/* Portal renders outside the welcome root, so the scoped tokens ride on the content. */}
+      <DialogContent
+        className='welcome-theme gap-6 rounded-2xl p-7 sm:max-w-[400px]'
+        aria-describedby='login-desc'
+      >
+        <DialogHeader className='items-center text-center sm:text-center'>
+          <span className='mb-2 grid size-10 place-items-center rounded-xl bg-foreground text-background'>
+            <Logo aria-hidden className='size-5' />
+          </span>
+          <DialogTitle className='text-xl font-semibold tracking-tight'>
+            登录控制台
+          </DialogTitle>
           <DialogDescription id='login-desc'>
-            使用面板账号进入号池网关。
+            使用面板账号进入 vm2api 号池网关
           </DialogDescription>
         </DialogHeader>
         <form className='space-y-4' onSubmit={onSubmit}>
@@ -99,6 +109,7 @@ export function LoginDialog({
             <Label htmlFor='welcome-username'>用户名</Label>
             <Input
               id='welcome-username'
+              className='h-10 rounded-lg'
               autoComplete='username'
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -109,6 +120,7 @@ export function LoginDialog({
             <Input
               id='welcome-password'
               type='password'
+              className='h-10 rounded-lg'
               autoComplete='current-password'
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -120,6 +132,7 @@ export function LoginDialog({
               <Input
                 id='welcome-api-base'
                 placeholder='http://127.0.0.1:8787'
+                className='h-10 rounded-lg'
                 value={base}
                 onChange={(e) => setBase(e.target.value)}
               />
@@ -130,7 +143,11 @@ export function LoginDialog({
               {error}
             </p>
           ) : null}
-          <Button className='w-full' type='submit' disabled={pending}>
+          <Button
+            className='h-10 w-full rounded-lg font-medium'
+            type='submit'
+            disabled={pending}
+          >
             {pending ? '登录中…' : '登录'}
           </Button>
         </form>
