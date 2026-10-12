@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 用量聚合按每行 prompt 分母计算缓存命中率：Claude 为 input + 读 + 写，Codex / OpenAI 的 input 已含缓存；混用提供商按 token 加权，账号窗口二次汇总保留该分母。首页和用量页复用已算出的 `billing.total`。数据库页 `PromptCacheMetricsPanel` 仍用 input+read+creation 自行重算，不在本次范围内。（#363）
+- 内核流 `streamGoWorker`（Claude / Codex 共用）的 TTFT 从首次生成内容起算：文本、推理、已生成的工具名（无参工具可能没有参数 delta）计时；`message_start` / `response.created` / 空完成等元数据不计。日志 `first_token_ms` 用 `firstTokenAt - 入口 t0`，取消和失败保留已观测时间。API 传输路径仍按首条 `data:` 行计时，未改。（#363）
+
 ## 1.3.151 — 2026-10-12
 
 - 修复消息级 effort 切换：支持该 beta 的模型保留空 `system` 控制轮及其原位置、历史控制和多次切换，不再删除或提升到顶层；顶层 `output_config.effort` 保持入站值。出站携带 `mid-conversation-output-config-2026-07-01`，kernel 序列化保留消息级控制字段。不支持该能力的模型维持原来的末尾提升处理。（#383）

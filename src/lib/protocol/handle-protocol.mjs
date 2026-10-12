@@ -960,6 +960,7 @@ export function createHandleProtocol(deps) {
       logBag.upstream_status = result?.status ?? null
       logBag.usage = result?.body?.usage || result?.usage || null
       logBag.upstream_model = result?.model || null
+      // API transport still stamps the first data: line; subtract t0 for queue wait only.
       logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
         ? Math.max(0, result.firstTokenAt - logCtx.t0)
         : (result?.ttftMs ?? null)
@@ -1375,6 +1376,7 @@ export function createHandleProtocol(deps) {
     // Fast mode bills 2x; upstream usage.speed wins, the request speed is only a fallback.
     if (logBag.usage && wantsFastMode(ctx.body)) logBag.usage = { ...logBag.usage, requested_speed: 'fast' }
     logBag.upstream_model = result?.body?.model || result?.model || null
+    // Kernel stream firstTokenAt is generated content; include admission/setup via t0.
     logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
       ? Math.max(0, result.firstTokenAt - logCtx.t0)
       : (result?.ttftMs ?? null)

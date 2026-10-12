@@ -29,7 +29,9 @@ import {
 } from './usage-log-preds.mjs'
 import { collapseBlockKeywords, foldInterceptRows } from '../../protocol/intercept-stats.mjs'
 
-// Preserve per-row denominators when aligning account quota windows.
+// Preserve per-row prompt denominators when aligning account quota windows.
+// Do not re-apply a single Anthropic formula on the mixed SUM (homepage/usage
+// billing). Database-page PromptCacheMetricsPanel still uses input+read+write.
 function sumCostBuckets(rows) {
   return {
     ...sumCostColumns(rows),

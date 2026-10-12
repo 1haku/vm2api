@@ -268,7 +268,13 @@ export function isDownstreamCommitEvent(event) {
   return t.startsWith('response.output_')
 }
 
-/** Timing starts at generated content, independently of downstream commitment. */
+/**
+ * Timing starts at generated content, independently of downstream commitment.
+ * A generated tool name is first output: name-only tools often never send a
+ * parameter delta. Connection metadata, empty blocks, and trailers are not TTFT.
+ * Shared Claude/Codex kernel stream path only; API transport still stamps the
+ * first `data:` line in api-protocol.mjs.
+ */
 function hasGeneratedContent(block) {
   if (!block || typeof block !== 'object') return false
   const nonempty = (value) => typeof value === 'string' && value.length > 0
@@ -674,6 +680,7 @@ export async function streamGoWorker({
     }
   }
   let committed = false
+  // Hop-relative TTFT. firstTokenAt is epoch ms so request logs subtract ingress t0.
   const startedAt = Date.now()
   let ttftMs = null
   const requestId = randomUUID()
