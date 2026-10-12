@@ -57,7 +57,7 @@ export function VmEngineEditor({
     mutationFn: () =>
       patchVm(id, { inference_engine: inferenceEnginePatchValue('auto') }),
     onSuccess: async () => {
-      toast.success('推理内核已改为跟随设置 → 协议')
+      toast.success('推理内核已改为跟随全局')
       await Promise.all([
         qc.invalidateQueries({ queryKey: vmQueryOptions(id).queryKey }),
         qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
