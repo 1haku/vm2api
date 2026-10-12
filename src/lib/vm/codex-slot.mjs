@@ -258,7 +258,12 @@ export function upsertCodexAccount(projectRoot, vmId, patch = {}) {
 export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredits, planType } = {}) {
   if (!projectRoot || !vmId) throw new Error('projectRoot and vmId required')
   const file = path.join(projectRoot, 'vms', `${vmId}.json`)
-  const vm = readJsonCached(file)
+  let vm
+  try {
+    vm = readJsonCached(file)
+  } catch {
+    return null
+  }
   if (!vm || typeof vm !== 'object') return null
   vm.codex = vm.codex && typeof vm.codex === 'object' ? { ...vm.codex } : {}
   if (extra && typeof extra === 'object') {

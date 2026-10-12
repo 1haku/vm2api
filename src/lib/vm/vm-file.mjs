@@ -47,20 +47,24 @@ export function listVmRecordFiles(dir) {
 }
 
 /* --------------------------------------------------------------------------
- * Slot-record read cache (local patch: perf).
+ * Slot-record read cache.
  *
  * A scheduling attempt reads every slot record, and the pool re-runs the
- * attempt on every request, retry and failover. With ~100 slots that is
- * thousands of readFileSync + UTF-8 decode calls per second, which saturates
- * the single Node thread and starves the admin API. The cache is keyed by
- * (mtime, size, inode), so the text handed out is always the bytes on disk at
- * call time: a record replaced by an atomic rename, or touched by a slot
- * worker, changes the key and is re-read on the next call. Only file text is
- * cached (never a parsed object), so callers still own their own copy.
+ * attempt on every request, retry and failover. Caching UTF-8 text (never a
+ * parsed object) keyed by path + (mtimeMs, size, ino) avoids repeating those
+ * decodes while the on-disk identity is unchanged. A matching signature is a
+ * freshness hint, not a byte-identity proof: writers that change bytes
+ * without a new mtime/size/inode can miss. Callers always receive a newly
+ * parsed object, so mutating a returned record cannot poison the next read.
  *
- * `KIN_VM_READ_CACHE_MS=0` disables the cache entirely (escape hatch).
+ * `KIN_VM_READ_CACHE_MS=0` disables the cache (escape hatch). The name is
+ * historical; the value is only an on/off switch, not a TTL. Capacity is a
+ * fixed LRU so deleted paths cannot accumulate without bound.
  * ------------------------------------------------------------------------ */
 const readCache = new Map()
+
+/** Conservative bound: a large fleet of records + credential files, LRU. */
+export const VM_READ_CACHE_MAX_ENTRIES = 1024
 
 const readCacheEnabled = (() => {
   const raw = process.env.KIN_VM_READ_CACHE_MS
@@ -69,57 +73,78 @@ const readCacheEnabled = (() => {
   return Number.isFinite(value) ? value > 0 : true
 })()
 
-/** File text for `file`, re-read only when the on-disk identity changed. */
+function isNotFound(err) {
+  return err && err.code === 'ENOENT'
+}
+
+function putReadCache(file, entry) {
+  if (readCache.has(file)) readCache.delete(file)
+  readCache.set(file, entry)
+  if (readCache.size <= VM_READ_CACHE_MAX_ENTRIES) return
+  const oldest = readCache.keys().next().value
+  if (oldest !== undefined && oldest !== file) readCache.delete(oldest)
+}
+
+/** File text for `file`. Missing file → null; other I/O throws. */
 export function readFileCached(file) {
   if (!readCacheEnabled) {
     try {
       return fs.readFileSync(file, 'utf8')
-    } catch {
-      return null
+    } catch (err) {
+      if (isNotFound(err)) return null
+      throw err
     }
   }
-  let stat = null
+  let stat
   try {
     stat = fs.statSync(file)
-  } catch {
+  } catch (err) {
     readCache.delete(file)
-    return null
+    if (isNotFound(err)) return null
+    throw err
   }
   const hit = readCache.get(file)
   if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size && hit.ino === stat.ino) {
+    putReadCache(file, hit)
     return hit.text
   }
-  let text = null
+  let text
   try {
     text = fs.readFileSync(file, 'utf8')
-  } catch {
+  } catch (err) {
     readCache.delete(file)
-    return null
+    if (isNotFound(err)) return null
+    throw err
   }
-  readCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, text })
+  putReadCache(file, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, text })
   return text
 }
 
-/** Parsed JSON for `file`, or null when the file is missing / not JSON. */
+/** Parsed JSON for `file`. Missing file → null; corrupt JSON and other I/O throw. */
 export function readJsonCached(file) {
   const text = readFileCached(file)
   if (text == null) return null
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
+  return JSON.parse(text)
 }
 
-/** Drop one path (or the whole cache) — called from every writer in this file. */
+/** Drop one path (or the whole cache). Returns whether a path entry was present. */
 export function invalidateReadCache(file = null) {
-  if (file) readCache.delete(file)
-  else readCache.clear()
+  if (!file) {
+    readCache.clear()
+    return
+  }
+  return readCache.delete(file)
 }
 
-/** Cache size, for the panel / diagnostics. */
-export function readCacheSize() {
-  return readCache.size
+/** Drop the slot record and any cached files under `vms/<id>/` (credentials). */
+export function invalidateVmSlotReadCache(projectRoot, id) {
+  if (!projectRoot || !id) return
+  invalidateReadCache(path.join(projectRoot, 'vms', `${id}.json`))
+  const home = path.join(projectRoot, 'vms', id)
+  const prefix = home + path.sep
+  for (const file of readCache.keys()) {
+    if (file === home || file.startsWith(prefix)) readCache.delete(file)
+  }
 }
 
 const locks = new Map()

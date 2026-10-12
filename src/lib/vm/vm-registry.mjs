@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { atomicWriteJson, listVmRecordFiles, readJsonCached } from './vm-file.mjs'
+import { atomicWriteJson, invalidateReadCache, listVmRecordFiles, readJsonCached } from './vm-file.mjs'
 import {
   hasAccessPresence,
   hasCredentialPresence,
@@ -168,8 +168,12 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
 }
 
 export function getActiveVmId(projectRoot) {
-  const a = readJsonCached(path.join(projectRoot, 'vms', 'active.json'))
-  return a?.active_vm ?? null
+  try {
+    const a = readJsonCached(path.join(projectRoot, 'vms', 'active.json'))
+    return a?.active_vm ?? null
+  } catch {
+    return null
+  }
 }
 
 export function persistAccountTier(projectRoot, vmId, tier, { source = null } = {}) {
@@ -397,9 +401,11 @@ export function setActiveVm(projectRoot, id) {
 
 /** Drop the active pointer. Used when the last slot is deleted. */
 export function clearActiveVm(projectRoot) {
+  const file = path.join(projectRoot, 'vms', 'active.json')
   try {
-    fs.rmSync(path.join(projectRoot, 'vms', 'active.json'), { force: true })
+    fs.rmSync(file, { force: true })
   } catch {}
+  invalidateReadCache(file)
 }
 
 /** Statuses that mean the slot is actually down — not a soft UI pause. */
