@@ -342,7 +342,10 @@ function normalizeRules(raw) {
       enabled: item.enabled !== false,
     })
   }
-  return out
+  // An empty list would swap the shipped rules for nothing while the panel still
+  // reports hard_regex_enabled=true. Fall back to the builtins instead; turn the
+  // layer off with hard_regex_enabled.
+  return out.length ? out : null
 }
 
 const KEY_MAX = 999
