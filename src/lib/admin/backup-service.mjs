@@ -42,7 +42,7 @@ import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { BackupRepo } from '../db/repos/backup-repo.mjs'
 import { reconcileVms } from '../vm/vm-db-sync.mjs'
 import { repairSlotSmbios, repairVmProxyCliEnabled } from '../vm/vm-registry.mjs'
-import { isVmRecordFile } from '../vm/vm-file.mjs'
+import { invalidateReadCache, isVmRecordFile } from '../vm/vm-file.mjs'
 
 const SCHEDULE_KEY = 'backup_schedule'
 
@@ -441,6 +441,7 @@ export class BackupService {
 
       // 5. db-only backups: rebuild vm files from the credential mirror
       if (this.projectRoot) {
+        invalidateReadCache()
         try {
           reconcileVms(this.projectRoot)
           try {

@@ -149,7 +149,7 @@ import {
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
 import * as panel from './panel-api.mjs'
 import { GATEWAY_CAPABILITIES } from '../vm/execution-context.mjs'
-import { withVmLock, atomicWriteJson, isValidVmId } from '../vm/vm-file.mjs'
+import { withVmLock, atomicWriteJson, isValidVmId, invalidateVmSlotReadCache } from '../vm/vm-file.mjs'
 import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
@@ -2651,6 +2651,7 @@ export function createPanelHandler(ctx) {
           fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
         } catch {}
         fs.unlinkSync(vmPath)
+        invalidateVmSlotReadCache(cfg.paths.project, id)
         if (active === id) {
           clearActiveVm(cfg.paths.project)
           try {
