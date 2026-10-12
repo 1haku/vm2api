@@ -67,18 +67,40 @@ function billingVersionMatchesUa(headers, body) {
   return true
 }
 
+function messageText(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content) || content.length !== 1) return null
+  const block = content[0]
+  return block?.type === 'text' && typeof block.text === 'string' ? block.text : null
+}
+
+/**
+ * The CLI's quota check (`makeTestQuery`): `max_tokens: 1`, one user turn `quota`, its
+ * metadata.user_id, no system, no tools. The body is fixed, so admitting it on the header set
+ * spends nothing a caller controls. Anything else with `max_tokens: 1` is a normal request:
+ * the output floor would turn it into a real completion on the pool.
+ */
+function isCliQuotaProbe(headers, body) {
+  if (body?.max_tokens !== 1 || body.system != null) return false
+  if (Array.isArray(body.tools) ? body.tools.length : body.tools != null) return false
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  if (messages.length !== 1 || messages[0]?.role !== 'user') return false
+  if (messageText(messages[0].content) !== 'quota') return false
+  return sessionHeaderMatchesUserId(headers, body)
+}
+
 /**
  * Direct Claude Code: client header set, plus official system + user_id (same recognition
  * the persona path uses), session id agreeing across header and body, and billing version
- * agreeing with the UA. Bodies that carry neither system nor user_id — count_tokens and the
- * CLI's own `max_tokens: 1` quota probe — are checked on the header set alone. Third-party
+ * agreeing with the UA. count_tokens bodies carry no system or user_id, so they are checked on
+ * the header set alone; the CLI quota probe must match its fixed body exactly. Third-party
  * probes never get here: the caller refuses every health-probe shape first.
  * Relayed Claude Code (UA rewritten) is admitted only while `detect_proxied_official_cc` is on.
  */
 export function isClaudeCodeFamilyRequest(headers = {}, body = {}, { routing = {}, countTokens = false } = {}) {
   if (looksLikeOhMyPiSystem(body?.system) || inboundHasOpenAIToolShape(body)) return false
   if (hasClaudeCodeClientHeaders(headers)) {
-    if (countTokens || body?.max_tokens === 1) return true
+    if (countTokens || isCliQuotaProbe(headers, body)) return true
     if (
       isOfficialClaudeCodeTraffic(headers, body) &&
       sessionHeaderMatchesUserId(headers, body) &&

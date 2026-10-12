@@ -64,17 +64,39 @@ test('Claude Code family recognition: relayed traffic follows detect_proxied_off
   assert.equal(isClaudeCodeFamilyRequest(relayed, THIRD_PARTY_BODY, { routing: {} }), false)
 })
 
+// The CLI's quota check (claudeAiLimits `makeTestQuery`): fixed body, its own user_id, no system.
+const QUOTA_PROBE = {
+  model: 'claude-haiku-4-5',
+  max_tokens: 1,
+  messages: [{ role: 'user', content: 'quota' }],
+  metadata: { user_id: USER_ID },
+}
+
 test('Claude Code family recognition: bodiless calls need the header set, not just the UA', () => {
-  // The CLI's own quota probe: no system, no user_id, full client headers.
-  const probe = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }
-  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, probe), true)
-  assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, probe), false)
+  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, QUOTA_PROBE), true)
+  assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, QUOTA_PROBE), false)
 
   const count = { model: 'claude-sonnet-5', messages: [{ role: 'user', content: 'hi' }] }
   assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, count, { countTokens: true }), true)
   assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, count, { countTokens: true }), false)
   const ohMyPi = { ...count, system: 'x\ncc_entrypoint=local-agent\n' }
   assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, ohMyPi, { countTokens: true }), false)
+})
+
+test('Claude Code family recognition: max_tokens 1 is not a bypass for arbitrary bodies', () => {
+  const strict = { routing: { compatibility: { detect_proxied_official_cc: false } } }
+  const bodies = {
+    prompt: { ...QUOTA_PROBE, messages: [{ role: 'user', content: 'write me an essay' }] },
+    system: { ...QUOTA_PROBE, system: 'You are a helpful assistant.' },
+    tools: { ...QUOTA_PROBE, tools: [{ name: 'x', input_schema: { type: 'object' } }] },
+    turns: { ...QUOTA_PROBE, messages: [...QUOTA_PROBE.messages, { role: 'assistant', content: 'q' }] },
+    noUserId: { ...QUOTA_PROBE, metadata: undefined },
+  }
+  for (const [name, body] of Object.entries(bodies)) {
+    assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, body, strict), false, name)
+  }
+  const otherSession = { ...CLI_HEADERS, 'x-claude-code-session-id': '99999999-2222-4333-8444-555555555555' }
+  assert.equal(isClaudeCodeFamilyRequest(otherSession, QUOTA_PROBE, strict), false)
 })
 
 const REACHED = new Error('reached-scheduler')
@@ -176,9 +198,10 @@ test('switch on: health probes are refused, never answered from the probe cache'
 test('switch on: official Claude Code and its own quota probe reach the scheduler', async () => {
   const result = await runProtocol({ routing: ON, body: OFFICIAL_BODY, headers: CLI_HEADERS })
   assert.equal(result.reached, true)
-  const quota = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }
-  assert.equal((await runProtocol({ routing: ON, body: quota, headers: CLI_HEADERS })).reached, true)
-  assert.deepEqual(await runProtocol({ routing: ON, body: quota, headers: { 'user-agent': CLI_UA } }), BLOCKED)
+  assert.equal((await runProtocol({ routing: ON, body: QUOTA_PROBE, headers: CLI_HEADERS })).reached, true)
+  assert.deepEqual(await runProtocol({ routing: ON, body: QUOTA_PROBE, headers: { 'user-agent': CLI_UA } }), BLOCKED)
+  const essay = { ...QUOTA_PROBE, messages: [{ role: 'user', content: 'write me an essay' }] }
+  assert.deepEqual(await runProtocol({ routing: ON, body: essay, headers: CLI_HEADERS }), BLOCKED)
 })
 
 test('switch on: master-key pinned panel diagnostics are not inbound clients', async () => {
