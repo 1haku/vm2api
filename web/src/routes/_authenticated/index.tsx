@@ -5,7 +5,7 @@ import { onboardingQueryOptions } from '@/features/welcome/queries'
 export const Route = createFileRoute('/_authenticated/')({
   beforeLoad: async ({ context }) => {
     // The router can still reach this hook after the layout redirect; a sessionless
-    // fetch would 401 and the global handler would force the sign-in dialog open.
+    // fetch would 401 and the global handler would bounce to the sign-in page.
     if (!hasSession()) throw redirect({ to: '/welcome' })
     let needsWelcome = false
     try {

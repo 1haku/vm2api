@@ -19,11 +19,9 @@ const CLIENTS = [
 export function WelcomeHero({
   signedIn,
   baseUrl,
-  onLogin,
 }: {
   signedIn: boolean
   baseUrl: string
-  onLogin: () => void
 }) {
   return (
     <section className='relative z-10 overflow-hidden px-6 pt-28 pb-16 md:pt-36 md:pb-24 lg:pb-28'>
@@ -90,14 +88,16 @@ export function WelcomeHero({
               </Button>
             ) : (
               <Button
+                asChild
                 className='group h-11 rounded-lg px-5 text-sm font-medium'
-                onClick={onLogin}
               >
-                登录控制台
-                <ArrowRight
-                  aria-hidden
-                  className='size-4 transition-transform duration-200 group-hover:translate-x-0.5'
-                />
+                <Link to='/login'>
+                  登录控制台
+                  <ArrowRight
+                    aria-hidden
+                    className='size-4 transition-transform duration-200 group-hover:translate-x-0.5'
+                  />
+                </Link>
               </Button>
             )}
             <Button

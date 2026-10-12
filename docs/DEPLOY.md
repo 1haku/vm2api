@@ -143,7 +143,7 @@ docker exec kin-<槽> curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 ht
 
 ## 上线后
 
-1. 打开 `/cc`（或 `/cc#/login`，会直接弹登录框），在欢迎页右上角登录（未配置时为 `admin` / `123456`）。首次登录停在欢迎页，下方首配清单按真实状态列出改密码、出口、槽位账号、可调度、密钥、首个请求，每步可跳面板或文档；点「跳过引导」后再登录直接进总览，用户菜单「欢迎与引导」可重新打开。
+1. 打开 `/cc` 是欢迎页，右上角「登录」进入登录页 `/cc#/login`（未配置时为 `admin` / `123456`）。首次登录回到欢迎页，下方首配清单按真实状态列出改密码、出口、槽位账号、可调度、密钥、首个请求，每步可跳面板或文档；点「跳过引导」后再登录直接进总览，用户菜单「欢迎与引导」可重新打开。
 2. 代理池：添加本地出口，或导入 SOCKS5。
 3. 建槽、绑出口、启动。没出口会停在 `stopped`。
 4. 在槽里导入凭证，再用 `sk-vm-…` 或 master key 打 `POST /v1/messages`。
@@ -203,7 +203,7 @@ docker compose up -d --build
 
 **2. 管理台「Missing credentials」/「鉴权失效，请重新登录」**
 
-打开 `http://<ip>:8787/cc#/login`：欢迎页会直接弹出登录框。未配置时账密是 `admin` / `123456`。已有密码：`grep '^VM2API_ADMIN_PASSWORD=' /opt/vm2api/.env`。
+打开登录页 `http://<ip>:8787/cc#/login`。未配置时账密是 `admin` / `123456`。已有密码：`grep '^VM2API_ADMIN_PASSWORD=' /opt/vm2api/.env`。
 
 ```bash
 # 安装

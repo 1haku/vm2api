@@ -278,7 +278,7 @@
 /* ── 欢迎页（公开落地页）────────────────────────────────────────
    落地页对齐 newapi 新版首页：中性黑白主色、1rem 圆角、蓝紫点缀。
    只在 .welcome-theme 作用域内覆盖 token，控制台本身的绿色主题不动；
-   登录弹窗挂在 body 上，所以 DialogContent 也要带这个类。 */
+   独立登录页（#/login）也套这个类。 */
 .welcome-theme {
   --radius: 1rem;
   --background: oklch(1 0 0);

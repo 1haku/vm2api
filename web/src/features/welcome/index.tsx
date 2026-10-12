@@ -4,11 +4,10 @@
  * three steps, CTA); tokens are scoped by `.welcome-theme` so the console
  * keeps its own theme. After sign-in the live setup checklist sits under the hero.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useSearch } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
-import { LoginDialog } from '@/features/auth/login-dialog'
 import { meQueryOptions } from '@/features/auth/queries'
 import { WelcomeCapabilities } from './capabilities'
 import { WelcomeChecklist } from './checklist'
@@ -23,60 +22,29 @@ import { WelcomeTopBar } from './top-bar'
 
 export function WelcomePage() {
   const search = useSearch({ from: '/welcome' })
-  const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
   const username = useAuthStore((s) => s.user)
   const signedIn = Boolean(token)
-  const [loginOpen, setLoginOpen] = useState(Boolean(search.login) && !signedIn)
-  // Set on a fresh sign-in; consumed once the checklist has data to render.
-  const scrollPending = useRef(false)
-  const wasSignedIn = useRef(signedIn)
 
   const onboarding = useQuery(onboardingQueryOptions(signedIn))
   const me = useQuery(meQueryOptions(signedIn))
 
+  // Sign-in lands here with `?setup=1`. The router resets scroll right after the
+  // navigation commits, so the jump waits a beat to not be overwritten.
   useEffect(() => {
-    if (search.login && !signedIn) setLoginOpen(true)
-  }, [search.login, signedIn])
-
-  useEffect(() => {
-    if (!wasSignedIn.current && signedIn) scrollPending.current = true
-    wasSignedIn.current = signedIn
-  }, [signedIn])
-
-  useEffect(() => {
-    if (!scrollPending.current || !onboarding.data) return
-    scrollPending.current = false
-    scrollToSection('welcome-setup')
-  }, [onboarding.data])
-
-  function setLogin(open: boolean) {
-    setLoginOpen(open)
-    if (!open && search.login) {
-      void navigate({
-        to: '/welcome',
-        search: { redirect: search.redirect },
-        replace: true,
-      })
-    }
-  }
+    if (!search.setup || !onboarding.data) return
+    const timer = window.setTimeout(() => scrollToSection('welcome-setup'), 120)
+    return () => window.clearTimeout(timer)
+  }, [search.setup, onboarding.data])
 
   const base =
     (onboarding.data?.base_url || '').replace(/\/$/, '') || location.origin
 
   return (
     <div className='welcome-theme min-h-svh overflow-x-hidden bg-background text-foreground'>
-      <WelcomeTopBar
-        signedIn={signedIn}
-        username={username}
-        onLogin={() => setLogin(true)}
-      />
+      <WelcomeTopBar signedIn={signedIn} username={username} />
       <main>
-        <WelcomeHero
-          signedIn={signedIn}
-          baseUrl={base}
-          onLogin={() => setLogin(true)}
-        />
+        <WelcomeHero signedIn={signedIn} baseUrl={base} />
         {signedIn && onboarding.data ? (
           <WelcomeChecklist payload={onboarding.data} views={me.data?.views} />
         ) : null}
@@ -84,14 +52,9 @@ export function WelcomePage() {
         <WelcomeCapabilities />
         <WelcomeQuickStart />
         <WelcomeClientSnippets baseUrl={base} />
-        <WelcomeCta signedIn={signedIn} onLogin={() => setLogin(true)} />
+        <WelcomeCta signedIn={signedIn} />
       </main>
       <WelcomeFooter />
-      <LoginDialog
-        open={loginOpen}
-        onOpenChange={setLogin}
-        redirect={search.redirect}
-      />
     </div>
   )
 }

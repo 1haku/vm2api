@@ -5,13 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Reveal } from './reveal'
 import { docsHref } from './steps'
 
-export function WelcomeCta({
-  signedIn,
-  onLogin,
-}: {
-  signedIn: boolean
-  onLogin: () => void
-}) {
+export function WelcomeCta({ signedIn }: { signedIn: boolean }) {
   return (
     <section className='relative z-10 overflow-hidden px-6 py-24 md:py-32'>
       <div
@@ -47,12 +41,14 @@ export function WelcomeCta({
               </Link>
             </Button>
           ) : (
-            <Button className='group rounded-lg' onClick={onLogin}>
-              登录控制台
-              <ArrowRight
-                aria-hidden
-                className='size-3.5 transition-transform group-hover:translate-x-0.5'
-              />
+            <Button asChild className='group rounded-lg'>
+              <Link to='/login'>
+                登录控制台
+                <ArrowRight
+                  aria-hidden
+                  className='size-3.5 transition-transform group-hover:translate-x-0.5'
+                />
+              </Link>
             </Button>
           )}
           <Button

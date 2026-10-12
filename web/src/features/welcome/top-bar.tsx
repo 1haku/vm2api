@@ -15,11 +15,9 @@ const NAV_LINK =
 export function WelcomeTopBar({
   signedIn,
   username,
-  onLogin,
 }: {
   signedIn: boolean
   username: string
-  onLogin: () => void
 }) {
   const [scrolled, setScrolled] = useState(false)
 
@@ -119,11 +117,11 @@ export function WelcomeTopBar({
               </div>
             ) : (
               <Button
+                asChild
                 size='sm'
                 className='h-8 rounded-lg px-3.5 text-xs font-medium'
-                onClick={onLogin}
               >
-                登录
+                <Link to='/login'>登录</Link>
               </Button>
             )}
           </div>
