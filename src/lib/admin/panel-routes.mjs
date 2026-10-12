@@ -13,6 +13,7 @@ import {
   clearPanelSessionCookie,
   revokePanelSession,
   revokePanelSessionsForUser,
+  getPanelAdmin,
 } from '../core/security.mjs'
 import { loadDistillRules, saveDistillRules, validateDistillPatch } from '../core/distill-detect.mjs'
 import { applyRefusalGuardPatch, refusalGuardPolicy } from '../core/refusal-guard.mjs'
@@ -235,6 +236,16 @@ import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
 import { mergeNotifyConfig, publicNotifyConfig, publicRoutingNotify, sendNotifyTest } from './notify.mjs'
 import { UsageLogsView } from '../db/repos/usage-logs-view.mjs'
 import {
+  applyOnboardingAction,
+  buildOnboardingPayload,
+  loadOnboardingState,
+  onboardingRoleOf,
+  onboardingUserOf,
+  recordOf,
+  saveOnboardingState,
+  vmStepFacts,
+} from './onboarding.mjs'
+import {
   StatisticsRepo,
   USER_ROLE_DIMENSIONS,
   normalizeDimension,
@@ -253,6 +264,46 @@ function clusterNodesOf(ctx) {
   } catch {
     return []
   }
+}
+
+function collectOnboardingFacts(req, ctx) {
+  const ident = panelIdentity(req)
+  const ownerUserId = ident.role === 'user' ? req.panelUserId : null
+  const vms = listVms(ctx.cfg.paths.project, ctx.routingConfig)
+  const snap = ctx.proxyPool.panelSnapshot({
+    role: ident.role,
+    ownerUserId: ident.role === 'user' ? req.panelUserId : undefined,
+    vms,
+    nodes: clusterNodesOf(ctx),
+  })
+  const visible = filterVmsForPanel(vms, { role: ident.role, userId: ownerUserId })
+  const keys = ctx.apiKeyStore.snapshot().keys || []
+  const mine =
+    ident.role === 'user' ? keys.filter((k) => normalizeOwnerId(k.user_id) === normalizeOwnerId(req.panelUserId)) : keys
+  const admin = getPanelAdmin()
+  return {
+    envPassword: admin.password,
+    envAdminExists: !!ctx.panelUsers.getByUsername(admin.username),
+    proxyCount: (snap.proxies || []).length,
+    ...vmStepFacts(visible),
+    activeKeyCount: mine.filter((k) => k.status === 'active').length,
+    hasFirstRequest: ctx.requestLog.hasSuccessfulRequest({ owner_user_id: ownerUserId }),
+  }
+}
+
+function onboardingPayloadFor(req, ctx) {
+  const user = onboardingUserOf(req)
+  const role = onboardingRoleOf(req)
+  const rec = recordOf(loadOnboardingState(new SettingsRepo()), user)
+  return buildOnboardingPayload({
+    user,
+    role,
+    status: rec.status,
+    updated_at: rec.updated_at,
+    // cfg.base_url falls back to HOST:PORT (often 0.0.0.0); only an explicit public URL beats the browser origin.
+    base_url: process.env.PUBLIC_BASE_URL || null,
+    facts: collectOnboardingFacts(req, ctx),
+  })
 }
 
 /** Scrolling-log query string → `UsageLogsView` filters. Empty strings are dropped. */
@@ -999,6 +1050,25 @@ export function createPanelHandler(ctx) {
         denyIfUserMissesProxy(req, res, { proxyPool, json, path: p })
       ) {
         return true
+      }
+      if ((req.method === 'GET' || req.method === 'PUT') && p === '/api/panel/onboarding') {
+        if (req.method === 'PUT') {
+          const body = await readBody(req, 4096).catch(() => ({}))
+          try {
+            const settings = new SettingsRepo()
+            const next = applyOnboardingAction(loadOnboardingState(settings), onboardingUserOf(req), body?.action)
+            saveOnboardingState(settings, next)
+          } catch (e) {
+            if (e.code === 'invalid_action') {
+              return json(res, 400, {
+                ok: false,
+                error: { message: String(e.message || e), code: 'invalid_action' },
+              })
+            }
+            throw e
+          }
+        }
+        return json(res, 200, panel.ok(onboardingPayloadFor(req, ctx)))
       }
       if (p.startsWith('/api/panel/cluster/')) return ctx.clusterRoutes.handle(req, res, url)
       if (req.method === 'GET' && p === '/api/panel/database/metrics') {

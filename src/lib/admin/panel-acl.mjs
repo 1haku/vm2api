@@ -88,6 +88,7 @@ export function panelIdentity(req) {
 
 const USER_EXACT_GET = new Set([
   '/api/panel/me',
+  '/api/panel/onboarding',
   '/api/panel/vms',
   '/api/panel/vms/create-options',
   '/api/panel/pool/stream',
@@ -221,6 +222,7 @@ function isUserAllowed(method, path) {
   const m = String(method || 'GET').toUpperCase()
   const p = String(path || '')
   if (m === 'GET' && (USER_EXACT_GET.has(p) || isRequestLogPath(p) || LOG_STATS_GET.has(p))) return true
+  if (m === 'PUT' && p === '/api/panel/onboarding') return true
   if (m === 'POST' && USER_EXACT_POST.has(p)) return true
   if (p.startsWith('/api/panel/vms')) return userVmPathAllowed(m, p)
   if (p.startsWith('/api/panel/proxies')) return userProxyPathAllowed(m, p)
@@ -235,6 +237,7 @@ export function authorizePanelRoute(method, path, role) {
   const p = String(path || '')
 
   if (r === 'user' && isUserAllowed(m, p)) return { ok: true, role: r }
+  if (p === '/api/panel/onboarding' && (m === 'GET' || m === 'PUT')) return { ok: true, role: r }
   if (
     r === 'super' &&
     m === 'GET' &&
