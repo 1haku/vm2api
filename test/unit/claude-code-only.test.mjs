@@ -38,29 +38,37 @@ const THIRD_PARTY_BODY = {
 }
 const ON = { compatibility: { claude_code_only: true } }
 
+const NO_RELAY = { routing: { compatibility: { detect_proxied_official_cc: false } } }
+
 test('Claude Code family recognition needs the full client fingerprint, not the UA', () => {
-  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, OFFICIAL_BODY), true)
+  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, OFFICIAL_BODY, NO_RELAY), true)
   // UA plus a copied official body is not enough without the client header set.
-  assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, OFFICIAL_BODY), false)
+  assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, OFFICIAL_BODY, NO_RELAY), false)
   for (const key of ['x-app', 'anthropic-beta', 'x-stainless-lang', 'x-claude-code-session-id']) {
     const { [key]: _drop, ...partial } = CLI_HEADERS
-    assert.equal(isClaudeCodeFamilyRequest(partial, OFFICIAL_BODY), false, key)
+    assert.equal(isClaudeCodeFamilyRequest(partial, OFFICIAL_BODY, NO_RELAY), false, key)
   }
   assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, THIRD_PARTY_BODY), false)
   // Header session and metadata.user_id session come from the same CLI value.
   const otherSession = { ...CLI_HEADERS, 'x-claude-code-session-id': '99999999-2222-4333-8444-555555555555' }
-  assert.equal(isClaudeCodeFamilyRequest(otherSession, OFFICIAL_BODY), false)
+  assert.equal(isClaudeCodeFamilyRequest(otherSession, OFFICIAL_BODY, NO_RELAY), false)
   // Billing cc_version and UA version come from the same build.
   const otherVersion = { ...CLI_HEADERS, 'user-agent': 'claude-cli/2.1.280 (external, cli)' }
-  assert.equal(isClaudeCodeFamilyRequest(otherVersion, OFFICIAL_BODY), false)
-  // A relayed official body is as easy to forge as a spoofed one.
-  assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': 'Go-http-client/1.1' }, OFFICIAL_BODY), false)
+  assert.equal(isClaudeCodeFamilyRequest(otherVersion, OFFICIAL_BODY, NO_RELAY), false)
 })
 
-test('Claude Code family recognition: no UA-only probe or count_tokens exceptions', () => {
-  const probe = { model: 'claude-sonnet-5', max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }
+test('Claude Code family recognition: relayed traffic follows detect_proxied_official_cc', () => {
+  const relayed = { 'user-agent': 'Go-http-client/1.1' }
+  assert.equal(isClaudeCodeFamilyRequest(relayed, OFFICIAL_BODY, { routing: {} }), true)
+  assert.equal(isClaudeCodeFamilyRequest(relayed, OFFICIAL_BODY, NO_RELAY), false)
+  assert.equal(isClaudeCodeFamilyRequest(relayed, THIRD_PARTY_BODY, { routing: {} }), false)
+})
+
+test('Claude Code family recognition: bodiless calls need the header set, not just the UA', () => {
+  // The CLI's own quota probe: no system, no user_id, full client headers.
+  const probe = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }
+  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, probe), true)
   assert.equal(isClaudeCodeFamilyRequest({ 'user-agent': CLI_UA }, probe), false)
-  assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, probe), false)
 
   const count = { model: 'claude-sonnet-5', messages: [{ role: 'user', content: 'hi' }] }
   assert.equal(isClaudeCodeFamilyRequest(CLI_HEADERS, count, { countTokens: true }), true)
@@ -133,8 +141,9 @@ const BLOCKED = { reached: false, status: 403, code: 'claude_code_only' }
 
 test('switch on: third-party Claude requests are 403 before any account is picked', async () => {
   assert.deepEqual(await runProtocol({ routing: ON, body: THIRD_PARTY_BODY, headers: AXIOS }), BLOCKED)
-  // A spoofed UA on a copied official body is still third-party.
-  const spoofed = await runProtocol({ routing: ON, body: OFFICIAL_BODY, headers: { 'user-agent': CLI_UA } })
+  // With relay detection off, a spoofed UA on a copied official body is third-party.
+  const strict = { compatibility: { claude_code_only: true, detect_proxied_official_cc: false } }
+  const spoofed = await runProtocol({ routing: strict, body: OFFICIAL_BODY, headers: { 'user-agent': CLI_UA } })
   assert.deepEqual(spoofed, BLOCKED)
   // Official Claude Code never uses the OpenAI Chat entry, even with its headers.
   const chat = await runProtocol({ routing: ON, body: OFFICIAL_BODY, headers: CLI_HEADERS, protocol: 'openai.chat' })
@@ -164,9 +173,12 @@ test('switch on: health probes are refused, never answered from the probe cache'
   assert.deepEqual(seen, [])
 })
 
-test('switch on: official Claude Code reaches the scheduler', async () => {
+test('switch on: official Claude Code and its own quota probe reach the scheduler', async () => {
   const result = await runProtocol({ routing: ON, body: OFFICIAL_BODY, headers: CLI_HEADERS })
   assert.equal(result.reached, true)
+  const quota = { model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }
+  assert.equal((await runProtocol({ routing: ON, body: quota, headers: CLI_HEADERS })).reached, true)
+  assert.deepEqual(await runProtocol({ routing: ON, body: quota, headers: { 'user-agent': CLI_UA } }), BLOCKED)
 })
 
 test('switch on: master-key pinned panel diagnostics are not inbound clients', async () => {

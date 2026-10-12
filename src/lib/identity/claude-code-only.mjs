@@ -7,9 +7,11 @@ import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
 import { isOfficialClaudeUa } from './official-claude-ua.mjs'
 import { parseUserId } from './identity-rewrite.mjs'
 import {
+  detectProxiedOfficialCcFromRouting,
   eachSystemText,
   inboundHasOpenAIToolShape,
   isOfficialClaudeCodeTraffic,
+  isProxiedOfficialClaudeCode,
   looksLikeOhMyPiSystem,
 } from './crs-persona.mjs'
 
@@ -29,8 +31,8 @@ function headerText(headers, key) {
 /**
  * Headers the CLI sends on every Messages and count_tokens call (captured from 2.1.280).
  * A UA alone is one string to copy; this set comes from the Stainless SDK plus the
- * CLI's own session header. Relays rewrite them, and a relayed body is just as easy to
- * forge, so the gate does not admit relayed traffic at all.
+ * CLI's own session header. Relays rewrite them, which is why the relayed path is
+ * body-only and follows its own switch.
  */
 export function hasClaudeCodeClientHeaders(headers = {}) {
   if (!isOfficialClaudeUa(headerText(headers, 'user-agent'))) return false
@@ -66,21 +68,26 @@ function billingVersionMatchesUa(headers, body) {
 }
 
 /**
- * Direct Claude Code only: client header set, official system + user_id (same recognition
- * the persona path uses), session id agreeing across header and body, billing version
- * agreeing with the UA. count_tokens bodies carry only model/messages/tools, so the header
- * set is all there is to check. No UA-only exceptions: a `max_tokens: 1` probe must look
- * like the CLI too.
+ * Direct Claude Code: client header set, plus official system + user_id (same recognition
+ * the persona path uses), session id agreeing across header and body, and billing version
+ * agreeing with the UA. Bodies that carry neither system nor user_id — count_tokens and the
+ * CLI's own `max_tokens: 1` quota probe — are checked on the header set alone. Third-party
+ * probes never get here: the caller refuses every health-probe shape first.
+ * Relayed Claude Code (UA rewritten) is admitted only while `detect_proxied_official_cc` is on.
  */
-export function isClaudeCodeFamilyRequest(headers = {}, body = {}, { countTokens = false } = {}) {
+export function isClaudeCodeFamilyRequest(headers = {}, body = {}, { routing = {}, countTokens = false } = {}) {
   if (looksLikeOhMyPiSystem(body?.system) || inboundHasOpenAIToolShape(body)) return false
-  if (!hasClaudeCodeClientHeaders(headers)) return false
-  if (countTokens) return true
-  return (
-    isOfficialClaudeCodeTraffic(headers, body) &&
-    sessionHeaderMatchesUserId(headers, body) &&
-    billingVersionMatchesUa(headers, body)
-  )
+  if (hasClaudeCodeClientHeaders(headers)) {
+    if (countTokens || body?.max_tokens === 1) return true
+    if (
+      isOfficialClaudeCodeTraffic(headers, body) &&
+      sessionHeaderMatchesUserId(headers, body) &&
+      billingVersionMatchesUa(headers, body)
+    ) {
+      return true
+    }
+  }
+  return !countTokens && detectProxiedOfficialCcFromRouting(routing) && isProxiedOfficialClaudeCode(body, headers)
 }
 
 export function claudeCodeOnlyError() {

@@ -510,7 +510,7 @@ export function createHandleProtocol(deps) {
       detectInboundPlatform(inbound?.model).platform === 'anthropic' &&
       (protocol !== 'anthropic.messages' ||
         isHealthShape(req.headers, inbound, getHealthMonitor()?.getConfig?.() || DEFAULT_HEALTH_PROBE, protocol) ||
-        !isClaudeCodeFamilyRequest(req.headers, inbound))
+        !isClaudeCodeFamilyRequest(req.headers, inbound, { routing: routingNow }))
     ) {
       stats.errors++
       const errorResult = claudeCodeOnlyError()
