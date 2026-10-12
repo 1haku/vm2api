@@ -652,6 +652,7 @@ export function createHandleProtocol(deps) {
     if (platform.platform === 'openai') {
       const routing = getRouting() || {}
       const codexSticky = {
+        requestStartedAt: logCtx.t0,
         stickyRouter,
         sessions: accountQuota?.sessions || null,
         body: ctx.body,
@@ -959,7 +960,10 @@ export function createHandleProtocol(deps) {
       logBag.upstream_status = result?.status ?? null
       logBag.usage = result?.body?.usage || result?.usage || null
       logBag.upstream_model = result?.model || null
-      logBag.first_token_ms = result?.ttftMs ?? null
+      // API transport still stamps the first data: line; subtract t0 for queue wait only.
+      logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
+        ? Math.max(0, result.firstTokenAt - logCtx.t0)
+        : (result?.ttftMs ?? null)
       logBag.final_state = result?.terminalState || null
       if (result?.ok && managedKey) {
         try {
@@ -1372,7 +1376,10 @@ export function createHandleProtocol(deps) {
     // Fast mode bills 2x; upstream usage.speed wins, the request speed is only a fallback.
     if (logBag.usage && wantsFastMode(ctx.body)) logBag.usage = { ...logBag.usage, requested_speed: 'fast' }
     logBag.upstream_model = result?.body?.model || result?.model || null
-    logBag.first_token_ms = result?.ttftMs ?? null
+    // Kernel stream firstTokenAt is generated content; include admission/setup via t0.
+    logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
+      ? Math.max(0, result.firstTokenAt - logCtx.t0)
+      : (result?.ttftMs ?? null)
     logBag.stop_reason = result?.body?.stop_reason || result?.stopReason || null
     logBag.via = result?.via || 'go-worker-pool'
     if (result?.finalState === 'content_filter' || logBag.stop_reason === 'refusal') {
