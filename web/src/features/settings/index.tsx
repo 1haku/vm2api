@@ -378,15 +378,11 @@ export function SettingsPage() {
                   codex={
                     (draft.codex as Record<string, unknown> | undefined) || {}
                   }
-                  inference={inference}
                   onCompatChange={(next) =>
                     setDraft((current) => ({ ...current, compatibility: next }))
                   }
                   onCodexChange={(next) =>
                     setDraft((current) => ({ ...current, codex: next }))
-                  }
-                  onInferenceChange={(next) =>
-                    setDraft((current) => ({ ...current, inference: next }))
                   }
                 />
               ) : null}

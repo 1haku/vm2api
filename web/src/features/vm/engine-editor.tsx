@@ -85,14 +85,6 @@ export function VmEngineEditor({
         <Link to='/wrap' className='underline underline-offset-4'>
           内核页
         </Link>{' '}
-        或{' '}
-        <Link
-          to='/settings/$tab'
-          params={{ tab: 'protocol' }}
-          className='underline underline-offset-4'
-        >
-          设置 → 协议
-        </Link>
         切换。Go HTTP 转发不再启用。
       </p>
       {inherits ? null : (

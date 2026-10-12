@@ -1,28 +1,11 @@
-import { Boxes, Check, Cpu, ShieldCheck } from 'lucide-react'
-import {
-  CACHE_TTL_OPTIONS,
-  cacheBreakpointsFromCompat,
-  cacheTtlFromCompat,
-  detectProxiedOfficialCcFromCompat,
-} from '@/lib/cache-breakpoints'
+import { Boxes, Check, ShieldCheck } from 'lucide-react'
+import { detectProxiedOfficialCcFromCompat } from '@/lib/cache-breakpoints'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/setting-row'
-import {
-  DATAPLANE_HINT,
-  HOP_TRANSPORT_LABEL,
-  dataplaneLabel,
-} from '@/features/vm/dataplane-contract'
-import { ChipGroup, PaneSection } from './scheduler-controls'
+import { PaneSection } from './scheduler-controls'
 
 type Block = Record<string, unknown>
 
@@ -196,86 +179,6 @@ function AdmissionSection({
   )
 }
 
-function ClaudeRouteSection({
-  compat,
-  inference,
-  onCompatChange,
-  onInferenceChange,
-}: {
-  compat: Block
-  inference: Block
-  onCompatChange: (next: Block) => void
-  onInferenceChange: (next: Block) => void
-}) {
-  const breakpoints = cacheBreakpointsFromCompat(compat)
-  const dataplane = String(inference.dataplane || 'wrap')
-  const seats = Number(inference.session_slots ?? 20)
-
-  return (
-    <PaneSection icon={Cpu} title='Claude 链路' desc='槽内内核与缓存。'>
-      <div className='divide-y'>
-        <SettingRow label='数据面' desc={DATAPLANE_HINT}>
-          <Select
-            value={dataplane}
-            onValueChange={(value) =>
-              onInferenceChange({ ...inference, dataplane: value })
-            }
-          >
-            <SelectTrigger className='w-48' aria-label='数据面'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='wrap'>{dataplaneLabel('wrap')}</SelectItem>
-              <SelectItem value='cc'>{dataplaneLabel('cc')}</SelectItem>
-              <SelectItem value='crag'>{dataplaneLabel('crag')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
-        <SettingRow
-          label='缓存 TTL'
-          desc='1 小时按 2× 写入计费；5 分钟按 1.25×。'
-        >
-          <ChipGroup
-            label='缓存 TTL'
-            value={cacheTtlFromCompat(compat)}
-            options={CACHE_TTL_OPTIONS}
-            onChange={(cache_ttl) => onCompatChange({ ...compat, cache_ttl })}
-          />
-        </SettingRow>
-        <SettingRow
-          label='缓存断点'
-          desc='非官方入站的消息断点交给 cli-hop 统一打点；官方 Claude Code 保留自带断点。'
-        >
-          <Switch
-            checked={breakpoints.enabled}
-            onCheckedChange={(on) =>
-              onCompatChange({
-                ...compat,
-                cache_breakpoints: { ...breakpoints, enabled: on },
-              })
-            }
-            aria-label='启用缓存断点'
-          />
-        </SettingRow>
-      </div>
-      <dl className='grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2.5 text-xs'>
-        <dt className='text-muted-foreground'>推理路径</dt>
-        <dd>{HOP_TRANSPORT_LABEL}</dd>
-        <dt className='text-muted-foreground'>凭证</dt>
-        <dd>宿主机写 credentials.json，槽内只读</dd>
-        <dt className='text-muted-foreground'>native 位</dt>
-        <dd className='tabular-nums'>
-          {dataplane === 'crag' ? '最多 20（cc-node 一进程）' : '20（固定）'}
-          <span className='text-muted-foreground'>
-            {' '}
-            · 席位上限 {seats}，在 账号池 → 席位 调
-          </span>
-        </dd>
-      </dl>
-    </PaneSection>
-  )
-}
-
 function GptRouteSection({
   codex,
   onCodexChange,
@@ -367,17 +270,13 @@ function GptRouteSection({
 export function ProtocolPane({
   compat,
   codex,
-  inference,
   onCompatChange,
   onCodexChange,
-  onInferenceChange,
 }: {
   compat: Block
   codex: Block
-  inference: Block
   onCompatChange: (next: Block) => void
   onCodexChange: (next: Block) => void
-  onInferenceChange: (next: Block) => void
 }) {
   return (
     <div className='space-y-4'>
@@ -387,15 +286,7 @@ export function ProtocolPane({
         onCompatChange={onCompatChange}
         onCodexChange={onCodexChange}
       />
-      <div className='grid items-start gap-4 xl:grid-cols-2'>
-        <ClaudeRouteSection
-          compat={compat}
-          inference={inference}
-          onCompatChange={onCompatChange}
-          onInferenceChange={onInferenceChange}
-        />
-        <GptRouteSection codex={codex} onCodexChange={onCodexChange} />
-      </div>
+      <GptRouteSection codex={codex} onCodexChange={onCodexChange} />
     </div>
   )
 }
