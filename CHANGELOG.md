@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 设置 → 协议 重排为三块：「入站准入」（Claude / GPT 两侧客户端放行）、「Claude 链路」（数据面、缓存 TTL、缓存断点、中转识别）、「GPT 链路」（总开关在标题栏）。「仅允许 Claude Code 家族请求」原来是页面最底下第六张卡片，容易漏看，现在放在第一块入站准入里，并列出放行条件。
+- 「仅允许 Claude Code 家族请求」改严：只认 UA 已不够，须同时带 Claude Code 的整组请求头（`x-app: cli`、`anthropic-beta` 含 `claude-code-20250219`、Stainless SDK 头、`x-claude-code-session-id`），Messages 还要官方 system + user_id、会话头与 user_id 会话一致、计费块版本与 UA 一致。去掉原先沿用 sub2api 的 UA-only `max_tokens=1` 探测与 count_tokens 例外；中转流量不再放行（「识别中转来的官方 Claude Code」只影响官方处理）；健康探测形状（含 sub2api 账号测试）一律 403，不再由探测缓存回答。面板测试对话和内部健康探测（master key 钉槽）不受影响。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。开着该开关、又依赖中转或第三方健康检查的部署，升级后这些请求会变成 403。
+
 ## 1.3.152 — 2026-10-12
 
 - 用量聚合按每行 prompt 分母计算缓存命中率：Claude 为 input + 读 + 写，Codex / OpenAI 的 input 已含缓存；混用提供商按 token 加权，账号窗口二次汇总保留该分母。首页和用量页复用已算出的 `billing.total`。数据库页 `PromptCacheMetricsPanel` 仍用 input+read+creation 自行重算，不在本次范围内。（#363）
