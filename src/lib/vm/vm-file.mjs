@@ -46,6 +46,82 @@ export function listVmRecordFiles(dir) {
   }
 }
 
+/* --------------------------------------------------------------------------
+ * Slot-record read cache (local patch: perf).
+ *
+ * A scheduling attempt reads every slot record, and the pool re-runs the
+ * attempt on every request, retry and failover. With ~100 slots that is
+ * thousands of readFileSync + UTF-8 decode calls per second, which saturates
+ * the single Node thread and starves the admin API. The cache is keyed by
+ * (mtime, size, inode), so the text handed out is always the bytes on disk at
+ * call time: a record replaced by an atomic rename, or touched by a slot
+ * worker, changes the key and is re-read on the next call. Only file text is
+ * cached (never a parsed object), so callers still own their own copy.
+ *
+ * `KIN_VM_READ_CACHE_MS=0` disables the cache entirely (escape hatch).
+ * ------------------------------------------------------------------------ */
+const readCache = new Map()
+
+const readCacheEnabled = (() => {
+  const raw = process.env.KIN_VM_READ_CACHE_MS
+  if (raw == null || raw === '') return true
+  const value = Number(raw)
+  return Number.isFinite(value) ? value > 0 : true
+})()
+
+/** File text for `file`, re-read only when the on-disk identity changed. */
+export function readFileCached(file) {
+  if (!readCacheEnabled) {
+    try {
+      return fs.readFileSync(file, 'utf8')
+    } catch {
+      return null
+    }
+  }
+  let stat = null
+  try {
+    stat = fs.statSync(file)
+  } catch {
+    readCache.delete(file)
+    return null
+  }
+  const hit = readCache.get(file)
+  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size && hit.ino === stat.ino) {
+    return hit.text
+  }
+  let text = null
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch {
+    readCache.delete(file)
+    return null
+  }
+  readCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, text })
+  return text
+}
+
+/** Parsed JSON for `file`, or null when the file is missing / not JSON. */
+export function readJsonCached(file) {
+  const text = readFileCached(file)
+  if (text == null) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+/** Drop one path (or the whole cache) — called from every writer in this file. */
+export function invalidateReadCache(file = null) {
+  if (file) readCache.delete(file)
+  else readCache.clear()
+}
+
+/** Cache size, for the panel / diagnostics. */
+export function readCacheSize() {
+  return readCache.size
+}
+
 const locks = new Map()
 
 /**
@@ -99,6 +175,7 @@ export function atomicWriteJson(filePath, obj, { mode } = {}) {
       fs.chmodSync(filePath, mode)
     } catch {}
   }
+  invalidateReadCache(filePath)
   notifyVmWrite(filePath)
   return true
 }
@@ -106,7 +183,7 @@ export function atomicWriteJson(filePath, obj, { mode } = {}) {
 export function writeJsonIfChanged(filePath, obj, { mode } = {}) {
   const data = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)
   try {
-    if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf8') === data) {
+    if (fs.existsSync(filePath) && readFileCached(filePath) === data) {
       return false
     }
   } catch {}
