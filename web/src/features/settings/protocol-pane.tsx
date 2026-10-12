@@ -97,7 +97,7 @@ function AdmissionSection({
             label='识别中转来的官方 Claude Code'
             desc={
               relay
-                ? 'UA 被改写、但带官方计费块与合法 user_id 的请求按官方处理，准入也放行。'
+                ? 'UA 被改写但系统里有官方计费块的请求按官方处理，准入也放行。计费块被丢掉时，还要官方 system 和合法 user_id。'
                 : '已关：只认直连 Claude Code，中转流量按第三方处理。'
             }
           >
