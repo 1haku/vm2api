@@ -27,7 +27,6 @@ import { Route as AuthenticatedRiskRouteImport } from './routes/_authenticated/r
 import { Route as AuthenticatedSpecsRouteImport } from './routes/_authenticated/specs'
 import { Route as AuthenticatedStatisticsRouteImport } from './routes/_authenticated/statistics'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
-import { Route as AuthenticatedUsageRouteImport } from './routes/_authenticated/usage'
 import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
 import { Route as AuthenticatedWrapRouteImport } from './routes/_authenticated/wrap'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
@@ -124,11 +123,6 @@ const AuthenticatedSystemRoute = AuthenticatedSystemRouteImport.update({
   path: '/system',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedUsageRoute = AuthenticatedUsageRouteImport.update({
-  id: '/usage',
-  path: '/usage',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
 const AuthenticatedUsersRoute = AuthenticatedUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -180,7 +174,6 @@ export interface FileRoutesByFullPath {
   '/specs': typeof AuthenticatedSpecsRoute
   '/statistics': typeof AuthenticatedStatisticsRoute
   '/system': typeof AuthenticatedSystemRoute
-  '/usage': typeof AuthenticatedUsageRoute
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
   '/settings/$tab': typeof AuthenticatedSettingsTabRoute
@@ -205,7 +198,6 @@ export interface FileRoutesByTo {
   '/specs': typeof AuthenticatedSpecsRoute
   '/statistics': typeof AuthenticatedStatisticsRoute
   '/system': typeof AuthenticatedSystemRoute
-  '/usage': typeof AuthenticatedUsageRoute
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
   '/': typeof AuthenticatedIndexRoute
@@ -233,7 +225,6 @@ export interface FileRoutesById {
   '/_authenticated/specs': typeof AuthenticatedSpecsRoute
   '/_authenticated/statistics': typeof AuthenticatedStatisticsRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
-  '/_authenticated/usage': typeof AuthenticatedUsageRoute
   '/_authenticated/users': typeof AuthenticatedUsersRoute
   '/_authenticated/wrap': typeof AuthenticatedWrapRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
@@ -262,7 +253,6 @@ export interface FileRouteTypes {
     | '/specs'
     | '/statistics'
     | '/system'
-    | '/usage'
     | '/users'
     | '/wrap'
     | '/settings/$tab'
@@ -287,7 +277,6 @@ export interface FileRouteTypes {
     | '/specs'
     | '/statistics'
     | '/system'
-    | '/usage'
     | '/users'
     | '/wrap'
     | '/'
@@ -314,7 +303,6 @@ export interface FileRouteTypes {
     | '/_authenticated/specs'
     | '/_authenticated/statistics'
     | '/_authenticated/system'
-    | '/_authenticated/usage'
     | '/_authenticated/users'
     | '/_authenticated/wrap'
     | '/_authenticated/'
@@ -458,13 +446,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSystemRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/usage': {
-      id: '/_authenticated/usage'
-      path: '/usage'
-      fullPath: '/usage'
-      preLoaderRoute: typeof AuthenticatedUsageRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/users': {
       id: '/_authenticated/users'
       path: '/users'
@@ -525,7 +506,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSpecsRoute: typeof AuthenticatedSpecsRoute
   AuthenticatedStatisticsRoute: typeof AuthenticatedStatisticsRoute
   AuthenticatedSystemRoute: typeof AuthenticatedSystemRoute
-  AuthenticatedUsageRoute: typeof AuthenticatedUsageRoute
   AuthenticatedUsersRoute: typeof AuthenticatedUsersRoute
   AuthenticatedWrapRoute: typeof AuthenticatedWrapRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
@@ -550,7 +530,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSpecsRoute: AuthenticatedSpecsRoute,
   AuthenticatedStatisticsRoute: AuthenticatedStatisticsRoute,
   AuthenticatedSystemRoute: AuthenticatedSystemRoute,
-  AuthenticatedUsageRoute: AuthenticatedUsageRoute,
   AuthenticatedUsersRoute: AuthenticatedUsersRoute,
   AuthenticatedWrapRoute: AuthenticatedWrapRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,

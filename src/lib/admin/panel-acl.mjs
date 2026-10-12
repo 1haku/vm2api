@@ -2,7 +2,7 @@
  * Panel RBAC.
  *
  *   admin  — full console + user management
- *   super  — overview / cluster / usage / logs / statistics + VM page (schedule only)
+ *   super  — overview / cluster / logs / statistics + VM page (schedule only)
  *   user   — tenant: vm / proxies / keys / billing / logs / statistics (owner-scoped)
  */
 
@@ -12,7 +12,6 @@ export const PANEL_VIEWS = [
   'vm',
   'import',
   'specs',
-  'usage',
   'proxies',
   'models',
   'risk',
@@ -30,7 +29,7 @@ export const PANEL_VIEWS = [
 
 const ROLE_VIEWS = {
   user: ['vm', 'proxies', 'keys', 'billing', 'logs', 'statistics'],
-  super: ['overview', 'cluster', 'usage', 'logs', 'statistics', 'vm'],
+  super: ['overview', 'cluster', 'logs', 'statistics', 'vm'],
   admin: PANEL_VIEWS.slice(),
 }
 

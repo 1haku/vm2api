@@ -175,7 +175,7 @@ export function WelcomeCapabilities() {
               ))}
             </div>
             <p className='mt-2 text-[11px] text-muted-foreground/70'>
-              示意图，实际用量在控制台「用量」页。
+              示意图，实际用量在控制台「虚拟机」页的用量窗口。
             </p>
           </Reveal>
         </div>
