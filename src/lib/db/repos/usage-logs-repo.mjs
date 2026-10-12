@@ -252,6 +252,16 @@ export class UsageLogsRepo {
     `)
   }
 
+  /** Cheap EXISTS: ≥1 2xx row visible to the caller (same ownerPred as request-log stats). */
+  hasSuccessfulRequest({ owner_user_id = null } = {}) {
+    const own = ownerPred(owner_user_id)
+    const where = own.sql ? `AND ${own.sql}` : ''
+    const row = this.db
+      .prepare(`SELECT 1 AS ok FROM usage_logs WHERE status >= 200 AND status < 300 ${where} LIMIT 1`)
+      .get(...own.params)
+    return !!row
+  }
+
   belongsToOwner(requestId, ownerUserId) {
     if (!requestId) return false
     if (!ownerUserId) return true

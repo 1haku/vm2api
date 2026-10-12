@@ -2,7 +2,7 @@
 
 基址 `/api/panel`。需要**面板登录会话**或 Master `VM2API_API_KEY`。协议密钥不能调面板。信封 `{ ok, data }` / `{ ok: false, error }`。调用方应从 `data` 取业务体。
 
-登录：`POST /api/panel/login` `{ username, password }` → token + Cookie `kin_panel_token`（7 天，HttpOnly）。`POST /api/panel/logout` 撤销。`GET /api/panel/me` → `{ user, role, views, capabilities, version }`。
+登录：`POST /api/panel/login` `{ username, password }` → token + Cookie `kin_panel_token`（7 天，HttpOnly）。`POST /api/panel/logout` 撤销。`GET /api/panel/me` → `{ user, role, views, capabilities, version }`。`GET/PUT /onboarding` 为首配进度（见「引导」）。
 
 `/admin/*` 仅 master / admin 角色。恢复备份期间协议口 503。
 
@@ -21,6 +21,27 @@
 环境变量 `VM2API_ADMIN_USER` / `VM2API_ADMIN_PASSWORD` 只在库里还没有同名用户时灌进第一个 admin；之后以 SQLite `users` 为准，面板「用户」页可增删改、改密码。密码 scrypt。不能删/停用最后一个 admin。
 
 `vms/*.json` 的 `owner_user_id` / `origin`（`platform` \| `admin_assigned` \| `user_created`）是属主 SSOT。`PATCH /vms/:id/owner` 仅 admin。自建 VM 不能收回进平台池。
+
+## 引导
+
+所有已登录角色与 master API key 可调，不是公开接口。状态按用户名存在 SQLite `settings` 键 `onboarding_state`；master key（`apiKeyKind=master`）键为 `__master__`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/onboarding` | `{ user, role, status, updated_at, needs_welcome, base_url, steps[{id,done}], done_count, total }`。缺记录 `status=pending`。`needs_welcome = status === 'pending' && (total === 0 \|\| done_count < total)`，前端不要重算。`base_url` 只在设置了 `PUBLIC_BASE_URL` 时返回（去尾 `/`），否则 `null`，前端用浏览器当前 origin。步骤只含 `id`/`done`，文案与链接由前端按 id 渲染。 |
+| PUT | `/onboarding` | `{ action: "complete" \| "dismiss" \| "reset" }` → 200 同 GET。其它 action 400 `{ ok:false, error:{ code:"invalid_action", message } }`。`complete`/`dismiss` 写入标记；`reset` 删除该用户记录（回到 pending）。 |
+
+步骤按角色裁剪（顺序固定），完成态复用现有列表的属主裁剪（`/vms`、`/proxies`、`/api-keys`、`/request-logs/stats`）：
+
+| id | admin | user | super | 完成条件 |
+|---|---|---|---|---|
+| `admin_password` | ✓ | | | 环境密码不是默认 `123456`，或 env 管理员已在 `users` 表 |
+| `egress` | ✓ | ✓ | | 可见代理 ≥ 1（`px-local` 计入） |
+| `slot_account` | ✓ | ✓ | | 可见槽 `has_token` ≥ 1 |
+| `schedulable` | ✓ | ✓ | ✓ | 可见槽 `has_token && schedulable` ≥ 1 |
+| `api_key` | ✓ | ✓ | | 可见未删且 `status=active` 的协议密钥 ≥ 1 |
+| `first_request` | ✓ | ✓ | ✓ | 可见 usage_logs 中 ≥ 1 条 2xx |
+
 
 ## 用户
 

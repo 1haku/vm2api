@@ -157,6 +157,16 @@ test('Claude native reset routes remain administrator-only', () => {
   }
 })
 
+test('user and super can GET/PUT onboarding; POST is admin-only', () => {
+  for (const role of ['user', 'super', 'admin']) {
+    assert.equal(authorizePanelRoute('GET', '/api/panel/onboarding', role).ok, true, `${role} GET`)
+    assert.equal(authorizePanelRoute('PUT', '/api/panel/onboarding', role).ok, true, `${role} PUT`)
+  }
+  assert.equal(authorizePanelRoute('POST', '/api/panel/onboarding', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/onboarding', 'super').ok, false)
+  assert.equal(authorizePanelRoute('DELETE', '/api/panel/onboarding', 'user').ok, false)
+})
+
 test('managed keys cannot bypass admin role checks through models refresh', async () => {
   let authCalls = 0
   const response = {}

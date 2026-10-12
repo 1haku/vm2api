@@ -14,6 +14,7 @@ const unit = [
   'kvm-host',
   'kvm-runtime',
   'machine-spec',
+  'onboarding',
   'os-catalog',
   'slot-exec',
   'runtime-kind',

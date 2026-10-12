@@ -33,6 +33,7 @@ import { evaluateCodexQuotaSchedule } from '../pool/codex-slot-pool.mjs'
 import { effectiveOpenAIPolicy, normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
 import { hasBoundExit } from './egress.mjs'
+import { ensureSlotSmbios } from './machine-spec.mjs'
 
 export { isCodexVm, normalizeVmKind } from './vm-kind.mjs'
 
@@ -529,6 +530,27 @@ export function repairVmProxyCliEnabled(projectRoot) {
     const enabled = hasBoundExit(vm.proxy)
     if (vm.proxy_cli_enabled === enabled) continue
     vm.proxy_cli_enabled = enabled
+    vm.updated_at = new Date().toISOString()
+    atomicWriteJson(file, vm, { mode: 0o600 })
+    repaired.push(vm.id)
+  }
+  return repaired
+}
+
+/** Attach a rotated SMBIOS identity to slots that were created without one. */
+export function repairSlotSmbios(projectRoot) {
+  const repaired = []
+  const dir = path.join(projectRoot, 'vms')
+  if (!fs.existsSync(dir)) return repaired
+  for (const name of listVmRecordFiles(dir)) {
+    const file = path.join(dir, name)
+    let vm
+    try {
+      vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+    } catch {
+      continue
+    }
+    if (!vm?.id || !ensureSlotSmbios(vm)) continue
     vm.updated_at = new Date().toISOString()
     atomicWriteJson(file, vm, { mode: 0o600 })
     repaired.push(vm.id)

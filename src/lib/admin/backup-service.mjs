@@ -41,7 +41,7 @@ import { getDb, getDbPath, closeDatabase, openDatabase, vacuumInto } from '../db
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { BackupRepo } from '../db/repos/backup-repo.mjs'
 import { reconcileVms } from '../vm/vm-db-sync.mjs'
-import { repairVmProxyCliEnabled } from '../vm/vm-registry.mjs'
+import { repairSlotSmbios, repairVmProxyCliEnabled } from '../vm/vm-registry.mjs'
 import { isVmRecordFile } from '../vm/vm-file.mjs'
 
 const SCHEDULE_KEY = 'backup_schedule'
@@ -445,6 +445,9 @@ export class BackupService {
           reconcileVms(this.projectRoot)
           try {
             repairVmProxyCliEnabled(this.projectRoot)
+          } catch {}
+          try {
+            repairSlotSmbios(this.projectRoot)
           } catch {}
         } catch {}
       }
