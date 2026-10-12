@@ -34,26 +34,24 @@ const ISSUE_INBOUND = {
   ],
 }
 
-test('issue 328: officialMessagesBody keeps current-turn effort=max', () => {
+test('issue 328: empty system control is dropped and current-turn effort=max is lifted', () => {
   const inbound = structuredClone(ISSUE_INBOUND)
   const outbound = officialMessagesBody(structuredClone(inbound))
-  const control = officialMessagesBody({
-    ...structuredClone(inbound),
-    output_config: { effort: 'max' },
-    messages: [{ role: 'user', content: 'Reply OK.' }],
-  })
-  assert.equal(control.output_config.effort, 'max')
   assert.equal(isDbOpen(), false)
-  assert.equal(outbound.messages.at(-1)?.output_config?.effort, 'max')
-  assert.equal(outbound.output_config.effort, 'high')
+  assert.equal(
+    outbound.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(outbound.output_config.effort, 'max')
+  assert.equal(outbound.messages[0].content[0].text, 'Reply OK.')
   assert.equal(reasoningEffortOf(inbound), 'max')
   const betas = withRequestProtocolBetas([], outbound)
-  assert.ok(betas.includes(BETA_MID_CONVERSATION_OUTPUT_CONFIG))
+  assert.equal(betas.includes(BETA_MID_CONVERSATION_OUTPUT_CONFIG), false)
+  assert.equal(betas.includes(BETA_MID_CONVERSATION_SYSTEM), false)
   assert.ok(betas.includes(BETA_EFFORT))
-  assert.ok(betas.includes(BETA_MID_CONVERSATION_SYSTEM))
 })
 
-test('empty system control is not merged into an adjacent system turn', () => {
+test('empty system control is dropped instead of merged into an adjacent system turn', () => {
   const body = officialMessagesBody({
     model: 'claude-opus-5-5',
     max_tokens: 32,
@@ -66,16 +64,36 @@ test('empty system control is not merged into an adjacent system turn', () => {
   })
   assert.deepEqual(
     body.messages.map((message) => message.role),
-    ['user', 'system', 'system'],
+    ['user', 'system'],
   )
   assert.equal(body.messages[1].output_config, undefined)
   assert.equal(body.messages[1].content[0].text, 'reminder')
-  assert.equal(body.messages[2].output_config.effort, 'max')
-  assert.deepEqual(body.messages[2].content, [])
+  assert.equal(body.output_config.effort, 'max')
 })
 
-test('history effort controls stay in order and are not collapsed', () => {
-  const body = officialMessagesBody({
+test('historical empty system controls are dropped and only a trailing effort is lifted', () => {
+  const historical = officialMessagesBody({
+    model: 'claude-opus-5-5',
+    max_tokens: 32,
+    output_config: { effort: 'high' },
+    messages: [
+      { role: 'user', content: 'one' },
+      { role: 'system', content: [], output_config: { effort: 'low' } },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'two' },
+    ],
+  })
+  assert.deepEqual(
+    historical.messages.map((message) => message.role),
+    ['user', 'assistant', 'user'],
+  )
+  assert.equal(historical.output_config.effort, 'high')
+  assert.equal(
+    historical.messages.some((message) => message.output_config),
+    false,
+  )
+
+  const current = officialMessagesBody({
     model: 'claude-opus-5-5',
     max_tokens: 32,
     output_config: { effort: 'high' },
@@ -87,15 +105,18 @@ test('history effort controls stay in order and are not collapsed', () => {
       { role: 'system', content: [], output_config: { effort: 'max' } },
     ],
   })
-  const efforts = body.messages
-    .filter((message) => message.output_config?.effort)
-    .map((message) => message.output_config.effort)
-  assert.deepEqual(efforts, ['low', 'max'])
-  assert.equal(body.output_config.effort, 'high')
-  assert.equal(reasoningEffortOf(body), 'max')
+  assert.deepEqual(
+    current.messages.map((message) => message.role),
+    ['user', 'assistant', 'user'],
+  )
+  assert.equal(current.output_config.effort, 'max')
+  assert.equal(
+    current.messages.some((message) => message.output_config),
+    false,
+  )
 })
 
-test('empty system with clear_at is kept as a control turn', () => {
+test('empty system with clear_at is dropped', () => {
   const body = officialMessagesBody({
     model: 'claude-opus-5-5',
     max_tokens: 32,
@@ -104,9 +125,14 @@ test('empty system with clear_at is kept as a control turn', () => {
       { role: 'system', content: [], clear_at: 0 },
     ],
   })
-  assert.equal(body.messages.at(-1).role, 'system')
-  assert.equal(body.messages.at(-1).clear_at, 0)
-  assert.deepEqual(body.messages.at(-1).content, [])
+  assert.deepEqual(
+    body.messages.map((message) => message.role),
+    ['user'],
+  )
+  assert.equal(
+    body.messages.some((message) => message.clear_at != null),
+    false,
+  )
 })
 
 test('empty content without turn controls is still dropped', () => {
@@ -177,8 +203,11 @@ test('beta sanitize lifts controls on models that reject mid-conversation system
     },
     header,
   )
-  assert.equal(opus.messages.at(-1).output_config.effort, 'max')
-  assert.equal(opus.output_config.effort, 'high')
+  assert.equal(
+    opus.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(opus.output_config.effort, 'max')
 })
 
 test('withRequestProtocolBetas derives mid-conversation-output-config from messages', () => {
@@ -194,7 +223,7 @@ test('withRequestProtocolBetas derives mid-conversation-output-config from messa
   assert.deepEqual(withRequestProtocolBetas(['caller-beta'], { model: 'claude-sonnet-4-6' }), ['caller-beta'])
 })
 
-test('thinking strip keeps empty effort controls and does not merge them', () => {
+test('thinking strip drops empty system controls and lifts trailing effort', () => {
   const body = stripInvalidThinkingBlocks({
     model: 'claude-opus-5-5',
     thinking: { type: 'adaptive' },
@@ -208,10 +237,17 @@ test('thinking strip keeps empty effort controls and does not merge them', () =>
       },
     ],
   })
-  assert.equal(body.messages.at(-1).output_config.effort, 'max')
-  assert.equal(body.messages.at(-1).role, 'system')
   assert.equal(
     body.messages.some((message) => message.role === 'assistant'),
+    false,
+  )
+  assert.equal(
+    body.messages.some((message) => message.content?.[0]?.text === 'reminder'),
+    true,
+  )
+  assert.equal(body.output_config.effort, 'max')
+  assert.equal(
+    body.messages.some((message) => message.role === 'system' && message.output_config),
     false,
   )
 })
@@ -236,10 +272,13 @@ test('stripUnsupportedEffort drops message-level effort on Haiku', () => {
   )
 })
 
-test('prepareCliHopBody keeps message-level max on Opus 5.5', () => {
+test('prepareCliHopBody lifts trailing message-level max on Opus 5.5', () => {
   const body = prepareCliHopBody(structuredClone(ISSUE_INBOUND))
-  assert.equal(body.messages.at(-1).output_config.effort, 'max')
-  assert.equal(body.output_config.effort, 'high')
+  assert.equal(
+    body.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(body.output_config.effort, 'max')
   assert.equal(body.messages[0].content[0].text, 'Reply OK.')
   assert.ok(body.messages[0].content[0].cache_control)
 })
@@ -276,15 +315,23 @@ test('prepareCliHopBody lifts last effort on Sonnet 5 and strips it on Haiku', (
   )
 })
 
-test('toClaudeMessages passthrough and rewrite both keep the control for officialMessagesBody', () => {
+test('toClaudeMessages passthrough and rewrite both drop the empty control', () => {
   const passthrough = toClaudeMessages('anthropic.messages', structuredClone(ISSUE_INBOUND)).claude
-  assert.equal(passthrough.messages.at(-1).output_config.effort, 'max')
+  assert.equal(
+    passthrough.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(passthrough.output_config.effort, 'max')
   const rewritten = toClaudeMessages('anthropic.messages', structuredClone(ISSUE_INBOUND), {
     rewrite: true,
     model_map: false,
   }).claude
   const hop = officialMessagesBody(rewritten)
-  assert.equal(hop.messages.at(-1).output_config.effort, 'max')
+  assert.equal(
+    hop.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(hop.output_config.effort, 'max')
 })
 
 test('cache rewrite stamps the last content-bearing turn, not an empty control', () => {
@@ -302,7 +349,7 @@ test('cache rewrite stamps the last content-bearing turn, not an empty control',
   assert.equal(out.messages[1].content.length, 0)
 })
 
-test('cli-hop worker envelope keeps the empty effort control and derives its beta', () => {
+test('cli-hop worker envelope drops the empty effort control and keeps its effort', () => {
   const body = prepareCliHopBody(structuredClone(ISSUE_INBOUND))
   const out = finalizeWorkerPayload({
     body,
@@ -311,8 +358,12 @@ test('cli-hop worker envelope keeps the empty effort control and derives its bet
     identity: null,
     cliHop: true,
   })
-  assert.equal(out.body.messages.at(-1).output_config.effort, 'max')
-  assert.ok(out.body.betas.includes(BETA_MID_CONVERSATION_OUTPUT_CONFIG))
+  assert.equal(
+    out.body.messages.some((message) => message.role === 'system'),
+    false,
+  )
+  assert.equal(out.body.output_config.effort, 'max')
+  assert.equal(out.body.betas.includes(BETA_MID_CONVERSATION_OUTPUT_CONFIG), false)
   assert.ok(out.body.betas.includes(BETA_EFFORT))
 })
 

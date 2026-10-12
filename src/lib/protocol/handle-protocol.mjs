@@ -675,8 +675,8 @@ export function createHandleProtocol(deps) {
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, 403, errorResult.body)
     }
-    // Codex returns before conversion. Distill does not apply to OpenAI platform models.
-    // Refusal still scans here so a cached refusal never reaches a slot.
+    // Codex returns before conversion. Distill does not apply to OpenAI platform models; the rest
+    // of the gate scans them only when jev.openai_platform_enabled is on.
     if (
       platform.platform !== 'openai' &&
       protocol === 'anthropic.messages' &&

@@ -123,6 +123,8 @@ export async function evaluateProtocolIntercept({
   requestId,
   fetchImpl,
 } = {}) {
+  // GPT / Codex traffic skips every layer unless the panel opts it in; once in, it runs the same chain.
+  if (jev?.openai_platform_enabled !== true && isOpenaiPlatformModel(inbound, body)) return pass('platform')
   const distill = detectDistill({ inbound, body, official, zeroInject }, distillRules)
   if (distill.action === 'block') {
     const evidence = (distill.hits || [])
