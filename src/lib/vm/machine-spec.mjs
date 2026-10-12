@@ -70,6 +70,27 @@ export const SMBIOS_CATALOG = Object.freeze([
     family: 'Modern',
   }),
   Object.freeze({ manufacturer: 'GIGABYTE', product: 'AERO 16 YE5', version: '1.0', family: 'AERO' }),
+  Object.freeze({ manufacturer: 'Dell Inc.', product: 'Precision 3560', version: '1.0', family: 'Precision' }),
+  Object.freeze({ manufacturer: 'Dell Inc.', product: 'Inspiron 15 3520', version: '1.0', family: 'Inspiron' }),
+  Object.freeze({
+    manufacturer: 'LENOVO',
+    product: 'ThinkCentre M70q Gen 3',
+    version: 'ThinkCentre M70q Gen 3',
+    family: 'ThinkCentre M70q',
+  }),
+  Object.freeze({
+    manufacturer: 'HP',
+    product: 'HP EliteDesk 800 G6',
+    version: '1.0',
+    family: '103C_53307F HP EliteDesk',
+  }),
+  Object.freeze({
+    manufacturer: 'ASUSTeK COMPUTER INC.',
+    product: 'VivoBook 15 X1502ZA',
+    version: '1.0',
+    family: 'VivoBook',
+  }),
+  Object.freeze({ manufacturer: 'Acer', product: 'Veriton N4670G', version: 'V1.0', family: 'Veriton' }),
 ])
 
 function copySmbios(row) {
