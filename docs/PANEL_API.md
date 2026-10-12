@@ -247,6 +247,8 @@ Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`g
 
 内置正则覆盖 NSFW、蒸馏、破解、破限，面板删不掉。比较的是用户自己写下的正文，不含 user 轮里的 `tool_result` / `*_tool_result` / `function_call_output`；决策模型仍看 system。命中硬正则或模型返回 HTTP 403 `policy_blocked`，不 hop；拒答守卫开启时写入拒答缓存，并在 device 封禁开启时封禁入站 device id。上游 `content_policy` / `content_filter` / `cyber_policy` / `moderation_blocked` / `safety_violation` / `usage_policy` 同样入库。仅 admin。
 
+账号范围（`account_types[]`、`account_plan_types[]`、`account_ids[]`，都可为空）把关卡收窄到部分槽位：三个列表取并集，全空 = 所有账号都进关卡。`account_plan_types` 里的 `none` 匹配没有 `plan_type` 的槽位，`account_ids` 收槽位 id、邮箱或名称。GPT / Codex 的关卡在选中槽位之后再判范围：没有范围时仍看 `openai_platform_enabled`，一旦有范围就只由范围决定；Claude 流量不受范围影响。`GET` / `PUT` 都回 `account_scope`：`account_type_options`、`account_plan_type_options`（各带当前槽位数）、`accounts_total` 和槽位清单，面板用它算「范围命中几个槽位」。
+
 
 ## 密钥 / 日志
 

@@ -237,7 +237,7 @@ export function createHandleProtocol(deps) {
     return finalizeAssembledAssistantHop(result)
   }
 
-  async function applyProtocolIntercept({ req, inbound, body, fp, logBag, requestId, res }) {
+  async function applyProtocolIntercept({ req, inbound, body, fp, logBag, requestId, res, account = null }) {
     const official =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
       isOfficialClaudeClient(fp.client_class) ||
@@ -261,6 +261,7 @@ export function createHandleProtocol(deps) {
       repo: refusalRepo(),
       devices: deviceRepo(),
       requestId,
+      account,
     })
     if (!decision || decision.action !== 'block') {
       if (decision?.intercept) logBag.intercept = decision.intercept
@@ -657,6 +658,19 @@ export function createHandleProtocol(deps) {
         sessions: accountQuota?.sessions || null,
         body: ctx.body,
       }
+      // Account scope needs the slot, so the Codex hop runs the same gate again
+      // once a candidate is claimed. Without a scope the pre-hop verdict stands.
+      const accountGate = (account) =>
+        applyProtocolIntercept({
+          req,
+          inbound,
+          body: ctx.body,
+          fp,
+          logBag,
+          requestId: logCtx.request_id,
+          res,
+          account,
+        })
       if (protocol === 'anthropic.messages') {
         const codex = normalizeCodexRouting(routing.codex)
         return handleCodexProtocol({
@@ -682,6 +696,7 @@ export function createHandleProtocol(deps) {
           },
           projectRoot: cfg.paths.project,
           captureOutbound: logCtx.capture_outbound === true,
+          accountGate,
           ...codexSticky,
         })
       }
@@ -698,6 +713,7 @@ export function createHandleProtocol(deps) {
         routing,
         projectRoot: cfg.paths.project,
         captureOutbound: logCtx.capture_outbound === true,
+        accountGate,
         ...codexSticky,
       })
     }

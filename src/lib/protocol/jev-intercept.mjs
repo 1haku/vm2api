@@ -31,12 +31,39 @@ export const POLICY_PROVIDERS = Object.freeze([
   { id: 'modernbert', label: 'ModernBERT', default_model: 'english', default_base_url: 'http://127.0.0.1:8000' },
 ])
 
+/**
+ * Account scope: which slots the four layers cover. Mirrors sub2api's
+ * content-moderation scope. Every list empty means "every account", which is
+ * the old behaviour. `account_types` is the slot's credential form,
+ * `account_plan_types` the upstream plan label (`none` matches a slot without
+ * one) and `account_ids` matches the slot id, email or name.
+ */
+export const ACCOUNT_TYPE_NONE = 'none'
+export const PLAN_TYPE_NONE = 'none'
+export const JEV_ACCOUNT_TYPES = Object.freeze([
+  { id: 'oauth', label: 'OAuth' },
+  { id: 'setup-token', label: 'Setup Token' },
+  { id: 'official-setup-token', label: '官方 Setup Token' },
+  { id: 'apikey', label: 'Console API Key' },
+  { id: ACCOUNT_TYPE_NONE, label: '无凭证' },
+])
+export const JEV_PLAN_TYPES = Object.freeze([
+  { id: 'plus', label: 'Plus' },
+  { id: 'pro', label: 'Pro' },
+  { id: 'prolite', label: 'Pro Lite' },
+  { id: 'self_serve_business_prolite', label: 'Business Premium' },
+  { id: 'business', label: 'Business' },
+  { id: 'free', label: 'Free' },
+  { id: PLAN_TYPE_NONE, label: '未标注' },
+])
+
 const TIMEOUT_MIN = 200
 const TIMEOUT_MAX = 8000
 const TIMEOUT_DEFAULT = 2000
 const PATTERN_MAX = 50
 const PATTERN_LEN = 400
 const RULE_MAX = 60
+const SCOPE_LIST_MAX = 200
 
 /**
  * User-authored text only. Official system prompts and tool results quote
@@ -287,6 +314,9 @@ export function defaultJevConfig() {
     enabled: false,
     hard_regex_enabled: true,
     openai_platform_enabled: false,
+    account_types: [],
+    account_plan_types: [],
+    account_ids: [],
     provider: 'jev',
     base_url: '',
     api_key: '',
@@ -351,6 +381,64 @@ function normalizeRules(raw) {
 
 const KEY_MAX = 999
 
+/** Trim, lowercase and dedupe one scope list; the panel sends what it shows. */
+function scopeList(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  const seen = new Set()
+  for (const item of raw) {
+    const text = String(item ?? '')
+      .trim()
+      .toLowerCase()
+      .slice(0, 160)
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    out.push(text)
+    if (out.length >= SCOPE_LIST_MAX) break
+  }
+  return out
+}
+
+function scopeText(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+}
+
+/** Any list filled in means the operator narrowed the gate to some accounts. */
+export function jevScopeConfigured(jev) {
+  if (!jev) return false
+  return (
+    (Array.isArray(jev.account_types) && jev.account_types.length > 0) ||
+    (Array.isArray(jev.account_plan_types) && jev.account_plan_types.length > 0) ||
+    (Array.isArray(jev.account_ids) && jev.account_ids.length > 0)
+  )
+}
+
+/**
+ * Union, like sub2api: the account is in scope when any selected list matches.
+ * An empty scope takes every account, an unknown account context matches
+ * nothing (the caller decides whether that means "wait for the slot").
+ */
+export function jevAccountInScope(jev, account) {
+  if (!jevScopeConfigured(jev)) return true
+  if (!account) return false
+  const id = scopeText(account.id)
+  const email = scopeText(account.email)
+  const name = scopeText(account.name)
+  const type = scopeText(account.type)
+  const plan = scopeText(account.plan_type) || PLAN_TYPE_NONE
+  const ids = jev.account_ids || []
+  for (const want of ids) {
+    if (want && (want === id || want === email || want === name)) return true
+  }
+  const types = jev.account_types || []
+  if (types.length && type && types.includes(type)) return true
+  const plans = jev.account_plan_types || []
+  if (plans.length && plans.includes(plan)) return true
+  return false
+}
+
 function normalizeKeys(raw) {
   const list = []
   const seen = new Set()
@@ -372,8 +460,13 @@ function normalizeKeys(raw) {
 
 export function normalizeJevConfig(raw) {
   const base = defaultJevConfig()
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return base
+  // Run the defaults through the same normalisation: `publicJevConfig(null)`
+  // used to read `questions` off the raw default and throw.
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return normalizeJevConfig(base)
   const timeout = Number(raw.timeout_ms)
+  const accountTypes = scopeList(raw.account_types)
+  const accountPlanTypes = scopeList(raw.account_plan_types)
+  const accountIds = scopeList(raw.account_ids)
   const patterns = []
   const seen = new Set(HARD_POLICY_RULES.map((rule) => rule.source))
   for (const item of Array.isArray(raw.patterns) ? raw.patterns : []) {
@@ -390,6 +483,9 @@ export function normalizeJevConfig(raw) {
     enabled: raw.enabled === true,
     hard_regex_enabled: raw.hard_regex_enabled !== false,
     openai_platform_enabled: raw.openai_platform_enabled === true,
+    account_types: accountTypes,
+    account_plan_types: accountPlanTypes,
+    account_ids: accountIds,
     provider: providerOf(raw.provider).id,
     base_url: String(raw.base_url || '')
       .trim()
@@ -424,6 +520,9 @@ export function publicJevConfig(cfg) {
     enabled: c.enabled,
     hard_regex_enabled: c.hard_regex_enabled,
     openai_platform_enabled: c.openai_platform_enabled,
+    account_types: [...c.account_types],
+    account_plan_types: [...c.account_plan_types],
+    account_ids: [...c.account_ids],
     provider: c.provider,
     providers: POLICY_PROVIDERS.map((item) => ({ ...item })),
     base_url: c.base_url,
@@ -460,8 +559,13 @@ export function publicJevConfig(cfg) {
       expand_base64: true,
       strip_reminders: true,
       openai_platform_enabled: false,
+      account_types: [],
+      account_plan_types: [],
+      account_ids: [],
       timeout_ms: TIMEOUT_DEFAULT,
     },
+    account_type_options: JEV_ACCOUNT_TYPES.map((item) => ({ ...item })),
+    account_plan_type_options: JEV_PLAN_TYPES.map((item) => ({ ...item })),
     categories: [...JEV_CATEGORIES, 'custom'],
     builtin_patterns: HARD_POLICY_RULES.map((rule) => rule.source),
     builtin_rules: builtinHardRules(),
@@ -550,6 +654,15 @@ export function validateJevPatch(body = {}) {
   }
   for (const key of ['block_if_below', 'fail_open', 'expand_base64', 'strip_reminders', 'openai_platform_enabled']) {
     if (Object.hasOwn(body, key) && typeof body[key] !== 'boolean') problems.push(`${key} 必须是布尔`)
+  }
+  for (const key of ['account_types', 'account_plan_types', 'account_ids']) {
+    if (!Object.hasOwn(body, key)) continue
+    const list = body[key]
+    if (!Array.isArray(list)) problems.push(`${key} 必须是字符串数组`)
+    else if (list.length > SCOPE_LIST_MAX) problems.push(`${key} 最多 ${SCOPE_LIST_MAX} 项`)
+    else if (list.some((item) => typeof item !== 'string' || !item.trim())) {
+      problems.push(`${key} 只能是非空字符串`)
+    }
   }
   if (Object.hasOwn(body, 'safety_instruction') && typeof body.safety_instruction !== 'string') {
     problems.push('safety_instruction 必须是字符串')
