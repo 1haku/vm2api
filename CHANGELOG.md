@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.149 — 2026-10-12
+
+- 控制台入口（`/cc`、`/console`）改为公开欢迎页 `#/welcome`：介绍、能力、三步快速开始和 Claude Code / Codex / curl 接入片段，版式参照 new-api 新版首页，配色只作用于欢迎页和登录页，控制台主题不变。登录改为独立页面 `#/login`，右上角「登录」进入；`/cc#/login`、`/console/#/login` 旧地址照常可用，未登录打开受保护页面会带 `redirect` 到登录页，登录后回原页面。
+- 登录后欢迎页显示首配清单：修改默认密码、出口代理、槽位账号、可调度槽位、`sk-vm-` 密钥、首个成功请求，完成态全部来自网关真实数据，按角色裁剪（租户只算自己的槽和密钥）。首次登录且未完成时落在欢迎页；「跳过引导」或「完成引导」后登录直接进总览，用户菜单「欢迎与引导」可重新打开。
+- 新增 `GET/PUT /api/panel/onboarding`：返回各步完成态、`needs_welcome` 和 `base_url`（仅 `PUBLIC_BASE_URL` 设置时），`PUT { action: complete | dismiss | reset }` 按用户写 SQLite `settings.onboarding_state`。admin / super / user 都可调用。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.148 — 2026-10-12
 
 - 硬正则和决策模型的用户文本不再包含工具回传。omp 把 issue、命令输出放在 user 轮的 `tool_result`（以及 `*_tool_result`、`function_call_output`）里，正文引用 `ignore all previous instructions` 会被 jailbreak 规则拦截。用户自己写下的同一句仍然拦截；system 提示词硬正则本来就不扫，决策模型仍看 system。拒答相似度仍把工具回传算进文档。
