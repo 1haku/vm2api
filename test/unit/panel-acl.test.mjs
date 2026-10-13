@@ -145,6 +145,38 @@ test('user and super can GET/PUT onboarding; POST is admin-only', () => {
   assert.equal(authorizePanelRoute('DELETE', '/api/panel/onboarding', 'user').ok, false)
 })
 
+test('onboarding profile writes are admin-only', async () => {
+  const { Readable } = await import('node:stream')
+  const { readBody } = await import('../../src/lib/http/respond.mjs')
+  for (const role of ['user', 'super']) {
+    let routingWrites = 0
+    const response = {}
+    const handlePanel = createPanelHandler({
+      cfg: { paths: {} },
+      readBody,
+      persistRoutingPatch() {
+        routingWrites += 1
+        return {}
+      },
+      requireAuth(req) {
+        req.panelUser = 'alice'
+        req.panelRole = role
+        return true
+      },
+      json(_res, status, body) {
+        response.status = status
+        response.body = body
+      },
+    })
+    const req = Readable.from([Buffer.from(JSON.stringify({ action: 'profile', mode: 'personal' }))])
+    req.method = 'PUT'
+    await handlePanel(req, {}, new URL('http://localhost/api/panel/onboarding'))
+    assert.equal(response.status, 403, role)
+    assert.equal(response.body.error.code, 'forbidden', role)
+    assert.equal(routingWrites, 0, role)
+  }
+})
+
 test('managed keys cannot bypass admin role checks through models refresh', async () => {
   let authCalls = 0
   const response = {}

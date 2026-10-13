@@ -49,7 +49,9 @@ export function WelcomePage() {
         <WelcomeHero signedIn={signedIn} baseUrl={base} />
         {signedIn && onboarding.data ? (
           <>
-            <WelcomeUsageMode profile={onboarding.data.profile ?? null} />
+            {me.data?.role === 'admin' ? (
+              <WelcomeUsageMode profile={onboarding.data.profile ?? null} />
+            ) : null}
             <WelcomeChecklist
               payload={onboarding.data}
               views={me.data?.views}

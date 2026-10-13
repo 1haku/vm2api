@@ -1057,6 +1057,12 @@ export function createPanelHandler(ctx) {
       if ((req.method === 'GET' || req.method === 'PUT') && p === '/api/panel/onboarding') {
         if (req.method === 'PUT') {
           const body = await readBody(req, 4096).catch(() => ({}))
+          if (body?.action === 'profile' && panelIdentity(req).role !== 'admin') {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'forbidden', message: '当前权限无法执行此操作' },
+            })
+          }
           try {
             const settings = new SettingsRepo()
             const user = onboardingUserOf(req)
