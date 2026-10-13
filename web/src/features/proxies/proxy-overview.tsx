@@ -8,6 +8,12 @@ import {
   useProxyHovered,
 } from './proxy-hover'
 import {
+  type ProxyRegionFilter,
+  REGION_ANY,
+  type RegionGroup,
+  proxyRegion,
+} from './proxy-region'
+import {
   LOCAL_PROXY_SHARED_QUOTA,
   PROXY_HEALTH_KEYS,
   PROXY_HEALTH_LABEL,
@@ -22,12 +28,18 @@ import {
 import { PROXY_HEALTH_SOLID } from './proxy-tone'
 import { VmChip } from './vm-chip'
 
+/** 一个点的边长与间距（px）。点阵靠这两个数对齐，不随容器缩放。 */
+const DOT = 7
+const GAP = 3
+/** 一列最多几个点；上限更高的代理折成相邻的几列，紧挨着画。 */
+const MAX_ROWS = 10
+
 /**
- * 席位图：一条代理一列，一列的格数就是它的绑定上限，已绑的格子按代理健康着色、
- * 自底向上填。整池「还剩多少位 · 哪些代理快满了 · 满的里面有没有坏的」一张图看完。
+ * 席位点阵：每个点是一个绑定位，实心 = 已绑（按代理健康着色），空心 = 可绑空位，
+ * 淡点 = 失效 / 禁用代理上用不了的位。一条代理一列，按地区成簇。
  *
- * 铺满页面宽度放在表格上方：图例即健康筛选，列和表格行双向联动（悬停同亮，
- * 点列滚到那一行）。「待接代理」列出池外槽位，可以直接拖到表格行上绑定。
+ * 一眼回答「哪个地区还能塞、塞在哪条上」：簇名旁是该地区空位数，点簇名即筛到该地区；
+ * 列和表格行双向联动（悬停同亮，点列滚到那一行）。
  */
 export function ProxyOverview({
   proxies,
@@ -39,6 +51,9 @@ export function ProxyOverview({
   probeMin,
   filter,
   onFilter,
+  regions,
+  region,
+  onRegion,
   hover,
   visible,
   onLocate,
@@ -54,8 +69,12 @@ export function ProxyOverview({
   probeMin: number
   filter: ProxyFilter
   onFilter: (next: ProxyFilter) => void
+  /** 地区顺序与名称，和地区栏同一份。 */
+  regions: RegionGroup[]
+  region: ProxyRegionFilter
+  onRegion: (next: ProxyRegionFilter) => void
   hover: ProxyHover
-  /** 只用来点亮「不在当前筛选里」的列；地区、搜索的命中由调用方算。 */
+  /** 只用来调暗「不在当前筛选里」的列；地区、搜索的命中由调用方算。 */
   visible: (prx: VmProxySnap) => boolean
   onLocate: (id: string) => void
   onVmDragChange: (vmId: string) => void
@@ -79,15 +98,39 @@ export function ProxyOverview({
     }
     return max ? new Date(max).toISOString() : ''
   }, [proxies])
+  const clusters = useMemo(() => {
+    const byCountry = new Map<string, VmProxySnap[]>()
+    for (const p of proxies) {
+      const key = proxyRegion(p).country
+      const list = byCountry.get(key)
+      if (list) list.push(p)
+      else byCountry.set(key, [p])
+    }
+    return regions
+      .filter((g) => byCountry.has(g.country))
+      .map((g) => {
+        const list = byCountry.get(g.country) || []
+        return {
+          country: g.country,
+          label: g.label,
+          proxies: list,
+          free: list.reduce((n, p) => n + freeOf(p, poolLimit), 0),
+        }
+      })
+  }, [proxies, regions, poolLimit])
+  // 行数按 SOCKS5 的上限定：本地代理上限常常大很多，让它多占几列，而不是把整张图拉高。
+  const rows = useMemo(() => {
+    const socks = proxies.filter((p) => !proxyIsLocal(p))
+    const src = socks.length ? socks : proxies
+    const max = src.reduce(
+      (n, p) => Math.max(n, proxyBindLimit(p, poolLimit)),
+      1
+    )
+    return Math.min(MAX_ROWS, max)
+  }, [proxies, poolLimit])
   const loose = vms.filter((v) => !ownerOf.has(v.id))
   const stranded = loose.filter((v) => v.has_token).length
-  const freeSeats = proxies.reduce((n, p) => {
-    if (!proxyBindable(p)) return n
-    return (
-      n + Math.max(0, proxyBindLimit(p, poolLimit) - proxyBoundIds(p).length)
-    )
-  }, 0)
-  const colHeight = proxies.length <= 40 ? 32 : 24
+  const freeSeats = clusters.reduce((n, c) => n + c.free, 0)
 
   return (
     <section
@@ -122,7 +165,7 @@ export function ProxyOverview({
           <div
             role='group'
             aria-label='按健康筛选'
-            className='-mx-1.5 flex flex-wrap gap-0.5'
+            className='-mx-1.5 flex flex-wrap items-center gap-0.5'
           >
             {PROXY_HEALTH_KEYS.map((k) => (
               <button
@@ -140,13 +183,20 @@ export function ProxyOverview({
               >
                 <span
                   aria-hidden='true'
-                  className='size-2 shrink-0 rounded-[2px]'
+                  className='size-2 shrink-0 rounded-full'
                   style={{ backgroundColor: PROXY_HEALTH_SOLID[k] }}
                 />
                 {PROXY_HEALTH_LABEL[k]}
                 <span className='font-medium tabular-nums'>{counts[k]}</span>
               </button>
             ))}
+            <span className='ms-1 inline-flex h-7 items-center gap-1.5 px-1.5 text-xs text-muted-foreground'>
+              <span
+                aria-hidden='true'
+                className='size-2 shrink-0 rounded-full border border-muted-foreground/60'
+              />
+              空位
+            </span>
           </div>
         ) : null}
       </div>
@@ -157,35 +207,76 @@ export function ProxyOverview({
             共 {proxies.length} 条代理，已绑 {slotsUsed} 个席位，空余{' '}
             {freeSeats} 个。
           </p>
-          <div
-            className='mt-2.5 grid gap-[3px]'
-            style={{
-              gridTemplateColumns: 'repeat(auto-fill, minmax(12px, 1fr))',
-            }}
-          >
-            {proxies.map((p, i) => (
-              <SeatColumn
-                key={p.id}
-                proxy={p}
-                limit={proxyBindLimit(p, poolLimit)}
-                height={colHeight}
-                order={i}
-                dim={!visible(p)}
-                hover={hover}
-                onLocate={onLocate}
-              />
-            ))}
+          <div className='mt-3 flex flex-wrap items-end gap-x-6 gap-y-3'>
+            {clusters.map((c) => {
+              const on = region.country === c.country
+              return (
+                <div key={c.country} className='min-w-0'>
+                  <button
+                    type='button'
+                    aria-pressed={on}
+                    onClick={() =>
+                      onRegion(
+                        on && !region.city
+                          ? REGION_ANY
+                          : { country: c.country, city: '' }
+                      )
+                    }
+                    title={`${c.label}：${c.proxies.length} 条代理，空位 ${c.free}。点击筛选该地区`}
+                    className={cn(
+                      '-mx-1 mb-1.5 flex items-baseline gap-1.5 rounded px-1 text-[11px] whitespace-nowrap transition-colors hover:bg-accent/60',
+                      on ? 'text-primary' : 'text-muted-foreground'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'font-medium',
+                        on ? 'text-primary' : 'text-foreground/85'
+                      )}
+                    >
+                      {c.label}
+                    </span>
+                    <span
+                      className={cn(
+                        'tabular-nums',
+                        c.free
+                          ? 'text-[color:var(--status-ok)]'
+                          : 'text-muted-foreground/70'
+                      )}
+                    >
+                      空 {c.free}
+                    </span>
+                  </button>
+                  <div
+                    className='flex flex-wrap items-end'
+                    style={{ gap: `${GAP + 2}px` }}
+                  >
+                    {c.proxies.map((p) => (
+                      <ProxyDots
+                        key={p.id}
+                        proxy={p}
+                        limit={proxyBindLimit(p, poolLimit)}
+                        rows={rows}
+                        dim={!visible(p)}
+                        hover={hover}
+                        onLocate={onLocate}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
           </div>
           <SeatReadout
             hover={hover}
             byId={byId}
             poolLimit={poolLimit}
-            idle={`${lastProbe ? `最近探测 ${fmtAgo(lastProbe)}` : '还没有探测记录'} · 每 ${probeMin} 分钟自动探测 · 悬停列查看，点击定位到表格行`}
+            idle={`${lastProbe ? `最近探测 ${fmtAgo(lastProbe)}` : '还没有探测记录'} · 每 ${probeMin} 分钟自动探测 · 一个点一个席位，点地区名筛选，点一列定位到表格行`}
           />
         </>
       ) : (
         <p className='mt-2 text-xs text-muted-foreground'>
-          池里还没有代理。导入后每条代理在这里占一列，格子数即它的绑定上限。
+          池里还没有代理。导入后每条代理在这里占一列，点数即它的绑定上限。
         </p>
       )}
 
@@ -228,6 +319,11 @@ export function ProxyOverview({
   )
 }
 
+function freeOf(prx: VmProxySnap, poolLimit: number): number {
+  if (!proxyBindable(prx)) return 0
+  return Math.max(0, proxyBindLimit(prx, poolLimit) - proxyBoundIds(prx).length)
+}
+
 function Figure({
   label,
   value,
@@ -252,19 +348,21 @@ function Figure({
   )
 }
 
-function SeatColumn({
+/**
+ * 一条代理的点列。自底向上填：底部先满，和「水位」的直觉一致。
+ * 上限超过 `rows` 时从左到右折成几列，列间距比代理之间更紧，读起来仍是一条。
+ */
+function ProxyDots({
   proxy,
   limit,
-  height,
-  order,
+  rows,
   dim,
   hover,
   onLocate,
 }: {
   proxy: VmProxySnap
   limit: number
-  height: number
-  order: number
+  rows: number
   dim: boolean
   hover: ProxyHover
   onLocate: (id: string) => void
@@ -272,10 +370,25 @@ function SeatColumn({
   const id = proxy.id || ''
   const lit = useProxyHovered(hover, id)
   const used = proxyBoundIds(proxy).length
+  const bindable = proxyBindable(proxy)
   const color = PROXY_HEALTH_SOLID[proxyHealthKey(proxy)]
-  const delay = { animationDelay: `${Math.min(order, 40) * 14}ms` }
-  // 上限很高时单格会细到看不清，改成连续填充；数字仍在读数行里。
-  const discrete = limit <= 10
+  const cols = Math.max(1, Math.ceil(limit / rows))
+  const cells: ('bound' | 'free' | 'void' | 'pad')[] = []
+  // CSS grid 按列从上往下排，所以每列先排顶部的位。
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      const seat = c * rows + (rows - 1 - r)
+      cells.push(
+        seat >= limit
+          ? 'pad'
+          : seat < used
+            ? 'bound'
+            : bindable
+              ? 'free'
+              : 'void'
+      )
+    }
+  }
   return (
     <button
       type='button'
@@ -285,35 +398,27 @@ function SeatColumn({
       onMouseLeave={() => hover.set('')}
       onClick={() => onLocate(id)}
       className={cn(
-        'flex flex-col-reverse gap-[2px] rounded-[3px] p-px outline-offset-1 transition-opacity duration-200',
+        'grid grid-flow-col rounded-[3px] p-[2px] outline-offset-1 transition-opacity duration-200',
         lit && 'outline-2 outline-primary',
-        dim && !lit && 'opacity-25'
+        dim && !lit && 'opacity-20'
       )}
-      style={{ height }}
+      style={{
+        gridTemplateRows: `repeat(${rows}, ${DOT}px)`,
+        gridAutoColumns: `${DOT}px`,
+        gap: `${GAP}px`,
+      }}
     >
-      {discrete ? (
-        Array.from({ length: limit }).map((_, i) => (
-          <span
-            key={i}
-            className={cn(
-              'w-full flex-1 rounded-[2px]',
-              i < used ? 'animate-seat-rise' : 'track-recessed'
-            )}
-            style={i < used ? { backgroundColor: color, ...delay } : undefined}
-          />
-        ))
-      ) : (
-        <span className='relative w-full flex-1 overflow-hidden rounded-[2px] track-recessed'>
-          <span
-            className='animate-seat-rise absolute inset-x-0 bottom-0 rounded-[2px]'
-            style={{
-              height: `${Math.min(100, (used / limit) * 100)}%`,
-              backgroundColor: color,
-              ...delay,
-            }}
-          />
-        </span>
-      )}
+      {cells.map((kind, i) => (
+        <span
+          key={i}
+          className={cn(
+            'rounded-full transition-colors duration-300',
+            kind === 'free' && 'border border-muted-foreground/45',
+            kind === 'void' && 'scale-50 bg-muted-foreground/25'
+          )}
+          style={kind === 'bound' ? { backgroundColor: color } : undefined}
+        />
+      ))}
     </button>
   )
 }
@@ -339,7 +444,7 @@ function SeatReadout({
         <>
           <span
             aria-hidden='true'
-            className='size-2 shrink-0 rounded-[2px]'
+            className='size-2 shrink-0 rounded-full'
             style={{ backgroundColor: PROXY_HEALTH_SOLID[proxyHealthKey(p)] }}
           />
           <span className='field-host truncate text-foreground'>

@@ -57,6 +57,14 @@ export function regionLabel(country: string): string {
   }
 }
 
+/** 收起的地区栏里用的短名：国家代码原样，本地 / 未测用两个字，其余截前 3 个字符。 */
+export function regionShort(country: string): string {
+  if (country === REGION_LOCAL) return '本地'
+  if (country === REGION_NONE) return '未测'
+  if (/^[A-Z]{2}$/.test(country)) return country
+  return country.slice(0, 3)
+}
+
 export type RegionTally = {
   /** 当前其它筛选（席位 / 健康 / 搜索）下命中的条数。 */
   count: number
