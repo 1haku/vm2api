@@ -40,7 +40,7 @@ import {
   waitForOpenAICapacity,
   wakeOpenAIWaiter,
 } from '../pool/openai-account-runtime.mjs'
-import { CLIENT_POOL_BUSY_MESSAGE } from '../core/errors.mjs'
+import { CLIENT_POOL_BUSY_MESSAGE, CLIENT_POOL_UNAVAILABLE_MESSAGE, ErrorCode } from '../core/errors.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
 import { sessionIdForLog } from './log-fields.mjs'
 import { redactHeaders } from '../admin/request-log.mjs'
@@ -199,13 +199,15 @@ export function pickCodexCandidates(
     excluded,
     quotaPolicy: routingPolicy,
   })
-  if (bound?.vmId && sessionKey && ordered.boundState === 'gone') {
+  // A resting home migrates the conversation like a gone one: the next slot rebinds it.
+  const boundLeft = ordered.boundState === 'gone' || ordered.boundState === 'resting'
+  if (bound?.vmId && sessionKey && boundLeft) {
     for (const key of stickyKeys.length ? stickyKeys : [sessionKey]) stickyRouter?.unbind?.(key)
     try {
       sessions?.drop?.(bound.vmId, sessionKey)
     } catch {}
   }
-  if (continuesResponse && (ordered.boundState === 'gone' || ordered.error === 'candidates_exhausted')) {
+  if (continuesResponse && (boundLeft || ordered.error === 'candidates_exhausted')) {
     return { error: 'response_not_portable', ids: [], sessionKey, stickyKeys, boundVmId: bound.vmId }
   }
   return { ...ordered, sessionKey, stickyKeys }
@@ -836,6 +838,19 @@ function rejectCodexAdmission({ res, json, stats, logBag, picked, model }) {
         code: 'pool_overloaded',
         message: CLIENT_POOL_BUSY_MESSAGE,
         details: { reason: picked.error },
+      },
+    })
+  }
+  if (picked.error === 'pool_resting') {
+    // Every slot is off-shift: 503 like the Claude pool, timed to the first window open.
+    const waitMs = Number(picked.retryAt) - Date.now()
+    res.setHeader?.('retry-after', String(Math.max(1, Math.ceil(waitMs / 1000) || 1)))
+    return json(res, 503, {
+      error: {
+        type: 'api_error',
+        code: ErrorCode.POOL_UNAVAILABLE,
+        message: CLIENT_POOL_UNAVAILABLE_MESSAGE,
+        details: { reason: 'pool_resting' },
       },
     })
   }

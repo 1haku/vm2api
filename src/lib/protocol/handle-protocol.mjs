@@ -224,7 +224,8 @@ export function createHandleProtocol(deps) {
       }
     }
     // Pool 529 / pool-wide 429 always carry Retry-After: the runner's wake estimate, floored at 1s.
-    if (mapped.retryAfterSec && Number(result?.retryAfterSec) > 0) {
+    // A 503 carries one only when the runner knows a wake (all-rest pool).
+    if (Number(result?.retryAfterSec) > 0) {
       mapped.retryAfterSec = Math.max(1, Math.ceil(Number(result.retryAfterSec)))
     }
     return mapped

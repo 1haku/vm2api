@@ -380,7 +380,11 @@ function selectionFailure(selected, { excluded, lastPolicy, lastResult, hops }) 
   if (CAPACITY_SELECTION_REASONS.has(reason)) return poolOverloadedError(details)
   if (reason === 'pool_rate_limited') return poolRateLimitedError(details)
   if (reason === 'quota_guard_request_too_large') return quotaGuardTooLargeError(details)
-  return poolError('account_pool_exhausted', 'No eligible Claude accounts remain', details)
+  const failed = poolError('account_pool_exhausted', 'No eligible Claude accounts remain', details)
+  // An all-rest pool knows when the first working window opens.
+  const retryMs = Number(details.retry_after_ms)
+  if (retryMs > 0) failed.retryAfterSec = Math.max(1, Math.ceil(retryMs / 1000))
+  return failed
 }
 
 function applyCooldown(scheduler, selected, policy, model, { diagnosticPin = false } = {}) {

@@ -58,10 +58,10 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/dashboard` | 总览：健康、KPI、`proxy_pool`、`ops`（默认近 1h SLA/TTFT）、`billing` |
-| GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨；Claude 行 `seats_used` / `seats_max` / `seats_grace` / `queue_depth` / `conc_waiting` / `inflight`）；响应另带 `pool_queue: { global_queue_depth, queue_max }`。`availability.key` 取值 `ok` / `drain` / `quota` / `cool` / `off` / `bad` / `none`，`drain` = 临近闸线（仍接单） |
+| GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨；Claude 行 `seats_used` / `seats_max` / `seats_grace` / `queue_depth` / `conc_waiting` / `inflight`）；响应另带 `pool_queue: { global_queue_depth, queue_max }`。`availability.key` 取值 `ok` / `drain` / `quota` / `cool` / `rest` / `off` / `bad` / `none`，`drain` = 临近闸线（仍接单），`rest` = 工作时段外休息中 |
 | GET | `/pool/stream` | SSE。`event: seats`：`{ seats: { [vmId]: { seats_used, seats_max, seats_grace, queue_depth, conc_waiting, inflight } }, global_queue_depth, queue_max, ts }`，缺席的 VM 表示空闲；每次请求开始/结束都会推。`event: proxy`：`{ proxies: { [vmId]: { id, status, enabled, blocked_reason, latency_ms, last_error, last_probe_at } }, ts }`，每次探测或代理状态变化推送。两类帧都按 250ms 节流，租户只收到自己 VM 的条目 |
 | GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/by_model/usage_stats`（`usage_stats` = 近 30 个上海自然日的按日用量 + 模型 / 入站路径排名，日界同 `billing.today`） + `account.runtime_window` |
-| PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level` 或 `timezone`（不重启槽）。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
+| PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level`、`active_hours` 或 `timezone`（不重启槽）。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
 | POST | `/vms/:id/probe` | 槽 SOCKS5 探官方 `/usage` + Fable（Pro 跳过 Fable） |
 | POST | `/vms/:id/schedulable` | `{ schedulable }` 是否入池；不改容器 |
 | POST | `/vms/:id/cooldown/clear` | 清账号/模型冷却、粘性钉和 `/usage` 429 旗标，重新入池 |
@@ -109,6 +109,8 @@
 ### 平台独立的槽位限额
 
 `max_concurrency` / `max_rpm` 传数字钉住本槽，传 `null` 清除覆盖并立即使用本平台全局值。Claude 跟随 `tiers`；OpenAI 跟随 `codex.quota`，不受 Claude 分档保存影响。
+
+`active_hours` 是本槽每日工作时段：`PATCH {"active_hours": {"start": "HH:MM", "end": "HH:MM", "timezone": "IANA", "days": [0-6]}}`，`null` 清除恢复 24h 接单。`start` 晚于 `end` 为跨夜班次（如 20:00–08:00）；`days` 约束窗口可开始的星期（0 = 周日，缺省每天），跨夜窗的下半段不受次日是否列出影响。时区取窗口自带值 → 槽位 `timezone` → UTC。窗口外该槽不参与调度：Claude 池返回 `rest_period`（模型/额度门禁之后才判，只有本可接单的槽才计入开窗时间）；Codex 池直接跳过，续接 `previous_response_id` 时绑定槽在休息返回 409 `response_not_portable`；两侧整池都在休息时均 503 `pool_unavailable` 并带 `Retry-After`（最近开窗时间）。pin 诊断不受影响，健康探测不挑休息中的槽。夏令时切换日按实际时刻判定：开窗落在被跳过的小时则在跳变时刻开窗，重复的小时不截断班次。导出包无窗口时写 `active_hours: null`，写回会清除窗口；面板 `availability.key` 显示 `rest`（仅当槽本可接单时；冷却/额度等真实原因优先）、`schedule_state` 为 `restricted`、`restriction_until` 为下次开窗。列表/详情另返回 `active_hours_timezone`（实际生效时区）与 `active_hours_active`（此刻是否在窗口内，未设为 `null`）。
 
 OpenAI 另支持 `PATCH {"max_sessions": 0..256 | null}`：数字钉住活跃对话窗口上限，0 = 不限；`null` 立即恢复跟随并继续随后续全局保存更新。窗口闲置保留沿用 5 分钟，不是 Claude 席位或 sticky TTL。新增对话受上限约束，已存在的对话可复用窗口；借用其它账号执行不重复占用该对话的归属窗口。
 
