@@ -69,6 +69,13 @@ export type ProxyRowPending = {
   binding: boolean
 }
 
+/**
+ * 表头与每一行共用的列模板。列表容器宽于 `@4xl` 才对齐成表格；更窄时行退回
+ * 自动换行的卡片排布，表头隐藏、改用工具条里的排序下拉。
+ */
+export const PROXY_ROW_GRID =
+  '@4xl/plist:grid @4xl/plist:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)_88px_84px_120px_minmax(0,1.7fr)_auto] @4xl/plist:items-center @4xl/plist:gap-x-4'
+
 export function ProxyRow({
   proxy,
   vms,
@@ -136,7 +143,8 @@ export function ProxyRow({
         actions.onBind(id, vmId)
       }}
       className={cn(
-        'relative flex flex-wrap items-start gap-x-5 gap-y-3 px-4 py-3.5 transition-[background-color,opacity,box-shadow] duration-200',
+        'flex scroll-mt-24 flex-wrap items-start gap-x-4 gap-y-2 px-4 py-2.5 transition-[background-color,opacity,box-shadow] duration-200',
+        PROXY_ROW_GRID,
         dead && 'bg-red-1/60',
         lit && !dragVm && 'bg-accent/40',
         dragVm && !accepts && !alreadyHere && 'opacity-40',
@@ -145,64 +153,42 @@ export function ProxyRow({
         over && 'bg-primary/8 shadow-[inset_0_0_0_2px_var(--primary)]'
       )}
     >
-      <span
-        aria-hidden='true'
-        className={cn(
-          'absolute inset-y-3 left-0 w-[3px] rounded-e-full transition-opacity duration-200',
-          lit || over ? 'opacity-100' : 'opacity-0'
-        )}
-        style={{
-          backgroundColor: over ? 'var(--primary)' : PROXY_HEALTH_SOLID[health],
-        }}
-      />
-
-      <div className='min-w-[210px] flex-[1.25] space-y-1'>
-        {proxy.label ? (
-          <p className='truncate text-[13px] font-medium' title={proxy.label}>
-            {proxy.label}
-          </p>
-        ) : null}
-        <div className='flex items-center gap-1.5'>
-          <span
-            className={cn(
-              'field-host truncate',
-              // 有代理名称时名称是主标题，地址退为次要信息。
-              proxy.label
-                ? 'text-xs text-muted-foreground'
-                : 'text-[13px] font-medium',
-              local && 'font-sans'
-            )}
-            title={
-              local
-                ? `${LOCAL_PROXY_HINT}：每台机器自己的公网出口，绑定额度${LOCAL_PROXY_SHARED_QUOTA}`
-                : proxyHostText(proxy)
-            }
-          >
-            {proxyHostText(proxy)}
-          </span>
+      <div className='min-w-[200px] flex-[1.4] @4xl/plist:min-w-0'>
+        <p
+          className={cn(
+            'truncate text-[13px] font-medium',
+            !proxy.label && !local && 'field-host'
+          )}
+          title={
+            local ? proxyHostText(proxy) : proxy.label || proxyHostText(proxy)
+          }
+        >
+          {local ? proxyHostText(proxy) : proxy.label || proxyHostText(proxy)}
+        </p>
+        <div className='mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground'>
           {local ? (
-            <span className='shrink-0 text-xs text-muted-foreground'>
-              {LOCAL_PROXY_SHARED_QUOTA}
+            <span
+              className='truncate'
+              title={`${LOCAL_PROXY_HINT}：每台机器自己的公网出口，绑定额度${LOCAL_PROXY_SHARED_QUOTA}`}
+            >
+              {LOCAL_PROXY_HINT} · 绑定额度{LOCAL_PROXY_SHARED_QUOTA}
+            </span>
+          ) : proxy.label ? (
+            <span className='field-host truncate' title={proxyHostText(proxy)}>
+              {proxyHostText(proxy)}
             </span>
           ) : null}
           {proxy.address_family === 6 ? (
-            <span className='shrink-0 text-xs text-muted-foreground'>IPv6</span>
+            <span className='shrink-0'>IPv6</span>
           ) : null}
           {proxy.has_auth ? (
-            <Lock
-              className='size-3 shrink-0 text-muted-foreground'
-              aria-label='已配账密'
-            />
+            <Lock className='size-3 shrink-0' aria-label='已配账密' />
           ) : null}
-        </div>
-        <div className='flex min-w-0 items-center gap-2'>
-          <StatusMark tone={proxyStatusTone(proxy)} />
-          <GeoLine proxy={proxy} local={local} />
         </div>
         {proxy.last_error && !proxy.blocked_reason ? (
           <p
             className={cn(
-              'field-host truncate text-[11px]',
+              'field-host mt-0.5 truncate text-[11px]',
               dead
                 ? 'text-[color:var(--status-bad)]'
                 : 'text-[color:var(--status-warn)]'
@@ -217,69 +203,70 @@ export function ProxyRow({
         ) : null}
       </div>
 
-      <div className='w-[84px] shrink-0 space-y-1'>
+      <GeoCell proxy={proxy} local={local} />
+
+      <div className='shrink-0 pt-0.5 @4xl/plist:pt-0'>
+        <StatusMark tone={proxyStatusTone(proxy)} />
+      </div>
+
+      <div className='w-[84px] shrink-0 @4xl/plist:w-auto'>
         <Latency proxy={proxy} />
-        <p className='text-[11px] text-muted-foreground'>
-          {local
-            ? `${fmtAgo(proxy.last_probe_at) || '未探测'} · 控制面`
-            : fmtAgo(proxy.last_probe_at) || '未探测'}
+        <p className='mt-1 truncate text-[11px] text-muted-foreground'>
+          {fmtAgo(proxy.last_probe_at) || '未探测'}
+          {local ? ' · 控制面' : ''}
         </p>
       </div>
 
-      <div className='min-w-[230px] flex-[1.7] space-y-2'>
-        <div
-          role='meter'
-          aria-label='已绑席位'
-          aria-valuemin={0}
-          aria-valuemax={limit}
-          aria-valuenow={ids.length}
-          aria-valuetext={
-            local
-              ? `已绑 ${ids.length} / ${limit}（${LOCAL_PROXY_SHARED_QUOTA}）`
-              : `已绑 ${ids.length} / ${limit}`
-          }
-          className='flex items-center gap-3'
-        >
-          <SeatCount
-            used={ids.length}
-            limit={limit}
-            className='w-[62px] shrink-0'
-          />
-          <SeatCells
-            used={ids.length}
-            limit={limit}
-            color={PROXY_HEALTH_SOLID[health]}
-            className='max-w-[180px] min-w-0 flex-1'
-          />
-          {local ? (
-            <span className='shrink-0 text-[10px] text-muted-foreground'>
-              {LOCAL_PROXY_SHARED_QUOTA}
-            </span>
-          ) : null}
-        </div>
-        <div className='space-y-1.5'>
-          {showGroups
-            ? groups.map((group) => (
-                <div key={group.node_id || 'control'} className='space-y-1'>
-                  <p className='text-[11px] text-muted-foreground'>
-                    {localBoundGroupLabel(group)}
-                    {group.node_id ? ' · 出口为该节点本机' : ''}
-                  </p>
-                  <div className='flex flex-wrap items-center gap-1'>
-                    {group.bound_vm_ids.map((vmId) => (
-                      <VmChip
-                        key={vmId}
-                        vm={vmById.get(vmId)}
-                        vmId={vmId}
-                        tone={dead ? 'bad' : 'ok'}
-                        disabled={pending.binding}
-                        onUnbind={() => actions.onUnbind(id, vmId)}
-                        onDragChange={actions.onVmDragChange}
-                      />
-                    ))}
-                  </div>
+      <div
+        role='meter'
+        aria-label='已绑席位'
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-valuenow={ids.length}
+        aria-valuetext={
+          local
+            ? `已绑 ${ids.length} / ${limit}（${LOCAL_PROXY_SHARED_QUOTA}）`
+            : `已绑 ${ids.length} / ${limit}`
+        }
+        className='flex w-[150px] shrink-0 items-center gap-2 @4xl/plist:w-auto'
+      >
+        <SeatCount used={ids.length} limit={limit} className='w-11 shrink-0' />
+        <SeatCells
+          used={ids.length}
+          limit={limit}
+          color={PROXY_HEALTH_SOLID[health]}
+          className='min-w-0 flex-1'
+        />
+      </div>
+
+      {/* 卡片排布时放到最后独占一行，操作按钮就能跟席位留在同一行。 */}
+      <div className='order-last min-w-0 basis-full space-y-1.5 @4xl/plist:order-none @4xl/plist:basis-auto'>
+        {showGroups
+          ? groups.map((group) => (
+              <div key={group.node_id || 'control'} className='space-y-1'>
+                <p className='text-[11px] text-muted-foreground'>
+                  {localBoundGroupLabel(group)}
+                  {group.node_id ? ' · 出口为该节点本机' : ''}
+                </p>
+                <div className='flex flex-wrap items-center gap-1'>
+                  {group.bound_vm_ids.map((vmId) => (
+                    <VmChip
+                      key={vmId}
+                      vm={vmById.get(vmId)}
+                      vmId={vmId}
+                      tone={dead ? 'bad' : 'ok'}
+                      disabled={pending.binding}
+                      onUnbind={() => actions.onUnbind(id, vmId)}
+                      onDragChange={actions.onVmDragChange}
+                    />
+                  ))}
                 </div>
-              ))
+              </div>
+            ))
+          : null}
+        <div className='flex flex-wrap items-center gap-1'>
+          {showGroups
+            ? null
             : ids.map((vmId) => (
                 <VmChip
                   key={vmId}
@@ -291,32 +278,30 @@ export function ProxyRow({
                   onDragChange={actions.onVmDragChange}
                 />
               ))}
-          <div className='flex flex-wrap items-center gap-1'>
-            {over ? (
-              <span className='inline-flex h-6 items-center rounded-md border border-dashed border-primary px-2 text-xs text-primary'>
-                松开绑定到这里
-              </span>
-            ) : !bindable ? (
-              <span className='text-xs text-muted-foreground'>
-                {health === 'off' ? '已禁用，不接新槽位' : '已失效，不接新槽位'}
-              </span>
-            ) : free > 0 ? (
-              <ProxyBindPicker
-                vms={vms}
-                boundHere={ids}
-                ownerOf={ownerOf}
-                free={free}
-                disabled={pending.binding}
-                onBind={(vmId) => actions.onBind(id, vmId)}
-              />
-            ) : ids.length ? null : (
-              <span className='text-xs text-muted-foreground'>无空位</span>
-            )}
-          </div>
+          {over ? (
+            <span className='inline-flex h-6 items-center rounded-md border border-dashed border-primary px-2 text-xs text-primary'>
+              松开绑定到这里
+            </span>
+          ) : !bindable ? (
+            <span className='text-xs text-muted-foreground'>
+              {health === 'off' ? '已禁用，不接新槽位' : '已失效，不接新槽位'}
+            </span>
+          ) : free > 0 ? (
+            <ProxyBindPicker
+              vms={vms}
+              boundHere={ids}
+              ownerOf={ownerOf}
+              free={free}
+              disabled={pending.binding}
+              onBind={(vmId) => actions.onBind(id, vmId)}
+            />
+          ) : ids.length ? null : (
+            <span className='text-xs text-muted-foreground'>无空位</span>
+          )}
         </div>
       </div>
 
-      <div className='ms-auto flex shrink-0 items-center gap-0.5'>
+      <div className='ms-auto flex shrink-0 items-center gap-0.5 @4xl/plist:ms-0'>
         <Button
           size='icon'
           variant='ghost'
@@ -385,7 +370,8 @@ export function ProxyRow({
   )
 }
 
-function GeoLine({
+/** 地区列：国家 · 城市为主，时区退到第二行。名称没写地区时，这一列就是找节点的依据。 */
+function GeoCell({
   proxy,
   local = false,
 }: {
@@ -396,25 +382,31 @@ function GeoLine({
   const note = local ? '控制面探测' : null
   if (!geo?.timezone && !geo?.country) {
     return (
-      <p className='truncate text-[11px] text-muted-foreground'>
-        {geo?.error ? '地理检测失败' : '地理未检测'}
-        {note ? ` · ${note}` : ''}
-      </p>
+      <div className='min-w-[120px] flex-1 text-[11px] text-muted-foreground @4xl/plist:min-w-0'>
+        <p className='truncate'>{geo?.error ? '地理检测失败' : '地理未检测'}</p>
+        {note ? <p className='mt-0.5 truncate'>{note}</p> : null}
+      </div>
     )
   }
-  const place = [geo.country_code || geo.country, geo.city]
-    .filter(Boolean)
-    .join(' · ')
+  const country = geo.country_code || geo.country
   return (
-    <p
-      className='min-w-0 truncate text-[11px] text-muted-foreground'
+    <div
+      className='min-w-[120px] flex-1 @4xl/plist:min-w-0'
       title={[geo.ip, geo.isp, note].filter(Boolean).join(' · ') || undefined}
     >
-      {place ? <span className='text-foreground/80'>{place}</span> : null}
-      {place && geo.timezone ? ' · ' : null}
-      {geo.timezone}
-      {note ? ` · ${note}` : ''}
-    </p>
+      <p className='truncate text-xs'>
+        {country ? (
+          <span className='font-medium tracking-[0.02em]'>{country}</span>
+        ) : null}
+        {country && geo.city ? (
+          <span className='text-muted-foreground'> · </span>
+        ) : null}
+        {geo.city}
+      </p>
+      <p className='mt-0.5 truncate text-[11px] text-muted-foreground'>
+        {[geo.timezone, note].filter(Boolean).join(' · ')}
+      </p>
+    </div>
   )
 }
 

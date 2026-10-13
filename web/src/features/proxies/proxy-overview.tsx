@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import type { Vm, VmProxySnap } from '@/types/panel-vm'
+import { fmtAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import {
   type ProxyHover,
   useProxyHoverId,
   useProxyHovered,
 } from './proxy-hover'
-import { ProxyPanel } from './proxy-panel'
 import {
   LOCAL_PROXY_SHARED_QUOTA,
   PROXY_HEALTH_KEYS,
@@ -18,7 +18,6 @@ import {
   proxyHealthKey,
   proxyIsLocal,
   proxyLabel,
-  proxyInFilter,
 } from './proxy-sort'
 import { PROXY_HEALTH_SOLID } from './proxy-tone'
 import { VmChip } from './vm-chip'
@@ -27,8 +26,8 @@ import { VmChip } from './vm-chip'
  * 席位图：一条代理一列，一列的格数就是它的绑定上限，已绑的格子按代理健康着色、
  * 自底向上填。整池「还剩多少位 · 哪些代理快满了 · 满的里面有没有坏的」一张图看完。
  *
- * 列和右侧列表行双向联动：悬停任一边，另一边跟着亮；点列直接滚到那一行。
- * 下方「待接代理」列出池外的槽位，可以直接拖到右侧代理行上绑定。
+ * 铺满页面宽度放在表格上方：图例即健康筛选，列和表格行双向联动（悬停同亮，
+ * 点列滚到那一行）。「待接代理」列出池外槽位，可以直接拖到表格行上绑定。
  */
 export function ProxyOverview({
   proxies,
@@ -37,9 +36,11 @@ export function ProxyOverview({
   poolLimit,
   slotsUsed,
   slotsCap,
+  probeMin,
   filter,
   onFilter,
   hover,
+  visible,
   onLocate,
   onVmDragChange,
 }: {
@@ -50,9 +51,12 @@ export function ProxyOverview({
   poolLimit: number
   slotsUsed: number
   slotsCap: number
+  probeMin: number
   filter: ProxyFilter
   onFilter: (next: ProxyFilter) => void
   hover: ProxyHover
+  /** 只用来点亮「不在当前筛选里」的列；地区、搜索的命中由调用方算。 */
+  visible: (prx: VmProxySnap) => boolean
   onLocate: (id: string) => void
   onVmDragChange: (vmId: string) => void
 }) {
@@ -67,6 +71,14 @@ export function ProxyOverview({
     () => new Map(proxies.map((p) => [p.id || '', p])),
     [proxies]
   )
+  const lastProbe = useMemo(() => {
+    let max = 0
+    for (const p of proxies) {
+      const t = Date.parse(p.last_probe_at || '')
+      if (Number.isFinite(t) && t > max) max = t
+    }
+    return max ? new Date(max).toISOString() : ''
+  }, [proxies])
   const loose = vms.filter((v) => !ownerOf.has(v.id))
   const stranded = loose.filter((v) => v.has_token).length
   const freeSeats = proxies.reduce((n, p) => {
@@ -75,47 +87,43 @@ export function ProxyOverview({
       n + Math.max(0, proxyBindLimit(p, poolLimit) - proxyBoundIds(p).length)
     )
   }, 0)
-  const colHeight = proxies.length <= 24 ? 64 : proxies.length <= 60 ? 44 : 28
+  const colHeight = proxies.length <= 40 ? 44 : 32
 
   return (
-    <ProxyPanel
-      title='席位'
-      meta={
-        <span className='text-xs text-muted-foreground tabular-nums'>
-          <span className='text-base font-[620] tracking-[-0.02em] text-foreground'>
-            {slotsUsed}
-          </span>{' '}
-          / {slotsCap || '—'} 已绑
-        </span>
-      }
+    <section
+      aria-labelledby='proxy-seat-title'
+      className='rounded-xl border bg-card px-4 pt-3.5 pb-3'
     >
-      {proxies.length ? (
-        <>
-          <p className='sr-only'>
-            共 {proxies.length} 条代理，已绑 {slotsUsed} 个席位，空余{' '}
-            {freeSeats} 个。
-          </p>
-          <div
-            className='grid gap-[3px]'
-            style={{
-              gridTemplateColumns: 'repeat(auto-fill, minmax(11px, 1fr))',
-            }}
+      <div className='flex flex-wrap items-center justify-between gap-x-6 gap-y-2'>
+        <div className='flex flex-wrap items-baseline gap-x-5 gap-y-1'>
+          <h3
+            id='proxy-seat-title'
+            className='flex items-baseline gap-2 text-sm font-semibold tracking-[-0.01em]'
           >
-            {proxies.map((p, i) => (
-              <SeatColumn
-                key={p.id}
-                proxy={p}
-                limit={proxyBindLimit(p, poolLimit)}
-                height={colHeight}
-                order={i}
-                dim={filter !== 'all' && !proxyInFilter(p, filter, poolLimit)}
-                hover={hover}
-                onLocate={onLocate}
-              />
-            ))}
-          </div>
-          <SeatReadout hover={hover} byId={byId} poolLimit={poolLimit} />
-          <div className='-mx-1 mt-1 flex flex-wrap gap-0.5'>
+            席位
+            <span className='text-xs font-normal text-muted-foreground tabular-nums'>
+              <span className='text-base font-[620] tracking-[-0.02em] text-foreground'>
+                {slotsUsed}
+              </span>{' '}
+              / {slotsCap || '—'} 已绑
+            </span>
+          </h3>
+          <dl className='flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs'>
+            <Figure label='空余席位' value={freeSeats} />
+            <Figure label='代理' value={proxies.length} />
+            <Figure
+              label='池外槽位'
+              value={loose.length}
+              tone={stranded ? 'bad' : undefined}
+            />
+          </dl>
+        </div>
+        {proxies.length ? (
+          <div
+            role='group'
+            aria-label='按健康筛选'
+            className='-mx-1.5 flex flex-wrap gap-0.5'
+          >
             {PROXY_HEALTH_KEYS.map((k) => (
               <button
                 key={k}
@@ -123,7 +131,7 @@ export function ProxyOverview({
                 aria-pressed={filter === k}
                 onClick={() => onFilter(filter === k ? 'all' : k)}
                 className={cn(
-                  'inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-accent/60',
+                  'inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors hover:bg-accent/60',
                   filter === k
                     ? 'bg-accent/70 font-medium text-foreground'
                     : 'text-muted-foreground',
@@ -140,33 +148,58 @@ export function ProxyOverview({
               </button>
             ))}
           </div>
-          <dl className='mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border/60 text-center'>
-            <Figure label='空余席位' value={freeSeats} />
-            <Figure label='代理' value={proxies.length} />
-            <Figure
-              label='池外槽位'
-              value={loose.length}
-              tone={stranded ? 'bad' : undefined}
-            />
-          </dl>
+        ) : null}
+      </div>
+
+      {proxies.length ? (
+        <>
+          <p className='sr-only'>
+            共 {proxies.length} 条代理，已绑 {slotsUsed} 个席位，空余{' '}
+            {freeSeats} 个。
+          </p>
+          <div
+            className='mt-3 grid gap-[3px]'
+            style={{
+              gridTemplateColumns: 'repeat(auto-fill, minmax(12px, 1fr))',
+            }}
+          >
+            {proxies.map((p, i) => (
+              <SeatColumn
+                key={p.id}
+                proxy={p}
+                limit={proxyBindLimit(p, poolLimit)}
+                height={colHeight}
+                order={i}
+                dim={!visible(p)}
+                hover={hover}
+                onLocate={onLocate}
+              />
+            ))}
+          </div>
+          <SeatReadout
+            hover={hover}
+            byId={byId}
+            poolLimit={poolLimit}
+            idle={`${lastProbe ? `最近探测 ${fmtAgo(lastProbe)}` : '还没有探测记录'} · 每 ${probeMin} 分钟自动探测 · 悬停列查看，点击定位到表格行`}
+          />
         </>
       ) : (
-        <p className='text-xs text-muted-foreground'>
+        <p className='mt-2 text-xs text-muted-foreground'>
           池里还没有代理。导入后每条代理在这里占一列，格子数即它的绑定上限。
         </p>
       )}
 
       {loose.length ? (
-        <div className='mt-4'>
-          <div className='mb-1.5 flex items-baseline justify-between gap-2'>
-            <h4 className='text-xs font-medium'>待接代理</h4>
+        <div className='mt-2.5 flex flex-wrap items-start gap-x-3 gap-y-1.5 border-t pt-2.5'>
+          <h4 className='flex h-6 shrink-0 items-center gap-2 text-xs font-medium'>
+            待接代理
             {stranded ? (
-              <span className='text-[11px] text-[color:var(--status-bad)]'>
+              <span className='font-normal text-[color:var(--status-bad)]'>
                 {stranded} 台有凭证，出站被拒
               </span>
             ) : null}
-          </div>
-          <div className='flex max-h-28 flex-wrap gap-1 overflow-y-auto'>
+          </h4>
+          <div className='flex max-h-[3.25rem] min-w-0 flex-1 flex-wrap gap-1 overflow-y-auto'>
             {loose.map((v) => (
               <VmChip
                 key={v.id}
@@ -177,17 +210,17 @@ export function ProxyOverview({
             ))}
           </div>
           {proxies.length ? (
-            <p className='mt-1.5 text-[11px] text-muted-foreground'>
-              拖到右侧代理行上即可绑定；已绑的槽位也能拖去换绑。
+            <p className='flex h-6 shrink-0 items-center text-[11px] text-muted-foreground'>
+              拖到表格行上即可绑定；已绑的槽位也能拖去换绑。
             </p>
           ) : null}
         </div>
       ) : vms.length ? (
-        <p className='mt-3 text-[11px] text-muted-foreground'>
+        <p className='mt-2.5 border-t pt-2.5 text-[11px] text-muted-foreground'>
           {vms.length} 台槽位都已接代理。
         </p>
       ) : null}
-    </ProxyPanel>
+    </section>
   )
 }
 
@@ -201,11 +234,11 @@ function Figure({
   tone?: 'bad'
 }) {
   return (
-    <div className='bg-card px-2 py-2'>
-      <dt className='text-[11px] text-muted-foreground'>{label}</dt>
+    <div className='flex items-baseline gap-1.5'>
+      <dt className='text-muted-foreground'>{label}</dt>
       <dd
         className={cn(
-          'mt-0.5 text-lg leading-none font-[620] tracking-[-0.02em] tabular-nums',
+          'text-sm leading-none font-[620] tracking-[-0.02em] tabular-nums',
           tone === 'bad' && 'text-[color:var(--status-bad)]'
         )}
       >
@@ -286,15 +319,18 @@ function SeatReadout({
   hover,
   byId,
   poolLimit,
+  idle,
 }: {
   hover: ProxyHover
   byId: Map<string, VmProxySnap>
   poolLimit: number
+  /** 没有悬停时显示的说明。 */
+  idle: string
 }) {
   const id = useProxyHoverId(hover)
   const p = id ? byId.get(id) : undefined
   return (
-    <div className='mt-2 flex h-5 items-center gap-2 text-[11px] text-muted-foreground'>
+    <div className='mt-2 flex h-5 min-w-0 items-center gap-2 text-[11px] text-muted-foreground'>
       {p ? (
         <>
           <span
@@ -320,7 +356,7 @@ function SeatReadout({
           ) : null}
         </>
       ) : (
-        <span>悬停查看，点击定位到列表</span>
+        <span className='truncate'>{idle}</span>
       )}
     </div>
   )
