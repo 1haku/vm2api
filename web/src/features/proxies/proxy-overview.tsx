@@ -114,10 +114,11 @@ export function ProxyOverview({
           country: g.country,
           label: g.label,
           proxies: list,
-          free: list.reduce((n, p) => n + freeOf(p, poolLimit), 0),
+          // 与地区栏同一个数：按当前席位 / 健康 / 搜索筛选算，不是整池空位。
+          free: g.free,
         }
       })
-  }, [proxies, regions, poolLimit])
+  }, [proxies, regions])
   // 行数按 SOCKS5 的上限定：本地代理上限常常大很多，让它多占几列，而不是把整张图拉高。
   const rows = useMemo(() => {
     const socks = proxies.filter((p) => !proxyIsLocal(p))
@@ -130,7 +131,8 @@ export function ProxyOverview({
   }, [proxies, poolLimit])
   const loose = vms.filter((v) => !ownerOf.has(v.id))
   const stranded = loose.filter((v) => v.has_token).length
-  const freeSeats = clusters.reduce((n, c) => n + c.free, 0)
+  // 页头是整池读数，不受筛选影响。
+  const freeSeats = proxies.reduce((n, p) => n + freeOf(p, poolLimit), 0)
 
   return (
     <section
@@ -222,7 +224,7 @@ export function ProxyOverview({
                           : { country: c.country, city: '' }
                       )
                     }
-                    title={`${c.label}：${c.proxies.length} 条代理，空位 ${c.free}。点击筛选该地区`}
+                    title={`${c.label}：${c.proxies.length} 条代理，当前筛选下空位 ${c.free}。点击筛选该地区`}
                     className={cn(
                       '-mx-1 mb-1.5 flex items-baseline gap-1.5 rounded px-1 text-[11px] whitespace-nowrap transition-colors hover:bg-accent/60',
                       on ? 'text-primary' : 'text-muted-foreground'
