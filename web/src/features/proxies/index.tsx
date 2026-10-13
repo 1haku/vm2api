@@ -5,6 +5,7 @@ import type { Vm, VmProxySnap } from '@/types/panel-vm'
 import { Plus, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -52,6 +53,23 @@ const PROBE_KEY = ['panel', 'proxies', 'probe'] as const
 const GEO_KEY = ['panel', 'proxies', 'geo'] as const
 const COPY_KEY = ['panel', 'proxies', 'reveal'] as const
 const TOGGLE_KEY = ['panel', 'proxies', 'toggle'] as const
+const LS_RAIL_COLLAPSED = 'kin_proxy_region_rail_collapsed'
+
+function readRailCollapsed(): boolean {
+  try {
+    return localStorage.getItem(LS_RAIL_COLLAPSED) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeRailCollapsed(next: boolean) {
+  try {
+    localStorage.setItem(LS_RAIL_COLLAPSED, next ? '1' : '0')
+  } catch {
+    // 隐私模式 / 配额满：本次会话内仍按内存状态生效。
+  }
+}
 
 /** 某类单条操作当前在哪些代理上进行中。支持多行同时转圈。 */
 function usePendingIds(mutationKey: readonly string[]): Set<string> {
@@ -82,6 +100,7 @@ export function ProxiesPage() {
   const [filter, setFilter] = useState<ProxyFilter>('all')
   const [query, setQuery] = useState('')
   const [region, setRegion] = useState<ProxyRegionFilter>(REGION_ANY)
+  const [railCollapsed, setRailCollapsed] = useState(readRailCollapsed)
   // 关闭时只收 open，内容保持到滑出动画结束，不会在关的那一刻闪成另一个面板。
   const [drawer, setDrawer] = useState<{
     open: boolean
@@ -376,18 +395,33 @@ export function ProxiesPage() {
             probeMin={probeMin}
             filter={filter}
             onFilter={setFilter}
+            regions={regions}
+            region={region}
+            onRegion={setRegion}
             hover={hover}
             visible={matches}
             onLocate={locate}
             onVmDragChange={setDragVm}
           />
-          <div className='grid items-start gap-3 2xl:grid-cols-[208px_minmax(0,1fr)] 2xl:gap-4'>
+          <div
+            className={cn(
+              'grid items-start gap-3 2xl:gap-4',
+              railCollapsed
+                ? '2xl:grid-cols-[60px_minmax(0,1fr)]'
+                : '2xl:grid-cols-[208px_minmax(0,1fr)]'
+            )}
+          >
             <ProxyRegionRail
               groups={regions}
               value={region}
               onChange={setRegion}
               totalCount={regionTotals.count}
               totalFree={regionTotals.free}
+              collapsed={railCollapsed}
+              onCollapsedChange={(next) => {
+                setRailCollapsed(next)
+                writeRailCollapsed(next)
+              }}
             />
             <ProxyList
               all={sorted}
