@@ -2,6 +2,13 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'active-hours',
+  'codex-slot-pool',
+  'credential-weight',
+  'fable-cache-continuity',
+  'health-real-quota',
+  'jev-account-scope',
+  'panel-vm-active-hours',
   'codex-weekly-reset',
   'security',
   'subscription-weekly-window',

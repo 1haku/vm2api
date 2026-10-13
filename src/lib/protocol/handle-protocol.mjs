@@ -19,7 +19,8 @@ import {
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
-import { readJevConfig } from './jev-intercept.mjs'
+import { findAccount } from '../admin/panel-api.mjs'
+import { jevScopeWaits, readJevConfig, scopeAccountFromVm } from './jev-intercept.mjs'
 import { runProtocolIntercept } from './intercept-gate.mjs'
 import {
   toClaudeMessages,
@@ -45,7 +46,6 @@ import { normalizeCodexRouting } from './codex-route.mjs'
 import { hasClaudeCode1mSuffix } from './context-1m.mjs'
 import {
   DEFAULT_HEALTH_PROBE,
-  HEALTH_REAL_HEADER,
   isHealthRealBypass,
   isHealthShape,
   synthesizeProtocolResponse,
@@ -227,7 +227,8 @@ export function createHandleProtocol(deps) {
       }
     }
     // Pool 529 / pool-wide 429 always carry Retry-After: the runner's wake estimate, floored at 1s.
-    if (mapped.retryAfterSec && Number(result?.retryAfterSec) > 0) {
+    // A 503 carries one only when the runner knows a wake (all-rest pool).
+    if (Number(result?.retryAfterSec) > 0) {
       mapped.retryAfterSec = Math.max(1, Math.ceil(Number(result.retryAfterSec)))
     }
     return mapped
@@ -242,7 +243,18 @@ export function createHandleProtocol(deps) {
     return finalizeAssembledAssistantHop(result)
   }
 
-  async function applyProtocolIntercept({ req, inbound, body, fp, logBag, requestId, res }) {
+  function claudeScopePending() {
+    let jev
+    try {
+      const settings = deps.settings || new SettingsRepo()
+      jev = readJevConfig((key, fallback) => settings.get(key, fallback))
+    } catch {
+      jev = readJevConfig()
+    }
+    return jevScopeWaits(jev, 'claude')
+  }
+
+  async function applyProtocolIntercept({ req, inbound, body, fp, logBag, requestId, res, account = null }) {
     const official =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
       isOfficialClaudeClient(fp.client_class) ||
@@ -266,6 +278,7 @@ export function createHandleProtocol(deps) {
       repo: refusalRepo(),
       devices: deviceRepo(),
       requestId,
+      account,
     })
     if (!decision || decision.action !== 'block') {
       if (decision?.intercept) logBag.intercept = decision.intercept
@@ -719,6 +732,19 @@ export function createHandleProtocol(deps) {
         sessions: accountQuota?.sessions || null,
         body: ctx.body,
       }
+      // Account scope needs the slot, so the Codex hop runs the same gate again
+      // once a candidate is claimed. Without a scope the pre-hop verdict stands.
+      const accountGate = (account) =>
+        applyProtocolIntercept({
+          req,
+          inbound,
+          body: ctx.body,
+          fp,
+          logBag,
+          requestId: logCtx.request_id,
+          res,
+          account,
+        })
       if (protocol === 'anthropic.messages') {
         const codex = normalizeCodexRouting(routing.codex)
         return handleCodexProtocol({
@@ -744,6 +770,7 @@ export function createHandleProtocol(deps) {
           },
           projectRoot: cfg.paths.project,
           captureOutbound: logCtx.capture_outbound === true,
+          accountGate,
           ...codexSticky,
         })
       }
@@ -760,6 +787,7 @@ export function createHandleProtocol(deps) {
         routing,
         projectRoot: cfg.paths.project,
         captureOutbound: logCtx.capture_outbound === true,
+        accountGate,
         ...codexSticky,
       })
     }
@@ -1063,7 +1091,8 @@ export function createHandleProtocol(deps) {
     const pinVmId = req.apiKeyKind === 'master' && isValidVmId(pinVmRaw) ? pinVmRaw : null
     // Pin is panel test-chat / diagnostics (manage). Unpinned /v1 is dispatch.
     const ownerScope = pinVmId ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
-    const healthReal = isHealthRealBypass(req.headers)
+    // Cache bypass is a client hint; only authenticated master-key probes may skip accounting.
+    const healthReal = req.apiKeyKind === 'master' && isHealthRealBypass(req.headers)
     // Cache lives per account; a failover to another account starts cold by design.
     const noteCachePrefix = (selected, sessionId, body) => {
       if (!sessionId) return
@@ -1101,6 +1130,23 @@ export function createHandleProtocol(deps) {
         deliveryMode,
         signal: clientAbort.signal,
         applyAttempt: async (body, selected, extra = {}) => {
+          if (claudeScopePending()) {
+            const blocked = await applyProtocolIntercept({
+              req,
+              inbound,
+              body: ctx.body,
+              fp,
+              logBag,
+              requestId: logCtx.request_id,
+              res,
+              account: scopeAccountFromVm(selected?.vm, findAccount(accountQuota, selected?.vm)?.unified),
+            })
+            if (blocked) {
+              const error = new Error('response already sent')
+              error.code = 'response_sent'
+              throw error
+            }
+          }
           try {
             touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm)
           } catch {}
@@ -1378,6 +1424,8 @@ export function createHandleProtocol(deps) {
       clientAbort.settle()
     }
 
+    if (result?.responseSent) return
+
     result = acceptAssistantHop(result)
     if (result?.finalState === 'verified' && logBag.cache_prefix_key) {
       confirmCachePrefix(logBag.cache_prefix_key)
@@ -1437,7 +1485,7 @@ export function createHandleProtocol(deps) {
           if (vm) pool.syncQuotaSchedule(vm)
         }
       } catch {}
-      if (managedKey && !healthReal) {
+      if (managedKey) {
         try {
           apiKeyStore.recordUsage(managedKey, logBag.usage || {}, {
             model: logBag.upstream_model || logBag.model,
