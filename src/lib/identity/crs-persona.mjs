@@ -1227,7 +1227,6 @@ export function prependToFirstUserMessage(messages, text) {
   return prependRawToFirstUserMessage(messages, wrapSystemReminder(text))
 }
 
-
 /** Top-level caller system only. role=system stays in the message list so the cached prefix can grow. */
 export function collectCallerSystemAppend(body) {
   return parkableSystemTexts(body?.system).join('\n\n')

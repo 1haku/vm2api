@@ -628,7 +628,11 @@ test('official_prompt keeps the caller agent prompt and leaves other system in s
     ],
     messages: [{ role: 'user', content: '你好呀。' }],
   }
-  const out = applyCrsUnofficialPersona(first, { mode: 'official_prompt', park: false, sessionId: '11111111-2222-4333-8444-555555555555' })
+  const out = applyCrsUnofficialPersona(first, {
+    mode: 'official_prompt',
+    park: false,
+    sessionId: '11111111-2222-4333-8444-555555555555',
+  })
   const agent = out.system.find((block) => String(block?.text || '').includes('# Doing tasks'))
   assert.ok(agent)
   assert.equal(agent.cache_control?.ttl, '1h')
