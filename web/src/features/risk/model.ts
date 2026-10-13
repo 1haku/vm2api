@@ -1,4 +1,5 @@
 import type { UsageLogRow } from '@/types/panel-usage-logs'
+import type { JevScopeAccount } from '@/types/panel-routing'
 
 /** Gate order matches `evaluateProtocolIntercept`: cheap rules first, the model last. */
 export type StageId = 'distill' | 'hard-regex' | 'refusal' | 'jev'
@@ -42,10 +43,64 @@ export const PASS_REASONS: Record<string, { label: string; hint: string }> = {
     label: 'OpenAI 平台未接入',
     hint: 'GPT / Codex 请求，「OpenAI 平台」开关关闭',
   },
+  scope: {
+    label: '账号不在范围',
+    hint: '请求落到的槽位不在风控的账号范围里',
+  },
+  'scope-wait': {
+    label: '等待账号判定',
+    hint: 'GPT / Codex 请求，等到槽位确定后再判范围',
+  },
   unknown: {
     label: '未经关卡',
     hint: '鉴权、请求体等错误在关卡前结束，或升级前的旧日志',
   },
+}
+
+/** 风控的账号范围，对应后端 `jev_intercept` 的三个列表。 */
+export type AccountScope = {
+  account_types: string[]
+  account_plan_types: string[]
+  account_ids: string[]
+}
+
+/** 槽位没有 plan_type 时归到这个桶，跟后端一致。 */
+export const SCOPE_NONE = 'none'
+
+export function scopeConfigured(scope: AccountScope) {
+  return (
+    scope.account_types.length > 0 ||
+    scope.account_plan_types.length > 0 ||
+    scope.account_ids.length > 0
+  )
+}
+
+/**
+ * 与后端 `jevAccountInScope` 同一套判断：三个列表取并集，空列表不限制。
+ * 面板用它实时算「当前范围命中几个槽位」。
+ */
+export function accountInScope(
+  scope: AccountScope,
+  account: JevScopeAccount
+) {
+  if (!scopeConfigured(scope)) return true
+  const ids = scope.account_ids.map((item) => item.trim().toLowerCase())
+  const id = (account.id || '').trim().toLowerCase()
+  const email = (account.email || '').trim().toLowerCase()
+  const name = (account.name || '').trim().toLowerCase()
+  if (ids.some((want) => want && (want === id || want === email || want === name)))
+    return true
+  const type = (account.type || '').trim().toLowerCase()
+  if (type && scope.account_types.includes(type)) return true
+  const plan = (account.plan_type || '').trim().toLowerCase() || SCOPE_NONE
+  return scope.account_plan_types.includes(plan)
+}
+
+export function scopeMatches(
+  scope: AccountScope,
+  accounts: JevScopeAccount[]
+) {
+  return accounts.filter((account) => accountInScope(scope, account))
 }
 
 /** `upstream` = passed every gate and the upstream refused it. */

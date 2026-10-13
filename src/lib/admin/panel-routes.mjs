@@ -18,6 +18,8 @@ import {
 import { loadDistillRules, saveDistillRules, validateDistillPatch } from '../core/distill-detect.mjs'
 import { applyRefusalGuardPatch, refusalGuardPolicy } from '../core/refusal-guard.mjs'
 import {
+  JEV_ACCOUNT_TYPES,
+  JEV_PLAN_TYPES,
   applyJevPatch,
   listPolicyModels as listDecisionModels,
   publicJevConfig,
@@ -628,13 +630,60 @@ export function createPanelHandler(ctx) {
     }
   }
 
+  /**
+   * Account scope options for the risk page: the credential forms and plan
+   * labels that currently exist, each with its live slot count, plus the flat
+   * slot list so the panel can say how many accounts the selection covers.
+   */
+  function jevScopeInventory() {
+    let vms = []
+    try {
+      vms = listVms(cfg.paths.project)
+    } catch {
+      vms = []
+    }
+    const typeCounts = new Map()
+    const planCounts = new Map()
+    const accounts = vms.map((vm) => {
+      const type = normalizeCredentialMode(vm.credential_mode || '')
+      typeCounts.set(type, (typeCounts.get(type) || 0) + 1)
+      const plan = String(vm.plan_type || 'none')
+        .trim()
+        .toLowerCase()
+      planCounts.set(plan, (planCounts.get(plan) || 0) + 1)
+      return {
+        id: vm.id,
+        email: vm.email || null,
+        name: vm.name || null,
+        platform: vm.platform || null,
+        plan_type: vm.plan_type || null,
+        type,
+        schedulable: vm.schedulable !== false,
+      }
+    })
+    const planOptions = JEV_PLAN_TYPES.map((item) => ({ ...item, count: planCounts.get(item.id) || 0 }))
+    // A tier the panel has never seen stays selectable instead of being invisible.
+    for (const [id, count] of planCounts) {
+      if (planOptions.some((item) => item.id === id)) continue
+      planOptions.push({ id, label: id, count })
+    }
+    return {
+      account_type_options: JEV_ACCOUNT_TYPES.map((item) => ({ ...item, count: typeCounts.get(item.id) || 0 })),
+      account_plan_type_options: planOptions,
+      accounts_total: accounts.length,
+      accounts,
+    }
+  }
+
   function jevInterceptSnapshot() {
+    let config
     try {
       const settings = new SettingsRepo()
-      return publicJevConfig(readJevConfig((key, fallback) => settings.get(key, fallback)))
+      config = publicJevConfig(readJevConfig((key, fallback) => settings.get(key, fallback)))
     } catch {
-      return publicJevConfig(null)
+      config = publicJevConfig(null)
     }
+    return { ...config, account_scope: jevScopeInventory() }
   }
 
   function activateVmSlot(id) {
@@ -4395,7 +4444,7 @@ export function createPanelHandler(ctx) {
             },
           })
         }
-        return json(res, 200, panel.ok(patched.config))
+        return json(res, 200, panel.ok({ ...patched.config, account_scope: jevScopeInventory() }))
       }
       if (req.method === 'POST' && p === '/api/panel/jev-intercept/models') {
         const body = await readBody(req, 8192).catch(() => ({}))

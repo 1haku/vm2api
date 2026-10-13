@@ -20,7 +20,9 @@ import {
   classifyJev,
   isPolicyBlockMemory,
   jevDocument,
+  jevAccountInScope,
   jevModelDocument,
+  jevScopeConfigured,
   matchHardPolicy,
   policyBlockError,
 } from './jev-intercept.mjs'
@@ -121,10 +123,21 @@ export async function evaluateProtocolIntercept({
   repo,
   devices,
   requestId,
+  account = null,
   fetchImpl,
 } = {}) {
   // GPT / Codex traffic skips every layer unless the panel opts it in; once in, it runs the same chain.
-  if (jev?.openai_platform_enabled !== true && isOpenaiPlatformModel(inbound, body)) return pass('platform')
+  // With an account scope set, the Codex hop asks again once the slot is claimed: only there is
+  // the serving account known. Until then the request waits instead of being judged.
+  if (isOpenaiPlatformModel(inbound, body)) {
+    if (!jevScopeConfigured(jev)) {
+      if (jev?.openai_platform_enabled !== true) return pass('platform')
+    } else if (!account) {
+      return pass('scope-wait')
+    } else if (!jevAccountInScope(jev, account)) {
+      return pass('scope')
+    }
+  }
   const distill = detectDistill({ inbound, body, official, zeroInject }, distillRules)
   if (distill.action === 'block') {
     const evidence = (distill.hits || [])
