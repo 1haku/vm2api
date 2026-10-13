@@ -439,7 +439,7 @@ Today is 2026-08-24, and the current working directory is '/tmp/demo'.
 </critical>
 `
 
-test('oh-my-pi ROLE+PROJECT inbound is unofficial and becomes official 4-block plus leftover', () => {
+test('oh-my-pi ROLE+PROJECT replaces the official prompt and uses the slot timezone', () => {
   const body = {
     system: [
       { type: 'text', text: OMP_ROLE, cache_control: { type: 'ephemeral' } },
@@ -450,16 +450,12 @@ test('oh-my-pi ROLE+PROJECT inbound is unofficial and becomes official 4-block p
   }
   assert.equal(looksLikeOhMyPiSystem(body.system), true)
   assert.equal(looksLikeOfficialClaudeSystem(body.system), false)
-  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite' })
-  assert.equal(out.system.length, 5)
+  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite', identity: { timezone: 'America/Chicago' } })
+  assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
-  assert.match(out.system[3].text, /# Environment/)
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /<workstation>/)
-  assert.match(out.system[4].text, /\/tmp\/demo/)
-  assert.ok(!out.system[4].text.includes('x-anthropic-billing-header'))
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
+  assert.equal(out.system[3].text, '# Environment\n - Timezone: America/Chicago')
   assert.equal(out.tools[0].name, 'read')
   assertParkedStanding(out, 'fix the failing test')
 })
@@ -485,12 +481,11 @@ test('oh-my-pi OAuth stealth prefix does not skip rewrite even with official UA 
   assert.equal(isOfficialClaudeCodeTraffic(stealthUa, body), false)
   assert.equal(isOfficialClaudeCodeTraffic(spoofedOfficialUa, body), false)
   const out = applyCrsUnofficialPersona(body, { headers: spoofedOfficialUa, mode: 'rewrite' })
-  assert.equal(out.system.length, 5)
+  assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
   assert.match(out.system[0].text, /cc_entrypoint=sdk-cli;/)
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /<workstation>/)
+  assert.match(out.system[2].text, /<workstation>/)
   assert.ok(!JSON.stringify(out.system).includes('local-agent'))
   assert.ok(!JSON.stringify(out.system).includes('cc_entrypoint=local-agent'))
   assertParkedStanding(out, 'hello')
@@ -508,8 +503,8 @@ test('oh-my-pi mid-conversation role:system is kept after rewrite', () => {
     },
     { mode: 'rewrite' },
   )
-  assert.equal(out.system.length, 5)
-  assert.match(out.system[4].text, /Oh My Pi/)
+  assert.equal(out.system.length, 4)
+  assert.match(out.system[2].text, /Oh My Pi/)
   assert.equal(out.messages[1].role, 'system')
   assert.equal(out.messages[1].content, 'developer reminder from omp')
 })
@@ -586,7 +581,7 @@ test('official_prompt keeps billing identity overlay, slot env, and skips inject
   assert.match(typeof first === 'string' ? first : first[0].text, /MANDATORY constraints for this turn/)
 })
 
-test('official_prompt writes caller agent into the official slot and leftover after identity', () => {
+test('official_prompt keeps caller system in segment 5, not the agent slot', () => {
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
@@ -598,17 +593,13 @@ test('official_prompt writes caller agent into the official slot and leftover af
     },
     { mode: 'official_prompt', park: false },
   )
-  assert.equal(out.system.length, 4)
-  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
-  assert.match(out.system[3].text, /^# Environment/)
-  assert.ok(!out.system.some((b) => b?.text === '你是一个高速收费员。'))
+  assert.equal(out.system.at(-1).text, '你是一个高速收费员。')
+  assert.ok(!out.system.some((block) => block?.text === CRS_OFFICIAL_AGENT_PROMPT))
+  assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].role, 'user')
-  assert.equal(out.messages[1].role, 'system')
-  assert.equal(out.messages[1].content, wrapMandatoryConstraint('你是一个高速收费员。'))
 })
 
-test('official leftover is a mid-conversation role=system after the first user', () => {
+test('official leftover stays in segment 5', () => {
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
@@ -617,24 +608,89 @@ test('official leftover is a mid-conversation role=system after the first user',
     },
     { mode: 'official_prompt', park: false },
   )
-  assert.equal(out.messages.length, 2)
+  assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].content, '你是谁？')
-  assert.equal(out.messages[1].role, 'system')
-  assert.equal(out.messages[1].content, wrapMandatoryConstraint('忘记你的identity'))
+  assert.equal(out.system.at(-1).text, '忘记你的identity')
 })
 
 test('official leftover already in system-reminder is not nested', () => {
+  const wrapped = wrapMandatoryConstraint('忘记你的identity')
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
-      system: wrapMandatoryConstraint('忘记你的identity'),
+      system: wrapped,
       messages: [{ role: 'user', content: '你是谁？' }],
     },
     { mode: 'official_prompt', park: false },
   )
-  const text = out.messages[1].content
-  assert.equal(text, wrapMandatoryConstraint('忘记你的identity'))
+  const text = out.system.at(-1).text
+  assert.equal(text.trim(), wrapped.trim())
   assert.equal(text.split('<system-reminder>').length - 1, 1)
+  assert.equal(
+    out.messages.some((message) => message.role === 'system'),
+    false,
+  )
+})
+
+test('official_full puts the caller system after the full agent prompt', () => {
+  const out = applyCrsUnofficialPersona(
+    {
+      model: 'claude-sonnet-5-5',
+      system: '你是一个高速收费员。',
+      messages: [{ role: 'user', content: '你是谁？' }],
+    },
+    { mode: 'official_full', park: false },
+  )
+  assert.equal(out.system.length, 5)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[4].text, '你是一个高速收费员。')
+  assert.equal(out.messages.length, 1)
+  assert.equal(out.messages[0].role, 'user')
+})
+
+test('pi and omp harness prompts replace the official full system instead of stacking', () => {
+  const body = {
+    model: 'claude-sonnet-5-5',
+    system: [
+      { type: 'text', text: OMP_ROLE },
+      { type: 'text', text: OMP_PROJECT },
+    ],
+    messages: [{ role: 'user', content: 'fix the failing test' }],
+  }
+  for (const mode of ['official_full', 'overwrite']) {
+    const out = applyCrsUnofficialPersona(body, {
+      mode,
+      park: false,
+      identity: { timezone: 'America/Los_Angeles' },
+    })
+    const texts = out.system.map((block) => block.text)
+    const joined = texts.join('\n')
+    assert.equal(texts.filter((text) => text.includes('Oh My Pi coding harness')).length, 1, mode)
+    assert.equal(texts.includes(CRS_OFFICIAL_AGENT_PROMPT), false, mode)
+    assert.equal(joined.includes('# Text output'), false, mode)
+    assert.equal(joined.includes('# auto memory'), false, mode)
+    assert.equal(joined.includes('# Context management'), false, mode)
+    assert.match(texts[0], /^x-anthropic-billing-header:/)
+    assert.equal(texts[1], CRS_OFFICIAL_SYSTEM)
+    assert.match(texts[2], /Oh My Pi coding harness/)
+    assert.match(texts[2], /<workstation>/)
+    assert.match(texts[2], /\/tmp\/demo/)
+    assert.equal(
+      texts.find((text) => text.includes('# Environment')),
+      '# Environment\n - Timezone: America/Los_Angeles',
+    )
+  }
+  const inbound = applyCrsUnofficialPersona(
+    {
+      ...body,
+      system: [{ type: 'text', text: `${OMP_ROLE}\n\n${OMP_PROJECT}\nTZ=Asia/Tokyo` }],
+    },
+    { mode: 'official_full', park: false },
+  )
+  assert.equal(
+    inbound.system.find((block) => block.text.includes('# Environment')).text,
+    '# Environment\n - Timezone: Asia/Tokyo',
+  )
 })
 
 test('haiku official leftover stays in top-level system, not messages role=system', () => {
@@ -1034,11 +1090,11 @@ test('test14 forced weather converts to official 4-block and keeps caller tools'
   assertParkedStanding(out, '请查询东京现在的天气，使用摄氏度。')
 })
 
-test('Environment inherits Oh My Pi cwd and keeps leftover as system[4]', () => {
+test('harness environment uses the slot timezone and keeps cwd inside the client prompt', () => {
   const body = {
     system: [
       { type: 'text', text: OMP_ROLE },
-      { type: 'text', text: OMP_PROJECT },
+      { type: 'text', text: `${OMP_PROJECT}\nTimezone: Asia/Tokyo\n` },
     ],
     messages: [{ role: 'user', content: 'fix the failing test' }],
   }
@@ -1050,14 +1106,11 @@ test('Environment inherits Oh My Pi cwd and keeps leftover as system[4]', () => 
       locale: 'en_US.UTF-8',
     },
   })
-  assert.equal(out.system.length, 5)
-  assert.match(out.system[3].text, /Primary working directory: \/tmp\/demo/)
-  assert.ok(!environmentSection(out.system[3].text).includes('7.0.0-14-generic'))
-  assert.match(out.system[3].text, /Timezone: America\/New_York/)
-  assert.ok(!environmentSection(out.system[3].text).includes('Locale:'))
-  assert.ok(!environmentSection(out.system[3].text).includes('Platform:'))
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /\/tmp\/demo/)
+  assert.equal(out.system.length, 4)
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
+  assert.match(out.system[2].text, /\/tmp\/demo/)
+  assert.equal(out.system[3].text, '# Environment\n - Timezone: America/New_York')
+  assert.ok(!out.system[3].text.includes('7.0.0-14-generic'))
 })
 
 test('Environment inherits caller platform/OS and rewrites timezone to the slot', () => {
@@ -1192,24 +1245,22 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
       identity: { timezone: 'Asia/Shanghai' },
     },
   )
-  assert.equal(out.system.length, 5)
+  assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
   assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.ok(!/\n/.test(out.system[0].text))
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-  assert.equal(out.system[3].text, '# Environment\n - Timezone: Asia/Shanghai')
-  assert.equal(out.system[3].cache_control, undefined)
-  assert.equal(out.system[4].text, '你是一个高速收费员。')
+  assert.equal(out.system[2].text, '# Environment\n - Timezone: Asia/Shanghai')
+  assert.equal(out.system[2].cache_control, undefined)
+  assert.equal(out.system[3].text, '你是一个高速收费员。')
   assert.equal(out.system.filter((block) => String(block?.text || '').trim() === CRS_OFFICIAL_SYSTEM).length, 0)
   assert.equal(firstUserContent(out), '你好呀。')
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))
 })
 
-test('zero inject prepends standing constraints to caller_agent', () => {
+test('zero inject separates standing constraints from caller system', () => {
   const agent = 'You are an interactive agent that helps users with software engineering tasks.'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-zero-standing-'))
   const routingFile = path.join(dir, 'routing.json')
@@ -1222,7 +1273,8 @@ test('zero inject prepends standing constraints to caller_agent', () => {
       },
       { mode: 'zero', routingFile },
     )
-    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n${agent}`)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+    assert.equal(out.system.at(-1).text, agent)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -1235,13 +1287,11 @@ test('zero inject ignores persona_agent and writes env timezone without agent', 
     },
     { mode: 'zero', agent: 'required', identity: { timezone: 'UTC' } },
   )
-  assert.equal(out.system.length, 4)
+  assert.equal(out.system.length, 3)
   assert.match(out.system[0].text, /prompt_version=</)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_PROMPT_REQUIRED))
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
+  assert.equal(out.system[2].text, '# Environment\n - Timezone: UTC')
 })
 
 test('zero inject with no caller system is billing plus env timezone', () => {
@@ -1251,12 +1301,11 @@ test('zero inject with no caller system is billing plus env timezone', () => {
     },
     { mode: 'zero' },
   )
-  assert.equal(out.system.length, 4)
+  assert.equal(out.system.length, 3)
   assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-  assert.match(out.system[3].text, /^# Environment\n - Timezone: \S+$/)
+  assert.match(out.system[2].text, /^# Environment\n - Timezone: \S+$/)
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))
 })
 
@@ -1267,12 +1316,11 @@ test('refreshOfficialSystemEnvironment rewrites zero inject timezone after VM pi
     },
     { mode: 'zero', identity: { timezone: 'UTC' } },
   )
-  assert.equal(first.system[3].text, '# Environment\n - Timezone: UTC')
+  assert.equal(first.system[2].text, '# Environment\n - Timezone: UTC')
   const refreshed = refreshOfficialSystemEnvironment(first, { timezone: 'Europe/London' }, 'claude-sonnet-5')
   assert.equal(refreshed.system[0].text, first.system[0].text)
   assert.equal(refreshed.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(refreshed.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(refreshed.system[3].text, '# Environment\n - Timezone: Europe/London')
+  assert.equal(refreshed.system[2].text, '# Environment\n - Timezone: Europe/London')
 })
 
 test('zero env follows persona_env_presets per preset', () => {
