@@ -84,6 +84,7 @@ export function buildOnboardingPayload({
   status = 'pending',
   updated_at = null,
   base_url = null,
+  profile = null,
   facts = {},
 } = {}) {
   const r = normalizePanelRole(role)
@@ -91,6 +92,7 @@ export function buildOnboardingPayload({
   const steps = stepsForRole(r).map((id) => ({ id, done: isStepDone(id, facts) }))
   const done_count = steps.filter((s) => s.done).length
   const total = steps.length
+  const chosen = profile === 'personal' || profile === 'relay' ? profile : null
   return {
     user,
     role: r,
@@ -98,6 +100,7 @@ export function buildOnboardingPayload({
     updated_at: updated_at || null,
     needs_welcome: needsWelcome(st, done_count, total),
     base_url: panelBaseUrl(base_url),
+    profile: chosen,
     steps,
     done_count,
     total,
@@ -115,14 +118,26 @@ export function saveOnboardingState(settings, map) {
   return map
 }
 
+function chosenProfile(value) {
+  return value === 'personal' || value === 'relay' ? value : null
+}
+
 export function recordOf(state, username) {
   const rec = state?.[username]
-  if (!rec || typeof rec !== 'object') return { status: 'pending', updated_at: null }
+  const profile = chosenProfile(rec?.profile)
+  if (!rec || typeof rec !== 'object') return { status: 'pending', updated_at: null, profile: null }
   const status = rec.status
   if (status === 'completed' || status === 'dismissed' || status === 'pending') {
-    return { status, updated_at: rec.updated_at || null }
+    return { status, updated_at: rec.updated_at || null, profile }
   }
-  return { status: 'pending', updated_at: rec.updated_at || null }
+  return { status: 'pending', updated_at: rec.updated_at || null, profile }
+}
+
+function statusRecord(state, username, status, now) {
+  const profile = recordOf(state, username).profile
+  const rec = { status, updated_at: now }
+  if (profile) rec.profile = profile
+  return rec
 }
 
 export function applyOnboardingAction(state, username, action, now = new Date().toISOString()) {
@@ -130,10 +145,10 @@ export function applyOnboardingAction(state, username, action, now = new Date().
   const next = { ...(state && typeof state === 'object' && !Array.isArray(state) ? state : {}) }
   switch (action) {
     case 'complete':
-      next[key] = { status: 'completed', updated_at: now }
+      next[key] = statusRecord(next, key, 'completed', now)
       return next
     case 'dismiss':
-      next[key] = { status: 'dismissed', updated_at: now }
+      next[key] = statusRecord(next, key, 'dismissed', now)
       return next
     case 'reset':
       delete next[key]
@@ -144,4 +159,18 @@ export function applyOnboardingAction(state, username, action, now = new Date().
       throw err
     }
   }
+}
+
+export function setOnboardingProfile(state, username, mode, now = new Date().toISOString()) {
+  const profile = chosenProfile(mode)
+  if (!profile) {
+    const err = new Error('mode 必须是 personal 或 relay')
+    err.code = 'invalid_profile'
+    throw err
+  }
+  const key = String(username || '')
+  const next = { ...(state && typeof state === 'object' && !Array.isArray(state) ? state : {}) }
+  const prev = recordOf(next, key)
+  next[key] = { status: prev.status, updated_at: now, profile }
+  return next
 }
