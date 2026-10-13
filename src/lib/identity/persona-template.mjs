@@ -86,10 +86,10 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'agent',
-      note: '与官方完整同一槽。只放常驻约束；用户 system 进第5段。空则丢弃。',
+      note: '常驻约束 + 调用方官方提示词。空则丢弃。1h 断点在本块，排在会变的第5段之前。',
       drop_if_empty: true,
       type: 'text',
-      text: '{{agent_standing}}',
+      text: '{{agent_standing}}{{caller_agent}}',
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' }),
     }),
     Object.freeze({
@@ -101,7 +101,7 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'caller_system',
-      note: '第5段可选。顶层 system、role=system 等调用方提示词都写这里，空则丢弃',
+      note: '第5段可选。只放顶层 system。role=system 留在消息列表。空则丢弃',
       drop_if_empty: true,
       type: 'text',
       text: '{{caller_system}}',
