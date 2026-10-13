@@ -1830,6 +1830,7 @@ export function applyCrsUnofficialPersona(
   body,
   {
     officialClient = false,
+    forceConfigured = false,
     cliVersion,
     mode,
     park,
@@ -1843,7 +1844,7 @@ export function applyCrsUnofficialPersona(
   } = {},
 ) {
   if (!body || typeof body !== 'object') return body
-  if (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body)) return body
+  if (!forceConfigured && (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body))) return body
   const fromFile = routingFile ? personaOptionsFromRoutingFile(routingFile) : null
   const resolved = normalizePersonaMode(mode ?? fromFile?.mode)
   // Read the caller's agent prompt before stripLeakySystem drops it as known official text.
