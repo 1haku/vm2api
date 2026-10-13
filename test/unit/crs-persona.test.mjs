@@ -26,6 +26,7 @@ import {
   DEFAULT_PERSONA_MODE,
   FINGERPRINT_SALT,
   isOfficialClaudeCodeTraffic,
+  officialCcPassthroughFromRouting,
   isLeakyClientFingerprint,
   looksLikeOhMyPiSystem,
   looksLikeOfficialClaudeSystem,
@@ -127,6 +128,12 @@ test('forceConfigured custom preset still writes billing and keeps caller system
   )
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.match(out.system.at(-1).text, /caller text/)
+})
+
+test('official family passthrough is off unless the protocol switch is on', () => {
+  assert.equal(officialCcPassthroughFromRouting({}), false)
+  assert.equal(officialCcPassthroughFromRouting({ compatibility: { official_cc_passthrough: false } }), false)
+  assert.equal(officialCcPassthroughFromRouting({ compatibility: { official_cc_passthrough: true } }), true)
 })
 
 test('empty unofficial system still writes the official full prompt', () => {

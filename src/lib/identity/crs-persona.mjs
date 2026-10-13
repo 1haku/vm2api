@@ -1636,6 +1636,11 @@ export function detectProxiedOfficialCcFromRoutingFile(filePath) {
   }
 }
 
+/** Off unless the protocol tab turns it on. Official family then keeps its inbound system. */
+export function officialCcPassthroughFromRouting(routing = {}) {
+  return routing?.compatibility?.official_cc_passthrough === true
+}
+
 function stripSystemCacheControl(body) {
   if (!Array.isArray(body.system)) return body
   let changed = false

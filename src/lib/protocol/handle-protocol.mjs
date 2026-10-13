@@ -106,6 +106,7 @@ import {
   extractFirstUserText,
   isOfficialClaudeCodeTraffic,
   isProxiedOfficialClaudeCode,
+  officialCcPassthroughFromRouting,
   personaHidesUsageFromRoutingFile,
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
@@ -1155,19 +1156,21 @@ export function createHandleProtocol(deps) {
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
           const routingNow = getRouting()
+          const officialPassthrough = officialTraffic && officialCcPassthroughFromRouting(routingNow)
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
-            // Any configured preset, including custom. Official traffic no longer
-            // skips it. Classifier requests keep their own system.
-            const panelRewrite = !requestContext
+            // Classifier keeps its own system. Official family keeps its inbound
+            // system only when the protocol tab turns passthrough on.
+            const panelRewrite = !requestContext && !officialPassthrough
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
+              preserveSystem: officialPassthrough,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
@@ -1226,7 +1229,7 @@ export function createHandleProtocol(deps) {
           }
 
           cacheTtl = requestedCacheTtl
-          if (!requestContext && (modeOverride || officialTraffic)) {
+          if (!requestContext && !officialPassthrough && (modeOverride || officialTraffic)) {
             const configuredMode = modeOverride || resolveSlotPersonaPreset(selected.vm, routingNow)
             const rewritten = applyCrsUnofficialPersona(structuredClone(personaIn), {
               officialClient: false,
