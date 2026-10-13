@@ -434,7 +434,7 @@ Today is 2026-08-24, and the current working directory is '/tmp/demo'.
 </critical>
 `
 
-test('oh-my-pi ROLE+PROJECT inbound is unofficial and becomes official 4-block plus leftover', () => {
+test('oh-my-pi ROLE+PROJECT replaces the official prompt and uses the slot timezone', () => {
   const body = {
     system: [
       { type: 'text', text: OMP_ROLE, cache_control: { type: 'ephemeral' } },
@@ -445,16 +445,12 @@ test('oh-my-pi ROLE+PROJECT inbound is unofficial and becomes official 4-block p
   }
   assert.equal(looksLikeOhMyPiSystem(body.system), true)
   assert.equal(looksLikeOfficialClaudeSystem(body.system), false)
-  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite' })
-  assert.equal(out.system.length, 5)
+  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite', identity: { timezone: 'America/Chicago' } })
+  assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
-  assert.match(out.system[3].text, /# Environment/)
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /<workstation>/)
-  assert.match(out.system[4].text, /\/tmp\/demo/)
-  assert.ok(!out.system[4].text.includes('x-anthropic-billing-header'))
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
+  assert.equal(out.system[3].text, '# Environment\n - Timezone: America/Chicago')
   assert.equal(out.tools[0].name, 'read')
   assertParkedStanding(out, 'fix the failing test')
 })
@@ -480,12 +476,11 @@ test('oh-my-pi OAuth stealth prefix does not skip rewrite even with official UA 
   assert.equal(isOfficialClaudeCodeTraffic(stealthUa, body), false)
   assert.equal(isOfficialClaudeCodeTraffic(spoofedOfficialUa, body), false)
   const out = applyCrsUnofficialPersona(body, { headers: spoofedOfficialUa, mode: 'rewrite' })
-  assert.equal(out.system.length, 5)
+  assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
   assert.match(out.system[0].text, /cc_entrypoint=sdk-cli;/)
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /<workstation>/)
+  assert.match(out.system[2].text, /<workstation>/)
   assert.ok(!JSON.stringify(out.system).includes('local-agent'))
   assert.ok(!JSON.stringify(out.system).includes('cc_entrypoint=local-agent'))
   assertParkedStanding(out, 'hello')
@@ -503,8 +498,8 @@ test('oh-my-pi mid-conversation role:system is kept after rewrite', () => {
     },
     { mode: 'rewrite' },
   )
-  assert.equal(out.system.length, 5)
-  assert.match(out.system[4].text, /Oh My Pi/)
+  assert.equal(out.system.length, 4)
+  assert.match(out.system[2].text, /Oh My Pi/)
   assert.equal(out.messages[1].role, 'system')
   assert.equal(out.messages[1].content, 'developer reminder from omp')
 })
@@ -680,6 +675,17 @@ test('pi and omp harness prompts replace the official full system instead of sta
       '# Environment\n - Timezone: America/Los_Angeles',
     )
   }
+  const inbound = applyCrsUnofficialPersona(
+    {
+      ...body,
+      system: [{ type: 'text', text: `${OMP_ROLE}\n\n${OMP_PROJECT}\nTZ=Asia/Tokyo` }],
+    },
+    { mode: 'official_full', park: false },
+  )
+  assert.equal(
+    inbound.system.find((block) => block.text.includes('# Environment')).text,
+    '# Environment\n - Timezone: Asia/Tokyo',
+  )
 })
 
 test('haiku official leftover stays in top-level system, not messages role=system', () => {
@@ -1079,11 +1085,11 @@ test('test14 forced weather converts to official 4-block and keeps caller tools'
   assertParkedStanding(out, '请查询东京现在的天气，使用摄氏度。')
 })
 
-test('Environment inherits Oh My Pi cwd and keeps leftover as system[4]', () => {
+test('harness environment uses the slot timezone and keeps cwd inside the client prompt', () => {
   const body = {
     system: [
       { type: 'text', text: OMP_ROLE },
-      { type: 'text', text: OMP_PROJECT },
+      { type: 'text', text: `${OMP_PROJECT}\nTimezone: Asia/Tokyo\n` },
     ],
     messages: [{ role: 'user', content: 'fix the failing test' }],
   }
@@ -1095,14 +1101,11 @@ test('Environment inherits Oh My Pi cwd and keeps leftover as system[4]', () => 
       locale: 'en_US.UTF-8',
     },
   })
-  assert.equal(out.system.length, 5)
-  assert.match(out.system[3].text, /Primary working directory: \/tmp\/demo/)
-  assert.ok(!environmentSection(out.system[3].text).includes('7.0.0-14-generic'))
-  assert.match(out.system[3].text, /Timezone: America\/New_York/)
-  assert.ok(!environmentSection(out.system[3].text).includes('Locale:'))
-  assert.ok(!environmentSection(out.system[3].text).includes('Platform:'))
-  assert.match(out.system[4].text, /Oh My Pi coding harness/)
-  assert.match(out.system[4].text, /\/tmp\/demo/)
+  assert.equal(out.system.length, 4)
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
+  assert.match(out.system[2].text, /\/tmp\/demo/)
+  assert.equal(out.system[3].text, '# Environment\n - Timezone: America/New_York')
+  assert.ok(!out.system[3].text.includes('7.0.0-14-generic'))
 })
 
 test('Environment inherits caller platform/OS and rewrites timezone to the slot', () => {

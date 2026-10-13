@@ -36,6 +36,7 @@ import { uuidFromSeed } from './identity-rewrite.mjs'
 import { CCH_PLACEHOLDER } from './cch.mjs'
 import { CLAUDE_CLI_UA_RE, isOfficialClaudeUa } from './official-claude-ua.mjs'
 import { modelSupportsMidConversationSystem } from '../protocol/anthropic-policy.mjs'
+import { validTimezone } from '../core/timezone.mjs'
 import {
   AGENT_EXPANSION_CACHE_CONTROL,
   CRS_AGENT_EXPANSION,
@@ -669,10 +670,15 @@ export function buildZeroAgentBlock(agent = DEFAULT_PERSONA_AGENT) {
 }
 
 export function requiredTimezone(identity = {}, facts = {}) {
+  return configuredTimezone(identity, facts) || 'UTC'
+}
+
+/** Slot config, then fingerprint, then a timezone recognized in the client prompt. */
+export function configuredTimezone(identity = {}, facts = {}) {
   const src = identity && typeof identity === 'object' ? identity : {}
   const fp = src.fingerprint || {}
   const inbound = facts && typeof facts === 'object' ? facts : {}
-  return String(src.timezone || fp.timezone || inbound.timezone || '').trim() || 'UTC'
+  return validTimezone(src.timezone) || validTimezone(fp.timezone) || validTimezone(inbound.timezone) || ''
 }
 
 export function buildZeroBillingText(firstUserText, cliVersion = DEFAULT_CLI_VERSION, sessionId = '') {
@@ -846,7 +852,7 @@ function personaEnvForBody(body, { identity, model, overwrite = false, forceTime
   const facts = parseInboundEnvFacts(sourceTexts)
   const env = officialSystemEnvFromIdentity(identity, model || body.model, facts, { overwrite })
   if (forceTimezone) env.timezone = requiredTimezone(identity, facts)
-  return { env, sourceTexts }
+  return { env, sourceTexts, facts }
 }
 
 function officialEnvBlockIndex(system) {
@@ -864,7 +870,8 @@ export function refreshOfficialSystemEnvironment(body, identity, modelId) {
   const idx = officialEnvBlockIndex(body.system)
   if (idx < 0) return body
   const last = body.system[idx]
-  const tz = requiredTimezone(identity, {})
+  const tz = configuredTimezone(identity, {})
+  if (!tz) return body
   let text = applySlotTimezone(String(last.text || ''), tz)
   if (isOverwriteEnvironmentText(text)) {
     const loc = String(identity?.locale || identity?.fingerprint?.locale || '').trim()
@@ -1511,6 +1518,7 @@ export function looksLikeOhMyPiSystem(system) {
   if (/<system-conventions>/i.test(text) && /Oh My Pi/i.test(text)) return true
   if (/<system-conventions>/i.test(text) && /<workstation>/i.test(text)) return true
   if (/^ROLE\s*\n\s*=+/m.test(text) && /^PROJECT\s*\n\s*=+/m.test(text)) return true
+  if (/\b(?:oh my pi|pi coding harness|omp coding harness)\b/i.test(text)) return true
   return false
 }
 
@@ -1691,9 +1699,9 @@ function rewriteOfficialSystem(
   const ver = parseCliVersion(cliVersion)
   const indexes = billingIndexesFromMessages(messages)
   const extras = park ? collectPersonaRuleAppends(body, messages, routingFile) : []
-  const { env, sourceTexts } = personaEnvForBody(body, { identity, model, overwrite })
+  const { env, sourceTexts, facts } = personaEnvForBody(body, { identity, model, overwrite })
   // Legacy rewrite keeps mid-conversation role=system in the message list.
-  const harness = overwrite ? thirdPartyClientPrompt(body.system) : ''
+  const harness = thirdPartyClientPrompt(body.system)
   const leftover = harness ? '' : parkableSystemTexts(body.system).join('\n\n')
   let system
   if (shouldAttachSystemExpansion(body, routingFile)) {
@@ -1703,7 +1711,7 @@ function rewriteOfficialSystem(
   }
   if (harness && system[2]) {
     const timezoneOnly = buildOfficialEnvironmentSection(
-      { timezone: env.timezone },
+      { timezone: requiredTimezone(identity, facts) },
       { sourceTexts: [], contextManagement: false },
     )
     system = system.map((block, index) => {
@@ -1761,16 +1769,17 @@ function applyTemplatePersona(
   const zero = preset === 'zero'
   const blocks = resolvePersonaTemplate(preset, templates)
   const usesEnv = blocks.some((block) => extractTemplateVars(block?.text).includes('env'))
-  const { env, sourceTexts } = personaEnvForBody(body, {
+  const { env, sourceTexts, facts } = personaEnvForBody(body, {
     identity,
     model,
     overwrite: false,
     forceTimezone: zero || usesEnv,
   })
+  const harness = thirdPartyClientPrompt(body.system)
+  if (harness) env.timezone = requiredTimezone(identity, facts)
   if (zero) env.timezone = String(env.timezone || '').trim() || 'UTC'
   // Only pull the caller's agent prompt out of leftover when the template has a
   // slot for it, otherwise a template without {{caller_agent}} would drop it.
-  const harness = thirdPartyClientPrompt(body.system)
   const usesCallerAgent = !harness && blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
   const callerAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
   const leftover = harness
