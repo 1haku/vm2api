@@ -648,6 +648,28 @@ test('official_full puts the caller system after the full agent prompt', () => {
   assert.equal(out.messages[0].role, 'user')
 })
 
+test('pi and omp harness prompts replace the official full system instead of stacking', () => {
+  const body = {
+    model: 'claude-sonnet-5-5',
+    system: [
+      { type: 'text', text: OMP_ROLE },
+      { type: 'text', text: OMP_PROJECT },
+    ],
+    messages: [{ role: 'user', content: 'fix the failing test' }],
+  }
+  for (const mode of ['official_full', 'overwrite']) {
+    const out = applyCrsUnofficialPersona(body, { mode, park: false })
+    const texts = out.system.map((block) => block.text)
+    assert.equal(texts.filter((text) => text.includes('Oh My Pi coding harness')).length, 1, mode)
+    assert.equal(texts.includes(CRS_OFFICIAL_AGENT_PROMPT), false, mode)
+    assert.match(texts[0], /^x-anthropic-billing-header:/)
+    assert.equal(texts[1], CRS_OFFICIAL_SYSTEM)
+    assert.match(texts[2], /Oh My Pi coding harness/)
+    assert.match(texts[2], /<workstation>/)
+    assert.match(texts.find((text) => text.includes('# Environment')) || '', /\/tmp\/demo/)
+  }
+})
+
 test('haiku official leftover stays in top-level system, not messages role=system', () => {
   const out = applyCrsUnofficialPersona(
     {

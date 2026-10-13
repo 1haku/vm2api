@@ -701,6 +701,7 @@ export function personaTemplateVars({
   agentStanding = '',
   withEnv = false,
   callerAgent = '',
+  agentOfficial = '',
   leftover = '',
   model = '',
 } = {}) {
@@ -712,7 +713,7 @@ export function personaTemplateVars({
     identity: CRS_OFFICIAL_SYSTEM,
     identity_compact: CRS_COMPACT_IDENTITY,
     agent_expansion: CRS_AGENT_EXPANSION,
-    agent_official: CRS_OFFICIAL_AGENT_PROMPT,
+    agent_official: agentOfficial || CRS_OFFICIAL_AGENT_PROMPT,
     agent_standing: String(agentStanding || ''),
     env: () => (withEnv ? envTimezoneOnly() : ''),
     caller_agent: String(callerAgent || '').trim(),
@@ -1509,6 +1510,15 @@ export function looksLikeOhMyPiSystem(system) {
   return false
 }
 
+/**
+ * pi / omp and the same harness shape. This text replaces the official
+ * full prompt block. It is not also appended after that block.
+ */
+export function thirdPartyClientPrompt(system) {
+  if (!looksLikeOhMyPiSystem(system)) return ''
+  return parkableSystemTexts(system).join('\n\n').trim()
+}
+
 /** Official CLI system: billing header, official entrypoint, identity, or child-hop prompt. */
 export function looksLikeOfficialClaudeSystem(system) {
   if (looksLikeOhMyPiSystem(system)) return false
@@ -1679,12 +1689,16 @@ function rewriteOfficialSystem(
   const extras = park ? collectPersonaRuleAppends(body, messages, routingFile) : []
   const { env, sourceTexts } = personaEnvForBody(body, { identity, model, overwrite })
   // Legacy rewrite keeps mid-conversation role=system in the message list.
-  const leftover = parkableSystemTexts(body.system).join('\n\n')
+  const harness = overwrite ? thirdPartyClientPrompt(body.system) : ''
+  const leftover = harness ? '' : parkableSystemTexts(body.system).join('\n\n')
   let system
   if (shouldAttachSystemExpansion(body, routingFile)) {
     system = buildFourBlocks(firstUserText, ver, env, sessionId, sourceTexts, { overwrite, indexes })
   } else {
     system = buildBillingAndOfficial(firstUserText, ver, sessionId, indexes)
+  }
+  if (harness && system[2]) {
+    system = system.map((block, index) => (index === 2 ? { ...block, text: harness } : block))
   }
   system = appendOfficialSystemPrompt(system, leftover)
   if (!extras.length) return { ...body, system, messages }
@@ -1744,13 +1758,16 @@ function applyTemplatePersona(
   if (zero) env.timezone = String(env.timezone || '').trim() || 'UTC'
   // Only pull the caller's agent prompt out of leftover when the template has a
   // slot for it, otherwise a template without {{caller_agent}} would drop it.
-  const usesCallerAgent = blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
+  const harness = thirdPartyClientPrompt(body.system)
+  const usesCallerAgent = !harness && blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
   const callerAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
-  const leftover = usesCallerAgent
-    ? parkableSystemTexts(body.system)
-        .filter((text) => !looksLikeAgentPrompt(text))
-        .join('\n\n')
-    : collectCallerSystemAppend(body)
+  const leftover = harness
+    ? ''
+    : usesCallerAgent
+      ? parkableSystemTexts(body.system)
+          .filter((text) => !looksLikeAgentPrompt(text))
+          .join('\n\n')
+      : collectCallerSystemAppend(body)
   const modelId = model || body.model
   const midSystem = leftoverGoesToMidSystem(preset, modelId)
   const system = renderPersonaTemplate(
@@ -1764,6 +1781,7 @@ function applyTemplatePersona(
       agentStanding: agentStandingVar(switches, preset),
       withEnv: presetFlagEnabled(switches, 'persona_env_presets', preset),
       callerAgent,
+      agentOfficial: harness,
       leftover: midSystem ? '' : leftover,
       model: modelId,
     }),
