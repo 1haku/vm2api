@@ -206,7 +206,6 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       {
         id: 'agent_slot',
         hide: true,
-        drop_if_empty: true,
         type: 'text',
         text: '{{agent_standing}}',
         cache_control: { type: 'ephemeral', ttl: '1h' },

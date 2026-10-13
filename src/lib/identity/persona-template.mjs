@@ -158,7 +158,6 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     Object.freeze({
       id: 'agent_slot',
       hide: true,
-      drop_if_empty: true,
       type: 'text',
       text: '{{agent_standing}}',
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),

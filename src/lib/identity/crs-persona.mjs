@@ -711,8 +711,14 @@ export function personaTemplateVars({
   leftover = '',
   model = '',
   timezoneOnlyEnv = false,
+  messages = null,
 } = {}) {
-  const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
+  const billing = buildBillingAttributionText(
+    firstUserText,
+    cliVersion,
+    sessionId,
+    billingIndexesFromMessages(messages),
+  )
   const envTimezoneOnly = () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false })
   return {
     billing,
@@ -1777,7 +1783,7 @@ function applyTemplatePersona(
   })
   const harness = thirdPartyClientPrompt(body.system)
   if (harness) env.timezone = requiredTimezone(identity, facts)
-  if (zero) env.timezone = String(env.timezone || '').trim() || 'UTC'
+  env.timezone = String(env.timezone || '').trim() || requiredTimezone(identity, facts)
   // Only pull the caller's agent prompt out of leftover when the template has a
   // slot for it, otherwise a template without {{caller_agent}} would drop it.
   const usesCallerAgent = !harness && blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
@@ -1806,6 +1812,7 @@ function applyTemplatePersona(
       timezoneOnlyEnv: Boolean(harness),
       leftover: midSystem ? '' : leftover,
       model: modelId,
+      messages,
     }),
   )
   let outMessages = withoutCallerSystemMessages(messages)
