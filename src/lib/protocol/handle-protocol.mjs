@@ -43,7 +43,6 @@ import { normalizeCodexRouting } from './codex-route.mjs'
 import { hasClaudeCode1mSuffix } from './context-1m.mjs'
 import {
   DEFAULT_HEALTH_PROBE,
-  HEALTH_REAL_HEADER,
   isHealthRealBypass,
   isHealthShape,
   synthesizeProtocolResponse,
@@ -1048,7 +1047,8 @@ export function createHandleProtocol(deps) {
     const pinVmId = req.apiKeyKind === 'master' && isValidVmId(pinVmRaw) ? pinVmRaw : null
     // Pin is panel test-chat / diagnostics (manage). Unpinned /v1 is dispatch.
     const ownerScope = pinVmId ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
-    const healthReal = isHealthRealBypass(req.headers)
+    // Cache bypass is a client hint; only authenticated master-key probes may skip accounting.
+    const healthReal = req.apiKeyKind === 'master' && isHealthRealBypass(req.headers)
     // Cache lives per account; a failover to another account starts cold by design.
     const noteCachePrefix = (selected, sessionId, body) => {
       if (!sessionId) return
@@ -1427,7 +1427,7 @@ export function createHandleProtocol(deps) {
           if (vm) pool.syncQuotaSchedule(vm)
         }
       } catch {}
-      if (managedKey && !healthReal) {
+      if (managedKey) {
         try {
           apiKeyStore.recordUsage(managedKey, logBag.usage || {}, {
             model: logBag.upstream_model || logBag.model,
