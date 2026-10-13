@@ -50,6 +50,11 @@ import { officialSystemKinds } from '../../src/lib/protocol/case-features.mjs'
 import { sanitizeInboundCwd } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 import { officialMessagesBody } from '../../src/lib/protocol/anthropic-messages.mjs'
 
+// These legacy fixtures assert the explicit rewrite preset, not the v1.3.154 unset default.
+function applyLegacyRewritePersona(body, options = {}) {
+  return applyCrsUnofficialPersona(body, { mode: 'rewrite', ...options })
+}
+
 function firstUserContent(out) {
   const content = out.messages?.[0]?.content
   if (typeof content === 'string') return content
@@ -94,7 +99,7 @@ test('official Claude Code client leaves system untouched', () => {
 
 test('empty unofficial system still writes official 4 blocks', () => {
   const messages = [{ role: 'user', content: 'ping' }]
-  const out = applyCrsUnofficialPersona({ messages }, { officialClient: false })
+  const out = applyLegacyRewritePersona({ messages }, { officialClient: false })
   assert.equal(out.system.length, 4)
   assert.equal(out.system[0].cache_control, undefined)
   assert.match(
@@ -123,7 +128,7 @@ test('empty unofficial system still writes official 4 blocks', () => {
 })
 
 test('Environment defaults to slot timezone only; caller cwd is kept and tz overwritten', () => {
-  const bare = applyCrsUnofficialPersona(
+  const bare = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'hi' }],
     },
@@ -136,7 +141,7 @@ test('Environment defaults to slot timezone only; caller cwd is kept and tz over
   assert.ok(!bareEnv.includes('Primary working directory'))
   assert.ok(!bareEnv.includes('Locale:'))
   assert.ok(!bareEnv.includes('You have been invoked'))
-  const caller = applyCrsUnofficialPersona(
+  const caller = applyLegacyRewritePersona(
     {
       system: `# Environment
  - Primary working directory: /tmp/demo
@@ -174,7 +179,7 @@ test('overwrite inject writes full official agent and full Environment', () => {
 })
 
 test('inbound official tools keep the official 4-block expansion', () => {
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'ping' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
@@ -205,7 +210,7 @@ test('custom forced weather tool skips SWE expansion', () => {
     ],
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyLegacyRewritePersona(body, { officialClient: false })
   assert.equal(shouldAttachSystemExpansion(body), true)
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
@@ -213,7 +218,7 @@ test('custom forced weather tool skips SWE expansion', () => {
 })
 
 test('custom tools without force also skip SWE expansion', () => {
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'tokyo weather' }],
       tools: [{ name: 'get_weather' }],
@@ -226,7 +231,7 @@ test('custom tools without force also skip SWE expansion', () => {
 })
 
 test('Claude Code Bash tool still gets expansion', () => {
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'ls' }],
       tools: [{ name: 'Bash' }],
@@ -238,7 +243,7 @@ test('Claude Code Bash tool still gets expansion', () => {
 })
 
 test('forced official web_search still gets expansion', () => {
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'search' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
@@ -254,7 +259,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-persona-exp-'))
   const file = path.join(dir, 'routing.json')
   fs.writeFileSync(file, JSON.stringify({ compatibility: { persona_expansion: 'any_tools' } }))
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'weather' }],
       tools: [{ name: 'get_weather' }],
@@ -264,7 +269,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
   fs.writeFileSync(file, JSON.stringify({ compatibility: { persona_expansion: 'never' } }))
-  const never = applyCrsUnofficialPersona(
+  const never = applyLegacyRewritePersona(
     {
       messages: [{ role: 'user', content: 'search' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
@@ -294,7 +299,7 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
     ],
     messages: [{ role: 'user', content: firstUser }],
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyLegacyRewritePersona(body, { officialClient: false })
   assert.equal(out.system.length, 5)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -309,7 +314,7 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
 })
 
 test('standalone official line does not insert System Instructions', () => {
-  const out = applyCrsUnofficialPersona({
+  const out = applyLegacyRewritePersona({
     system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }],
     messages: [{ role: 'user', content: 'hi' }],
   })
@@ -1019,7 +1024,7 @@ test('test14 forced weather converts to official 4-block and keeps caller tools'
     tools,
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyLegacyRewritePersona(body, { officialClient: false })
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -1099,7 +1104,7 @@ test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezo
  - Platform: darwin
  - OS Version: Darwin 24.3.0 - Locale: zh_CN.UTF-8 - Timezone: Asia/Shanghai
 `
-  const first = applyCrsUnofficialPersona(
+  const first = applyLegacyRewritePersona(
     {
       system: leftover,
       messages: [{ role: 'user', content: 'continue' }],
@@ -1135,7 +1140,7 @@ test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezo
 })
 
 test('Environment inherits caller git/shell and Windows cwd', () => {
-  const out = applyCrsUnofficialPersona(
+  const out = applyLegacyRewritePersona(
     {
       system: `# Environment
  - Primary working directory: X:\\Users\\me\\proj
