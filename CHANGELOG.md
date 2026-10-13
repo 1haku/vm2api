@@ -30,6 +30,7 @@
 - 欢迎页补了各主要页面的一句话说明。配额、风险审计、密钥、虚拟机用量、内核重装多一句：配额闸在设置「配额」；风险审计是出站前的四道关；密钥用 `sk-vm-`，不要把主控密钥写进环境变量；5h/7d 用量在虚拟机列表；内核重装不改凭证、代理和容器。
 - system 提示词在没有 `persona_preset`、也没有 `persona_inject` 时默认完整官方提示词（`official_full`）。已写明的档位和旧的 `persona_inject` 不变。仓库里的 `routing.json` 本来就是这一档。
 - 自动额度探测和健康缓存改为默认关闭。预热拦截、`max_tokens` 下限和其余探测项不变。已在 live `routing.json` 里写成开的开关保持开。
+- 新增单槽「工作时段」（`policy.active_hours`：开工 / 收工、可选星期与钉住时区，开工晚于收工为跨夜班次）。窗口外该槽不参与调度：Claude 在模型与额度门禁之后判，Codex 直接跳过；整池都在休息时两侧都 503 `pool_unavailable` 并带 `Retry-After`（最近开窗时间）；Codex 续接 `previous_response_id` 时绑定槽在休息返回 409 `response_not_portable`。健康探测不挑休息中的槽，pin 诊断不受影响。时区取窗口自带值 → 槽位时区 → UTC，夏令时切换日按实际时刻判定。面板「调度」编辑器可设置，列表显示「休息时段」（受限），新增 `active_hours_timezone` / `active_hours_active` 字段；导出包、写回与重建保留窗口，无窗口导出为 `null`。
 
 已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 live `routing.json`、`vms/`、`data/`、`.env`。要让已部署的探测和健康缓存跟着新默认关掉，在设置 → 探测里关，或删掉 `usage_probe.enabled` / `health_probe.enabled` 后重启。
 

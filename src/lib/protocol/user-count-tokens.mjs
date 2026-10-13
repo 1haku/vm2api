@@ -156,8 +156,8 @@ function sendPoolFail(res, json, peeked) {
     return json(res, mapped.status, mapped.body)
   }
   const mapped = rewritePoolErrorForClient(makeError({ type: ErrorType.OVERLOADED, code, message: code, status: 503 }))
-  if (mapped.retryAfterSec) {
-    const retryMs = Number(peeked?.retry_after_ms)
+  const retryMs = Number(peeked?.retry_after_ms)
+  if (mapped.retryAfterSec || retryMs > 0) {
     const secs = retryMs > 0 ? Math.max(1, Math.ceil(retryMs / 1000)) : mapped.retryAfterSec
     res.setHeader?.('retry-after', String(secs))
   }
