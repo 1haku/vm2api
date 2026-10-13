@@ -23,7 +23,7 @@ export const PERSONA_PRESETS: readonly PersonaPreset[] = [
   'zero',
   'custom',
 ]
-export const DEFAULT_PERSONA_PRESET: PersonaPreset = 'official'
+export const DEFAULT_PERSONA_PRESET: PersonaPreset = 'official_full'
 export const OVERLAY_PRESETS: readonly OverlayPreset[] = [
   'off',
   'official',

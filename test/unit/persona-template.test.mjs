@@ -36,6 +36,7 @@ import {
   overlayPresetFromCompat,
   personaHidesUsageFromRoutingFile,
   personaPresetFromHopMode,
+  personaTemplateSettingsFromRouting,
   personaTemplateVars,
   wrapMandatoryConstraint,
 } from '../../src/lib/identity/crs-persona.mjs'
@@ -268,7 +269,7 @@ test('preset normalization accepts legacy aliases', () => {
   assert.equal(normalizePersonaPreset('full'), 'official_full')
   assert.equal(normalizePersonaPreset('official_prompt'), 'official')
   assert.equal(normalizePersonaPreset('0-inject'), 'zero')
-  assert.equal(normalizePersonaPreset('nonsense'), 'official')
+  assert.equal(normalizePersonaPreset('nonsense'), 'official_full')
   assert.equal(normalizeOverlayPreset('disabled'), 'off')
   assert.equal(normalizeOverlayPreset('slim'), 'minimal')
   assert.equal(personaPresetFromLegacyMode('rewrite'), 'custom')
@@ -397,6 +398,15 @@ test('legacy routing without persona_preset keeps the old rewrite path', () => {
     )
     assert.equal(out.system.length, 4)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
+  })
+})
+
+test('no persona preset and no inject uses the full official prompt', () => {
+  assert.equal(personaTemplateSettingsFromRouting({}).preset, 'official_full')
+  assert.equal(personaTemplateSettingsFromRouting({ compatibility: {} }).preset, 'official_full')
+  withRoutingFile({ overlay_preset: 'off' }, (file) => {
+    const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
+    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
   })
 })
 

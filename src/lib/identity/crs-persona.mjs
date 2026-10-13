@@ -1331,7 +1331,7 @@ export function overlayPresetFromCompat(compat = {}) {
 function personaTemplateSettingsFallback() {
   return {
     explicit: false,
-    preset: personaPresetFromLegacyMode(DEFAULT_PERSONA_MODE),
+    preset: DEFAULT_PERSONA_PRESET,
     templates: null,
     overlayPreset: DEFAULT_PERSONA_PARK ? 'official' : DEFAULT_OVERLAY_PRESET,
     overlayTemplates: null,
@@ -1340,15 +1340,20 @@ function personaTemplateSettingsFallback() {
   }
 }
 
+/** No persona_preset and no persona_inject → 完整官方提示词. An explicit inject stays on the legacy map. */
+function presetFromUnsetCompat(compat = {}) {
+  const inject = compat.persona_inject
+  if (inject != null && String(inject).trim() !== '') return personaPresetFromLegacyMode(inject)
+  return DEFAULT_PERSONA_PRESET
+}
+
 export function personaTemplateSettingsFromRouting(routing = {}) {
   const compat = routing?.compatibility || {}
   const raw = compat.persona_preset
   const explicit = raw != null && String(raw).trim() !== ''
   return {
     explicit,
-    preset: explicit
-      ? normalizePersonaPreset(raw)
-      : personaPresetFromLegacyMode(compat.persona_inject ?? DEFAULT_PERSONA_MODE),
+    preset: explicit ? normalizePersonaPreset(raw) : presetFromUnsetCompat(compat),
     templates: compat.persona_templates || null,
     overlayPreset: overlayPresetFromCompat(compat),
     overlayTemplates: compat.overlay_templates || null,
