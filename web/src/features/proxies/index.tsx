@@ -350,7 +350,7 @@ export function ProxiesPage() {
               showDescription={false}
               rows={2}
             />
-            <div className='grid gap-4 lg:grid-cols-[208px_minmax(0,1fr)]'>
+            <div className='grid gap-4 2xl:grid-cols-[208px_minmax(0,1fr)]'>
               <SectionSkeleton
                 titleWidth='w-10'
                 showDescription={false}
@@ -381,7 +381,7 @@ export function ProxiesPage() {
             onLocate={locate}
             onVmDragChange={setDragVm}
           />
-          <div className='grid items-start gap-4 lg:grid-cols-[208px_minmax(0,1fr)]'>
+          <div className='grid items-start gap-3 2xl:grid-cols-[208px_minmax(0,1fr)] 2xl:gap-4'>
             <ProxyRegionRail
               groups={regions}
               value={region}

@@ -7,7 +7,9 @@ import {
 } from './proxy-region'
 
 /**
- * 地区分面。宽屏是表格左侧的竖栏，窄屏折成表格上方可横向滚动的一排。
+ * 地区分面。超宽屏（2xl）是表格左侧的竖栏；更窄时折成表格上方的一排
+ * （sm 以上换行，手机横向滚动），把宽度让给表格 —— 笔记本宽度下竖栏会把
+ * 列表挤到表格断点以下，退回卡片排布。
  *
  * 每档右侧两个数：当前筛选下的条数、其中可绑的空位。找节点的问题通常是
  * 「这个地区还能不能塞」，所以空位和条数并排，不用点进去再数。
@@ -29,12 +31,12 @@ export function ProxyRegionRail({
   return (
     <nav
       aria-label='按地区筛选'
-      className='min-w-0 lg:sticky lg:top-20 lg:max-h-[calc(100svh-6rem)] lg:overflow-y-auto lg:overscroll-contain'
+      className='min-w-0 2xl:sticky 2xl:top-20 2xl:max-h-[calc(100svh-6rem)] 2xl:overflow-y-auto 2xl:overscroll-contain'
     >
-      <h3 className='mb-1.5 hidden px-2 text-xs font-medium text-muted-foreground lg:block'>
+      <h3 className='mb-1.5 hidden px-2 text-xs font-medium text-muted-foreground 2xl:block'>
         地区
       </h3>
-      <ul className='-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:gap-px lg:overflow-visible lg:px-0 lg:pb-0'>
+      <ul className='-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible 2xl:mx-0 2xl:flex-col 2xl:flex-nowrap 2xl:gap-px 2xl:px-0 2xl:pb-0'>
         <li className='shrink-0'>
           <RegionButton
             label='全部地区'
@@ -63,7 +65,7 @@ export function ProxyRegionRail({
               {on && g.cities.length ? (
                 <ul
                   aria-label={`${g.label}的城市`}
-                  className='hidden lg:mt-px lg:flex lg:flex-col lg:gap-px'
+                  className='hidden 2xl:mt-px 2xl:flex 2xl:flex-col 2xl:gap-px'
                 >
                   {g.cities.map((c) => (
                     <li key={c.city}>
@@ -86,9 +88,9 @@ export function ProxyRegionRail({
             </li>
           )
         })}
-        {/* 窄屏横排里城市跟在选中的国家后面，竖栏里它们已经嵌在国家下方。 */}
+        {/* 横排里城市跟在选中的国家后面，竖栏里它们已经嵌在国家下方。 */}
         {active?.cities.map((c) => (
-          <li key={`m-${c.city}`} className='shrink-0 lg:hidden'>
+          <li key={`m-${c.city}`} className='shrink-0 2xl:hidden'>
             <RegionButton
               label={c.city}
               tally={c}
@@ -133,11 +135,11 @@ function RegionButton({
       title={`${label}：${tally.count} 条，空位 ${tally.free}`}
       className={cn(
         'group flex h-8 w-full items-center gap-2 rounded-md px-2 text-start text-[13px] whitespace-nowrap transition-colors',
-        'border border-transparent bg-muted/50 lg:bg-transparent',
+        'border border-transparent bg-muted/50 2xl:bg-transparent',
         'hover:bg-accent/70 focus-visible:outline-2 focus-visible:outline-ring',
-        nested && 'lg:h-7 lg:ps-5 lg:text-xs',
+        nested && '2xl:h-7 2xl:ps-5 2xl:text-xs',
         on
-          ? 'border-primary/30 bg-primary/10 font-medium text-foreground lg:bg-primary/10'
+          ? 'border-primary/30 bg-primary/10 font-medium text-foreground 2xl:bg-primary/10'
           : within
             ? 'text-foreground'
             : 'text-muted-foreground hover:text-foreground',
