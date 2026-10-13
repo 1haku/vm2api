@@ -1,6 +1,14 @@
 export type OnboardingStatus = 'pending' | 'completed' | 'dismissed'
+export type UsageProfile = 'personal' | 'relay'
 
 export type OnboardingAction = 'complete' | 'dismiss' | 'reset'
+
+export type OnboardingProfileAction = {
+  action: 'profile'
+  mode: UsageProfile
+}
+
+export type OnboardingActionInput = OnboardingAction | OnboardingProfileAction
 
 export type OnboardingStep = {
   id: string
@@ -15,6 +23,7 @@ export type OnboardingPayload = {
   needs_welcome: boolean
   base_url: string | null
   steps: OnboardingStep[]
+  profile: UsageProfile | null
   done_count: number
   total: number
 }
