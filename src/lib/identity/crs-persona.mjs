@@ -1211,8 +1211,32 @@ export function prependToFirstUserMessage(messages, text) {
   return prependRawToFirstUserMessage(messages, wrapSystemReminder(text))
 }
 
+function messagePlainText(message) {
+  const content = message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((block) => (typeof block === 'string' ? block : block?.text || ''))
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** Top-level system plus every role=system turn. Segment 5 owns all of it. */
 export function collectCallerSystemAppend(body) {
-  return parkableSystemTexts(body.system).join('\n\n')
+  const parts = parkableSystemTexts(body?.system)
+  const messages = Array.isArray(body?.messages) ? body.messages : []
+  for (const message of messages) {
+    if (String(message?.role || '').toLowerCase() !== 'system') continue
+    const cleaned = dropRewriteSourceText(messagePlainText(message))
+    if (cleaned) parts.push(cleaned)
+  }
+  return parts.join('\n\n')
+}
+
+function withoutCallerSystemMessages(messages) {
+  if (!Array.isArray(messages)) return messages
+  if (!messages.some((message) => String(message?.role || '').toLowerCase() === 'system')) return messages
+  return messages.filter((message) => String(message?.role || '').toLowerCase() !== 'system')
 }
 
 function collectPersonaRuleAppends(body, messages, routingFile) {
@@ -1623,10 +1647,9 @@ export function insertMidConversationSystem(messages, text) {
   return [...messages.slice(0, idx + 1), { role: 'system', content: t }, ...messages.slice(idx + 1)]
 }
 
-/** Leftover → messages role=system only when that model accepts the role. */
-function leftoverGoesToMidSystem(preset, modelId) {
-  if (!modelSupportsMidConversationSystem(modelId)) return false
-  return preset === 'official' || preset === 'official_full'
+/** Caller text stays in system segment 5. Do not lift it into role=system. */
+function leftoverGoesToMidSystem() {
+  return false
 }
 
 function wrapExistingMidConversationSystem(messages) {
@@ -1655,7 +1678,8 @@ function rewriteOfficialSystem(
   const indexes = billingIndexesFromMessages(messages)
   const extras = park ? collectPersonaRuleAppends(body, messages, routingFile) : []
   const { env, sourceTexts } = personaEnvForBody(body, { identity, model, overwrite })
-  const leftover = collectCallerSystemAppend(body)
+  // Legacy rewrite keeps mid-conversation role=system in the message list.
+  const leftover = parkableSystemTexts(body.system).join('\n\n')
   let system
   if (shouldAttachSystemExpansion(body, routingFile)) {
     system = buildFourBlocks(firstUserText, ver, env, sessionId, sourceTexts, { overwrite, indexes })
@@ -1744,7 +1768,7 @@ function applyTemplatePersona(
       model: modelId,
     }),
   )
-  let outMessages = messages
+  let outMessages = withoutCallerSystemMessages(messages)
   if (midSystem) {
     outMessages = wrapExistingMidConversationSystem(insertMidConversationSystem(outMessages, leftover))
   }

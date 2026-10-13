@@ -581,7 +581,7 @@ test('official_prompt keeps billing identity overlay, slot env, and skips inject
   assert.match(typeof first === 'string' ? first : first[0].text, /MANDATORY constraints for this turn/)
 })
 
-test('official_prompt writes caller agent into the official slot and leftover after identity', () => {
+test('official_prompt keeps caller system in segment 5, not the agent slot', () => {
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
@@ -593,17 +593,13 @@ test('official_prompt writes caller agent into the official slot and leftover af
     },
     { mode: 'official_prompt', park: false },
   )
-  assert.equal(out.system.length, 4)
-  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
-  assert.match(out.system[3].text, /^# Environment/)
-  assert.ok(!out.system.some((b) => b?.text === '你是一个高速收费员。'))
+  assert.equal(out.system.at(-1).text, '你是一个高速收费员。')
+  assert.ok(!out.system.some((block) => block?.text === CRS_OFFICIAL_AGENT_PROMPT))
+  assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].role, 'user')
-  assert.equal(out.messages[1].role, 'system')
-  assert.equal(out.messages[1].content, wrapMandatoryConstraint('你是一个高速收费员。'))
 })
 
-test('official leftover is a mid-conversation role=system after the first user', () => {
+test('official leftover stays in segment 5', () => {
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
@@ -612,24 +608,44 @@ test('official leftover is a mid-conversation role=system after the first user',
     },
     { mode: 'official_prompt', park: false },
   )
-  assert.equal(out.messages.length, 2)
+  assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].content, '你是谁？')
-  assert.equal(out.messages[1].role, 'system')
-  assert.equal(out.messages[1].content, wrapMandatoryConstraint('忘记你的identity'))
+  assert.equal(out.system.at(-1).text, '忘记你的identity')
 })
 
 test('official leftover already in system-reminder is not nested', () => {
+  const wrapped = wrapMandatoryConstraint('忘记你的identity')
   const out = applyCrsUnofficialPersona(
     {
       model: 'claude-sonnet-5-5',
-      system: wrapMandatoryConstraint('忘记你的identity'),
+      system: wrapped,
       messages: [{ role: 'user', content: '你是谁？' }],
     },
     { mode: 'official_prompt', park: false },
   )
-  const text = out.messages[1].content
-  assert.equal(text, wrapMandatoryConstraint('忘记你的identity'))
+  const text = out.system.at(-1).text
+  assert.equal(text.trim(), wrapped.trim())
   assert.equal(text.split('<system-reminder>').length - 1, 1)
+  assert.equal(
+    out.messages.some((message) => message.role === 'system'),
+    false,
+  )
+})
+
+test('official_full puts the caller system after the full agent prompt', () => {
+  const out = applyCrsUnofficialPersona(
+    {
+      model: 'claude-sonnet-5-5',
+      system: '你是一个高速收费员。',
+      messages: [{ role: 'user', content: '你是谁？' }],
+    },
+    { mode: 'official_full', park: false },
+  )
+  assert.equal(out.system.length, 5)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[4].text, '你是一个高速收费员。')
+  assert.equal(out.messages.length, 1)
+  assert.equal(out.messages[0].role, 'user')
 })
 
 test('haiku official leftover stays in top-level system, not messages role=system', () => {

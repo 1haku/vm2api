@@ -40,6 +40,7 @@ import {
   personaTemplateVars,
   wrapMandatoryConstraint,
 } from '../../src/lib/identity/crs-persona.mjs'
+import { prepareCliHopBody } from '../../src/lib/protocol/outbound-attempt.mjs'
 import { validatePersonaRoutingPatch } from '../../src/lib/admin/panel-api.mjs'
 import {
   buildOfficialEnvironmentSection,
@@ -96,17 +97,14 @@ test('official preset renders billing + identity byte-identical to the legacy bu
   assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_SYSTEM })
 })
 
-test('official preset keeps caller agent and leftover system separate', () => {
+test('official preset keeps user system in the optional fifth segment', () => {
   const vars = personaTemplateVars({
     firstUserText: 'hi',
-    callerAgent: 'You are an interactive agent that helps users with software engineering tasks.',
     leftover: '你是一个高速收费员。',
   })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
-  assert.equal(out.length, 4)
-  assert.equal(out[2].text, 'You are an interactive agent that helps users with software engineering tasks.')
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
-  assert.deepEqual(out[3], { type: 'text', text: '你是一个高速收费员。' })
+  assert.equal(out.at(-1).text, '你是一个高速收费员。')
+  assert.ok(!out.some((block) => String(block.text).includes('{{caller_agent}}')))
 })
 
 test('official_full preset renders the complete agent prompt separately', () => {
@@ -305,7 +303,7 @@ test('zero preset ignores a stored overlay_preset and never parks', () => {
     const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
     assert.equal(out.messages, messages)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
-    assert.equal(out.system.length, 4)
+    assert.equal(out.system.length, 3)
     assert.match(out.system[0].text, /prompt_version=</)
   })
 })
@@ -334,22 +332,75 @@ test('official_full routing preset adds the complete agent prompt without changi
     assert.match(String(out.system[3].text || ''), /# Environment|# Text output/)
   })
 })
+test('cli-hop strip then rewrites official and official_full from the configured template', () => {
+  const inbound = {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 128,
+    messages: [{ role: 'user', content: 'hi' }],
+  }
+  for (const preset of ['official', 'official_full']) {
+    withRoutingFile({ persona_preset: preset, overlay_preset: 'off' }, (file) => {
+      const stripped = prepareCliHopBody(
+        applyCrsUnofficialPersona(structuredClone(inbound), { routingFile: file, mode: preset }),
+      )
+      const strippedTexts = Array.isArray(stripped.system)
+        ? stripped.system.map((block) => String(block.text || ''))
+        : []
+      assert.equal(
+        strippedTexts.some((text) => text.startsWith('x-anthropic-billing-header')),
+        false,
+        `${preset} strip drops billing`,
+      )
+      assert.equal(strippedTexts.includes(CRS_OFFICIAL_SYSTEM), false, `${preset} strip drops identity`)
+      const out = applyCrsUnofficialPersona(stripped, {
+        routingFile: file,
+        mode: preset,
+        officialClient: false,
+        identity: { timezone: 'America/New_York' },
+      })
+      const texts = out.system.map((block) => String(block.text || ''))
+      assert.ok(
+        texts.some((text) => text.startsWith('x-anthropic-billing-header')),
+        preset,
+      )
+      assert.ok(
+        texts.some((text) => text.includes(CRS_OFFICIAL_SYSTEM)),
+        preset,
+      )
+      assert.ok(
+        texts.some((text) => /# Environment|Timezone/.test(text)),
+        preset,
+      )
+      if (preset === 'official_full') {
+        assert.ok(
+          texts.some((text) => text.includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 40))),
+          preset,
+        )
+      }
+    })
+  }
+})
 
-test('official_full leftover is a mid-conversation role=system after the first user', () => {
+test('caller system and role=system both land in segment 5', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(
       {
         model: 'claude-sonnet-5-5',
         system: '不要使用你现在的identity跟我对话',
-        messages: [{ role: 'user', content: '你是谁？' }],
+        messages: [
+          { role: 'user', content: '你是谁？' },
+          { role: 'system', content: 'role-system-note' },
+        ],
       },
       { routingFile: file },
     )
-    assert.equal(out.system.length, 4)
-    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
-    assert.ok(!out.system.some((b) => b?.text === '不要使用你现在的identity跟我对话'))
-    assert.equal(out.messages[1].role, 'system')
-    assert.equal(out.messages[1].content, wrapMandatoryConstraint('不要使用你现在的identity跟我对话'))
+    assert.equal(out.system.length, 5)
+    assert.match(out.system[4].text, /不要使用你现在的identity跟我对话/)
+    assert.match(out.system[4].text, /role-system-note/)
+    assert.equal(
+      out.messages.some((message) => message.role === 'system'),
+      false,
+    )
   })
 })
 
@@ -484,11 +535,11 @@ test('template edits are hot-read without a restart', () => {
 })
 
 test('agent standing: default off, explicit per-preset on, and custom text replaces the default', () => {
-  const agent = 'You are an interactive agent that helps users with software engineering tasks.'
-  const body = () => ({ system: agent, messages: [{ role: 'user', content: 'hi' }] })
+  const caller = '你是一个高速收费员。'
+  const body = () => ({ system: caller, messages: [{ role: 'user', content: 'hi' }] })
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-    assert.equal(out.system[2].text, agent)
+    assert.equal(out.system.at(-1).text, caller)
   })
   withRoutingFile(
     { persona_preset: 'official', overlay_preset: 'off', agent_standing_presets: { official: true } },
@@ -510,16 +561,17 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
     { persona_preset: 'zero', agent_standing: 'Stay terse.', agent_standing_presets: { zero: true } },
     (file) => {
       const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-      assert.equal(out.system[2].text, `Stay terse.\n${agent}`)
+      assert.equal(out.system[2].text, 'Stay terse.\n')
+      assert.equal(out.system.at(-1).text, caller)
     },
   )
   withRoutingFile({ persona_preset: 'zero' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-    assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+    assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
   })
   withRoutingFile({ persona_preset: 'zero', agent_standing: '', agent_standing_presets: { zero: true } }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-    assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+    assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
   })
 })
 
