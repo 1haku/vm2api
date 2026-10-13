@@ -87,12 +87,12 @@ export function ProxyOverview({
       n + Math.max(0, proxyBindLimit(p, poolLimit) - proxyBoundIds(p).length)
     )
   }, 0)
-  const colHeight = proxies.length <= 40 ? 44 : 32
+  const colHeight = proxies.length <= 40 ? 32 : 24
 
   return (
     <section
       aria-labelledby='proxy-seat-title'
-      className='rounded-xl border bg-card px-4 pt-3.5 pb-3'
+      className='rounded-xl border bg-card px-4 pt-3 pb-2.5'
     >
       <div className='flex flex-wrap items-center justify-between gap-x-6 gap-y-2'>
         <div className='flex flex-wrap items-baseline gap-x-5 gap-y-1'>
@@ -158,7 +158,7 @@ export function ProxyOverview({
             {freeSeats} 个。
           </p>
           <div
-            className='mt-3 grid gap-[3px]'
+            className='mt-2.5 grid gap-[3px]'
             style={{
               gridTemplateColumns: 'repeat(auto-fill, minmax(12px, 1fr))',
             }}
@@ -190,19 +190,23 @@ export function ProxyOverview({
       )}
 
       {loose.length ? (
-        <div className='mt-2.5 flex flex-wrap items-start gap-x-3 gap-y-1.5 border-t pt-2.5'>
-          <h4 className='flex h-6 shrink-0 items-center gap-2 text-xs font-medium'>
-            待接代理
+        <div
+          className='mt-2 flex items-center gap-x-3 border-t pt-2'
+          title='拖到表格行上即可绑定；已绑的槽位也能拖去换绑'
+        >
+          <h4 className='flex shrink-0 items-center gap-2 text-xs font-medium'>
+            待接代理 {loose.length}
             {stranded ? (
               <span className='font-normal text-[color:var(--status-bad)]'>
-                {stranded} 台有凭证，出站被拒
+                {stranded} 台出站被拒
               </span>
             ) : null}
           </h4>
-          <div className='flex max-h-[3.25rem] min-w-0 flex-1 flex-wrap gap-1 overflow-y-auto'>
+          <div className='flex min-w-0 flex-1 gap-1 overflow-x-auto'>
             {loose.map((v) => (
               <VmChip
                 key={v.id}
+                compact
                 vm={v}
                 tone={v.has_token ? 'bad' : 'none'}
                 onDragChange={onVmDragChange}
@@ -210,13 +214,13 @@ export function ProxyOverview({
             ))}
           </div>
           {proxies.length ? (
-            <p className='flex h-6 shrink-0 items-center text-[11px] text-muted-foreground'>
-              拖到表格行上即可绑定；已绑的槽位也能拖去换绑。
+            <p className='hidden shrink-0 text-[11px] text-muted-foreground xl:block'>
+              拖到表格行上绑定
             </p>
           ) : null}
         </div>
       ) : vms.length ? (
-        <p className='mt-2.5 border-t pt-2.5 text-[11px] text-muted-foreground'>
+        <p className='mt-2 border-t pt-2 text-[11px] text-muted-foreground'>
           {vms.length} 台槽位都已接代理。
         </p>
       ) : null}

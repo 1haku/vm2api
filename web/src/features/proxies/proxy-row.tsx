@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Vm, VmProxySnap } from '@/types/panel-vm'
 import {
   Activity,
+  ChevronDown,
   Copy,
   Ellipsis,
   Globe,
@@ -10,6 +11,7 @@ import {
   Power,
   PowerOff,
   Trash2,
+  TriangleAlert,
 } from 'lucide-react'
 import { fmtAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -24,7 +26,7 @@ import {
 import { StatusMark } from '@/components/status-mark'
 import { ProxyBindPicker } from './proxy-bind-picker'
 import { type ProxyHover, useProxyHovered } from './proxy-hover'
-import { SeatCells, SeatCount } from './proxy-seats'
+import { SeatCells } from './proxy-seats'
 import {
   LOCAL_PROXY_HINT,
   LOCAL_PROXY_SHARED_QUOTA,
@@ -70,12 +72,19 @@ export type ProxyRowPending = {
 }
 
 /**
- * 表头与每一行共用的列模板。列表容器宽于 `@4xl` 才对齐成表格；更窄时行退回
- * 自动换行的卡片排布，表头隐藏、改用工具条里的排序下拉。
+ * 表头与每一行共用的列模板。列表容器宽于 `@3xl` 才对齐成表格；更窄时行退回
+ * 两行的卡片排布，表头隐藏、改用工具条里的排序下拉。
  */
 export const PROXY_ROW_GRID =
-  '@4xl/plist:grid @4xl/plist:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)_88px_84px_120px_minmax(0,1.7fr)_auto] @4xl/plist:items-center @4xl/plist:gap-x-4'
+  '@3xl/plist:grid @3xl/plist:grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_68px_72px_88px_minmax(0,1.3fr)_auto] @3xl/plist:items-center @3xl/plist:gap-x-3'
 
+/** 行内最多铺几片槽位，再多折成「+N」，展开后看全。 */
+const INLINE_CHIPS = 2
+
+/**
+ * 一条代理一行：只放找节点时要扫的东西（名称、地区、状态、延迟、席位、绑了谁），
+ * 单行约 40px。地址细节、错误、地理全文、全部操作在点名称展开的详情里。
+ */
 export function ProxyRow({
   proxy,
   vms,
@@ -101,6 +110,7 @@ export function ProxyRow({
   const id = proxy.id || ''
   const lit = useProxyHovered(hover, id)
   const [over, setOver] = useState(false)
+  const [open, setOpen] = useState(false)
   const ids = proxyBoundIds(proxy)
   const limit = proxyBindLimit(proxy, poolLimit)
   const health = proxyHealthKey(proxy)
@@ -108,9 +118,8 @@ export function ProxyRow({
   const local = proxyIsLocal(proxy)
   const bindable = proxyBindable(proxy)
   const free = Math.max(0, limit - ids.length)
-  const groups = local ? localBoundGroups(proxy, vmById) : []
-  const showGroups =
-    local && (proxy.bound_nodes != null || groups.some((g) => g.node_id))
+  const error =
+    proxy.last_error && !proxy.blocked_reason ? proxy.last_error : ''
   const accepts =
     !!dragVm &&
     bindable &&
@@ -118,6 +127,16 @@ export function ProxyRow({
     !ids.includes(dragVm) &&
     !pending.binding
   const alreadyHere = !!dragVm && ids.includes(dragVm)
+  const detailId = `proxy-detail-${id}`
+  const name = local
+    ? proxyHostText(proxy)
+    : proxy.label || proxyHostText(proxy)
+  const sub = local
+    ? `${LOCAL_PROXY_HINT} · ${LOCAL_PROXY_SHARED_QUOTA}`
+    : proxy.label
+      ? proxyHostText(proxy)
+      : ''
+  const hidden = Math.max(0, ids.length - INLINE_CHIPS)
 
   return (
     <li
@@ -143,151 +162,147 @@ export function ProxyRow({
         actions.onBind(id, vmId)
       }}
       className={cn(
-        'flex scroll-mt-24 flex-wrap items-start gap-x-4 gap-y-2 px-4 py-2.5 transition-[background-color,opacity,box-shadow] duration-200',
-        PROXY_ROW_GRID,
+        'scroll-mt-24 transition-[background-color,opacity,box-shadow] duration-200',
         dead && 'bg-red-1/60',
         lit && !dragVm && 'bg-accent/40',
+        open && !lit && 'bg-muted/25',
         dragVm && !accepts && !alreadyHere && 'opacity-40',
         accepts &&
           'shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--primary)_35%,transparent)]',
         over && 'bg-primary/8 shadow-[inset_0_0_0_2px_var(--primary)]'
       )}
     >
-      <div className='min-w-[200px] flex-[1.4] @4xl/plist:min-w-0'>
-        <p
-          className={cn(
-            'truncate text-[13px] font-medium',
-            !proxy.label && !local && 'field-host'
-          )}
-          title={
-            local ? proxyHostText(proxy) : proxy.label || proxyHostText(proxy)
-          }
-        >
-          {local ? proxyHostText(proxy) : proxy.label || proxyHostText(proxy)}
-        </p>
-        <div className='mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground'>
-          {local ? (
-            <span
-              className='truncate'
-              title={`${LOCAL_PROXY_HINT}：每台机器自己的公网出口，绑定额度${LOCAL_PROXY_SHARED_QUOTA}`}
-            >
-              {LOCAL_PROXY_HINT} · 绑定额度{LOCAL_PROXY_SHARED_QUOTA}
-            </span>
-          ) : proxy.label ? (
-            <span className='field-host truncate' title={proxyHostText(proxy)}>
-              {proxyHostText(proxy)}
-            </span>
-          ) : null}
-          {proxy.address_family === 6 ? (
-            <span className='shrink-0'>IPv6</span>
-          ) : null}
-          {proxy.has_auth ? (
-            <Lock className='size-3 shrink-0' aria-label='已配账密' />
-          ) : null}
-        </div>
-        {proxy.last_error && !proxy.blocked_reason ? (
-          <p
-            className={cn(
-              'field-host mt-0.5 truncate text-[11px]',
-              dead
-                ? 'text-[color:var(--status-bad)]'
-                : 'text-[color:var(--status-warn)]'
-            )}
-            title={proxy.last_error}
-          >
-            {proxy.last_error}
-            {Number(proxy.consecutive_failures) > 1
-              ? ` · 连续 ${proxy.consecutive_failures} 次`
-              : ''}
-          </p>
-        ) : null}
-      </div>
-
-      <GeoCell proxy={proxy} local={local} />
-
-      <div className='shrink-0 pt-0.5 @4xl/plist:pt-0'>
-        <StatusMark tone={proxyStatusTone(proxy)} />
-      </div>
-
-      <div className='w-[84px] shrink-0 @4xl/plist:w-auto'>
-        <Latency proxy={proxy} />
-        <p className='mt-1 truncate text-[11px] text-muted-foreground'>
-          {fmtAgo(proxy.last_probe_at) || '未探测'}
-          {local ? ' · 控制面' : ''}
-        </p>
-      </div>
-
       <div
-        role='meter'
-        aria-label='已绑席位'
-        aria-valuemin={0}
-        aria-valuemax={limit}
-        aria-valuenow={ids.length}
-        aria-valuetext={
-          local
-            ? `已绑 ${ids.length} / ${limit}（${LOCAL_PROXY_SHARED_QUOTA}）`
-            : `已绑 ${ids.length} / ${limit}`
-        }
-        className='flex w-[150px] shrink-0 items-center gap-2 @4xl/plist:w-auto'
+        className={cn(
+          'flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-1.5',
+          PROXY_ROW_GRID
+        )}
       >
-        <SeatCount used={ids.length} limit={limit} className='w-11 shrink-0' />
-        <SeatCells
-          used={ids.length}
-          limit={limit}
-          color={PROXY_HEALTH_SOLID[health]}
-          className='min-w-0 flex-1'
-        />
-      </div>
+        <button
+          type='button'
+          aria-expanded={open}
+          aria-controls={detailId}
+          onClick={() => setOpen((v) => !v)}
+          title={open ? '收起详情' : '展开详情'}
+          className='group/name flex min-w-0 basis-full items-center gap-2 rounded-sm text-start focus-visible:outline-2 focus-visible:outline-ring @3xl/plist:basis-auto'
+        >
+          <ChevronDown
+            aria-hidden='true'
+            className={cn(
+              'size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200 group-hover/name:text-foreground',
+              !open && '-rotate-90'
+            )}
+          />
+          <span
+            className={cn(
+              'min-w-0 shrink truncate text-[13px] font-medium group-hover/name:underline group-hover/name:underline-offset-2',
+              !proxy.label && !local && 'field-host'
+            )}
+          >
+            {name}
+          </span>
+          {sub ? (
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-[11px] text-muted-foreground',
+                !local && 'field-host'
+              )}
+            >
+              {sub}
+            </span>
+          ) : (
+            <span className='flex-1' />
+          )}
+          {proxy.has_auth ? (
+            <Lock
+              className='size-3 shrink-0 text-muted-foreground'
+              aria-label='已配账密'
+            />
+          ) : null}
+          {error ? (
+            <TriangleAlert
+              className={cn(
+                'size-3.5 shrink-0',
+                dead
+                  ? 'text-[color:var(--status-bad)]'
+                  : 'text-[color:var(--status-warn)]'
+              )}
+              aria-label={`最近错误：${error}`}
+            />
+          ) : null}
+        </button>
 
-      {/* 卡片排布时放到最后独占一行，操作按钮就能跟席位留在同一行。 */}
-      <div className='order-last min-w-0 basis-full space-y-1.5 @4xl/plist:order-none @4xl/plist:basis-auto'>
-        {showGroups
-          ? groups.map((group) => (
-              <div key={group.node_id || 'control'} className='space-y-1'>
-                <p className='text-[11px] text-muted-foreground'>
-                  {localBoundGroupLabel(group)}
-                  {group.node_id ? ' · 出口为该节点本机' : ''}
-                </p>
-                <div className='flex flex-wrap items-center gap-1'>
-                  {group.bound_vm_ids.map((vmId) => (
-                    <VmChip
-                      key={vmId}
-                      vm={vmById.get(vmId)}
-                      vmId={vmId}
-                      tone={dead ? 'bad' : 'ok'}
-                      disabled={pending.binding}
-                      onUnbind={() => actions.onUnbind(id, vmId)}
-                      onDragChange={actions.onVmDragChange}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))
-          : null}
-        <div className='flex flex-wrap items-center gap-1'>
-          {showGroups
-            ? null
-            : ids.map((vmId) => (
-                <VmChip
-                  key={vmId}
-                  vm={vmById.get(vmId)}
-                  vmId={vmId}
-                  tone={dead ? 'bad' : 'ok'}
-                  disabled={pending.binding}
-                  onUnbind={() => actions.onUnbind(id, vmId)}
-                  onDragChange={actions.onVmDragChange}
-                />
-              ))}
+        <GeoText proxy={proxy} local={local} />
+
+        <StatusMark tone={proxyStatusTone(proxy)} />
+
+        <Latency proxy={proxy} local={local} />
+
+        <div
+          role='meter'
+          aria-label='已绑席位'
+          aria-valuemin={0}
+          aria-valuemax={limit}
+          aria-valuenow={ids.length}
+          aria-valuetext={
+            local
+              ? `已绑 ${ids.length} / ${limit}（${LOCAL_PROXY_SHARED_QUOTA}）`
+              : `已绑 ${ids.length} / ${limit}`
+          }
+          className='flex w-[88px] shrink-0 items-center gap-2 @3xl/plist:w-auto'
+        >
+          <span className='w-9 shrink-0 text-xs tabular-nums'>
+            <span
+              className={cn(
+                'font-semibold',
+                ids.length > limit
+                  ? 'text-[color:var(--status-warn)]'
+                  : !ids.length && 'text-muted-foreground'
+              )}
+            >
+              {ids.length}
+            </span>
+            <span className='text-muted-foreground'>/{limit}</span>
+          </span>
+          <SeatCells
+            used={ids.length}
+            limit={limit}
+            color={PROXY_HEALTH_SOLID[health]}
+            className='min-w-0 flex-1'
+          />
+        </div>
+
+        {/* 卡片排布时放不下就整体换到下一行，不在行内被裁掉。 */}
+        <div className='flex min-w-[180px] flex-1 items-center gap-1 overflow-hidden @3xl/plist:min-w-0'>
+          {ids.slice(0, INLINE_CHIPS).map((vmId) => (
+            <VmChip
+              key={vmId}
+              compact
+              vm={vmById.get(vmId)}
+              vmId={vmId}
+              tone={dead ? 'bad' : 'ok'}
+              disabled={pending.binding}
+              onUnbind={() => actions.onUnbind(id, vmId)}
+              onDragChange={actions.onVmDragChange}
+            />
+          ))}
+          {hidden ? (
+            <button
+              type='button'
+              onClick={() => setOpen(true)}
+              aria-label={`还有 ${hidden} 台，展开查看`}
+              className='inline-flex h-6 shrink-0 items-center rounded-md bg-muted px-1.5 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground'
+            >
+              +{hidden}
+            </button>
+          ) : null}
           {over ? (
-            <span className='inline-flex h-6 items-center rounded-md border border-dashed border-primary px-2 text-xs text-primary'>
-              松开绑定到这里
+            <span className='inline-flex h-6 shrink-0 items-center rounded-md border border-dashed border-primary px-2 text-xs text-primary'>
+              松开绑定
             </span>
-          ) : !bindable ? (
-            <span className='text-xs text-muted-foreground'>
-              {health === 'off' ? '已禁用，不接新槽位' : '已失效，不接新槽位'}
-            </span>
-          ) : free > 0 ? (
+          ) : bindable && free > 0 ? (
             <ProxyBindPicker
+              compact
               vms={vms}
               boundHere={ids}
               ownerOf={ownerOf}
@@ -295,83 +310,350 @@ export function ProxyRow({
               disabled={pending.binding}
               onBind={(vmId) => actions.onBind(id, vmId)}
             />
-          ) : ids.length ? null : (
-            <span className='text-xs text-muted-foreground'>无空位</span>
-          )}
+          ) : !ids.length ? (
+            <span className='truncate text-xs text-muted-foreground'>
+              {!bindable ? (health === 'off' ? '已禁用' : '已失效') : '无空位'}
+            </span>
+          ) : null}
+        </div>
+
+        <div className='ms-auto flex shrink-0 items-center @3xl/plist:ms-0'>
+          <Button
+            size='icon'
+            variant='ghost'
+            className='size-7'
+            onClick={() => actions.onProbe(id)}
+            loading={pending.probe === id}
+            disabled={!!proxy.blocked_reason}
+            aria-label='测通'
+            title='测通：只测 SOCKS TCP，不打 Anthropic'
+          >
+            <Activity />
+          </Button>
+          <RowMenu
+            proxy={proxy}
+            local={local}
+            pending={pending}
+            actions={actions}
+          />
         </div>
       </div>
 
-      <div className='ms-auto flex shrink-0 items-center gap-0.5 @4xl/plist:ms-0'>
-        <Button
-          size='icon'
-          variant='ghost'
-          className='size-8'
-          onClick={() => actions.onProbe(id)}
-          loading={pending.probe === id}
-          disabled={!!proxy.blocked_reason}
-          aria-label='测通'
-          title='测通：只测 SOCKS TCP，不打 Anthropic'
-        >
-          <Activity />
-        </Button>
-        <Button
-          size='icon'
-          variant='ghost'
-          className='size-8'
-          onClick={() => actions.onGeo(id)}
-          loading={pending.geo === id}
-          disabled={!!proxy.blocked_reason}
-          aria-label='测地理'
-          title='测地理：经这条代理查出口 IP 的国家 / 城市 / 时区'
-        >
-          <Globe />
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size='icon'
-              variant='ghost'
-              className='size-8'
-              aria-label='更多操作'
-              loading={pending.copy === id || pending.toggle === id}
-            >
-              <Ellipsis />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='end' className='w-44'>
-            {local ? null : (
-              <>
-                <DropdownMenuItem onSelect={() => actions.onCopy(id)}>
-                  <Copy />
-                  复制地址（含账密）
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => actions.onEdit(id)}>
-                  <Pencil />
-                  编辑 / 改名
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuItem onSelect={() => actions.onToggleEnabled(proxy)}>
-              {proxy.enabled === false ? <Power /> : <PowerOff />}
-              {proxy.enabled === false ? '启用' : '禁用'}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant='destructive'
-              onSelect={() => actions.onDelete(id)}
-            >
-              <Trash2 />
-              删除
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {open ? (
+        <ProxyDetail
+          id={detailId}
+          proxy={proxy}
+          vms={vms}
+          vmById={vmById}
+          ownerOf={ownerOf}
+          ids={ids}
+          free={free}
+          bindable={bindable}
+          dead={dead}
+          local={local}
+          error={error}
+          pending={pending}
+          actions={actions}
+        />
+      ) : null}
     </li>
   )
 }
 
-/** 地区列：国家 · 城市为主，时区退到第二行。名称没写地区时，这一列就是找节点的依据。 */
-function GeoCell({
+function RowMenu({
+  proxy,
+  local,
+  pending,
+  actions,
+}: {
+  proxy: VmProxySnap
+  local: boolean
+  pending: ProxyRowPending
+  actions: ProxyRowActions
+}) {
+  const id = proxy.id || ''
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size='icon'
+          variant='ghost'
+          className='size-7'
+          aria-label='更多操作'
+          loading={
+            pending.geo === id || pending.copy === id || pending.toggle === id
+          }
+        >
+          <Ellipsis />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-44'>
+        <DropdownMenuItem
+          disabled={!!proxy.blocked_reason}
+          onSelect={() => actions.onGeo(id)}
+        >
+          <Globe />
+          测地理
+        </DropdownMenuItem>
+        {local ? null : (
+          <>
+            <DropdownMenuItem onSelect={() => actions.onCopy(id)}>
+              <Copy />
+              复制地址（含账密）
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => actions.onEdit(id)}>
+              <Pencil />
+              编辑 / 改名
+            </DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuItem onSelect={() => actions.onToggleEnabled(proxy)}>
+          {proxy.enabled === false ? <Power /> : <PowerOff />}
+          {proxy.enabled === false ? '启用' : '禁用'}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant='destructive'
+          onSelect={() => actions.onDelete(id)}
+        >
+          <Trash2 />
+          删除
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** 展开详情：行里省掉的全部信息与绑定管理。不重复行内已有的状态 / 延迟 / 席位读数。 */
+function ProxyDetail({
+  id,
+  proxy,
+  vms,
+  vmById,
+  ownerOf,
+  ids,
+  free,
+  bindable,
+  dead,
+  local,
+  error,
+  pending,
+  actions,
+}: {
+  id: string
+  proxy: VmProxySnap
+  vms: Vm[]
+  vmById: Map<string, Vm>
+  ownerOf: Map<string, VmProxySnap>
+  ids: string[]
+  free: number
+  bindable: boolean
+  dead: boolean
+  local: boolean
+  error: string
+  pending: ProxyRowPending
+  actions: ProxyRowActions
+}) {
+  const pxId = proxy.id || ''
+  const geo = proxy.geo
+  const groups = local ? localBoundGroups(proxy, vmById) : []
+  const showGroups =
+    local && (proxy.bound_nodes != null || groups.some((g) => g.node_id))
+  const chip = (vmId: string) => (
+    <VmChip
+      key={vmId}
+      vm={vmById.get(vmId)}
+      vmId={vmId}
+      tone={dead ? 'bad' : 'ok'}
+      disabled={pending.binding}
+      onUnbind={() => actions.onUnbind(pxId, vmId)}
+      onDragChange={actions.onVmDragChange}
+    />
+  )
+  return (
+    <div
+      id={id}
+      className='mx-4 mb-2.5 space-y-3 rounded-lg border bg-background/60 px-4 py-3 text-xs'
+    >
+      <dl className='grid gap-x-6 gap-y-2.5 sm:grid-cols-[auto_minmax(0,1fr)]'>
+        <DetailField label='地址'>
+          <span className='field-host'>{proxyHostText(proxy)}</span>
+          {local ? (
+            <span className='text-muted-foreground'>
+              {' '}
+              · {LOCAL_PROXY_HINT}，每台机器自己的公网出口，绑定额度
+              {LOCAL_PROXY_SHARED_QUOTA}
+            </span>
+          ) : null}
+          <span className='text-muted-foreground'>
+            {proxy.has_auth ? ' · 有账密' : ' · 无账密'}
+            {proxy.address_family === 6 ? ' · IPv6' : ''}
+          </span>
+        </DetailField>
+        <DetailField label='出口'>
+          {geo?.country || geo?.timezone ? (
+            <span>
+              {[geo.country || geo.country_code, geo.city, geo.timezone]
+                .filter(Boolean)
+                .join(' · ')}
+              <span className='text-muted-foreground'>
+                {[geo.isp, geo.ip].filter(Boolean).length
+                  ? ` · ${[geo.isp, geo.ip].filter(Boolean).join(' · ')}`
+                  : ''}
+                {local ? ' · 控制面探测，节点槽从节点本机出网' : ''}
+              </span>
+            </span>
+          ) : (
+            <span className='text-muted-foreground'>
+              {geo?.error ? `地理检测失败：${geo.error}` : '地理未检测'}
+            </span>
+          )}
+        </DetailField>
+        <DetailField label='探测'>
+          <span className='text-muted-foreground'>
+            {proxy.last_probe_at
+              ? `${fmtAgo(proxy.last_probe_at)}探测`
+              : '还没探测过'}
+          </span>
+          {error ? (
+            <span
+              className={cn(
+                'field-host block break-all',
+                dead
+                  ? 'text-[color:var(--status-bad)]'
+                  : 'text-[color:var(--status-warn)]'
+              )}
+            >
+              {error}
+              {Number(proxy.consecutive_failures) > 1
+                ? ` · 连续 ${proxy.consecutive_failures} 次`
+                : ''}
+            </span>
+          ) : null}
+        </DetailField>
+        <DetailField label='已绑槽位'>
+          <div className='space-y-1.5'>
+            {showGroups ? (
+              groups.map((group) => (
+                <div key={group.node_id || 'control'} className='space-y-1'>
+                  <p className='text-[11px] text-muted-foreground'>
+                    {localBoundGroupLabel(group)}
+                    {group.node_id ? ' · 出口为该节点本机' : ''}
+                  </p>
+                  <div className='flex flex-wrap gap-1'>
+                    {group.bound_vm_ids.map(chip)}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className='flex flex-wrap items-center gap-1'>
+                {ids.map(chip)}
+                {!ids.length ? (
+                  <span className='text-muted-foreground'>还没有绑定槽位</span>
+                ) : null}
+              </div>
+            )}
+            {bindable && free > 0 ? (
+              <ProxyBindPicker
+                vms={vms}
+                boundHere={ids}
+                ownerOf={ownerOf}
+                free={free}
+                disabled={pending.binding}
+                onBind={(vmId) => actions.onBind(pxId, vmId)}
+              />
+            ) : (
+              <p className='text-muted-foreground'>
+                {!bindable
+                  ? proxyHealthKey(proxy) === 'off'
+                    ? '已禁用，不接新槽位'
+                    : '已失效，不接新槽位'
+                  : '已满，不接新槽位；把槽位拖到别的代理行可以换绑'}
+              </p>
+            )}
+          </div>
+        </DetailField>
+      </dl>
+      <div className='flex flex-wrap gap-1.5'>
+        <Button
+          size='sm'
+          variant='outline'
+          className='h-7 text-xs'
+          onClick={() => actions.onGeo(pxId)}
+          loading={pending.geo === pxId}
+          disabled={!!proxy.blocked_reason}
+        >
+          <Globe aria-hidden='true' />
+          测地理
+        </Button>
+        {local ? null : (
+          <>
+            <Button
+              size='sm'
+              variant='outline'
+              className='h-7 text-xs'
+              onClick={() => actions.onCopy(pxId)}
+              loading={pending.copy === pxId}
+            >
+              <Copy aria-hidden='true' />
+              复制地址
+            </Button>
+            <Button
+              size='sm'
+              variant='outline'
+              className='h-7 text-xs'
+              onClick={() => actions.onEdit(pxId)}
+            >
+              <Pencil aria-hidden='true' />
+              编辑 / 改名
+            </Button>
+          </>
+        )}
+        <Button
+          size='sm'
+          variant='outline'
+          className='h-7 text-xs'
+          onClick={() => actions.onToggleEnabled(proxy)}
+          loading={pending.toggle === pxId}
+        >
+          {proxy.enabled === false ? (
+            <Power aria-hidden='true' />
+          ) : (
+            <PowerOff aria-hidden='true' />
+          )}
+          {proxy.enabled === false ? '启用' : '禁用'}
+        </Button>
+        <Button
+          size='sm'
+          variant='ghost'
+          className='ms-auto h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive'
+          onClick={() => actions.onDelete(pxId)}
+        >
+          <Trash2 aria-hidden='true' />
+          删除
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function DetailField({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <>
+      <dt className='pt-px text-muted-foreground'>{label}</dt>
+      <dd className='min-w-0'>{children}</dd>
+    </>
+  )
+}
+
+/** 地区：国家代码 · 城市，一行。时区、ISP 在悬停提示和展开详情里。 */
+function GeoText({
   proxy,
   local = false,
 }: {
@@ -379,48 +661,44 @@ function GeoCell({
   local?: boolean
 }) {
   const geo = proxy.geo
-  const note = local ? '控制面探测' : null
-  if (!geo?.timezone && !geo?.country) {
-    return (
-      <div className='min-w-[120px] flex-1 text-[11px] text-muted-foreground @4xl/plist:min-w-0'>
-        <p className='truncate'>{geo?.error ? '地理检测失败' : '地理未检测'}</p>
-        {note ? <p className='mt-0.5 truncate'>{note}</p> : null}
-      </div>
-    )
-  }
-  const country = geo.country_code || geo.country
+  const country = geo?.country_code || geo?.country
+  const title =
+    [geo?.timezone, geo?.isp, geo?.ip, local ? '控制面探测' : null]
+      .filter(Boolean)
+      .join(' · ') || undefined
   return (
-    <div
-      className='min-w-[120px] flex-1 @4xl/plist:min-w-0'
-      title={[geo.ip, geo.isp, note].filter(Boolean).join(' · ') || undefined}
-    >
-      <p className='truncate text-xs'>
-        {country ? (
+    <p className='min-w-0 truncate text-xs' title={title}>
+      {country ? (
+        <>
           <span className='font-medium tracking-[0.02em]'>{country}</span>
-        ) : null}
-        {country && geo.city ? (
-          <span className='text-muted-foreground'> · </span>
-        ) : null}
-        {geo.city}
-      </p>
-      <p className='mt-0.5 truncate text-[11px] text-muted-foreground'>
-        {[geo.timezone, note].filter(Boolean).join(' · ')}
-      </p>
-    </div>
+          {geo?.city ? (
+            <span className='text-muted-foreground'> · {geo.city}</span>
+          ) : null}
+        </>
+      ) : (
+        <span className='text-muted-foreground'>
+          {geo?.error ? '检测失败' : '未测地理'}
+        </span>
+      )}
+    </p>
   )
 }
 
 const BAR_H = [5, 8, 11]
 
-function Latency({ proxy }: { proxy: VmProxySnap }) {
+function Latency({ proxy, local }: { proxy: VmProxySnap; local: boolean }) {
   const tone = proxyLatencyTone(proxy)
   const bars = proxySignalBars(proxy)
   const color =
     tone === 'caution'
       ? 'var(--status-caution-solid)'
       : 'var(--status-ok-solid)'
+  const ago = fmtAgo(proxy.last_probe_at)
   return (
-    <div className='flex items-end gap-1.5'>
+    <div
+      className='flex shrink-0 items-end gap-1.5'
+      title={`${ago ? `${ago}探测` : '未探测'}${local ? ' · 控制面' : ''}`}
+    >
       <span aria-hidden='true' className='flex items-end gap-[2px] pb-px'>
         {BAR_H.map((h, i) => (
           <span
@@ -438,7 +716,7 @@ function Latency({ proxy }: { proxy: VmProxySnap }) {
       </span>
       <span
         className={cn(
-          'field-metric text-[13px] leading-none',
+          'field-metric text-xs leading-none',
           proxyFieldClass(tone)
         )}
       >

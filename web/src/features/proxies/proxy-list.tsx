@@ -200,7 +200,7 @@ export function ProxyList({
         ) : null}
 
         {/* 宽屏用表头排序；表头隐藏时才需要这组下拉。 */}
-        <div className='ms-auto flex items-center gap-1 @4xl/plist:hidden'>
+        <div className='ms-auto flex items-center gap-1 @3xl/plist:hidden'>
           <Select
             value={sortKey}
             onValueChange={(v) => onSortKey(v as ProxySortKey)}
@@ -244,7 +244,7 @@ export function ProxyList({
         <>
           <div
             className={cn(
-              'hidden border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground',
+              'hidden border-b bg-muted/30 px-4 py-1 text-[11px] font-medium text-muted-foreground',
               PROXY_ROW_GRID
             )}
           >
@@ -255,6 +255,8 @@ export function ProxyList({
                   label={c.label}
                   active={sortKey === c.sort}
                   dir={sortDir}
+                  // 行首有展开箭头，表头文字对齐到名称上。
+                  className={c.sort === 'host' ? 'ms-[18px]' : undefined}
                   onClick={() => onSort(c.sort as ProxySortKey)}
                 />
               ) : (
@@ -337,11 +339,13 @@ function SortHeader({
   label,
   active,
   dir,
+  className,
   onClick,
 }: {
   label: string
   active: boolean
   dir: 'asc' | 'desc'
+  className?: string
   onClick: () => void
 }) {
   const Arrow = dir === 'asc' ? ArrowUp : ArrowDown
@@ -356,7 +360,8 @@ function SortHeader({
       }
       className={cn(
         'group -mx-1 inline-flex h-6 w-fit items-center gap-1 rounded px-1 text-start transition-colors hover:text-foreground',
-        active && 'text-foreground'
+        active && 'text-foreground',
+        className
       )}
     >
       {label}
