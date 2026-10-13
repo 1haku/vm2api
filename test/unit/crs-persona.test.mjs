@@ -92,7 +92,7 @@ test('official Claude Code client leaves system untouched', () => {
   assert.equal(out.messages.length, 1)
 })
 
-test('empty unofficial system still writes official 4 blocks', () => {
+test('empty unofficial system still writes the official full prompt', () => {
   const messages = [{ role: 'user', content: 'ping' }]
   const out = applyCrsUnofficialPersona({ messages }, { officialClient: false })
   assert.equal(out.system.length, 4)
@@ -105,19 +105,15 @@ test('empty unofficial system still writes official 4 blocks', () => {
   )
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[1].cache_control, undefined)
-  assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
-  assert.deepEqual(out.system[2].cache_control, AGENT_EXPANSION_CACHE_CONTROL)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.match(out.system[3].text, /# Text output/)
   assert.match(out.system[3].text, /# Environment/)
-  assert.ok(!out.system[3].text.includes('# Text output'))
-  assert.ok(!out.system[3].text.includes('# auto memory'))
-  assert.ok(!out.system[3].text.includes('# Context management'))
   assert.ok(!environmentSection(out.system[3].text).includes('Primary working directory'))
-  assert.ok(!environmentSection(out.system[3].text).includes('/home/kincli'))
   assert.ok(!environmentSection(out.system[3].text).includes('Platform:'))
   assert.ok(!environmentSection(out.system[3].text).includes('OS Version:'))
   assert.match(environmentSection(out.system[3].text), /Timezone: UTC/)
-  assert.ok(!environmentSection(out.system[3].text).includes('Locale:'))
-  assert.equal(out.system[3].cache_control, undefined)
+  assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(out.messages.length, 1)
   assertParkedStanding(out, 'ping')
 })
@@ -127,7 +123,7 @@ test('Environment defaults to slot timezone only; caller cwd is kept and tz over
     {
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false, identity: { timezone: 'America/Los_Angeles' } },
+    { officialClient: false, mode: 'rewrite', identity: { timezone: 'America/Los_Angeles' } },
   )
   const bareEnv = environmentSection(bare.system[3].text)
   assert.match(bareEnv, /Timezone: America\/Los_Angeles/)
@@ -144,7 +140,7 @@ test('Environment defaults to slot timezone only; caller cwd is kept and tz over
 `,
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false, identity: { timezone: 'America/New_York' } },
+    { officialClient: false, mode: 'rewrite', identity: { timezone: 'America/New_York' } },
   )
   assert.match(caller.system[3].text, /Primary working directory: \/tmp\/demo/)
   assert.match(caller.system[3].text, /Timezone: America\/New_York/)
@@ -179,7 +175,7 @@ test('inbound official tools keep the official 4-block expansion', () => {
       messages: [{ role: 'user', content: 'ping' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
     },
-    { officialClient: false },
+    { officialClient: false, mode: 'rewrite' },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
@@ -205,7 +201,7 @@ test('custom forced weather tool skips SWE expansion', () => {
     ],
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { officialClient: false, mode: 'rewrite' })
   assert.equal(shouldAttachSystemExpansion(body), true)
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
@@ -218,7 +214,7 @@ test('custom tools without force also skip SWE expansion', () => {
       messages: [{ role: 'user', content: 'tokyo weather' }],
       tools: [{ name: 'get_weather' }],
     },
-    { officialClient: false },
+    { officialClient: false, mode: 'rewrite' },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
@@ -231,7 +227,7 @@ test('Claude Code Bash tool still gets expansion', () => {
       messages: [{ role: 'user', content: 'ls' }],
       tools: [{ name: 'Bash' }],
     },
-    { officialClient: false },
+    { officialClient: false, mode: 'rewrite' },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -244,7 +240,7 @@ test('forced official web_search still gets expansion', () => {
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
       tool_choice: { type: 'tool', name: 'web_search' },
     },
-    { officialClient: false },
+    { officialClient: false, mode: 'rewrite' },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -259,7 +255,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
       messages: [{ role: 'user', content: 'weather' }],
       tools: [{ name: 'get_weather' }],
     },
-    { officialClient: false, routingFile: file },
+    { officialClient: false, mode: 'rewrite', routingFile: file },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -269,7 +265,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
       messages: [{ role: 'user', content: 'search' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
     },
-    { officialClient: false, routingFile: file },
+    { officialClient: false, mode: 'rewrite', routingFile: file },
   )
   assert.equal(never.system.length, 2)
   fs.rmSync(dir, { recursive: true, force: true })
@@ -294,7 +290,7 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
     ],
     messages: [{ role: 'user', content: firstUser }],
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { officialClient: false, mode: 'rewrite' })
   assert.equal(out.system.length, 5)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -309,10 +305,13 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
 })
 
 test('standalone official line does not insert System Instructions', () => {
-  const out = applyCrsUnofficialPersona({
-    system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }],
-    messages: [{ role: 'user', content: 'hi' }],
-  })
+  const out = applyCrsUnofficialPersona(
+    {
+      system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }],
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+    { mode: 'rewrite' },
+  )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -1075,7 +1074,7 @@ test('test14 forced weather converts to official 4-block and keeps caller tools'
     tools,
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { officialClient: false, mode: 'rewrite' })
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -1159,6 +1158,7 @@ test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezo
     },
     {
       officialClient: false,
+      mode: 'rewrite',
       identity: {
         kernel: '7.0.0-14-generic',
         timezone: 'America/New_York',
@@ -1199,7 +1199,7 @@ test('Environment inherits caller git/shell and Windows cwd', () => {
 `,
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false },
+    { officialClient: false, mode: 'rewrite' },
   )
   assert.equal(out.system.length, 5)
   assert.match(out.system[3].text, /Primary working directory: X:\\Users\\me\\proj/)
@@ -1270,7 +1270,8 @@ test('zero inject prepends standing constraints to caller_agent', () => {
       },
       { mode: 'zero', routingFile },
     )
-    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n${agent}`)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+    assert.equal(out.system[4].text, agent)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

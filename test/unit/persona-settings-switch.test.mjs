@@ -286,7 +286,7 @@ test('official_prompt attaches caller agent and keeps leftover overlay', () => {
       system: [{ type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT }],
     })
     assert.equal(withAgent.system.length, 4)
-    assert.equal(withAgent.system[2].text, `${DEFAULT_AGENT_STANDING}\n${CRS_OFFICIAL_AGENT_PROMPT}`)
+    assert.equal(withAgent.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
     assert.deepEqual(withAgent.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
     assert.match(envTextAt(withAgent), /^# Environment\n - Timezone: /)
 
@@ -294,11 +294,10 @@ test('official_prompt attaches caller agent and keeps leftover overlay', () => {
       ...UNOFFICIAL,
       system: '你是一个高速收费员。',
     })
-    assert.equal(withLeftover.system.length, 4)
+    assert.equal(withLeftover.system.length, 5)
     assert.ok(!withLeftover.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-    assert.ok(!withLeftover.system.some((b) => b?.text === '你是一个高速收费员。'))
-    assert.equal(withLeftover.messages[1].role, 'system')
-    assert.equal(withLeftover.messages[1].content, wrapMandatoryConstraint('你是一个高速收费员。'))
+    assert.equal(withLeftover.system[4].text, '你是一个高速收费员。')
+    assert.ok(!withLeftover.messages.some((message) => message.role === 'system'))
     assert.match(envTextAt(withLeftover), /^# Environment/)
   })
 })
