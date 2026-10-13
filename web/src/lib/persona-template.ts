@@ -694,7 +694,6 @@ export function fillTemplateVars(
   })
 }
 
-
 export type SystemPreviewBlock = {
   id: string
   text: string

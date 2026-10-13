@@ -1227,7 +1227,6 @@ export function prependToFirstUserMessage(messages, text) {
   return prependRawToFirstUserMessage(messages, wrapSystemReminder(text))
 }
 
-
 /** Top-level caller system only. role=system stays in the message list so the cached prefix can grow. */
 export function collectCallerSystemAppend(body) {
   return parkableSystemTexts(body?.system).join('\n\n')
@@ -1244,6 +1243,24 @@ function insertOfficialCallerAgent(system, callerAgent) {
   const identityAt = system.findIndex((item) => item?.text === CRS_OFFICIAL_SYSTEM)
   const at = identityAt >= 0 ? identityAt + 1 : Math.min(system.length, 2)
   return [...system.slice(0, at), block, ...system.slice(at)]
+}
+
+/** cch is sealed from the whole body, so it changes every turn. Keep that block after the last cache breakpoint or the 1h prefix never hits. */
+export function parkBillingAfterCacheBoundary(system) {
+  if (!Array.isArray(system) || system.length < 2) return system
+  let billingAt = -1
+  let lastCacheAt = -1
+  for (let i = 0; i < system.length; i++) {
+    const block = system[i]
+    const text = String(block?.text || '')
+    if (billingAt < 0 && /x-anthropic-billing-header:/i.test(text)) billingAt = i
+    if (block?.cache_control && i !== billingAt) lastCacheAt = i
+  }
+  if (billingAt < 0 || lastCacheAt < 0 || billingAt > lastCacheAt) return system
+  const next = system.slice(0, billingAt).concat(system.slice(billingAt + 1))
+  const cacheAt = lastCacheAt - (billingAt < lastCacheAt ? 1 : 0)
+  next.splice(cacheAt + 1, 0, system[billingAt])
+  return next
 }
 
 function collectPersonaRuleAppends(body, messages, routingFile) {
@@ -1720,7 +1737,7 @@ function rewriteOfficialSystem(
       return block
     })
   }
-  system = appendOfficialSystemPrompt(system, leftover)
+  system = parkBillingAfterCacheBoundary(appendOfficialSystemPrompt(system, leftover))
   if (!extras.length) return { ...body, system, messages }
   return {
     ...body,
@@ -1782,7 +1799,8 @@ function applyTemplatePersona(
   // mentions {{caller_agent}} would otherwise drop it and leave only the identity line.
   const templateWantsCallerAgent = blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
   const usesCallerAgent = !harness && (preset === 'official' || templateWantsCallerAgent)
-  const callerAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  const suppliedAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  const callerAgent = suppliedAgent || (preset === 'official' && !harness ? CRS_OFFICIAL_AGENT_PROMPT : '')
   const leftover = harness
     ? ''
     : usesCallerAgent
