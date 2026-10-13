@@ -2,6 +2,11 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'subscription-weekly-window',
+  'usage-profile',
+  'health-probe',
+  'usage-probe-monitor',
+  'cache-breakpoints',
   'panel-login-protection',
   'subscriptions',
   'subscription-estimate',
@@ -133,6 +138,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'subscription-weekly-window',
   'panel-turnstile',
   'subscription-reassignment',
   'shared-plan-slots',

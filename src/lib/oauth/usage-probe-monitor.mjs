@@ -14,7 +14,7 @@ import { hasRefreshPresence } from './oauth-credentials.mjs'
 import { vmHasProxyPath } from './credential-refresh-monitor.mjs'
 import { hasLiveExtraSample, hasOfficialUsageSample, parseResetMs } from '../pool/quota-window.mjs'
 export const DEFAULT_USAGE_PROBE = Object.freeze({
-  enabled: true,
+  enabled: false,
   interval_sec: 60,
   stale_sec: 300,
   run_on_start: true,

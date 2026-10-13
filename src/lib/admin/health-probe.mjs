@@ -17,9 +17,9 @@ export const HEALTH_VIA_UNAVAILABLE = 'health_unavailable'
 export const HEALTH_PROBE_UA = 'kin-health-probe/1.0'
 
 export const DEFAULT_HEALTH_PROBE = Object.freeze({
-  // On by default: third-party health checks replay a real cached reply
-  // instead of taking a seat. Operators can turn it off in settings.
-  enabled: true,
+  // Off by default. Third-party health checks then take a real seat.
+  // Operators turn the cache on under 设置 → 探测.
+  enabled: false,
   interval_sec: 600,
   cache_ttl_sec: 900,
   max_stale_sec: 900,

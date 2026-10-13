@@ -1,3 +1,4 @@
+import { readClaudeWeeklyReset, resolveWeeklyWindow, WEEK_MS } from '../../admin/subscription-weekly-window.mjs'
 import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
@@ -31,7 +32,7 @@ export class SubscriptionsRepo {
   group(id) {
     return this.db
       .prepare(
-        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
+        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
       )
       .get(id)
   }
@@ -39,7 +40,7 @@ export class SubscriptionsRepo {
   plans() {
     return this.db
       .prepare(
-        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
+        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
       )
       .all()
       .map((g) => ({
@@ -99,6 +100,20 @@ export class SubscriptionsRepo {
       if (!vm) throw subscriptionError(`槽位不存在：${vmId}`)
       if (vm.owner_user_id) throw subscriptionError(`槽位 ${vmId} 已分配给个人，请先收回`)
     }
+    const weeklyMode = input.weekly_reset_mode ?? old?.weekly_reset_mode ?? 'independent'
+    if (!['independent', 'slot'].includes(weeklyMode)) throw subscriptionError('无效的周额度周期')
+    const weeklyVm = weeklyMode === 'slot' ? (input.weekly_reset_vm_id ?? old?.weekly_reset_vm_id) : null
+    if (weeklyMode === 'slot' && (platform !== 'claude' || !slots.includes(weeklyVm)))
+      throw subscriptionError('请选择本套餐已绑定的 Claude 槽位作为官方周窗口来源')
+    const source = weeklyMode === 'slot' ? readClaudeWeeklyReset(this.db, weeklyVm) : null
+    const changed = weeklyMode !== old?.weekly_reset_mode || weeklyVm !== old?.weekly_reset_vm_id
+    if (
+      weeklyMode === 'slot' &&
+      (changed || (source && source.accountId !== old?.weekly_source_account)) &&
+      !source?.end
+    )
+      throw subscriptionError('尚未获取此槽位有效的官方周重置时间，请先在槽位页查询限额')
+    const reseed = weeklyMode === 'slot' && (changed || (source && source.accountId !== old?.weekly_source_account))
     return withTransaction(this.db, () => {
       let groupId = id
       if (groupId) {
@@ -124,10 +139,26 @@ export class SubscriptionsRepo {
       this.db
         .prepare('UPDATE custom_subscription_plans SET group_rpm_limit=?,user_rpm_limit=? WHERE group_id=?')
         .run(groupRpm, userRpm, groupId)
+      this.db
+        .prepare(
+          'UPDATE custom_subscription_plans SET weekly_reset_mode=?,weekly_reset_vm_id=?,weekly_window_start=?,weekly_window_end=?,weekly_source_account=? WHERE group_id=?',
+        )
+        .run(
+          weeklyMode,
+          weeklyVm,
+          weeklyMode === 'independent' ? null : reseed ? iso(source.end - WEEK_MS) : old.weekly_window_start,
+          weeklyMode === 'independent' ? null : reseed ? iso(source.end) : old.weekly_window_end,
+          weeklyMode === 'independent' ? null : source?.accountId || old.weekly_source_account,
+          groupId,
+        )
       this.db.prepare('DELETE FROM custom_subscription_slots WHERE group_id=?').run(groupId)
       for (const vmId of new Set(slots))
         this.db.prepare('INSERT INTO custom_subscription_slots(group_id,vm_id) VALUES(?,?)').run(groupId, vmId)
-      this.event(id ? 'plan_updated' : 'plan_created', { group_id: groupId, actor, detail: { name, vm_ids: slots } })
+      this.event(id ? 'plan_updated' : 'plan_created', {
+        group_id: groupId,
+        actor,
+        detail: { name, vm_ids: slots, weekly_reset_mode: weeklyMode, weekly_reset_vm_id: weeklyVm },
+      })
       return this.plans().find((g) => g.id === groupId)
     })
   }
@@ -250,7 +281,12 @@ export class SubscriptionsRepo {
     // A manual reset starts a fresh seven-day window. reset_at already exists
     // on older records, so both historical resets and new resets use this anchor.
     const anchor = Math.max(Date.parse(sub.starts_at), Date.parse(sub.reset_at) || 0)
-    const week = anchor + Math.max(0, Math.floor((now - anchor) / (7 * DAY))) * 7 * DAY
+    const plan = this.group(sub.group_id)
+    const official = plan ? resolveWeeklyWindow(this.db, plan, now) : null
+    const week =
+      official && Number.isFinite(official.start)
+        ? official.start
+        : anchor + Math.max(0, Math.floor((now - anchor) / (7 * DAY))) * 7 * DAY
     const dayStart = sub.reset_at > day ? sub.reset_at : day
     const weekStart = sub.reset_at > iso(week) ? sub.reset_at : iso(week)
     const spent = (since) =>
@@ -263,14 +299,16 @@ export class SubscriptionsRepo {
       daily_used: spent(dayStart),
       weekly_used: spent(weekStart),
       daily_reset_at: iso(Date.parse(day) + DAY),
-      weekly_reset_at: iso(week + 7 * DAY),
+      weekly_reset_at: official ? (Number.isFinite(official.end) ? iso(official.end) : null) : iso(week + 7 * DAY),
+      weekly_reset_mode: plan?.weekly_reset_mode || 'independent',
+      weekly_sync_status: official?.status || 'independent',
     }
   }
 
   list(userId) {
     const rows = this.db
       .prepare(
-        `SELECT s.*,g.name AS plan_name,g.platform,g.status AS plan_status,p.daily_limit_usd,p.weekly_limit_usd,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,g.rate_multiplier,u.username FROM custom_user_subscriptions s JOIN groups g ON g.id=s.group_id JOIN custom_subscription_plans p ON p.group_id=g.id JOIN users u ON u.id=s.user_id ${userId ? 'WHERE s.user_id=?' : ''} ORDER BY s.created_at DESC`,
+        `SELECT s.*,g.name AS plan_name,g.platform,g.status AS plan_status,p.daily_limit_usd,p.weekly_limit_usd,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account,g.rate_multiplier,u.username FROM custom_user_subscriptions s JOIN groups g ON g.id=s.group_id JOIN custom_subscription_plans p ON p.group_id=g.id JOIN users u ON u.id=s.user_id ${userId ? 'WHERE s.user_id=?' : ''} ORDER BY s.created_at DESC`,
       )
       .all(...(userId ? [userId] : []))
     return rows.map((s) => ({
@@ -323,6 +361,12 @@ export class SubscriptionsRepo {
       if (pending.n >= sub.group.subscription_concurrency)
         throw subscriptionError('订阅并发已满，请稍后重试', 429, 'subscription_concurrency')
       const progress = this.progress(sub)
+      if (sub.group.weekly_limit_usd > 0 && progress.weekly_sync_status === 'waiting')
+        throw subscriptionError(
+          '订阅正在等待官方周窗口同步，请管理员在槽位页查询限额；不会提前重置周额度',
+          503,
+          'subscription_window_pending',
+        )
       const input = estimateSubscriptionInput(body)
       const requestedOutput = Number(body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? 16384)
       if (!Number.isFinite(requestedOutput) || requestedOutput < 1) throw subscriptionError('输出 Token 上限无效')

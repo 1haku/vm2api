@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { Plan } from './index'
+import { WeeklyCycleFields } from './weekly-cycle-fields'
 
 export type WizardPreset = {
   mode?: 'new' | 'existing'
@@ -44,6 +45,8 @@ export function SubscriptionWizard({
   const [search, setSearch] = useState('')
   const [daysOverride, setDays] = useState<number>()
   const [draft, setDraft] = useState({
+    weekly_reset_mode: 'independent',
+    weekly_reset_vm_id: null as string | null,
     name: preset.vm ? `${preset.vm.name || preset.vm.id} 共享订阅` : '',
     description: '',
     platform:
@@ -243,6 +246,8 @@ export function SubscriptionWizard({
                         setDraft({
                           ...draft,
                           platform: e.target.value,
+                          weekly_reset_mode: 'independent',
+                          weekly_reset_vm_id: null,
                           vm_ids: [],
                         })
                       }
@@ -342,6 +347,16 @@ export function SubscriptionWizard({
               <p className='text-xs text-muted-foreground'>
                 可以先分配订阅，再由管理员登录上游账号；未登录时用户首页会提示原因。
               </p>
+              {mode === 'new' && (
+                <WeeklyCycleFields
+                  value={draft}
+                  platform={draft.platform}
+                  slots={(vms.data?.items || []).filter((v) =>
+                    draft.vm_ids.includes(v.id)
+                  )}
+                  onChange={(patch) => setDraft({ ...draft, ...patch })}
+                />
+              )}
             </>
           )}
           {step === 2 && (

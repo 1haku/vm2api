@@ -147,6 +147,14 @@ export function SubscriptionHome({
                 {s.availability?.message || '正在读取订阅状态'}
               </p>
               <div className='my-5 space-y-4'>
+                <p className='text-xs text-muted-foreground'>
+                  {s.weekly_reset_mode === 'slot'
+                    ? '周额度跟随官方窗口'
+                    : '独立 7 天周期'}
+                  {s.weekly_sync_status === 'waiting'
+                    ? ' · 等待官方窗口同步，请联系管理员'
+                    : ''}
+                </p>
                 {[
                   ['今日', s.daily_used, s.daily_limit_usd, s.daily_reset_at],
                   [
@@ -189,7 +197,9 @@ export function SubscriptionHome({
                     <p className='mt-1 text-xs text-muted-foreground'>
                       {resetCountdown(String(reset), now)}
                       <span className='ml-2 opacity-75'>
-                        {new Date(String(reset)).toLocaleString('zh-CN')}
+                        {reset
+                          ? new Date(String(reset)).toLocaleString('zh-CN')
+                          : '等待官方窗口同步'}
                       </span>
                     </p>
                   </div>

@@ -18,6 +18,8 @@ export function subscriptionAvailability(sub, slots = [], pending = 0) {
           revoked: '订阅已撤销，请联系管理员',
         }[sub.status] || '订阅尚未生效',
     }
+  if (sub.weekly_reset_mode === 'slot' && sub.weekly_sync_status === 'waiting' && sub.weekly_limit_usd > 0)
+    return { code: 'window_pending', message: '等待官方周窗口同步，请管理员查询槽位限额' }
   if (
     (sub.daily_limit_usd > 0 && sub.daily_used + pending >= sub.daily_limit_usd) ||
     (sub.weekly_limit_usd > 0 && sub.weekly_used + pending >= sub.weekly_limit_usd)
@@ -120,7 +122,18 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
           ),
         }
       })
-      if (!admin) result.items = result.items.map(({ assigned_by, username, ...s }) => s)
+      if (!admin)
+        result.items = result.items.map(
+          ({
+            assigned_by,
+            username,
+            weekly_reset_vm_id,
+            weekly_source_account,
+            weekly_window_start,
+            weekly_window_end,
+            ...s
+          }) => s,
+        )
     } else if (path === '/api/panel/subscription-plans' && req.method === 'GET') {
       const own = new Set(
         repo

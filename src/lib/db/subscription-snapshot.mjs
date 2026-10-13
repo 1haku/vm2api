@@ -98,6 +98,11 @@ export function subscriptionSnapshot(db) {
         ...row,
         group_rpm_limit: row.group_rpm_limit ?? 0,
         user_rpm_limit: row.user_rpm_limit ?? 0,
+        weekly_reset_mode: row.weekly_reset_mode ?? 'independent',
+        weekly_reset_vm_id: row.weekly_reset_vm_id ?? null,
+        weekly_window_start: row.weekly_window_start ?? null,
+        weekly_window_end: row.weekly_window_end ?? null,
+        weekly_source_account: row.weekly_source_account ?? null,
       })),
     ),
   }
@@ -145,4 +150,6 @@ export function verifySubscriptionSchema(db) {
     throw new Error('Custom migration 003 missing')
   if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='004'").get())
     throw new Error('Custom migration 004 missing')
+  if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='005'").get())
+    throw new Error('Custom migration 005 missing')
 }

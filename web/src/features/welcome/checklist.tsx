@@ -49,7 +49,6 @@ export function WelcomeChecklist({
   )
   const doneCount = known.filter((step) => step.done).length
   const total = known.length
-  const allDone = total > 0 && doneCount >= total
   const percent = total === 0 ? 100 : Math.round((doneCount / total) * 100)
   const next = known.find((step) => !step.done)
 
@@ -60,7 +59,7 @@ export function WelcomeChecklist({
           kind === 'reset'
             ? '将再次显示引导'
             : kind === 'complete'
-              ? '已完成引导'
+              ? '已结束引导'
               : '已跳过引导'
         )
       },
@@ -250,13 +249,13 @@ export function WelcomeChecklist({
               )}
 
               <div className='mt-auto flex flex-col gap-2 border-t pt-4'>
-                {payload.status !== 'pending' ? (
+                {payload.guide_used ? (
                   <>
                     <p className='text-xs leading-relaxed text-muted-foreground'>
                       {payload.status === 'completed'
-                        ? '已完成引导'
+                        ? '已结束引导'
                         : '已跳过引导'}
-                      ，登录后直接进控制台。
+                      ，不再自动弹出。
                     </p>
                     <Button
                       size='sm'
@@ -268,17 +267,16 @@ export function WelcomeChecklist({
                       重新显示引导
                     </Button>
                   </>
-                ) : allDone ? (
-                  <Button
-                    size='sm'
-                    className='h-8 rounded-lg text-xs'
-                    disabled={action.isPending}
-                    onClick={() => run('complete')}
-                  >
-                    完成引导
-                  </Button>
                 ) : (
                   <>
+                    <Button
+                      size='sm'
+                      className='h-8 rounded-lg text-xs'
+                      disabled={action.isPending}
+                      onClick={() => run('complete')}
+                    >
+                      结束引导
+                    </Button>
                     <Button
                       size='sm'
                       variant='outline'
@@ -289,7 +287,7 @@ export function WelcomeChecklist({
                       跳过引导
                     </Button>
                     <p className='text-[11px] leading-relaxed text-muted-foreground'>
-                      跳过后登录直接进控制台，用户菜单「欢迎与引导」可再打开。
+                      跳过或结束后记为已使用，不再弹出。用户菜单「欢迎与引导」仍可打开。
                     </p>
                   </>
                 )}

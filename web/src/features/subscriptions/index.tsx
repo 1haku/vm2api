@@ -28,9 +28,12 @@ import {
 import { SlotLoadPanel } from './admin-overview'
 import { BatchActions } from './batch-actions'
 import { SubscriptionHome } from './home'
+import { WeeklyCycleFields } from './weekly-cycle-fields'
 import { SubscriptionWizard, type WizardPreset } from './wizard'
 
 export type Plan = {
+  weekly_reset_mode: string
+  weekly_reset_vm_id: string | null
   id: number
   name: string
   description: string
@@ -47,6 +50,8 @@ export type Plan = {
   rate_multiplier: number
 }
 export type Subscription = {
+  weekly_reset_mode: string
+  weekly_sync_status: string
   pending_cost?: number
   availability?: { code: string; message: string }
   id: string
@@ -63,7 +68,7 @@ export type Subscription = {
   daily_used: number
   weekly_used: number
   daily_reset_at: string
-  weekly_reset_at: string
+  weekly_reset_at: string | null
 }
 type User = { id: string; username: string; enabled: boolean }
 const selectClass = 'h-9 rounded-md border bg-background px-3 text-sm'
@@ -75,6 +80,8 @@ const statusName: Record<string, string> = {
 }
 const date = (value: string) => new Date(value).toLocaleString('zh-CN')
 const emptyPlan = {
+  weekly_reset_mode: 'independent',
+  weekly_reset_vm_id: null as string | null,
   name: '',
   description: '',
   platform: 'claude',
@@ -428,6 +435,7 @@ export function SubscriptionsPage() {
                         limit={s.weekly_limit_usd}
                         reset={s.weekly_reset_at}
                       />
+                      <p className='text-[11px] text-muted-foreground'>{s.weekly_reset_mode === 'slot' ? '跟随官方周窗口' : '独立周期'}{s.weekly_sync_status === 'waiting' ? ' · 等待同步' : ''}</p>
                     </td>
                     <td className='p-4 whitespace-nowrap'>
                       {date(s.expires_at)}
@@ -542,6 +550,11 @@ export function SubscriptionsPage() {
                   {p.weekly_limit_usd ? fmtUsd(p.weekly_limit_usd) : '不限'}
                 </span>
                 <span>{p.members} 位有效用户</span>
+                <span>
+                  {p.weekly_reset_mode === 'slot'
+                    ? `官方周窗口 · ${p.weekly_reset_vm_id}`
+                    : '独立 7 天周期'}
+                </span>
                 <span>每人 {p.subscription_concurrency} 路并发</span>
                 <span>
                   分组总 RPM：{p.group_rpm_limit || '不限'} · 每人 RPM：
@@ -672,7 +685,13 @@ export function SubscriptionsPage() {
                   className={selectClass}
                   value={draft.platform}
                   onChange={(e) =>
-                    setDraft({ ...draft, platform: e.target.value, vm_ids: [] })
+                    setDraft({
+                      ...draft,
+                      platform: e.target.value,
+                      vm_ids: [],
+                      weekly_reset_mode: 'independent',
+                      weekly_reset_vm_id: null,
+                    })
                   }
                 >
                   <option value='claude'>Anthropic / Claude</option>
@@ -738,6 +757,14 @@ export function SubscriptionsPage() {
                   })}
               </div>
             </fieldset>
+            <WeeklyCycleFields
+              value={draft}
+              platform={draft.platform}
+              slots={(vms.data?.items || []).filter((v) =>
+                draft.vm_ids.includes(v.id)
+              )}
+              onChange={(patch) => setDraft({ ...draft, ...patch })}
+            />
             <div className='grid grid-cols-2 gap-3'>
               {(
                 [
@@ -778,8 +805,7 @@ export function SubscriptionsPage() {
               分组总 RPM 由所有用户共享，每人 RPM
               合并该用户在本分组的所有密钥；按最近 60 秒计数，0
               表示不限。每日额度于北京时间 00:00
-              重置，每周从首次分配或最近一次手动重置起每 7
-              天重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
+              重置；周额度按上方所选周期重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
             </p>
             <Button
               type='submit'
@@ -810,7 +836,9 @@ export function SubscriptionsPage() {
           <p className='text-sm'>
             {action?.sub.plan_name} ·{' '}
             {action?.action === 'reset'
-              ? '清零个人日/周额度消耗，每周重置时间改为现在起 7 天后；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
+              ? action.sub.weekly_reset_mode === 'slot'
+                ? '清零个人日/周额度消耗，仍跟随官方周窗口，不改变周重置时间；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
+                : '清零个人日/周额度消耗，每周重置时间改为现在起 7 天后；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
               : action?.action === 'renew'
                 ? '从当前到期时间或今天起延长有效期。'
                 : `将订阅设为${statusName[action?.action || ''] || ''}。`}
@@ -857,7 +885,7 @@ function Quota({
   label: string
   used: number
   limit: number
-  reset: string
+  reset: string | null
 }) {
   return (
     <div className='mb-2 last:mb-0'>
@@ -872,7 +900,7 @@ function Quota({
         className='h-1.5'
       />
       <div className='mt-1 text-[11px] text-muted-foreground'>
-        {date(reset)} 重置
+        {reset ? `${date(reset)} 重置` : '等待官方窗口同步'}
       </div>
     </div>
   )

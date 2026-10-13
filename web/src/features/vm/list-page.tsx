@@ -109,6 +109,7 @@ export function VmListPage() {
   return (
     <PageHeader
       title={VIEW_TITLES.vm}
+      description='槽位和账号用量。5h / 7d 窗口在列表里，未探测的额度不会冒充可用。'
       fluid
       extra={
         poolQueue || canCreate ? (
