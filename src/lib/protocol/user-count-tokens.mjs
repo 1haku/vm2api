@@ -7,7 +7,7 @@ import { refusalGuardPolicy } from '../core/refusal-guard.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
-import { readJevConfig } from './jev-intercept.mjs'
+import { readJevConfig, scopeAccountFromVm } from './jev-intercept.mjs'
 import { runProtocolIntercept } from './intercept-gate.mjs'
 import { readRoutingConfigFile } from '../core/config.mjs'
 import {
@@ -210,7 +210,7 @@ function deviceRepo(deps) {
   }
 }
 
-/** Distill, hard regex, refusal cache, and jev all return before peek or worker hop. */
+/** Distill, hard regex, refusal cache, and jev. `wait` means the slot is required before a verdict. */
 export async function blockCountTokensBeforeHop(req, inbound, deps = {}) {
   let jev
   try {
@@ -229,8 +229,17 @@ export async function blockCountTokensBeforeHop(req, inbound, deps = {}) {
     jev,
     repo: refusalRepo(deps),
     devices: deviceRepo(deps),
+    account: deps.account || null,
   })
-  return decision?.error || null
+  let wait = false
+  if (decision?.action !== 'block' && decision?.intercept) {
+    try {
+      wait = JSON.parse(decision.intercept).by === 'scope-wait'
+    } catch {
+      wait = false
+    }
+  }
+  return { error: decision?.action === 'block' ? decision.error : null, wait }
 }
 
 export async function handleUserCountTokens(req, res, deps) {
@@ -263,8 +272,8 @@ export async function handleUserCountTokens(req, res, deps) {
     const err = claudeCodeOnlyError()
     return json(res, err.status, err.body)
   }
-  const blocked = await blockCountTokensBeforeHop(req, parsed.body, deps)
-  if (blocked) return json(res, blocked.status, blocked.body)
+  const gate = await blockCountTokensBeforeHop(req, parsed.body, deps)
+  if (gate?.error) return json(res, gate.error.status, gate.error.body)
   const peeked = await peekCurrentAccount({
     poolScheduler: typeof deps.getPoolScheduler === 'function' ? deps.getPoolScheduler() : deps.poolScheduler,
     stickyRouter: deps.stickyRouter,
@@ -274,6 +283,13 @@ export async function handleUserCountTokens(req, res, deps) {
     usersRepo: deps.apiKeyStore?.users || null,
   })
   if (!peeked.ok) return sendPoolFail(res, json, peeked)
+  if (gate.wait) {
+    const again = await blockCountTokensBeforeHop(req, parsed.body, {
+      ...deps,
+      account: scopeAccountFromVm(peeked.vm),
+    })
+    if (again?.error) return json(res, again.error.status, again.error.body)
+  }
   const mode = credentialModeOfVm(peeked.vm)
   if (!canCountTokens(mode)) {
     const { listed, source } = await resolveUsageWindows({

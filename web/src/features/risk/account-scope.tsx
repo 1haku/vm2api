@@ -1,26 +1,30 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { JevInterceptConfig, JevScopeOption } from '@/types/panel-routing'
+import { ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Textarea } from '@/components/ui/textarea'
 import { SaveBar } from '@/features/settings/save-bar'
-import { Group, Panel } from './blocks'
+import { Group } from './blocks'
 import { type AccountScope, scopeConfigured, scopeMatches } from './model'
 import { jevInterceptQueryOptions } from './queries'
 
 type Draft = {
-  account_types: string[]
-  account_plan_types: string[]
+  account_platform_plans: string[]
   account_ids: string
 }
 
 function draftOf(data: JevInterceptConfig): Draft {
   return {
-    account_types: data.account_types || [],
-    account_plan_types: data.account_plan_types || [],
+    account_platform_plans: data.account_platform_plans || [],
     account_ids: (data.account_ids || []).join('\n'),
   }
 }
@@ -34,18 +38,15 @@ function linesOf(text: string) {
 
 function scopeOf(draft: Draft): AccountScope {
   return {
-    account_types: draft.account_types,
-    account_plan_types: draft.account_plan_types,
+    account_platform_plans: draft.account_platform_plans,
     account_ids: linesOf(draft.account_ids),
   }
 }
 
 function sameScope(left: AccountScope, right: AccountScope) {
   return (
-    [...left.account_types].sort().join('\n') ===
-      [...right.account_types].sort().join('\n') &&
-    [...left.account_plan_types].sort().join('\n') ===
-      [...right.account_plan_types].sort().join('\n') &&
+    [...left.account_platform_plans].sort().join('\n') ===
+      [...right.account_platform_plans].sort().join('\n') &&
     [...left.account_ids].sort().join('\n') ===
       [...right.account_ids].sort().join('\n')
   )
@@ -78,61 +79,15 @@ function Chip({
   )
 }
 
-function Options({
-  title,
-  hint,
-  options,
-  selected,
-  onToggle,
-  onClear,
-}: {
-  title: string
-  hint: string
-  options: JevScopeOption[]
-  selected: string[]
-  onToggle: (id: string) => void
-  onClear: () => void
-}) {
-  return (
-    <Group
-      title={title}
-      hint={hint}
-      action={
-        selected.length ? (
-          <Button
-            type='button'
-            size='sm'
-            variant='ghost'
-            className='cursor-pointer text-xs'
-            onClick={onClear}
-          >
-            清空
-          </Button>
-        ) : undefined
-      }
-    >
-      <div className='flex flex-wrap gap-2'>
-        {options.map((option) => (
-          <Chip
-            key={option.id}
-            option={option}
-            active={selected.includes(option.id)}
-            onToggle={() => onToggle(option.id)}
-          />
-        ))}
-      </div>
-    </Group>
-  )
-}
-
 /**
- * 风控的账号范围：跟 sub2api 的内容审核一样，按账号类型 / 套餐类型 / 指定账号
- * 收窄关卡覆盖的槽位。三个列表取并集，全空 = 所有账号都进关卡（旧行为）。
+ * 风控的账号范围，独立于当前关卡。按平台+套餐收窄，可收起。
+ * 全空 = 所有账号都进关卡。指定账号和勾选是并集。
  */
 export function AccountScopeSettings() {
   const qc = useQueryClient()
   const q = useQuery(jevInterceptQueryOptions())
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     if (q.data) setDraft(draftOf(q.data))
@@ -148,9 +103,10 @@ export function AccountScopeSettings() {
       return api<JevInterceptConfig>('/api/panel/jev-intercept', {
         method: 'PUT',
         body: JSON.stringify({
-          account_types: draft.account_types,
-          account_plan_types: draft.account_plan_types,
+          account_platform_plans: draft.account_platform_plans,
           account_ids: linesOf(draft.account_ids),
+          account_types: [],
+          account_plan_types: [],
         }),
       })
     },
@@ -163,60 +119,110 @@ export function AccountScopeSettings() {
 
   if (q.error) {
     return (
-      <p className='p-4 text-sm text-destructive' role='alert'>
+      <p
+        className='rounded-xl border px-4 py-3 text-sm text-destructive'
+        role='alert'
+      >
         {(q.error as Error).message}
       </p>
     )
   }
-  if (!draft || !current)
-    return <div className='h-40 animate-pulse bg-muted/40' />
+  if (!draft || !current) {
+    return <div className='h-12 animate-pulse rounded-xl bg-muted/40' />
+  }
 
   const inventory = q.data?.account_scope
   const accounts = inventory?.accounts || []
   const total = inventory?.accounts_total ?? accounts.length
+  const options = inventory?.account_platform_plan_options || []
   const configured = scopeConfigured(current)
   const matched = configured ? scopeMatches(current, accounts) : accounts
-  const preview = matched
-    .slice(0, 6)
-    .map((account) => account.email || account.id)
+  const selectedLabels = options
+    .filter((option) => draft.account_platform_plans.includes(option.id))
+    .map((option) => option.label)
+  const named = linesOf(draft.account_ids).length
+  const summary = configured
+    ? [
+        selectedLabels.join('、') || (named ? '指定账号' : '未选'),
+        named ? `另指定 ${named}` : '',
+        `命中 ${matched.length}/${total}`,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : `全部账号 · ${total}`
+  const shown = open || dirty
 
-  const toggle = (key: 'account_types' | 'account_plan_types', id: string) =>
+  const toggle = (id: string) =>
     setDraft({
       ...draft,
-      [key]: draft[key].includes(id)
-        ? draft[key].filter((item) => item !== id)
-        : [...draft[key], id],
+      account_platform_plans: draft.account_platform_plans.includes(id)
+        ? draft.account_platform_plans.filter((item) => item !== id)
+        : [...draft.account_platform_plans, id],
     })
 
   return (
-    <Panel
-      title='账号范围'
-      hint='范围只决定“哪些账号的请求进关卡”。三个列表都不选 = 所有账号都进关卡。'
+    <Collapsible
+      open={shown}
+      onOpenChange={(next) => {
+        if (!next && dirty) return
+        setOpen(next)
+      }}
+      className='rounded-xl border bg-card'
     >
-      <div className='space-y-6 p-4'>
-        <p className='rounded-lg border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground'>
-          勾选后只有命中的账号会被四道关检查，其它账号的请求直接放行。 GPT /
-          Codex 按请求实际落到的槽位判定；选了范围就不再受「OpenAI
-          平台」开关影响，Claude 流量始终进关卡。
+      <CollapsibleTrigger className='flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-200 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'>
+        <span className='shrink-0 text-sm font-semibold'>账号范围</span>
+        <span className='flex min-w-0 items-center gap-2 text-xs text-muted-foreground'>
+          <span className='truncate'>{summary}</span>
+          <ChevronDown
+            className={cn(
+              'size-4 shrink-0 transition-transform duration-200',
+              shown && 'rotate-180'
+            )}
+            aria-hidden='true'
+          />
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className='space-y-6 border-t px-4 py-4'>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          按平台和套餐决定哪些槽位进四道关。都不选 =
+          全部账号。指定账号和勾选取并集。没设范围时 Claude 照旧进关卡，GPT
+          仍看「OpenAI 平台」；设了范围后，只有命中的槽位进关卡。
         </p>
 
-        <Options
-          title='账号类型'
-          hint='按槽位的凭证形式。Console API Key 与 Setup Token 分开算。'
-          options={inventory?.account_type_options || []}
-          selected={draft.account_types}
-          onToggle={(id) => toggle('account_types', id)}
-          onClear={() => setDraft({ ...draft, account_types: [] })}
-        />
-
-        <Options
-          title='套餐类型'
-          hint='按上游套餐判定，括号里是当前槽位数。'
-          options={inventory?.account_plan_type_options || []}
-          selected={draft.account_plan_types}
-          onToggle={(id) => toggle('account_plan_types', id)}
-          onClear={() => setDraft({ ...draft, account_plan_types: [] })}
-        />
+        <Group
+          title='平台 · 套餐'
+          hint='数字是当前槽位数。同一套餐的不同写法合成一档，例如 Team 和 Business Premium 都是 Business。'
+          action={
+            draft.account_platform_plans.length ? (
+              <Button
+                type='button'
+                size='sm'
+                variant='ghost'
+                className='cursor-pointer text-xs'
+                onClick={() =>
+                  setDraft({ ...draft, account_platform_plans: [] })
+                }
+              >
+                清空
+              </Button>
+            ) : undefined
+          }
+        >
+          {options.length ? (
+            <div className='flex flex-wrap gap-2'>
+              {options.map((option) => (
+                <Chip
+                  key={option.id}
+                  option={option}
+                  active={draft.account_platform_plans.includes(option.id)}
+                  onToggle={() => toggle(option.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className='text-xs text-muted-foreground'>还没有槽位。</p>
+          )}
+        </Group>
 
         <Group
           title='指定账号'
@@ -234,7 +240,7 @@ export function AccountScopeSettings() {
           />
         </Group>
 
-        <div className='space-y-1 rounded-lg border bg-card px-3 py-2 text-xs leading-5'>
+        <div className='space-y-1 text-xs leading-5'>
           <p className='font-medium'>
             {configured
               ? `当前范围命中 ${matched.length} / ${total} 个槽位`
@@ -243,11 +249,6 @@ export function AccountScopeSettings() {
           {configured && !matched.length ? (
             <p className='text-[var(--status-caution)]'>
               没有槽位命中，等于所有请求都不检查。请重选。
-            </p>
-          ) : preview.length ? (
-            <p className='truncate text-muted-foreground'>
-              例如：{preview.join('、')}
-              {matched.length > preview.length ? ' …' : ''}
             </p>
           ) : null}
         </div>
@@ -259,7 +260,7 @@ export function AccountScopeSettings() {
             onDiscard={() => q.data && setDraft(draftOf(q.data))}
           />
         ) : null}
-      </div>
-    </Panel>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }

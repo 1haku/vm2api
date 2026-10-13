@@ -25,7 +25,7 @@ import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-ke
 import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
 import { hostProxyUrlForVm } from '../vm/slot-host.mjs'
 import { readCodexAccounts, upsertCodexAccount } from '../vm/codex-slot.mjs'
-import { credentialModeOfVm } from '../oauth/credential-mode.mjs'
+import { scopeAccountFromVm } from './jev-intercept.mjs'
 import {
   CODEX_APP_VERSION,
   CODEX_CATALOG_ORIGINATOR,
@@ -544,18 +544,11 @@ export async function handleCodexProtocol({
         stats.requests++
         stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
       }
-      // The slot is known here, so an account scope can be applied: the panel
-      // narrowed the gate to some account types and this request landed on one
-      // that is out of range. `true` means the 403 is already written.
+      // The slot is known here, so an account scope can be applied. `true`
+      // means the 403 is already written.
       if (accountGate) {
         logBag.vm_id = vm.id
-        const blocked = await accountGate({
-          id: vm.id,
-          email: vm.email || vm.codex?.email || null,
-          name: vm.name || null,
-          plan_type: vm.codex?.plan_type || null,
-          type: credentialModeOfVm(vm),
-        })
+        const blocked = await accountGate(scopeAccountFromVm(vm))
         if (blocked) {
           lease.release()
           return
