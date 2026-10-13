@@ -332,8 +332,20 @@ test('selectHealthProbeTargets uses summary credential flags', () => {
 test('selectHealthProbeTargets skips slots outside their working window', () => {
   const now = Date.parse('2026-09-17T12:00:00.000Z')
   const vms = [
-    { id: 'vm-rest', schedulable: true, status: 'running', has_token: true, active_hours: { start: '20:00', end: '08:00', timezone: 'UTC' } },
-    { id: 'vm-day', schedulable: true, status: 'running', has_token: true, active_hours: { start: '08:00', end: '20:00', timezone: 'UTC' } },
+    {
+      id: 'vm-rest',
+      schedulable: true,
+      status: 'running',
+      has_token: true,
+      active_hours: { start: '20:00', end: '08:00', timezone: 'UTC' },
+    },
+    {
+      id: 'vm-day',
+      schedulable: true,
+      status: 'running',
+      has_token: true,
+      active_hours: { start: '08:00', end: '20:00', timezone: 'UTC' },
+    },
   ]
   assert.deepEqual(
     selectHealthProbeTargets(vms, cfg, now).map((v) => v.id),
