@@ -619,22 +619,36 @@ test('official_prompt keeps billing identity overlay, slot env, and skips inject
   assert.match(typeof first === 'string' ? first : first[0].text, /MANDATORY constraints for this turn/)
 })
 
-test('official_prompt keeps caller system in segment 5, not the agent slot', () => {
-  const out = applyCrsUnofficialPersona(
-    {
-      model: 'claude-sonnet-5-5',
-      system: [
-        { type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT },
-        { type: 'text', text: '你是一个高速收费员。' },
-      ],
-      messages: [{ role: 'user', content: '你好呀。' }],
-    },
-    { mode: 'official_prompt', park: false },
-  )
+test('official_prompt keeps the caller agent prompt and leaves other system in segment 5', () => {
+  const first = {
+    model: 'claude-sonnet-5-5',
+    system: [
+      { type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT },
+      { type: 'text', text: '你是一个高速收费员。' },
+    ],
+    messages: [{ role: 'user', content: '你好呀。' }],
+  }
+  const out = applyCrsUnofficialPersona(first, { mode: 'official_prompt', park: false, sessionId: '11111111-2222-4333-8444-555555555555' })
+  const agent = out.system.find((block) => String(block?.text || '').includes('# Doing tasks'))
+  assert.ok(agent)
+  assert.equal(agent.cache_control?.ttl, '1h')
+  assert.equal(agent.cache_control?.scope, 'global')
   assert.equal(out.system.at(-1).text, '你是一个高速收费员。')
-  assert.ok(!out.system.some((block) => block?.text === CRS_OFFICIAL_AGENT_PROMPT))
-  assert.equal(out.messages.length, 1)
-  assert.equal(out.messages[0].role, 'user')
+  const later = applyCrsUnofficialPersona(
+    {
+      ...first,
+      messages: [
+        { role: 'user', content: '你好呀。' },
+        { role: 'assistant', content: '在。' },
+        { role: 'user', content: '继续' },
+        { role: 'system', content: '<total_tokens>100 tokens left</total_tokens>' },
+      ],
+    },
+    { mode: 'official_prompt', park: false, sessionId: '11111111-2222-4333-8444-555555555555' },
+  )
+  assert.equal(later.system[0].text, out.system[0].text)
+  assert.equal(later.messages.at(-1).role, 'system')
+  assert.equal(later.system.at(-1).text, '你是一个高速收费员。')
 })
 
 test('official leftover stays in segment 5', () => {

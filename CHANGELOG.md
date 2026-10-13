@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.164 — 2026-10-14
+
+- 官方提示词把调用方的官方长提示词放回 agent 槽，并在该块打 1h 断点。不再只留身份句。
+- 计费头的 `cc_prompt_index` / `cc_turn_index` 固定在首轮，避免每轮改写 system 前缀、把缓存打穿到工具断点。
+- `role=system` 留在消息列表。第 5 段只放顶层 system，对话前缀可以随轮次增长。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。已保存的官方档模板即使没有 `{{caller_agent}}`，出站仍会把官方长提示词插回 agent 槽。
+
 ## 1.3.163 — 2026-10-14
 
 - 官方请求也套用协议里设置的 system 档，包括 custom。分类器请求仍不改。

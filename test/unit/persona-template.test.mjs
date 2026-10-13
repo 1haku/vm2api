@@ -384,7 +384,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
   }
 })
 
-test('caller system and role=system both land in segment 5', () => {
+test('caller system stays in segment 5 and role=system stays in the transcript', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(
       {
@@ -398,12 +398,9 @@ test('caller system and role=system both land in segment 5', () => {
       { routingFile: file },
     )
     assert.equal(out.system.length, 5)
-    assert.match(out.system[4].text, /不要使用你现在的identity跟我对话/)
-    assert.match(out.system[4].text, /role-system-note/)
-    assert.equal(
-      out.messages.some((message) => message.role === 'system'),
-      false,
-    )
+    assert.equal(out.system[4].text, '不要使用你现在的identity跟我对话')
+    assert.equal(out.messages[1].role, 'system')
+    assert.equal(out.messages[1].content, 'role-system-note')
   })
 })
 
