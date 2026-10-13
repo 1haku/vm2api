@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_AGENT_STANDING,
   DEFAULT_PERSONA_TEMPLATES,
-  EMPTY_BLOCK_TEXT,
   PERSONA_PRESETS,
   agentStandingVar,
   overlayDisabledByPersona,
@@ -90,17 +89,12 @@ describe('agent standing + system preview', () => {
     }
   })
 
-  it('drops billing blocks and keeps a blank zero agent slot as zero-width', () => {
+  it('drops billing blocks and a blank zero agent slot', () => {
     const zero = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
       ...vars,
       agent_standing: '',
     })
-    expect(zero.map((block) => block.id)).toEqual([
-      'identity_slot',
-      'agent_slot',
-    ])
-    expect(zero[1]?.text).toBe(EMPTY_BLOCK_TEXT)
-    expect(zero[1]?.placeholder).toBe(true)
+    expect(zero.map((block) => block.id)).toEqual(['identity_slot'])
 
     const officialDefault = previewSystemBlocks(
       DEFAULT_PERSONA_TEMPLATES.official,
