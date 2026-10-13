@@ -8,7 +8,11 @@ import {
   projectClaudeCodeCchText,
   sealClaudeCodeCch,
 } from '../../src/lib/identity/cch.mjs'
-import { buildBillingAttributionText, applyCrsUnofficialPersona } from '../../src/lib/identity/crs-persona.mjs'
+import {
+  CRS_OFFICIAL_AGENT_PROMPT,
+  applyCrsUnofficialPersona,
+  buildBillingAttributionText,
+} from '../../src/lib/identity/crs-persona.mjs'
 import { finalizeWorkerPayload } from '../../src/lib/transport/go-worker-client.mjs'
 
 test('xxh64 matches Python xxhash.xxh64 intdigest vectors', () => {
@@ -100,21 +104,23 @@ test('applyCrsUnofficialPersona keeps the placeholder until hop finalize', () =>
   const out = applyCrsUnofficialPersona({
     messages: [{ role: 'user', content: 'ping' }],
   })
-  assert.match(out.system[0].text, new RegExp(`cch=${CCH_PLACEHOLDER};`))
+  const billing = out.system.find((block) => /x-anthropic-billing-header:/i.test(block?.text || ''))
+  assert.match(billing.text, new RegExp(`cch=${CCH_PLACEHOLDER};`))
   const sealed = finalizeWorkerPayload({
     body: out,
     reqHeaders: {},
     exec: { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } },
     identity: null,
   }).body
-  const cch = sealed.system[0].text.match(/cch=([0-9a-f]{5})/)[1]
+  const sealedBilling = sealed.system.find((block) => /x-anthropic-billing-header:/i.test(block?.text || ''))
+  const cch = sealedBilling.text.match(/cch=([0-9a-f]{5})/)[1]
   assert.notEqual(cch, CCH_PLACEHOLDER)
   const replay = JSON.stringify(sealed).replace(`cch=${cch}`, `cch=${CCH_PLACEHOLDER}`)
   const projected = projectClaudeCodeCchText(replay)
   assert.equal(computeClaudeCodeCch(Buffer.from(projected, 'utf8')), cch)
 })
 
-test('sealed official turns differ in system[0] because cch covers messages', () => {
+test('sealed official turns keep the 1h prefix and leave cch after it', () => {
   const sessionId = '11111111-2222-4333-8444-555555555555'
   const exec = { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } }
   const seal = (messages, cliHop) =>
@@ -122,7 +128,10 @@ test('sealed official turns differ in system[0] because cch covers messages', ()
       body: applyCrsUnofficialPersona(
         {
           model: 'claude-sonnet-5-5',
-          system: '你是一个高速收费员。',
+          system: [
+            { type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT },
+            { type: 'text', text: '你是一个高速收费员。' },
+          ],
           messages,
         },
         { mode: 'official_prompt', park: false, sessionId },
@@ -132,6 +141,12 @@ test('sealed official turns differ in system[0] because cch covers messages', ()
       identity: null,
       cliHop,
     }).body
+  const cachedPrefix = (body) => {
+    let end = -1
+    for (let i = 0; i < body.system.length; i++) if (body.system[i]?.cache_control) end = i
+    assert.ok(end >= 0, 'official prompt must carry the 1h breakpoint')
+    return body.system.slice(0, end + 1)
+  }
   for (const cliHop of [true, false]) {
     const first = seal([{ role: 'user', content: '你好呀。' }], cliHop)
     const second = seal(
@@ -142,9 +157,16 @@ test('sealed official turns differ in system[0] because cch covers messages', ()
       ],
       cliHop,
     )
-    const cchOf = (body) => body.system[0].text.match(/cch=([0-9a-f]{5})/)[1]
+    assert.deepEqual(cachedPrefix(first), cachedPrefix(second))
+    const billingAt = (body) => body.system.findIndex((block) => /x-anthropic-billing-header:/i.test(block?.text || ''))
+    const cacheAt = (body) => {
+      let end = -1
+      for (let i = 0; i < body.system.length; i++) if (body.system[i]?.cache_control) end = i
+      return end
+    }
+    assert.ok(billingAt(first) > cacheAt(first))
+    const cchOf = (body) => body.system[billingAt(body)].text.match(/cch=([0-9a-f]{5})/)[1]
     assert.notEqual(cchOf(first), CCH_PLACEHOLDER)
     assert.notEqual(cchOf(first), cchOf(second))
-    assert.notEqual(first.system[0].text, second.system[0].text)
   }
 })
