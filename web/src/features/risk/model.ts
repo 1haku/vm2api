@@ -45,11 +45,11 @@ export const PASS_REASONS: Record<string, { label: string; hint: string }> = {
   },
   scope: {
     label: '账号不在范围',
-    hint: '请求落到的槽位不在风控的账号范围里',
+    hint: '请求落到的槽位不在选中的平台和套餐里',
   },
   'scope-wait': {
     label: '等待账号判定',
-    hint: 'GPT / Codex 请求，等到槽位确定后再判范围',
+    hint: '范围含这个平台或指定了账号，等到槽位确定后再判',
   },
   unknown: {
     label: '未经关卡',
@@ -57,27 +57,19 @@ export const PASS_REASONS: Record<string, { label: string; hint: string }> = {
   },
 }
 
-/** 风控的账号范围，对应后端 `jev_intercept` 的三个列表。 */
+/** 风控的账号范围。一对是 `claude:max` / `gpt:plus` 这种平台+套餐。 */
 export type AccountScope = {
-  account_types: string[]
-  account_plan_types: string[]
+  account_platform_plans: string[]
   account_ids: string[]
 }
 
-/** 槽位没有 plan_type 时归到这个桶，跟后端一致。 */
-export const SCOPE_NONE = 'none'
-
 export function scopeConfigured(scope: AccountScope) {
-  return (
-    scope.account_types.length > 0 ||
-    scope.account_plan_types.length > 0 ||
-    scope.account_ids.length > 0
-  )
+  return scope.account_platform_plans.length > 0 || scope.account_ids.length > 0
 }
 
 /**
- * 与后端 `jevAccountInScope` 同一套判断：三个列表取并集，空列表不限制。
- * 面板用它实时算「当前范围命中几个槽位」。
+ * 与后端 `jevAccountInScope` 同一套判断：平台+套餐和指定账号取并集，
+ * 全空 = 所有账号。面板用它实时算「当前范围命中几个槽位」。
  */
 export function accountInScope(scope: AccountScope, account: JevScopeAccount) {
   if (!scopeConfigured(scope)) return true
@@ -89,10 +81,8 @@ export function accountInScope(scope: AccountScope, account: JevScopeAccount) {
     ids.some((want) => want && (want === id || want === email || want === name))
   )
     return true
-  const type = (account.type || '').trim().toLowerCase()
-  if (type && scope.account_types.includes(type)) return true
-  const plan = (account.plan_type || '').trim().toLowerCase() || SCOPE_NONE
-  return scope.account_plan_types.includes(plan)
+  const key = (account.scope_key || '').trim().toLowerCase()
+  return !!key && scope.account_platform_plans.includes(key)
 }
 
 export function scopeMatches(scope: AccountScope, accounts: JevScopeAccount[]) {

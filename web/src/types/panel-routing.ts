@@ -116,13 +116,17 @@ export type JevScopeAccount = {
   name: string | null
   platform: string | null
   plan_type: string | null
-  type: string
+  account_tier?: string | null
+  /** `claude:max` / `gpt:plus`. The chip id. */
+  scope_key?: string
+  type?: string
   schedulable: boolean
 }
 
 export type JevScopeInventory = {
-  account_type_options: JevScopeOption[]
-  account_plan_type_options: JevScopeOption[]
+  account_platform_plan_options?: JevScopeOption[]
+  account_type_options?: JevScopeOption[]
+  account_plan_type_options?: JevScopeOption[]
   accounts_total: number
   accounts: JevScopeAccount[]
 }
@@ -133,7 +137,8 @@ export type JevInterceptConfig = {
   hard_regex_enabled: boolean
   /** GPT / Codex 请求是否过拦截关卡，默认 false。 */
   openai_platform_enabled: boolean
-  /** 账号范围：空 = 所有账号都进关卡。三个列表取并集，跟 sub2api 风控一致。 */
+  /** 账号范围。空 = 所有账号都进关卡。平台+套餐与指定账号取并集。 */
+  account_platform_plans: string[]
   account_types: string[]
   account_plan_types: string[]
   account_ids: string[]

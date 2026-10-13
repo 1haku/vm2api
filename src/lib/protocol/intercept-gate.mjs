@@ -23,6 +23,7 @@ import {
   jevAccountInScope,
   jevModelDocument,
   jevScopeConfigured,
+  jevScopeWaits,
   matchHardPolicy,
   policyBlockError,
 } from './jev-intercept.mjs'
@@ -126,17 +127,23 @@ export async function evaluateProtocolIntercept({
   account = null,
   fetchImpl,
 } = {}) {
-  // GPT / Codex traffic skips every layer unless the panel opts it in; once in, it runs the same chain.
-  // With an account scope set, the Codex hop asks again once the slot is claimed: only there is
-  // the serving account known. Until then the request waits instead of being judged.
+  // GPT / Codex skips every layer unless the panel opts it in. Once a scope
+  // is set, the slot decides GPT: a scope with no GPT pair and no named
+  // account is out of range. Claude stays in the gate until a Claude pair
+  // or a named account is selected; a GPT-only scope does not turn it off.
   if (isOpenaiPlatformModel(inbound, body)) {
     if (!jevScopeConfigured(jev)) {
       if (jev?.openai_platform_enabled !== true) return pass('platform')
+    } else if (!jevScopeWaits(jev, 'gpt')) {
+      return pass('scope')
     } else if (!account) {
       return pass('scope-wait')
     } else if (!jevAccountInScope(jev, account)) {
       return pass('scope')
     }
+  } else if (jevScopeWaits(jev, 'claude')) {
+    if (!account) return pass('scope-wait')
+    if (!jevAccountInScope(jev, account)) return pass('scope')
   }
   const distill = detectDistill({ inbound, body, official, zeroInject }, distillRules)
   if (distill.action === 'block') {

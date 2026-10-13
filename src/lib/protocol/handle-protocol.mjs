@@ -17,7 +17,8 @@ import {
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
-import { readJevConfig } from './jev-intercept.mjs'
+import { findAccount } from '../admin/panel-api.mjs'
+import { jevScopeWaits, readJevConfig, scopeAccountFromVm } from './jev-intercept.mjs'
 import { runProtocolIntercept } from './intercept-gate.mjs'
 import {
   toClaudeMessages,
@@ -237,6 +238,17 @@ export function createHandleProtocol(deps) {
 
   function acceptAssistantHop(result) {
     return finalizeAssembledAssistantHop(result)
+  }
+
+  function claudeScopePending() {
+    let jev
+    try {
+      const settings = deps.settings || new SettingsRepo()
+      jev = readJevConfig((key, fallback) => settings.get(key, fallback))
+    } catch {
+      jev = readJevConfig()
+    }
+    return jevScopeWaits(jev, 'claude')
   }
 
   async function applyProtocolIntercept({ req, inbound, body, fp, logBag, requestId, res, account = null }) {
@@ -1103,6 +1115,23 @@ export function createHandleProtocol(deps) {
         deliveryMode,
         signal: clientAbort.signal,
         applyAttempt: async (body, selected, extra = {}) => {
+          if (claudeScopePending()) {
+            const blocked = await applyProtocolIntercept({
+              req,
+              inbound,
+              body: ctx.body,
+              fp,
+              logBag,
+              requestId: logCtx.request_id,
+              res,
+              account: scopeAccountFromVm(selected?.vm, findAccount(accountQuota, selected?.vm)?.unified),
+            })
+            if (blocked) {
+              const error = new Error('response already sent')
+              error.code = 'response_sent'
+              throw error
+            }
+          }
           try {
             touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm)
           } catch {}
@@ -1384,6 +1413,8 @@ export function createHandleProtocol(deps) {
         } catch {}
       }
     }
+
+    if (result?.responseSent) return
 
     result = acceptAssistantHop(result)
     if (result?.finalState === 'verified' && logBag.cache_prefix_key) {

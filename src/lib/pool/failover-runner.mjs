@@ -914,6 +914,26 @@ export class FailoverRunner {
         budget.noteSwitch(selected.accountId, selected.vmId, { spill: policy.reason === 'slot_busy' })
       } catch (error) {
         noteHop(null)
+        if (error?.code === 'response_sent') {
+          this.attemptsRepo?.complete?.(requestId, attemptNo, {
+            upstreamStatus: 403,
+            errorScope: 'request',
+            action: 'stop',
+            downstreamCommitted: true,
+            terminalState: 'policy_block',
+            latencyMs: Date.now() - attemptStarted,
+          })
+          return {
+            ok: false,
+            responseSent: true,
+            status: 403,
+            via: 'account-scope',
+            vmId: selected.vmId,
+            accountId: selected.accountId,
+            attemptCount: attemptNo,
+            finalState: 'policy_block',
+          }
+        }
         if (signal?.aborted || error?.code === 'selection_cancelled' || error?.code === 'request_cancelled') {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
             upstreamStatus: 0,
