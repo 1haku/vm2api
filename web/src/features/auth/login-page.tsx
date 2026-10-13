@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/password-input'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { LoginVerification } from './turnstile'
 
 export function LoginPage() {
   const queryClient = useQueryClient()
@@ -19,15 +20,19 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
+  const [verification, setVerification] = useState({ ready: false, token: '' })
+  const [attempt, setAttempt] = useState(0)
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
+    if (pending || !verification.ready) return
     setError('')
     setPending(true)
     try {
       const result = await loginRequest({
         username: username.trim(),
         password,
+        turnstileToken: verification.token || undefined,
       })
       await queryClient.cancelQueries()
       queryClient.clear()
@@ -41,6 +46,8 @@ export function LoginPage() {
       await navigate({ to: '/overview' })
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
+      setVerification({ ready: false, token: '' })
+      setAttempt((n) => n + 1)
     } finally {
       setPending(false)
     }
@@ -85,6 +92,10 @@ export function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+          <LoginVerification
+            attempt={attempt}
+            onChange={(ready, token) => setVerification({ ready, token })}
+          />
           {error ? (
             <p
               role='alert'
@@ -96,7 +107,9 @@ export function LoginPage() {
           <Button
             className='h-11 w-full'
             type='submit'
-            disabled={pending || !username.trim() || !password}
+            disabled={
+              pending || !verification.ready || !username.trim() || !password
+            }
             loading={pending}
           >
             {pending ? '登录中…' : '登录'}

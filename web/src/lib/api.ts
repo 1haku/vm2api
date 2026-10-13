@@ -156,6 +156,7 @@ export function patchVm<T = unknown>(id: string, body: VmPatch) {
 export async function loginRequest(input: {
   username: string
   password: string
+  turnstileToken?: string
 }): Promise<{ token: string; user: string }> {
   const url = '/api/panel/login'
   let res: Response
@@ -167,6 +168,7 @@ export async function loginRequest(input: {
       body: JSON.stringify({
         username: input.username,
         password: input.password,
+        'cf-turnstile-response': input.turnstileToken,
       }),
     })
   } catch {

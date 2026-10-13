@@ -4,6 +4,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { createPanelLoginProtection } from './panel-login-protection.mjs'
 import {
   verifyPanelLogin,
   createPanelSession,
@@ -471,6 +472,7 @@ function slotProxyHint(px = {}, label = null) {
 }
 
 export function createPanelHandler(ctx) {
+  const loginProtection = createPanelLoginProtection({ fetchImpl: ctx.turnstileFetch || fetch })
   // A checkout can change under a live Node process; report its boot version.
   const runningVersion = readLocalVersion(ctx.cfg?.paths?.project)
   const json = (...args) => ctx.json(...args)
@@ -973,8 +975,18 @@ export function createPanelHandler(ctx) {
     }
 
     // ========== Panel login (public) ==========
+    if (req.method === 'GET' && p === '/api/panel/login-config') {
+      res.setHeader('Cache-Control', 'no-store')
+      return json(res, 200, loginProtection.publicConfig())
+    }
     if (req.method === 'POST' && p === '/api/panel/login') {
+      res.setHeader('Cache-Control', 'no-store')
       const body = await readBody(req, 4096)
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json(res, 400, { ok: false, error: { message: '无效的登录请求', type: 'auth' } })
+      }
+      const denied = await loginProtection.check(req, body)
+      if (denied) return json(res, denied.status, denied.body)
       const username = body.username || body.user || body.u || ''
       const password = body.password || body.pass || body.p || ''
       const authed = verifyPanelLogin(username, password)

@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'panel-login-protection',
   'subscriptions',
   'subscription-estimate',
   'request-limits',
@@ -132,6 +133,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'panel-turnstile',
   'subscription-reassignment',
   'shared-plan-slots',
   'pool-seat-stream',

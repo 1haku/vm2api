@@ -2,6 +2,10 @@
 
 ## 版本与功能
 
+面板登录支持 Cloudflare Turnstile。服务器 `.env` 配置 `TURNSTILE_ENABLED=1`、`TURNSTILE_SITE_KEY`、`TURNSTILE_SECRET` 和逗号分隔的 `TURNSTILE_HOSTNAMES`（只填允许的前端域名，不填协议/端口/路径）。Secret 不放进源码、前端、日志或公开配置。`GET /api/panel/login-config` 只返回启用/就绪状态、公开 Site Key 和允许域名；登录服务端固定向官方 Siteverify 验证，强制 success=true、action=login 及域名匹配，8 秒超时拒绝登录。每次失败后重新获取一次性 token。使用居中登录卡片，内网 IP 访问提示改用允许域名，不按 Host/转发头/内网 IP 绕过。
+
+登录限流独立于 Turnstile：每账户 10 次/10 分钟、每 socket 来源 60 次/分钟、全站 300 次/分钟，按窗口恢复，进程内存储且有容量上限。Tunnel 客户端可能共用一个来源，不信任任意转发 IP 头。验证服务故障不自动放行；管理员可通过 SSH 将服务器 `.env` 的 `TURNSTILE_ENABLED=0` 后执行 `docker compose up -d --no-deps vm2api` 恢复密码登录。模型 API、已登录会话、订阅和计费不增加人机验证。无数据库迁移。
+
 订阅预留修复：不再将整份请求 JSON 字节数作为 Token。按消息/提示词/工具定义文本采用 UTF-8/3 加 25% 余量估算，保留 8192 基础余量；图片、音频、文件、加密推理及 previous_response_id 使用独立估算余量，忽略顶层传输元数据，不预先假定缓存命中。预留仍是近似值而非精确 tokenizer 或费用上界，实际扣款始终依据上游 usage。日/周额度、并发、RPM、未定价模型保护和事务预留不变；拒绝响应增加额度明细并将错误文案写入日志。无数据库迁移，不修改历史费用或用户额度。
 
 `codex-auto-review` 按本站管理员要求配置输入、输出、缓存读写均为零价，定价来源标记 `custom-free-auto-review`，不作为 OpenAI 独立官方报价。该模型保持原名转发至 Codex，不替换审批模型或修改审批规则；限额订阅可正常预留和结算，保留 Token、调用次数、归属及零金额账本。订阅权限、撤销、并发、RPM 与其他未知模型的未定价拒绝策略不变。无数据库迁移。
