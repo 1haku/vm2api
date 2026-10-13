@@ -120,53 +120,19 @@ test('applyCrsUnofficialPersona keeps the placeholder until hop finalize', () =>
   assert.equal(computeClaudeCodeCch(Buffer.from(projected, 'utf8')), cch)
 })
 
-test('sealed official turns keep the 1h prefix and leave cch after it', () => {
+test('no inbound system still emits billing, identity, official prompt, and env', () => {
   const sessionId = '11111111-2222-4333-8444-555555555555'
-  const exec = { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } }
-  const seal = (messages, cliHop) =>
-    finalizeWorkerPayload({
-      body: applyCrsUnofficialPersona(
-        {
-          model: 'claude-sonnet-5-5',
-          system: [
-            { type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT },
-            { type: 'text', text: '你是一个高速收费员。' },
-          ],
-          messages,
-        },
-        { mode: 'official_prompt', park: false, sessionId },
-      ),
-      reqHeaders: {},
-      exec,
-      identity: null,
-      cliHop,
-    }).body
-  const cachedPrefix = (body) => {
-    let end = -1
-    for (let i = 0; i < body.system.length; i++) if (body.system[i]?.cache_control) end = i
-    assert.ok(end >= 0, 'official prompt must carry the 1h breakpoint')
-    return body.system.slice(0, end + 1)
-  }
-  for (const cliHop of [true, false]) {
-    const first = seal([{ role: 'user', content: '你好呀。' }], cliHop)
-    const second = seal(
-      [
-        { role: 'user', content: '你好呀。' },
-        { role: 'assistant', content: '在。' },
-        { role: 'user', content: '继续' },
-      ],
-      cliHop,
-    )
-    assert.deepEqual(cachedPrefix(first), cachedPrefix(second))
-    const billingAt = (body) => body.system.findIndex((block) => /x-anthropic-billing-header:/i.test(block?.text || ''))
-    const cacheAt = (body) => {
-      let end = -1
-      for (let i = 0; i < body.system.length; i++) if (body.system[i]?.cache_control) end = i
-      return end
-    }
-    assert.ok(billingAt(first) > cacheAt(first))
-    const cchOf = (body) => body.system[billingAt(body)].text.match(/cch=([0-9a-f]{5})/)[1]
-    assert.notEqual(cchOf(first), CCH_PLACEHOLDER)
-    assert.notEqual(cchOf(first), cchOf(second))
-  }
+  const out = applyCrsUnofficialPersona(
+    {
+      model: 'claude-sonnet-5-5',
+      messages: [{ role: 'user', content: '你好呀。' }],
+    },
+    { mode: 'official_prompt', sessionId },
+  )
+  assert.equal(out.system.length, 4)
+  assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
+  assert.equal(out.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.match(out.system[3].text, /^# Environment\n/)
 })

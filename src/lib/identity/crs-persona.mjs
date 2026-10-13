@@ -1799,7 +1799,8 @@ function applyTemplatePersona(
   // mentions {{caller_agent}} would otherwise drop it and leave only the identity line.
   const templateWantsCallerAgent = blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
   const usesCallerAgent = !harness && (preset === 'official' || templateWantsCallerAgent)
-  const callerAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  const suppliedAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  const callerAgent = suppliedAgent || (preset === 'official' && !harness ? CRS_OFFICIAL_AGENT_PROMPT : '')
   const leftover = harness
     ? ''
     : usesCallerAgent
@@ -1828,7 +1829,6 @@ function applyTemplatePersona(
     }),
   )
   if (preset === 'official') system = insertOfficialCallerAgent(system, callerAgent)
-  system = parkBillingAfterCacheBoundary(system)
   let outMessages = messages
   if (midSystem) {
     outMessages = wrapExistingMidConversationSystem(insertMidConversationSystem(outMessages, leftover))

@@ -110,9 +110,9 @@ test('forceConfigured rewrites official and proxied-official system onto the pre
   const skipped = applyCrsUnofficialPersona(body, { headers, mode: 'official_full' })
   assert.equal(skipped.system.length, 3)
   const out = applyCrsUnofficialPersona(body, { headers, mode: 'official_full', forceConfigured: true })
-  assert.equal(out.system[0].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_AGENT_PROMPT)
-  assert.match(out.system[3].text, /^x-anthropic-billing-header:/)
+  assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.match(out.system.at(-1).text, /RFC 2119/)
   assert.match(out.system.at(-1).text, /<workstation>/)
   assert.ok(!out.system.some((block) => String(block?.text || '').includes('cc_entrypoint=cli')))
@@ -140,24 +140,18 @@ test('empty unofficial system still writes the official full prompt', () => {
   const messages = [{ role: 'user', content: 'ping' }]
   const out = applyCrsUnofficialPersona({ messages }, { officialClient: false })
   assert.equal(out.system.length, 4)
-  assert.equal(out.system[0].text, CRS_OFFICIAL_SYSTEM)
+  assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[0].cache_control, undefined)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_AGENT_PROMPT)
-  assert.deepEqual(out.system[1].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
-  assert.match(out.system[2].text, /# Text output/)
-  assert.match(out.system[2].text, /# Environment/)
-  assert.ok(!environmentSection(out.system[2].text).includes('Primary working directory'))
-  assert.ok(!environmentSection(out.system[2].text).includes('Platform:'))
-  assert.ok(!environmentSection(out.system[2].text).includes('OS Version:'))
-  assert.match(environmentSection(out.system[2].text), /Timezone: UTC/)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.match(
-    out.system[3].text,
-    new RegExp(
-      `^x-anthropic-billing-header: cc_version=${DEFAULT_CLI_VERSION.replaceAll('.', '\\.')}\\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=[0-9a-f]{5}; cc_prompt_id=[0-9a-f-]{36}; cc_turn_origin=sdk; cc_prompt_index=0; cc_turn_index=1;$`,
-    ),
-  )
-  assert.equal(out.system[3].cache_control, undefined)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.match(out.system[3].text, /# Text output/)
+  assert.match(out.system[3].text, /# Environment/)
+  assert.ok(!environmentSection(out.system[3].text).includes('Primary working directory'))
+  assert.ok(!environmentSection(out.system[3].text).includes('Platform:'))
+  assert.ok(!environmentSection(out.system[3].text).includes('OS Version:'))
+  assert.match(environmentSection(out.system[3].text), /Timezone: UTC/)
+  assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(out.messages.length, 1)
   assertParkedStanding(out, 'ping')
 })
@@ -383,8 +377,8 @@ test('fingerprint uses first user text, not discarded caller system', () => {
     system: 'keep this persona',
     messages: [{ role: 'user', content: firstUser }],
   })
-  assert.match(out.system[3].text, new RegExp(expectedFp(firstUser)))
-  assert.ok(!out.system[3].text.includes(expectedFp('[System Instructions]\nkeep this persona')))
+  assert.match(out.system[0].text, new RegExp(expectedFp(firstUser)))
+  assert.ok(!out.system[0].text.includes(expectedFp('[System Instructions]\nkeep this persona')))
 })
 
 test('cliVersion can be parsed from a slot user-agent', () => {
@@ -394,7 +388,7 @@ test('cliVersion can be parsed from a slot user-agent', () => {
     },
     { cliVersion: 'claude-cli/2.1.200 (external, cli)' },
   )
-  assert.match(out.system[3].text, /cc_version=2\.1\.200\.[0-9a-f]{3}/)
+  assert.match(out.system[0].text, /cc_version=2\.1\.200\.[0-9a-f]{3}/)
 })
 
 test('persona mode append attaches the official one-liner and keeps caller system', () => {
@@ -607,14 +601,14 @@ test('official_prompt keeps billing identity overlay, slot env, and skips inject
     },
     { mode: 'official_prompt', park: true },
   )
-  assert.equal(out.system.length, 3)
+  assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /x-anthropic-billing-header:/)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.match(out.system[2].text, /^# Environment\n - Timezone: /)
-  assert.equal(out.system[2].cache_control, undefined)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.match(out.system[3].text, /^# Environment\n - Timezone: /)
+  assert.equal(out.system[3].cache_control, undefined)
   assert.ok(!out.system.some((b) => String(b?.text || '').includes(DEFAULT_AGENT_STANDING)))
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-  assert.ok(!out.system.some((b) => b?.text === CRS_OFFICIAL_AGENT_PROMPT))
   const first = out.messages[0].content
   assert.match(typeof first === 'string' ? first : first[0].text, /MANDATORY constraints for this turn/)
 })
@@ -698,7 +692,7 @@ test('official_full puts the caller system after the full agent prompt', () => {
     { mode: 'official_full', park: false },
   )
   assert.equal(out.system.length, 5)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.equal(out.system[4].text, '你是一个高速收费员。')
   assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].role, 'user')
@@ -726,11 +720,11 @@ test('pi and omp harness prompts replace the official full system instead of sta
     assert.equal(joined.includes('# Text output'), false, mode)
     assert.equal(joined.includes('# auto memory'), false, mode)
     assert.equal(joined.includes('# Context management'), false, mode)
-    assert.equal(texts[0], CRS_OFFICIAL_SYSTEM)
-    assert.match(texts[1], /Oh My Pi coding harness/)
-    assert.match(texts[1], /<workstation>/)
-    assert.match(texts[1], /\/tmp\/demo/)
-    assert.match(texts[3], /^x-anthropic-billing-header:/)
+    assert.ok(texts.some((text) => text.startsWith('x-anthropic-billing-header:')), mode)
+    assert.ok(texts.includes(CRS_OFFICIAL_SYSTEM), mode)
+    const harness = texts.find((text) => text.includes('Oh My Pi coding harness'))
+    assert.match(harness, /<workstation>/)
+    assert.match(harness, /\/tmp\/demo/)
     assert.equal(
       texts.find((text) => text.includes('# Environment')),
       '# Environment\n - Timezone: America/Los_Angeles',
@@ -1163,9 +1157,9 @@ test('harness environment uses the slot timezone and keeps cwd inside the client
     },
   })
   assert.equal(out.system.length, 4)
-  assert.match(out.system[1].text, /Oh My Pi coding harness/)
-  assert.match(out.system[1].text, /\/tmp\/demo/)
-  assert.equal(out.system[2].text, '# Environment\n - Timezone: America/New_York')
+  assert.match(out.system[2].text, /Oh My Pi coding harness/)
+  assert.match(out.system[2].text, /\/tmp\/demo/)
+  assert.equal(out.system[3].text, '# Environment\n - Timezone: America/New_York')
   assert.ok(!out.system[3].text.includes('7.0.0-14-generic'))
 })
 
@@ -1194,16 +1188,16 @@ test('Environment inherits caller platform/OS and rewrites timezone to the slot'
     },
   )
   assert.equal(out.system.length, 5)
-  assert.match(out.system[2].text, /Primary working directory: \/Users\/me\/app/)
-  assert.match(out.system[2].text, /Platform: darwin/)
-  assert.match(out.system[2].text, /OS Version: Darwin 24\.3\.0/)
-  assert.match(out.system[2].text, /Locale: zh_CN\.UTF-8/)
-  assert.match(out.system[2].text, /Timezone: America\/New_York/)
-  assert.match(out.system[2].text, /Shell: zsh/)
-  assert.ok(!out.system[2].text.includes('7.0.0-14-generic'))
-  assert.ok(!out.system[2].text.includes('Asia/Shanghai'))
-  assert.ok(!out.system[2].text.includes('en_US.UTF-8'))
-  assert.ok(!out.system[2].text.includes('Platform: linux'))
+  assert.match(out.system[3].text, /Primary working directory: \/Users\/me\/app/)
+  assert.match(out.system[3].text, /Platform: darwin/)
+  assert.match(out.system[3].text, /OS Version: Darwin 24\.3\.0/)
+  assert.match(out.system[3].text, /Locale: zh_CN\.UTF-8/)
+  assert.match(out.system[3].text, /Timezone: America\/New_York/)
+  assert.match(out.system[3].text, /Shell: zsh/)
+  assert.ok(!out.system[3].text.includes('7.0.0-14-generic'))
+  assert.ok(!out.system[3].text.includes('Asia/Shanghai'))
+  assert.ok(!out.system[3].text.includes('en_US.UTF-8'))
+  assert.ok(!out.system[3].text.includes('Platform: linux'))
   assert.equal(out.system[4].text.includes('Timezone: Asia/Shanghai'), true)
 })
 
@@ -1303,13 +1297,13 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
     },
   )
   assert.equal(out.system.length, 5)
-  assert.equal(out.system[0].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
+  assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
+  assert.ok(!/\n/.test(out.system[0].text))
+  assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[1].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.match(out.system[2].text, /^x-anthropic-billing-header: /)
-  assert.match(out.system[2].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
-  assert.ok(!/\n/.test(out.system[2].text))
-  assert.equal(out.system[2].cache_control, undefined)
+  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
   assert.equal(out.system[3].text, '# Environment\n - Timezone: Asia/Shanghai')
   assert.equal(out.system[3].cache_control, undefined)
@@ -1332,7 +1326,7 @@ test('zero inject prepends standing constraints to caller_agent', () => {
       },
       { mode: 'zero', routingFile },
     )
-    assert.equal(out.system[1].text, `${DEFAULT_AGENT_STANDING}\n`)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
     assert.equal(out.system[4].text, agent)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -1347,11 +1341,11 @@ test('zero inject ignores persona_agent and writes env timezone without agent', 
     { mode: 'zero', agent: 'required', identity: { timezone: 'UTC' } },
   )
   assert.equal(out.system.length, 4)
-  assert.match(out.system[2].text, /prompt_version=</)
+  assert.match(out.system[0].text, /prompt_version=</)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_PROMPT_REQUIRED))
-  assert.equal(out.system[0].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[1].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
 })
 
@@ -1363,9 +1357,9 @@ test('zero inject with no caller system is billing plus env timezone', () => {
     { mode: 'zero' },
   )
   assert.equal(out.system.length, 4)
-  assert.match(out.system[2].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
-  assert.equal(out.system[0].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
   assert.match(out.system[3].text, /^# Environment\n - Timezone: \S+$/)
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))

@@ -148,7 +148,7 @@ test('official_prompt does not start usage hide, even with standing and env', ()
   try {
     const after = applyCrsUnofficialPersona(before, { mode: 'official_prompt', routingFile })
     assert.equal(personaHideForUnofficial(before, after, { mode: 'official_prompt' }), 0)
-    assert.ok(after.system.some((b) => String(b?.text || '') === `${DEFAULT_AGENT_STANDING}\n`))
+    assert.ok(after.system.some((b) => String(b?.text || '').startsWith(`${DEFAULT_AGENT_STANDING}\n`)))
     assert.ok(after.system.some((b) => String(b?.text || '').startsWith('# Environment')))
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -159,12 +159,12 @@ test('zero inject hides billing and env, not leftover', () => {
   const before = { system: '你是一个高速收费员。', messages: helloBody.messages }
   const after = applyCrsUnofficialPersona(before, { mode: 'zero', identity: { timezone: 'Asia/Tokyo' } })
   const hide = personaHideInputTokens(before, after)
-  const billing = String(after.system[2].text || '')
+  const billing = String(after.system[0].text || '')
   assert.ok(billing.startsWith('x-anthropic-billing-header:'))
   assert.match(billing, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(after.system.length, 5)
-  assert.equal(after.system[0].text, '\u200b')
   assert.equal(after.system[1].text, '\u200b')
+  assert.equal(after.system[2].text, '\u200b')
   assert.equal(after.system[3].text, '# Environment\n - Timezone: Asia/Tokyo')
   assert.equal(after.system[4].text, '你是一个高速收费员。')
   const noEnv = structuredClone(after)
