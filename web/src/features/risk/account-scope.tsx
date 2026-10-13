@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type {
-  JevInterceptConfig,
-  JevScopeOption,
-} from '@/types/panel-routing'
+import type { JevInterceptConfig, JevScopeOption } from '@/types/panel-routing'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -171,14 +168,17 @@ export function AccountScopeSettings() {
       </p>
     )
   }
-  if (!draft || !current) return <div className='h-40 animate-pulse bg-muted/40' />
+  if (!draft || !current)
+    return <div className='h-40 animate-pulse bg-muted/40' />
 
   const inventory = q.data?.account_scope
   const accounts = inventory?.accounts || []
   const total = inventory?.accounts_total ?? accounts.length
   const configured = scopeConfigured(current)
   const matched = configured ? scopeMatches(current, accounts) : accounts
-  const preview = matched.slice(0, 6).map((account) => account.email || account.id)
+  const preview = matched
+    .slice(0, 6)
+    .map((account) => account.email || account.id)
 
   const toggle = (key: 'account_types' | 'account_plan_types', id: string) =>
     setDraft({
@@ -195,8 +195,8 @@ export function AccountScopeSettings() {
     >
       <div className='space-y-6 p-4'>
         <p className='rounded-lg border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground'>
-          勾选后只有命中的账号会被四道关检查，其它账号的请求直接放行。
-          GPT / Codex 按请求实际落到的槽位判定；选了范围就不再受「OpenAI
+          勾选后只有命中的账号会被四道关检查，其它账号的请求直接放行。 GPT /
+          Codex 按请求实际落到的槽位判定；选了范围就不再受「OpenAI
           平台」开关影响，Claude 流量始终进关卡。
         </p>
 

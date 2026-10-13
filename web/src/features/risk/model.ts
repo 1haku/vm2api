@@ -1,5 +1,5 @@
-import type { UsageLogRow } from '@/types/panel-usage-logs'
 import type { JevScopeAccount } from '@/types/panel-routing'
+import type { UsageLogRow } from '@/types/panel-usage-logs'
 
 /** Gate order matches `evaluateProtocolIntercept`: cheap rules first, the model last. */
 export type StageId = 'distill' | 'hard-regex' | 'refusal' | 'jev'
@@ -79,16 +79,15 @@ export function scopeConfigured(scope: AccountScope) {
  * 与后端 `jevAccountInScope` 同一套判断：三个列表取并集，空列表不限制。
  * 面板用它实时算「当前范围命中几个槽位」。
  */
-export function accountInScope(
-  scope: AccountScope,
-  account: JevScopeAccount
-) {
+export function accountInScope(scope: AccountScope, account: JevScopeAccount) {
   if (!scopeConfigured(scope)) return true
   const ids = scope.account_ids.map((item) => item.trim().toLowerCase())
   const id = (account.id || '').trim().toLowerCase()
   const email = (account.email || '').trim().toLowerCase()
   const name = (account.name || '').trim().toLowerCase()
-  if (ids.some((want) => want && (want === id || want === email || want === name)))
+  if (
+    ids.some((want) => want && (want === id || want === email || want === name))
+  )
     return true
   const type = (account.type || '').trim().toLowerCase()
   if (type && scope.account_types.includes(type)) return true
@@ -96,10 +95,7 @@ export function accountInScope(
   return scope.account_plan_types.includes(plan)
 }
 
-export function scopeMatches(
-  scope: AccountScope,
-  accounts: JevScopeAccount[]
-) {
+export function scopeMatches(scope: AccountScope, accounts: JevScopeAccount[]) {
   return accounts.filter((account) => accountInScope(scope, account))
 }
 

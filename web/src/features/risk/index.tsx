@@ -12,8 +12,8 @@ import {
   type DetailState,
   LogDetailDialog,
 } from '@/features/logs/log-detail/log-detail-dialog'
-import { Panel } from './blocks'
 import { AccountScopeSettings } from './account-scope'
+import { Panel } from './blocks'
 import { DistillSettings } from './distill-settings'
 import { RiskFeed } from './feed'
 import { GateRail, type StageState } from './gate-rail'

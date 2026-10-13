@@ -680,7 +680,11 @@ describe('rest period (working window) is scheduling, not cooldown or credential
   })
 
   it('pool status shows rest with the caution tone, not cool', () => {
-    expect(poolStatus(resting)).toMatchObject({ key: 'rest', text: '休息时段', cls: 'caution' })
+    expect(poolStatus(resting)).toMatchObject({
+      key: 'rest',
+      text: '休息时段',
+      cls: 'caution',
+    })
     expect(accountStatus(resting).cls).toBe('caution')
   })
 
