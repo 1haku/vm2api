@@ -303,6 +303,7 @@ function onboardingPayloadFor(req, ctx) {
     role,
     status: rec.status,
     profile: rec.profile,
+    guide_used: rec.guide_used,
     // cfg.base_url falls back to HOST:PORT (often 0.0.0.0); only an explicit public URL beats the browser origin.
     base_url: process.env.PUBLIC_BASE_URL || null,
     facts: collectOnboardingFacts(req, ctx),

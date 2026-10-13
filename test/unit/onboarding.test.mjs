@@ -69,28 +69,31 @@ test('step sets follow role: admin 6, user 5, super schedulable+first_request', 
   )
 })
 
-test('needs_welcome is pending and (total=0 or incomplete); all-done skips welcome', () => {
-  assert.equal(needsWelcome('pending', 0, 0), true)
-  assert.equal(needsWelcome('pending', 0, 6), true)
-  assert.equal(needsWelcome('pending', 5, 6), true)
-  assert.equal(needsWelcome('pending', 6, 6), false)
-  assert.equal(needsWelcome('completed', 0, 6), false)
-  assert.equal(needsWelcome('dismissed', 1, 6), false)
-  const empty = { ...payload('admin'), steps: [], done_count: 0, total: 0 }
-  assert.equal(needsWelcome(empty.status, empty.done_count, empty.total), true)
-  const allDone = payload('admin', {
-    envPassword: 'custom',
-    envAdminExists: false,
-    proxyCount: 1,
-    vmWithTokenCount: 1,
-    schedulableCount: 1,
-    activeKeyCount: 1,
-    hasFirstRequest: true,
+test('guide pops until skip or finish, even when setup steps are already done', () => {
+  assert.equal(needsWelcome(false), true)
+  assert.equal(needsWelcome(undefined), true)
+  assert.equal(needsWelcome(true), false)
+  const fresh = payload('admin')
+  assert.equal(fresh.guide_used, false)
+  assert.equal(fresh.needs_welcome, true)
+  const legacy = buildOnboardingPayload({
+    user: 'admin',
+    role: 'admin',
+    status: 'dismissed',
+    guide_used: false,
+    facts: {
+      envPassword: 'custom',
+      envAdminExists: true,
+      proxyCount: 1,
+      vmWithTokenCount: 1,
+      schedulableCount: 1,
+      activeKeyCount: 1,
+      hasFirstRequest: true,
+    },
   })
-  assert.equal(allDone.done_count, 6)
-  assert.equal(allDone.total, 6)
-  assert.equal(allDone.needs_welcome, false)
-  assert.equal(allDone.status, 'pending')
+  assert.equal(legacy.done_count, 6)
+  assert.equal(legacy.needs_welcome, true)
+  assert.equal(legacy.guide_used, false)
 })
 
 test('PUT complete / dismiss / reset round-trip through settings; invalid action rejected', () => {
@@ -102,6 +105,7 @@ test('PUT complete / dismiss / reset round-trip through settings; invalid action
   saveOnboardingState(settings, applyOnboardingAction(loadOnboardingState(settings), 'admin', 'complete'))
   const completed = recordOf(loadOnboardingState(settings), 'admin')
   assert.equal(completed.status, 'completed')
+  assert.equal(completed.guide_used, true)
   assert.ok(completed.updated_at)
   const afterComplete = buildOnboardingPayload({
     user: 'admin',
@@ -113,6 +117,10 @@ test('PUT complete / dismiss / reset round-trip through settings; invalid action
 
   saveOnboardingState(settings, applyOnboardingAction(loadOnboardingState(settings), 'admin', 'dismiss'))
   assert.equal(recordOf(loadOnboardingState(settings), 'admin').status, 'dismissed')
+  assert.equal(recordOf(loadOnboardingState(settings), 'admin').guide_used, true)
+  const legacy = recordOf({ admin: { status: 'completed', updated_at: '2026-01-01T00:00:00.000Z' } }, 'admin')
+  assert.equal(legacy.guide_used, false)
+  assert.equal(buildOnboardingPayload({ user: 'admin', role: 'admin', ...legacy }).needs_welcome, true)
   assert.equal(recordOf(loadOnboardingState(settings), 'bob').status, 'pending')
 
   saveOnboardingState(settings, applyOnboardingAction(loadOnboardingState(settings), 'admin', 'reset'))
