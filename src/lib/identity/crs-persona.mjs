@@ -1245,24 +1245,6 @@ function insertOfficialCallerAgent(system, callerAgent) {
   return [...system.slice(0, at), block, ...system.slice(at)]
 }
 
-/** cch is sealed from the whole body, so it changes every turn. Keep that block after the last cache breakpoint or the 1h prefix never hits. */
-export function parkBillingAfterCacheBoundary(system) {
-  if (!Array.isArray(system) || system.length < 2) return system
-  let billingAt = -1
-  let lastCacheAt = -1
-  for (let i = 0; i < system.length; i++) {
-    const block = system[i]
-    const text = String(block?.text || '')
-    if (billingAt < 0 && /x-anthropic-billing-header:/i.test(text)) billingAt = i
-    if (block?.cache_control && i !== billingAt) lastCacheAt = i
-  }
-  if (billingAt < 0 || lastCacheAt < 0 || billingAt > lastCacheAt) return system
-  const next = system.slice(0, billingAt).concat(system.slice(billingAt + 1))
-  const cacheAt = lastCacheAt - (billingAt < lastCacheAt ? 1 : 0)
-  next.splice(cacheAt + 1, 0, system[billingAt])
-  return next
-}
-
 function collectPersonaRuleAppends(body, messages, routingFile) {
   const extras = []
   const standing = standingConstraintFromRoutingFile(routingFile)
@@ -1737,7 +1719,7 @@ function rewriteOfficialSystem(
       return block
     })
   }
-  system = parkBillingAfterCacheBoundary(appendOfficialSystemPrompt(system, leftover))
+  system = appendOfficialSystemPrompt(system, leftover)
   if (!extras.length) return { ...body, system, messages }
   return {
     ...body,

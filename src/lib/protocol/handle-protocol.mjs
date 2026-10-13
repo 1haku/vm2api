@@ -923,6 +923,28 @@ export function createHandleProtocol(deps) {
           standing: standingUsageFromRoutingFile(routingConfigPath),
         })
 
+    if (
+      inferenceBackend === 'api' &&
+      !requestContext &&
+      officialTraffic &&
+      !officialCcPassthroughFromRouting(getRouting() || {})
+    ) {
+      ctx.body = applyCrsUnofficialPersona(ctx.body, {
+        officialClient: false,
+        forceConfigured: true,
+        routingFile: routingConfigPath,
+        headers: req.headers,
+        sessionId: outboundSessionId,
+        model: ctx.body?.model,
+        cliVersion: OFFICIAL_CLI_VERSION,
+      })
+      personaHideTokens = personaHideForUnofficial(personaIn, ctx.body, {
+        officialClient: false,
+        mode: personaMode,
+        hides: personaHidesUsageFromRoutingFile(routingConfigPath),
+        standing: standingUsageFromRoutingFile(routingConfigPath),
+      })
+    }
     if (inferenceBackend === 'api') {
       const managedKey = req.apiKeyRecord || null
       if (managedKey) {
