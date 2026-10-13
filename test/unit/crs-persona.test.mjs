@@ -720,7 +720,10 @@ test('pi and omp harness prompts replace the official full system instead of sta
     assert.equal(joined.includes('# Text output'), false, mode)
     assert.equal(joined.includes('# auto memory'), false, mode)
     assert.equal(joined.includes('# Context management'), false, mode)
-    assert.ok(texts.some((text) => text.startsWith('x-anthropic-billing-header:')), mode)
+    assert.ok(
+      texts.some((text) => text.startsWith('x-anthropic-billing-header:')),
+      mode,
+    )
     assert.ok(texts.includes(CRS_OFFICIAL_SYSTEM), mode)
     const harness = texts.find((text) => text.includes('Oh My Pi coding harness'))
     assert.match(harness, /<workstation>/)
