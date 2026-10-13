@@ -3,6 +3,7 @@ import { getDb, withTransaction } from '../db/database.mjs'
 import { panelIdentity } from './panel-acl.mjs'
 import { getVm, listVms } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
+import { persistCodexQuotaSnapshot } from '../vm/codex-slot.mjs'
 import { subscriptionOverview } from './subscription-overview.mjs'
 
 // This is a configuration readiness summary, not an upstream health probe.
@@ -100,6 +101,11 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
   const admin = ident.role === 'admin'
   const db = getDb()
   const repo = new SubscriptionsRepo(db)
+  const primeWeeklySource = (plan) => {
+    if (plan.weekly_reset_mode !== 'slot' || !plan.vm_ids?.includes(plan.weekly_reset_vm_id)) return
+    const vm = getVm(projectRoot, plan.weekly_reset_vm_id)
+    if (vm && isCodexVm(vm) && vm.codex?.extra) persistCodexQuotaSnapshot(projectRoot, vm.id, { extra: vm.codex.extra })
+  }
   try {
     let result
     if (path === '/api/panel/usage-records' && req.method === 'GET') {
@@ -166,6 +172,7 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
           if (!vm || (isCodexVm(vm) ? 'openai' : 'claude') !== (plan.platform || 'claude'))
             throw subscriptionError('所选槽位与方案平台不匹配')
         }
+        primeWeeklySource(plan)
         result = withTransaction(db, () => {
           const created = repo.savePlan(plan, req.panelUserId || 'master')
           const ids = repo.assign(
@@ -186,6 +193,7 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
           if (!vm || (isCodexVm(vm) ? 'openai' : 'claude') !== platform)
             throw subscriptionError('所选槽位与方案平台不匹配')
         }
+        primeWeeklySource({ ...old, ...body })
         result = repo.savePlan(body, req.panelUserId || 'master', id)
       } else if (path === '/api/panel/subscriptions' && req.method === 'POST') {
         result = { ids: repo.assign(body, req.panelUserId || 'master') }

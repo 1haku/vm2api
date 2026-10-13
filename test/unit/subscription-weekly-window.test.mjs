@@ -7,6 +7,83 @@ import { createDatabase } from '../../src/lib/db/database.mjs'
 import { AccountsRepo } from '../../src/lib/db/repos/accounts-repo.mjs'
 import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs'
 import { readClaudeWeeklyReset, WEEK_MS } from '../../src/lib/admin/subscription-weekly-window.mjs'
+import { VmsRepo } from '../../src/lib/db/repos/vms-repo.mjs'
+import { observeCodexWeekly } from '../../src/lib/protocol/codex-weekly-reset.mjs'
+
+test('Codex early official reset clears each following plan once, preserves daily spend, ledger and reservations', (t) => {
+  const { db, repo, time } = setup(t)
+  const vms = new VmsRepo(db)
+  const vm = { id: 'Codex', platform: 'openai', codex: { chatgpt_account_id: 'test-account' } }
+  const sample = (at, used, end = boundary) => {
+    const extra = {
+      codex_primary_window_minutes: 10080,
+      codex_primary_used_percent: used,
+      codex_primary_reset_at: new Date(end).toISOString(),
+      codex_usage_updated_at: new Date(at).toISOString(),
+    }
+    vm.codex.subscription_weekly = observeCodexWeekly(vm, extra, {}, { now: at })
+    vm.codex.extra = extra
+    vms.upsertFromVmJson(vm)
+  }
+  sample(initial, 75)
+  const groups = ['Gold', 'Silver'].map((name) =>
+    repo.savePlan(
+      {
+        name,
+        platform: 'openai',
+        vm_ids: ['Codex'],
+        daily_limit_usd: 100,
+        weekly_limit_usd: 100,
+        weekly_reset_mode: 'slot',
+        weekly_reset_vm_id: 'Codex',
+      },
+      'admin',
+    ),
+  )
+  const subscriptions = groups.map((g) => repo.assign({ group_id: g.id, user_ids: ['a'] }, 'admin')[0])
+  for (const [i, id] of subscriptions.entries()) repo.settle('codex-old-' + i, id, 80)
+  db.prepare(
+    'INSERT INTO custom_subscription_reservations(request_id,subscription_id,amount,created_at) VALUES(?,?,?,?)',
+  ).run('still-running', subscriptions[0], 2, new Date(initial).toISOString())
+  const raw = (id) => db.prepare('SELECT * FROM custom_user_subscriptions WHERE id=?').get(id)
+  for (const id of subscriptions) assert.equal(repo.progress(raw(id)).weekly_used, 80)
+  time(initial + 10000)
+  sample(initial + 10000, 0)
+  assert.equal(repo.progress(raw(subscriptions[0])).weekly_used, 80)
+  time(initial + 16000)
+  sample(initial + 16000, 0)
+  for (const id of subscriptions) {
+    const p = repo.progress(raw(id))
+    assert.equal(p.weekly_used, 0)
+    assert.equal(p.daily_used, 80)
+    assert.equal(p.weekly_reset_at, new Date(boundary).toISOString())
+  }
+  assert.equal(
+    db.prepare("SELECT COUNT(*) n FROM custom_subscription_events WHERE action='official_weekly_reset'").get().n,
+    2,
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 1)
+  repo.settle('still-running', subscriptions[0], 1.5)
+  const restarted = new SubscriptionsRepo(db)
+  assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 1.5)
+  time(initial + 30000)
+  sample(initial + 30000, 0)
+  assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 1.5)
+  assert.equal(
+    db.prepare("SELECT COUNT(*) n FROM custom_subscription_events WHERE action='official_weekly_reset'").get().n,
+    2,
+  )
+  time(initial + 40000)
+  sample(initial + 40000, 9)
+  time(initial + 50000)
+  sample(initial + 50000, 0, initial + 50000 + WEEK_MS)
+  assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 0)
+  assert.equal(
+    restarted.progress(raw(subscriptions[0])).weekly_reset_at,
+    new Date(initial + 50000 + WEEK_MS).toISOString(),
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger').get().n, 3)
+})
 
 const initial = Date.parse('2026-10-13T08:00:00Z')
 const boundary = Date.parse('2026-10-14T10:00:00Z')

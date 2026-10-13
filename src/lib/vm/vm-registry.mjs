@@ -4,6 +4,7 @@
  * (lib/vm-db-sync.mjs) sees every change.
  */
 import fs from 'node:fs'
+import { observeCodexWeekly } from '../protocol/codex-weekly-reset.mjs'
 import path from 'node:path'
 import { atomicWriteJson, invalidateReadCache, listVmRecordFiles, readJsonCached } from './vm-file.mjs'
 import {
@@ -28,7 +29,7 @@ import {
   codexQuotaPark,
 } from '../protocol/codex-usage.mjs'
 
-import { summarizeCodexSlot } from './codex-slot.mjs'
+import { summarizeCodexSlot, readCodexAccounts } from './codex-slot.mjs'
 import { evaluateCodexQuotaSchedule } from '../pool/codex-slot-pool.mjs'
 import { effectiveOpenAIPolicy, normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
@@ -207,6 +208,15 @@ export function persistCodexUsage(
   const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
   vm.codex = { ...(vm.codex || {}) }
   const fromHeaders = extraFromCodexHeaders(headers || {}, now)
+  vm.codex.subscription_weekly = observeCodexWeekly(
+    vm,
+    { ...(fromHeaders || {}), ...(extra || {}) },
+    readCodexAccounts(projectRoot, vmId)[0],
+    {
+      now,
+      confirmedReset: vm.codex.subscription_reset_receipt,
+    },
+  )
   const merged = { ...(vm.codex.extra || {}), ...(fromHeaders || {}), ...(extra || {}) }
   if (limitedUntil) {
     merged.codex_limited_until = new Date(limitedUntil).toISOString()

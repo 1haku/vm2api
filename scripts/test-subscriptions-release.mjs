@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'codex-weekly-reset',
   'security',
   'subscription-weekly-window',
   'usage-profile',

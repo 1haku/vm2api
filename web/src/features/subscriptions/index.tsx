@@ -435,7 +435,14 @@ export function SubscriptionsPage() {
                         limit={s.weekly_limit_usd}
                         reset={s.weekly_reset_at}
                       />
-                      <p className='text-[11px] text-muted-foreground'>{s.weekly_reset_mode === 'slot' ? '跟随官方周窗口' : '独立周期'}{s.weekly_sync_status === 'waiting' ? ' · 等待同步' : ''}</p>
+                      <p className='text-[11px] text-muted-foreground'>
+                        {s.weekly_reset_mode === 'slot'
+                          ? '跟随官方周窗口'
+                          : '独立周期'}
+                        {s.weekly_sync_status === 'waiting'
+                          ? ' · 等待同步'
+                          : ''}
+                      </p>
                     </td>
                     <td className='p-4 whitespace-nowrap'>
                       {date(s.expires_at)}
@@ -626,6 +633,7 @@ export function SubscriptionsPage() {
                     revoked: '撤销',
                     plan_created: '创建方案',
                     plan_updated: '修改方案',
+                    official_weekly_reset: '跟随官方提前重置周额度',
                     interrupted_reservation_released:
                       '中断请求待核查（已释放预留）',
                   } as Record<string, string>

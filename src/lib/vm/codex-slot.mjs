@@ -6,6 +6,7 @@ import path from 'node:path'
 import { atomicWriteJson, readJsonCached } from './vm-file.mjs'
 import { isCodexVm } from '../protocol/codex-route.mjs'
 import { buildCodexUsageView, extraToCodexSnapshot } from '../protocol/codex-usage.mjs'
+import { observeCodexWeekly } from '../protocol/codex-weekly-reset.mjs'
 
 export { isCodexVm }
 
@@ -255,7 +256,7 @@ export function upsertCodexAccount(projectRoot, vmId, patch = {}) {
   return cur
 }
 
-export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredits, planType } = {}) {
+export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredits, planType, confirmedReset } = {}) {
   if (!projectRoot || !vmId) throw new Error('projectRoot and vmId required')
   const file = path.join(projectRoot, 'vms', `${vmId}.json`)
   let vm
@@ -266,7 +267,11 @@ export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredi
   }
   if (!vm || typeof vm !== 'object') return null
   vm.codex = vm.codex && typeof vm.codex === 'object' ? { ...vm.codex } : {}
+  if (confirmedReset) vm.codex.subscription_reset_receipt = confirmedReset
   if (extra && typeof extra === 'object') {
+    vm.codex.subscription_weekly = observeCodexWeekly(vm, extra, readCodexAccounts(projectRoot, vmId)[0], {
+      confirmedReset: vm.codex.subscription_reset_receipt,
+    })
     vm.codex.extra = { ...(vm.codex.extra || {}), ...extra }
     vm.codex.usage = buildCodexUsageView(extraToCodexSnapshot(vm.codex.extra))
   }

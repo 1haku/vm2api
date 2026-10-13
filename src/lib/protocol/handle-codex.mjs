@@ -221,9 +221,10 @@ export function pickCodexCandidates(
   return { ...ordered, sessionKey, stickyKeys }
 }
 
-function ingestCodexHop(projectRoot, vmId, result, now = Date.now(), policy = null) {
+function ingestCodexHop(projectRoot, vmId, result, now = Date.now(), policy = null, sampleStartedAt = now) {
   const headers = result?.headers || {}
   const extra = extraFromCodexHeaders(headers, now)
+  if (extra) extra.codex_subscription_sample_started_at = new Date(sampleStartedAt).toISOString()
   let limitedUntil = null
   if (
     isCodexFailoverError(result) &&
@@ -716,7 +717,14 @@ export async function handleCodexProtocol({
           result.terminalState = 'incomplete'
           result.body = { error: conversionError }
         }
-        ingestCodexHop(projectRoot, vm.id, result, Date.now(), normalizeCodexRouting(routing.codex).quota)
+        ingestCodexHop(
+          projectRoot,
+          vm.id,
+          result,
+          Date.now(),
+          normalizeCodexRouting(routing.codex).quota,
+          requestStartedAt,
+        )
         if (req.apiKeyRecord?.user_id)
           new SubscriptionsRepo().rememberResponse(
             result.body?.response?.id || result.body?.id,
@@ -1043,6 +1051,7 @@ export async function handleCodexSearch({
         logBag.vm_id = vm.id
         logBag.account_id = vm.id
         logBag.attempt_count = attempts
+        const searchStartedAt = Date.now()
         last = await post({
           projectRoot,
           vm,
@@ -1063,6 +1072,7 @@ export async function handleCodexSearch({
           },
           Date.now(),
           codex.quota,
+          searchStartedAt,
         )
         if (!isSearchFailover(last)) break
       } finally {

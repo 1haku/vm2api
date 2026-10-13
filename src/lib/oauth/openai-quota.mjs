@@ -4,6 +4,7 @@
  * without auto-reset, spark shadow, or agent-identity recovery.
  */
 import crypto from 'node:crypto'
+import { codexWeeklyAccountKey } from '../protocol/codex-weekly-reset.mjs'
 import { getVm, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { isLocalEgressProxy } from '../vm/egress.mjs'
@@ -325,6 +326,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
   const headersOf = (access) => buildOpenaiQuotaHeaders({ accessToken: access, accountId: current.accountId })
 
   const run = async (access) => {
+    const usageStartedAt = new Date().toISOString()
     const usage = await quotaFetch(CHATGPT_USAGE_URL, {
       headers: headersOf(access),
       proxyUrl: current.proxyUrl,
@@ -346,7 +348,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
       fetchImpl,
       direct: current.direct,
     })
-    return { usage, details }
+    return { usage, details, usageStartedAt }
   }
 
   let pack = await run(current.access)
@@ -365,6 +367,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
   if (pack.ok === false || pack.error) return pack
 
   const extra = extraFromRateLimit(pack.usage.payload?.rate_limit || pack.usage.payload?.rateLimit || {})
+  extra.codex_subscription_sample_started_at = pack.usageStartedAt
   const usageCredits = pack.usage.payload?.rate_limit_reset_credits || pack.usage.payload?.rateLimitResetCredits
   const detailCredits = pack.details?.ok ? parseResetCreditDetails(pack.details.payload) : null
   const resetCredits = mergeResetCredits(
@@ -443,6 +446,15 @@ export async function resetOpenaiQuota({ projectRoot, vmId, fetchImpl, rotate = 
     })
   }
 
+  // A successful consume alone is not proof of a weekly reset. Keep the receipt;
+  // the weekly observer also requires >=2 reset windows and a fresh zero weekly sample.
+  persistCodexQuotaSnapshot(projectRoot, vmId, {
+    confirmedReset: {
+      account: codexWeeklyAccountKey(current.vm, current.first),
+      at: new Date().toISOString(),
+      windows: int(res.payload?.windows_reset ?? res.payload?.windowsReset) || 0,
+    },
+  })
   const after = await queryUpstream(current, { fetchImpl, rotate: false, projectRoot, vmId, policy })
   if (!after.ok) {
     return {

@@ -1,4 +1,6 @@
-import { readClaudeWeeklyReset, resolveWeeklyWindow, WEEK_MS } from '../../admin/subscription-weekly-window.mjs'
+import { readOfficialWeeklyReset, resolveWeeklyWindow, WEEK_MS } from '../../admin/subscription-weekly-window.mjs'
+import { VmsRepo } from './vms-repo.mjs'
+import { isCodexVm } from '../../vm/vm-kind.mjs'
 import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
@@ -103,9 +105,13 @@ export class SubscriptionsRepo {
     const weeklyMode = input.weekly_reset_mode ?? old?.weekly_reset_mode ?? 'independent'
     if (!['independent', 'slot'].includes(weeklyMode)) throw subscriptionError('无效的周额度周期')
     const weeklyVm = weeklyMode === 'slot' ? (input.weekly_reset_vm_id ?? old?.weekly_reset_vm_id) : null
-    if (weeklyMode === 'slot' && (platform !== 'claude' || !slots.includes(weeklyVm)))
-      throw subscriptionError('请选择本套餐已绑定的 Claude 槽位作为官方周窗口来源')
-    const source = weeklyMode === 'slot' ? readClaudeWeeklyReset(this.db, weeklyVm) : null
+    if (
+      weeklyMode === 'slot' &&
+      (!slots.includes(weeklyVm) ||
+        (isCodexVm(new VmsRepo(this.db).get(weeklyVm)?.vm) ? 'openai' : 'claude') !== platform)
+    )
+      throw subscriptionError('请选择本套餐已绑定且平台一致的槽位作为官方周窗口来源')
+    const source = weeklyMode === 'slot' ? readOfficialWeeklyReset(this.db, weeklyVm) : null
     const changed = weeklyMode !== old?.weekly_reset_mode || weeklyVm !== old?.weekly_reset_vm_id
     if (
       weeklyMode === 'slot' &&
@@ -146,7 +152,11 @@ export class SubscriptionsRepo {
         .run(
           weeklyMode,
           weeklyVm,
-          weeklyMode === 'independent' ? null : reseed ? iso(source.end - WEEK_MS) : old.weekly_window_start,
+          weeklyMode === 'independent'
+            ? null
+            : reseed
+              ? iso(Math.max(source.end - WEEK_MS, source.resetAt || 0))
+              : old.weekly_window_start,
           weeklyMode === 'independent' ? null : reseed ? iso(source.end) : old.weekly_window_end,
           weeklyMode === 'independent' ? null : source?.accountId || old.weekly_source_account,
           groupId,

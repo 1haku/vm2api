@@ -42,8 +42,9 @@ export function WeeklyCycleFields({
           }
         >
           <option value='independent'>独立周期（每位用户 7 天）</option>
-          <option value='slot' disabled={platform !== 'claude'}>
-            跟随指定 Claude 槽位的官方周窗口
+          <option value='slot'>
+            跟随指定 {platform === 'openai' ? 'Codex' : 'Claude'}{' '}
+            槽位的官方周窗口
           </option>
         </select>
       </label>
@@ -78,6 +79,12 @@ export function WeeklyCycleFields({
           <p className='text-xs text-muted-foreground'>
             同套餐用户共用这个周时间边界，额度仍各自计算。切换后按官方当前窗口重算历史用量，不清空账本；手动清零用量不改变官方重置时间。多个槽位时仅所选槽位决定周期。
           </p>
+          {platform === 'openai' && (
+            <p className='text-xs text-muted-foreground'>
+              Codex
+              官方提前重置经新快照确认后，自动开始新的周额度统计并跟随最新截止时间；普通用量下降不会清零。日额度保持原周期。
+            </p>
+          )}
         </>
       )}
     </fieldset>

@@ -259,6 +259,51 @@ test('resetOpenaiQuota posts redeem_request_id then re-queries', async () => {
   assert.match(body.redeem_request_id, /^[0-9a-f-]{36}$/i)
 })
 
+test('weekly reset receipt is recorded only after a successful consume and a fresh zero weekly snapshot', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-week-receipt-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  writeGptSlot(root)
+  const usage = () => ({
+    rate_limit: {
+      primary_window: {
+        used_percent: 0,
+        limit_window_seconds: 604800,
+        reset_at: Math.floor(Date.now() / 1000) + 604800,
+      },
+      secondary_window: {
+        used_percent: 0,
+        limit_window_seconds: 18000,
+        reset_at: Math.floor(Date.now() / 1000) + 18000,
+      },
+    },
+  })
+  const failed = await resetOpenaiQuota({
+    projectRoot: root,
+    vmId: 'vm-codex-01',
+    fetchImpl: async () => ({ status: 500, json: async () => ({}) }),
+  })
+  assert.equal(failed.ok, false)
+  const file = path.join(root, 'vms', 'vm-codex-01.json')
+  assert.equal(JSON.parse(fs.readFileSync(file)).codex.subscription_reset_receipt, undefined)
+  const result = await resetOpenaiQuota({
+    projectRoot: root,
+    vmId: 'vm-codex-01',
+    fetchImpl: async (url) => ({
+      status: 200,
+      json: async () =>
+        String(url) === CHATGPT_RESET_CONSUME_URL
+          ? { windows_reset: 2 }
+          : String(url) === CHATGPT_USAGE_URL
+            ? usage()
+            : { available_count: 0, credits: [] },
+    }),
+  })
+  assert.equal(result.ok, true)
+  const vm = JSON.parse(fs.readFileSync(file))
+  assert.equal(vm.codex.subscription_weekly.resetKind, 'official_reset_credit')
+  assert.equal(vm.codex.subscription_weekly.resetAt, Date.parse(vm.codex.subscription_reset_receipt.at))
+})
+
 test('queryOpenaiQuota rejects Claude slots', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-openai-claude-'))
   fs.mkdirSync(path.join(root, 'vms'), { recursive: true })
