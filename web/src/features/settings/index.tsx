@@ -210,7 +210,14 @@ export function SettingsPage() {
   })
 
   return (
-    <PageHeader title={VIEW_TITLES.settings}>
+    <PageHeader
+      title={VIEW_TITLES.settings}
+      description={
+        tab === 'quota'
+          ? '配额闸线、并发和 RPM。个人自用引导会把闸关掉并拉到上限；这里仍可再改。'
+          : undefined
+      }
+    >
       <div className='md:grid md:grid-cols-[10.5rem_1fr] md:gap-8'>
         <SettingsNav active={tab} />
         <div className={cn('mt-4 min-w-0 md:mt-0', showSaveBar && 'pb-16')}>

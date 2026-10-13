@@ -74,8 +74,9 @@ export function isStepDone(id, facts = {}) {
   }
 }
 
-export function needsWelcome(status, doneCount, total) {
-  return status === 'pending' && (total === 0 || doneCount < total)
+/** Absent `guide_used` is unused, including records written before this flag existed. */
+export function needsWelcome(guideUsed) {
+  return guideUsed !== true
 }
 
 export function buildOnboardingPayload({
@@ -84,6 +85,8 @@ export function buildOnboardingPayload({
   status = 'pending',
   updated_at = null,
   base_url = null,
+  profile = null,
+  guide_used = false,
   facts = {},
 } = {}) {
   const r = normalizePanelRole(role)
@@ -91,13 +94,17 @@ export function buildOnboardingPayload({
   const steps = stepsForRole(r).map((id) => ({ id, done: isStepDone(id, facts) }))
   const done_count = steps.filter((s) => s.done).length
   const total = steps.length
+  const chosen = profile === 'personal' || profile === 'relay' ? profile : null
+  const used = guide_used === true
   return {
     user,
     role: r,
     status: st,
     updated_at: updated_at || null,
-    needs_welcome: needsWelcome(st, done_count, total),
+    needs_welcome: needsWelcome(used),
     base_url: panelBaseUrl(base_url),
+    profile: chosen,
+    guide_used: used,
     steps,
     done_count,
     total,
@@ -115,14 +122,31 @@ export function saveOnboardingState(settings, map) {
   return map
 }
 
+function chosenProfile(value) {
+  return value === 'personal' || value === 'relay' ? value : null
+}
+
+function usedFlag(value) {
+  return value === true
+}
+
 export function recordOf(state, username) {
   const rec = state?.[username]
-  if (!rec || typeof rec !== 'object') return { status: 'pending', updated_at: null }
+  const profile = chosenProfile(rec?.profile)
+  const guide_used = usedFlag(rec?.guide_used)
+  if (!rec || typeof rec !== 'object') return { status: 'pending', updated_at: null, profile: null, guide_used: false }
   const status = rec.status
   if (status === 'completed' || status === 'dismissed' || status === 'pending') {
-    return { status, updated_at: rec.updated_at || null }
+    return { status, updated_at: rec.updated_at || null, profile, guide_used }
   }
-  return { status: 'pending', updated_at: rec.updated_at || null }
+  return { status: 'pending', updated_at: rec.updated_at || null, profile, guide_used }
+}
+
+function statusRecord(state, username, status, now, guide_used) {
+  const prev = recordOf(state, username)
+  const rec = { status, updated_at: now, guide_used }
+  if (prev.profile) rec.profile = prev.profile
+  return rec
 }
 
 export function applyOnboardingAction(state, username, action, now = new Date().toISOString()) {
@@ -130,10 +154,10 @@ export function applyOnboardingAction(state, username, action, now = new Date().
   const next = { ...(state && typeof state === 'object' && !Array.isArray(state) ? state : {}) }
   switch (action) {
     case 'complete':
-      next[key] = { status: 'completed', updated_at: now }
+      next[key] = statusRecord(next, key, 'completed', now, true)
       return next
     case 'dismiss':
-      next[key] = { status: 'dismissed', updated_at: now }
+      next[key] = statusRecord(next, key, 'dismissed', now, true)
       return next
     case 'reset':
       delete next[key]
@@ -144,4 +168,20 @@ export function applyOnboardingAction(state, username, action, now = new Date().
       throw err
     }
   }
+}
+
+export function setOnboardingProfile(state, username, mode, now = new Date().toISOString()) {
+  const profile = chosenProfile(mode)
+  if (!profile) {
+    const err = new Error('mode 必须是 personal 或 relay')
+    err.code = 'invalid_profile'
+    throw err
+  }
+  const key = String(username || '')
+  const next = { ...(state && typeof state === 'object' && !Array.isArray(state) ? state : {}) }
+  const prev = recordOf(next, key)
+  const rec = { status: prev.status, updated_at: now, profile }
+  if (prev.guide_used) rec.guide_used = true
+  next[key] = rec
+  return next
 }

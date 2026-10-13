@@ -244,8 +244,10 @@ import {
   onboardingUserOf,
   recordOf,
   saveOnboardingState,
+  setOnboardingProfile,
   vmStepFacts,
 } from './onboarding.mjs'
+import { applyUsageProfile } from './usage-profile.mjs'
 import {
   StatisticsRepo,
   USER_ROLE_DIMENSIONS,
@@ -300,7 +302,8 @@ function onboardingPayloadFor(req, ctx) {
     user,
     role,
     status: rec.status,
-    updated_at: rec.updated_at,
+    profile: rec.profile,
+    guide_used: rec.guide_used,
     // cfg.base_url falls back to HOST:PORT (often 0.0.0.0); only an explicit public URL beats the browser origin.
     base_url: process.env.PUBLIC_BASE_URL || null,
     facts: collectOnboardingFacts(req, ctx),
@@ -1055,15 +1058,37 @@ export function createPanelHandler(ctx) {
       if ((req.method === 'GET' || req.method === 'PUT') && p === '/api/panel/onboarding') {
         if (req.method === 'PUT') {
           const body = await readBody(req, 4096).catch(() => ({}))
+          if (body?.action === 'profile' && panelIdentity(req).role !== 'admin') {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'forbidden', message: '当前权限无法执行此操作' },
+            })
+          }
           try {
             const settings = new SettingsRepo()
-            const next = applyOnboardingAction(loadOnboardingState(settings), onboardingUserOf(req), body?.action)
+            const user = onboardingUserOf(req)
+            const state = loadOnboardingState(settings)
+            let next
+            if (body?.action === 'profile') {
+              applyUsageProfile({
+                mode: body?.mode,
+                persistRouting: (patch) => persistRoutingPatch(patch),
+                settings,
+                distillFile: distillFile(),
+                setDistill: (rules) => {
+                  cfg.distill = rules
+                },
+              })
+              next = setOnboardingProfile(state, user, body?.mode)
+            } else {
+              next = applyOnboardingAction(state, user, body?.action)
+            }
             saveOnboardingState(settings, next)
           } catch (e) {
-            if (e.code === 'invalid_action') {
+            if (e.code === 'invalid_action' || e.code === 'invalid_profile') {
               return json(res, 400, {
                 ok: false,
-                error: { message: String(e.message || e), code: 'invalid_action' },
+                error: { message: String(e.message || e), code: e.code },
               })
             }
             throw e

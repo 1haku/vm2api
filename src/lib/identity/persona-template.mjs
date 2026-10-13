@@ -16,7 +16,7 @@
  */
 
 export const PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', 'custom'])
-export const DEFAULT_PERSONA_PRESET = 'official'
+export const DEFAULT_PERSONA_PRESET = 'official_full'
 export const OVERLAY_PRESETS = Object.freeze(['off', 'official', 'minimal', 'custom'])
 export const DEFAULT_OVERLAY_PRESET = 'off'
 

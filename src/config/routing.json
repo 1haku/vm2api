@@ -140,7 +140,7 @@
   },
 
   "usage_probe": {
-    "enabled": true,
+    "enabled": false,
     "interval_sec": 60,
     "stale_sec": 300,
     "run_on_start": true,
@@ -148,7 +148,7 @@
     "timeout_ms": 60000
   },
   "health_probe": {
-    "enabled": true,
+    "enabled": false,
     "interval_sec": 600,
     "cache_ttl_sec": 900,
     "max_stale_sec": 900,

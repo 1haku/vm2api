@@ -14,11 +14,13 @@ import { WelcomeChecklist } from './checklist'
 import { WelcomeClientSnippets } from './client-snippets'
 import { WelcomeCta, WelcomeFooter } from './cta'
 import { WelcomeHero } from './hero'
+import { WelcomeModuleGuide } from './module-guide'
 import { onboardingQueryOptions } from './queries'
 import { WelcomeQuickStart } from './quick-start'
 import { scrollToSection } from './scroll'
 import { WelcomeStats } from './stats'
 import { WelcomeTopBar } from './top-bar'
+import { WelcomeUsageMode } from './usage-mode'
 
 export function WelcomePage() {
   const search = useSearch({ from: '/welcome' })
@@ -46,7 +48,16 @@ export function WelcomePage() {
       <main>
         <WelcomeHero signedIn={signedIn} baseUrl={base} />
         {signedIn && onboarding.data ? (
-          <WelcomeChecklist payload={onboarding.data} views={me.data?.views} />
+          <>
+            {me.data?.role === 'admin' ? (
+              <WelcomeUsageMode profile={onboarding.data.profile ?? null} />
+            ) : null}
+            <WelcomeChecklist
+              payload={onboarding.data}
+              views={me.data?.views}
+            />
+            <WelcomeModuleGuide views={me.data?.views} />
+          </>
         ) : null}
         <WelcomeStats />
         <WelcomeCapabilities />
