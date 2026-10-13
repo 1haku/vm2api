@@ -93,6 +93,11 @@ test('the slot file and the panel summary produce the same key', () => {
   assert.equal(scopeKeyOf(summary), 'gpt:plus')
   const untiered = scopeAccountFromVm({ id: 'vm-04', platform: 'anthropic', claude: { has_access: true } })
   assert.equal(scopeKeyOf(untiered), 'claude:pro')
+  const maxByUsage = scopeAccountFromVm(
+    { id: 'vm-06', platform: 'anthropic', has_token: true, account_tier: 'pro' },
+    { usage_has_fable: true },
+  )
+  assert.equal(scopeKeyOf(maxByUsage), 'claude:max')
 
   const inventory = buildScopeInventory(
     [
@@ -137,8 +142,8 @@ test('a scoped gate waits for the slot, then only checks the accounts in range',
   assert.equal(JSON.parse(outside.intercept).by, 'scope')
 
   const claude = await evaluateProtocolIntercept({ inbound: claudeBody(JAILBREAK), jev })
-  assert.equal(claude.action, 'pass')
-  assert.equal(JSON.parse(claude.intercept).by, 'scope')
+  assert.equal(claude.action, 'block')
+  assert.equal(claude.via, 'hard-regex')
 })
 
 test('a Claude pair waits for the slot and does not scan the other tier', async () => {

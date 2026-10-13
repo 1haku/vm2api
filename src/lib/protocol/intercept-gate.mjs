@@ -128,9 +128,9 @@ export async function evaluateProtocolIntercept({
   fetchImpl,
 } = {}) {
   // GPT / Codex skips every layer unless the panel opts it in. Once a scope
-  // is set, the slot decides: a platform with no selected pair and no named
-  // account is out of range immediately; otherwise the hop asks again when
-  // the slot is claimed. Claude uses the same wait.
+  // is set, the slot decides GPT: a scope with no GPT pair and no named
+  // account is out of range. Claude stays in the gate until a Claude pair
+  // or a named account is selected; a GPT-only scope does not turn it off.
   if (isOpenaiPlatformModel(inbound, body)) {
     if (!jevScopeConfigured(jev)) {
       if (jev?.openai_platform_enabled !== true) return pass('platform')
@@ -141,10 +141,9 @@ export async function evaluateProtocolIntercept({
     } else if (!jevAccountInScope(jev, account)) {
       return pass('scope')
     }
-  } else if (jevScopeConfigured(jev)) {
-    if (!jevScopeWaits(jev, 'claude')) return pass('scope')
+  } else if (jevScopeWaits(jev, 'claude')) {
     if (!account) return pass('scope-wait')
-    else if (!jevAccountInScope(jev, account)) return pass('scope')
+    if (!jevAccountInScope(jev, account)) return pass('scope')
   }
   const distill = detectDistill({ inbound, body, official, zeroInject }, distillRules)
   if (distill.action === 'block') {

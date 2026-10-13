@@ -7,6 +7,7 @@ import { refusalGuardPolicy } from '../core/refusal-guard.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
+import { findAccount } from '../admin/panel-api.mjs'
 import { readJevConfig, scopeAccountFromVm } from './jev-intercept.mjs'
 import { runProtocolIntercept } from './intercept-gate.mjs'
 import { readRoutingConfigFile } from '../core/config.mjs'
@@ -286,7 +287,7 @@ export async function handleUserCountTokens(req, res, deps) {
   if (gate.wait) {
     const again = await blockCountTokensBeforeHop(req, parsed.body, {
       ...deps,
-      account: scopeAccountFromVm(peeked.vm),
+      account: scopeAccountFromVm(peeked.vm, findAccount(deps.accountQuota, peeked.vm)?.unified),
     })
     if (again?.error) return json(res, again.error.status, again.error.body)
   }

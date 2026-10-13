@@ -14,6 +14,7 @@ import { refusalUserDocument } from '../core/refusal-similarity.mjs'
 import { normalizeText } from '../core/distill-detect.mjs'
 import { hasAccessPresence } from '../oauth/oauth-credentials.mjs'
 import { prepareInterceptText } from './jev-prepare.mjs'
+import { inferClaudeTier } from '../pool/claude-tier.mjs'
 
 export const JEV_SETTING = 'jev_intercept'
 export const JEV_CATEGORIES = Object.freeze(['nsfw', 'distill', 'crack', 'jailbreak'])
@@ -471,8 +472,25 @@ export function scopePlatformOf(account = {}) {
 
 export function scopePlanOf(account = {}) {
   if (scopePlatformOf(account) === 'gpt') return gptPlanBucket(account.plan_type)
-  const tier = scopeText(account.account_tier || account.tier)
-  if (tier === 'max' || tier === 'pro') return tier
+  const hasUsage =
+    account.usage_has_fable != null ||
+    account.utilization_7d_oi != null ||
+    account.reset_7d_oi ||
+    account.status_7d_oi ||
+    account['7d_oi'] ||
+    account.fable
+  if (hasUsage || account.has_token || account.has_access) {
+    const tier = inferClaudeTier(
+      {
+        ...account,
+        has_token: !!(account.has_token || account.has_access || hasUsage),
+      },
+      account,
+    )
+    if (tier.key === 'max' || tier.key === 'pro') return tier.key
+  }
+  const stored = scopeText(account.account_tier || account.tier)
+  if (stored === 'max' || stored === 'pro') return stored
   return PLAN_TYPE_NONE
 }
 
@@ -507,28 +525,43 @@ function compareScopeKeys(left, right) {
 }
 
 /**
- * The same key the panel chip uses. Summaries already carry `account_tier`
- * (`pro` when a Claude slot has a token and no probed tier). Raw files nest
- * that under `claude` / `codex`.
+ * The same key the panel chip uses. Claude Max/Pro follows `inferClaudeTier`
+ * (usage Fable wins over a stored or defaulted Pro). `quota` is the account
+ * unified record when the caller has it; summaries often lack it.
  */
-export function scopeAccountFromVm(vm = {}) {
+export function scopeAccountFromVm(vm = {}, quota = null) {
   if (!vm || typeof vm !== 'object') return null
   const platform = scopePlatformOf(vm)
-  const summaryTier = scopeText(vm.account_tier)
-  let accountTier = null
-  if (platform === 'claude') {
-    const nested = scopeText(vm.claude?.account_tier)
-    const tier = nested || (summaryTier === 'max' || summaryTier === 'pro' ? summaryTier : '')
-    if (tier === 'max' || tier === 'pro') accountTier = tier
-    else if (hasAccessPresence(vm.claude || {}) || vm.has_token) accountTier = 'pro'
+  const attached = vm.quota && typeof vm.quota === 'object' ? vm.quota.unified || vm.quota : {}
+  const passed = quota && typeof quota === 'object' ? quota.unified || quota : {}
+  const q = { ...attached, ...passed }
+  const storedTier = scopeText(vm.claude?.account_tier || q.account_tier || vm.account_tier)
+  const view = {
+    has_token: !!(vm.has_token || vm.has_access || hasAccessPresence(vm.claude || {})),
+    has_access: !!(vm.has_access || vm.claude?.has_access || vm.has_token || hasAccessPresence(vm.claude || {})),
+    account_tier: storedTier === 'codex' ? null : storedTier || null,
+    usage_has_fable: q.usage_has_fable ?? vm.usage_has_fable ?? null,
+    utilization_7d_oi: q.utilization_7d_oi ?? vm.utilization_7d_oi ?? null,
+    reset_7d_oi: q.reset_7d_oi || vm.reset_7d_oi || null,
+    status_7d_oi: q.status_7d_oi || vm.status_7d_oi || null,
+    '7d_oi': q['7d_oi'] || vm['7d_oi'] || null,
+    fable: q.fable || vm.fable || null,
   }
+  const tier = platform === 'claude' ? scopePlanOf({ ...view, platform: 'claude' }) : null
   return {
     id: vm.id || null,
     email: vm.email || vm.codex?.email || vm.claude?.email || null,
     name: vm.name || null,
     platform,
     plan_type: platform === 'gpt' ? vm.plan_type || vm.codex?.plan_type || null : null,
-    account_tier: accountTier,
+    account_tier: tier === 'max' || tier === 'pro' ? tier : null,
+    has_token: view.has_token,
+    usage_has_fable: view.usage_has_fable,
+    utilization_7d_oi: view.utilization_7d_oi,
+    reset_7d_oi: view.reset_7d_oi,
+    status_7d_oi: view.status_7d_oi,
+    '7d_oi': view['7d_oi'],
+    fable: view.fable,
   }
 }
 

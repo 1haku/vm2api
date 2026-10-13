@@ -185,8 +185,9 @@ export function AccountScopeSettings() {
       <CollapsibleContent className='space-y-6 border-t px-4 py-4'>
         <p className='text-xs leading-5 text-muted-foreground'>
           按平台和套餐决定哪些槽位进四道关。都不选 =
-          全部账号。指定账号和勾选取并集。没设范围时 Claude 照旧进关卡，GPT
-          仍看「OpenAI 平台」；设了范围后，只有命中的槽位进关卡。
+          全部账号。指定账号和勾选取并集。只选 GPT 套餐时 Claude
+          照旧全进关卡；选了 Claude 套餐或指定了账号，才按槽位收窄 Claude。GPT
+          没设范围时仍看「OpenAI 平台」。
         </p>
 
         <Group

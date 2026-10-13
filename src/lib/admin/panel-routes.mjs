@@ -642,7 +642,10 @@ export function createPanelHandler(ctx) {
     } catch {
       vms = []
     }
-    const inventory = buildScopeInventory(vms, selectedKeys)
+    const inventory = buildScopeInventory(
+      vms.map((vm) => ({ ...vm, quota: panel.findAccount(accountQuota, vm)?.unified || null })),
+      selectedKeys,
+    )
     return {
       ...inventory,
       account_type_options: [],
