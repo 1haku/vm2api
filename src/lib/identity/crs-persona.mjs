@@ -704,6 +704,7 @@ export function personaTemplateVars({
   agentOfficial = '',
   leftover = '',
   model = '',
+  timezoneOnlyEnv = false,
 } = {}) {
   const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
   const envTimezoneOnly = () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false })
@@ -719,7 +720,10 @@ export function personaTemplateVars({
     caller_agent: String(callerAgent || '').trim(),
     caller_system: String(leftover || '').trim(),
     env_timezone_only: envTimezoneOnly,
-    env_official: () => buildOfficialContinuationText(env, sourceTexts, { overwrite: true }),
+    env_official: () =>
+      timezoneOnlyEnv
+        ? buildOfficialEnvironmentSection({ timezone: env.timezone }, { sourceTexts: [], contextManagement: false })
+        : buildOfficialContinuationText(env, sourceTexts, { overwrite: true }),
     timezone: String(env?.timezone || '').trim(),
     locale: String(env?.locale || '').trim(),
     model: String(model || env?.modelId || '').trim(),
@@ -1698,7 +1702,15 @@ function rewriteOfficialSystem(
     system = buildBillingAndOfficial(firstUserText, ver, sessionId, indexes)
   }
   if (harness && system[2]) {
-    system = system.map((block, index) => (index === 2 ? { ...block, text: harness } : block))
+    const timezoneOnly = buildOfficialEnvironmentSection(
+      { timezone: env.timezone },
+      { sourceTexts: [], contextManagement: false },
+    )
+    system = system.map((block, index) => {
+      if (index === 2) return { ...block, text: harness }
+      if (index === 3) return { ...block, text: timezoneOnly }
+      return block
+    })
   }
   system = appendOfficialSystemPrompt(system, leftover)
   if (!extras.length) return { ...body, system, messages }
@@ -1782,6 +1794,7 @@ function applyTemplatePersona(
       withEnv: presetFlagEnabled(switches, 'persona_env_presets', preset),
       callerAgent,
       agentOfficial: harness,
+      timezoneOnlyEnv: Boolean(harness),
       leftover: midSystem ? '' : leftover,
       model: modelId,
     }),

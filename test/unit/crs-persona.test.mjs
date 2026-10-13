@@ -658,15 +658,27 @@ test('pi and omp harness prompts replace the official full system instead of sta
     messages: [{ role: 'user', content: 'fix the failing test' }],
   }
   for (const mode of ['official_full', 'overwrite']) {
-    const out = applyCrsUnofficialPersona(body, { mode, park: false })
+    const out = applyCrsUnofficialPersona(body, {
+      mode,
+      park: false,
+      identity: { timezone: 'America/Los_Angeles' },
+    })
     const texts = out.system.map((block) => block.text)
+    const joined = texts.join('\n')
     assert.equal(texts.filter((text) => text.includes('Oh My Pi coding harness')).length, 1, mode)
     assert.equal(texts.includes(CRS_OFFICIAL_AGENT_PROMPT), false, mode)
+    assert.equal(joined.includes('# Text output'), false, mode)
+    assert.equal(joined.includes('# auto memory'), false, mode)
+    assert.equal(joined.includes('# Context management'), false, mode)
     assert.match(texts[0], /^x-anthropic-billing-header:/)
     assert.equal(texts[1], CRS_OFFICIAL_SYSTEM)
     assert.match(texts[2], /Oh My Pi coding harness/)
     assert.match(texts[2], /<workstation>/)
-    assert.match(texts.find((text) => text.includes('# Environment')) || '', /\/tmp\/demo/)
+    assert.match(texts[2], /\/tmp\/demo/)
+    assert.equal(
+      texts.find((text) => text.includes('# Environment')),
+      '# Environment\n - Timezone: America/Los_Angeles',
+    )
   }
 })
 
