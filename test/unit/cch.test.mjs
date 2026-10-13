@@ -113,3 +113,38 @@ test('applyCrsUnofficialPersona keeps the placeholder until hop finalize', () =>
   const projected = projectClaudeCodeCchText(replay)
   assert.equal(computeClaudeCodeCch(Buffer.from(projected, 'utf8')), cch)
 })
+
+test('sealed official turns differ in system[0] because cch covers messages', () => {
+  const sessionId = '11111111-2222-4333-8444-555555555555'
+  const exec = { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } }
+  const seal = (messages, cliHop) =>
+    finalizeWorkerPayload({
+      body: applyCrsUnofficialPersona(
+        {
+          model: 'claude-sonnet-5-5',
+          system: '你是一个高速收费员。',
+          messages,
+        },
+        { mode: 'official_prompt', park: false, sessionId },
+      ),
+      reqHeaders: {},
+      exec,
+      identity: null,
+      cliHop,
+    }).body
+  for (const cliHop of [true, false]) {
+    const first = seal([{ role: 'user', content: '你好呀。' }], cliHop)
+    const second = seal(
+      [
+        { role: 'user', content: '你好呀。' },
+        { role: 'assistant', content: '在。' },
+        { role: 'user', content: '继续' },
+      ],
+      cliHop,
+    )
+    const cchOf = (body) => body.system[0].text.match(/cch=([0-9a-f]{5})/)[1]
+    assert.notEqual(cchOf(first), CCH_PLACEHOLDER)
+    assert.notEqual(cchOf(first), cchOf(second))
+    assert.notEqual(first.system[0].text, second.system[0].text)
+  }
+})
