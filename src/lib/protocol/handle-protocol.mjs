@@ -1160,33 +1160,9 @@ export function createHandleProtocol(deps) {
           if (cliHop) {
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
-            // Configured prompt is global. Official and proxied-official traffic
-            // used to skip this, so the strip removed billing and identity and
-            // nothing wrote them back. Classifier requests keep their own system.
-            const panelRewrite =
-              !requestContext &&
-              (resolvedPersona === 'official' || resolvedPersona === 'official_full' || resolvedPersona === 'zero')
-            const cliAppliesNodePersona =
-              !requestContext && !officialTraffic && !panelRewrite && resolvedPersona !== 'zero'
-            if (cliAppliesNodePersona) {
-              hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
-                officialClient: false,
-                routingFile: routingConfigPath,
-                mode: resolvedPersona,
-                headers: req.headers,
-                sessionId: attemptSessionId,
-                model: personaIn?.model,
-                cliVersion: OFFICIAL_CLI_VERSION,
-                identity,
-              })
-              // The slot preset may differ from the global one; its panel mask applies.
-              personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
-                officialClient: false,
-                mode: resolvedPersona,
-                hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-                standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-              })
-            }
+            // Any configured preset, including custom. Official traffic no longer
+            // skips it. Classifier requests keep their own system.
+            const panelRewrite = !requestContext
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
@@ -1228,19 +1204,7 @@ export function createHandleProtocol(deps) {
             cacheTtl = requestedCacheTtl
             if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
-            // 0注入 hides CLI billing + env. 官方 / 官方完整 are the configured
-            // template written after the strip, so their usage stays real.
-            const cliHide =
-              requestContext || panelRewrite
-                ? 0
-                : personaHideForCliZero(personaIn, hopBody, {
-                    officialClient: officialTraffic,
-                    timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
-                    overlay: cliAppliesNodePersona ? 0 : personaHideTokens?.overlay,
-                    hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-                  })
-            personaHideTokens =
-              cliAppliesNodePersona || panelRewrite ? (Number(personaHideTokens) || 0) + cliHide : cliHide
+            if (!panelRewrite) personaHideTokens = 0
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
             logBag.official_cc_inference = 'cli-hop'

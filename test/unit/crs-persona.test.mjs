@@ -117,6 +117,18 @@ test('forceConfigured rewrites official and proxied-official system onto the pre
   assert.ok(!out.system.some((block) => String(block?.text || '').includes('cc_entrypoint=cli')))
 })
 
+test('forceConfigured custom preset still writes billing and keeps caller system', () => {
+  const out = applyCrsUnofficialPersona(
+    {
+      system: 'caller text',
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+    { forceConfigured: true, mode: 'custom' },
+  )
+  assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
+  assert.match(out.system.at(-1).text, /caller text/)
+})
+
 test('empty unofficial system still writes the official full prompt', () => {
   const messages = [{ role: 'user', content: 'ping' }]
   const out = applyCrsUnofficialPersona({ messages }, { officialClient: false })
