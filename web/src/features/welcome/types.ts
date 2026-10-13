@@ -24,6 +24,7 @@ export type OnboardingPayload = {
   base_url: string | null
   steps: OnboardingStep[]
   profile: UsageProfile | null
+  guide_used: boolean
   done_count: number
   total: number
 }

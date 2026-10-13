@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Outlet } from '@tanstack/react-router'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
@@ -9,6 +10,9 @@ import { AppHeader } from '@/components/layout/app-header'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { StarHint } from '@/components/layout/star-hint'
 import { SkipToMain } from '@/components/skip-to-main'
+import { meQueryOptions } from '@/features/auth/queries'
+import { GuideDialog } from '@/features/welcome/guide-dialog'
+import { onboardingQueryOptions } from '@/features/welcome/queries'
 
 type AuthenticatedLayoutProps = {
   children?: ReactNode
@@ -41,11 +45,24 @@ export function AuthenticatedLayout({
             )}
           >
             <AppHeader actions={headerActions} />
+            <GuideGate />
             {children ?? <Outlet />}
           </SidebarInset>
           <StarHint />
         </SidebarProvider>
       </LayoutProvider>
     </SearchProvider>
+  )
+}
+
+function GuideGate() {
+  const onboarding = useQuery(onboardingQueryOptions())
+  const me = useQuery(meQueryOptions())
+  if (!onboarding.data || onboarding.data.guide_used) return null
+  return (
+    <GuideDialog
+      payload={onboarding.data}
+      isAdmin={me.data?.role === 'admin'}
+    />
   )
 }
