@@ -92,9 +92,9 @@ test('official Claude Code client leaves system untouched', () => {
   assert.equal(out.messages.length, 1)
 })
 
-test('empty unofficial system still writes official 4 blocks', () => {
+test('legacy rewrite: empty unofficial system still writes official 4 blocks', () => {
   const messages = [{ role: 'user', content: 'ping' }]
-  const out = applyCrsUnofficialPersona({ messages }, { officialClient: false })
+  const out = applyCrsUnofficialPersona({ messages }, { mode: 'rewrite', officialClient: false })
   assert.equal(out.system.length, 4)
   assert.equal(out.system[0].cache_control, undefined)
   assert.match(
@@ -122,12 +122,12 @@ test('empty unofficial system still writes official 4 blocks', () => {
   assertParkedStanding(out, 'ping')
 })
 
-test('Environment defaults to slot timezone only; caller cwd is kept and tz overwritten', () => {
+test('legacy rewrite: Environment defaults to slot timezone only; caller cwd is kept and tz overwritten', () => {
   const bare = applyCrsUnofficialPersona(
     {
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false, identity: { timezone: 'America/Los_Angeles' } },
+    { mode: 'rewrite', officialClient: false, identity: { timezone: 'America/Los_Angeles' } },
   )
   const bareEnv = environmentSection(bare.system[3].text)
   assert.match(bareEnv, /Timezone: America\/Los_Angeles/)
@@ -144,7 +144,7 @@ test('Environment defaults to slot timezone only; caller cwd is kept and tz over
 `,
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false, identity: { timezone: 'America/New_York' } },
+    { mode: 'rewrite', officialClient: false, identity: { timezone: 'America/New_York' } },
   )
   assert.match(caller.system[3].text, /Primary working directory: \/tmp\/demo/)
   assert.match(caller.system[3].text, /Timezone: America\/New_York/)
@@ -173,13 +173,13 @@ test('overwrite inject writes full official agent and full Environment', () => {
   assert.ok(out.system[2].text.includes('# Doing tasks'))
 })
 
-test('inbound official tools keep the official 4-block expansion', () => {
+test('legacy rewrite: inbound official tools keep the official 4-block expansion', () => {
   const out = applyCrsUnofficialPersona(
     {
       messages: [{ role: 'user', content: 'ping' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
     },
-    { officialClient: false },
+    { mode: 'rewrite', officialClient: false },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
@@ -193,7 +193,7 @@ test('inbound official tools keep the official 4-block expansion', () => {
   assert.match(out.system[2].text, /file_path:line_number/)
 })
 
-test('custom forced weather tool skips SWE expansion', () => {
+test('legacy rewrite uses short expansion with a forced custom tool', () => {
   const body = {
     messages: [{ role: 'user', content: '请查询东京现在的天气，使用摄氏度。' }],
     tools: [
@@ -205,52 +205,52 @@ test('custom forced weather tool skips SWE expansion', () => {
     ],
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite', officialClient: false })
   assert.equal(shouldAttachSystemExpansion(body), true)
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
 })
 
-test('custom tools without force also skip SWE expansion', () => {
+test('legacy rewrite uses short expansion with unforced custom tools', () => {
   const out = applyCrsUnofficialPersona(
     {
       messages: [{ role: 'user', content: 'tokyo weather' }],
       tools: [{ name: 'get_weather' }],
     },
-    { officialClient: false },
+    { mode: 'rewrite', officialClient: false },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
 })
 
-test('Claude Code Bash tool still gets expansion', () => {
+test('legacy rewrite: Claude Code Bash tool still gets expansion', () => {
   const out = applyCrsUnofficialPersona(
     {
       messages: [{ role: 'user', content: 'ls' }],
       tools: [{ name: 'Bash' }],
     },
-    { officialClient: false },
+    { mode: 'rewrite', officialClient: false },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
 })
 
-test('forced official web_search still gets expansion', () => {
+test('legacy rewrite: forced official web_search still gets expansion', () => {
   const out = applyCrsUnofficialPersona(
     {
       messages: [{ role: 'user', content: 'search' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
       tool_choice: { type: 'tool', name: 'web_search' },
     },
-    { officialClient: false },
+    { mode: 'rewrite', officialClient: false },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
 })
 
-test('persona_expansion any_tools restores old expand-on-any-tools behavior', () => {
+test('legacy rewrite: persona_expansion any_tools restores old expand-on-any-tools behavior', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-persona-exp-'))
   const file = path.join(dir, 'routing.json')
   fs.writeFileSync(file, JSON.stringify({ compatibility: { persona_expansion: 'any_tools' } }))
@@ -259,7 +259,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
       messages: [{ role: 'user', content: 'weather' }],
       tools: [{ name: 'get_weather' }],
     },
-    { officialClient: false, routingFile: file },
+    { mode: 'rewrite', officialClient: false, routingFile: file },
   )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -269,7 +269,7 @@ test('persona_expansion any_tools restores old expand-on-any-tools behavior', ()
       messages: [{ role: 'user', content: 'search' }],
       tools: [{ name: 'web_search', type: 'web_search_20250305' }],
     },
-    { officialClient: false, routingFile: file },
+    { mode: 'rewrite', officialClient: false, routingFile: file },
   )
   assert.equal(never.system.length, 2)
   fs.rmSync(dir, { recursive: true, force: true })
@@ -282,7 +282,7 @@ test('normalizePersonaExpansion aliases', () => {
   assert.equal(normalizePersonaExpansion(''), 'official_tools')
 })
 
-test('last-night style 3-block inbound becomes official 4 blocks plus leftover --system append', () => {
+test('legacy rewrite: last-night style 3-block inbound becomes official 4 blocks plus leftover --system append', () => {
   const persona = 'security monitor persona ' + 'P'.repeat(115_000)
   const session = 'Session Context: conv-abc'
   const firstUser = 'heartbeat please reply ok now'
@@ -294,7 +294,7 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
     ],
     messages: [{ role: 'user', content: firstUser }],
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite', officialClient: false })
   assert.equal(out.system.length, 5)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -308,11 +308,14 @@ test('last-night style 3-block inbound becomes official 4 blocks plus leftover -
   assert.ok(!firstUserContent(out).includes(persona))
 })
 
-test('standalone official line does not insert System Instructions', () => {
-  const out = applyCrsUnofficialPersona({
-    system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }],
-    messages: [{ role: 'user', content: 'hi' }],
-  })
+test('legacy rewrite: standalone official line does not insert System Instructions', () => {
+  const out = applyCrsUnofficialPersona(
+    {
+      system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }],
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+    { mode: 'rewrite' },
+  )
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -1058,7 +1061,7 @@ test('prompt-leak question parks do-not-repeat leftover on the first user', () =
   assert.ok(firstUserContent(out).includes(CRS_PROMPT_LEAK_APPEND))
 })
 
-test('test14 forced weather converts to official 4-block and keeps caller tools', () => {
+test('legacy rewrite: test14 forced weather converts to official 4-block and keeps caller tools', () => {
   const tools = [
     {
       name: 'get_weather',
@@ -1075,7 +1078,7 @@ test('test14 forced weather converts to official 4-block and keeps caller tools'
     tools,
     tool_choice: { type: 'tool', name: 'get_weather' },
   }
-  const out = applyCrsUnofficialPersona(body, { officialClient: false })
+  const out = applyCrsUnofficialPersona(body, { mode: 'rewrite', officialClient: false })
   assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(out.system[2].text, CRS_AGENT_EXPANSION)
@@ -1146,7 +1149,7 @@ test('Environment inherits caller platform/OS and rewrites timezone to the slot'
   assert.equal(out.system[4].text.includes('Timezone: Asia/Shanghai'), true)
 })
 
-test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezone', () => {
+test('legacy rewrite: refreshOfficialSystemEnvironment keeps caller env and only rewrites timezone', () => {
   const leftover = `# Environment
  - Primary working directory: /tmp/demo
  - Platform: darwin
@@ -1158,6 +1161,7 @@ test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezo
       messages: [{ role: 'user', content: 'continue' }],
     },
     {
+      mode: 'rewrite',
       officialClient: false,
       identity: {
         kernel: '7.0.0-14-generic',
@@ -1187,7 +1191,7 @@ test('refreshOfficialSystemEnvironment keeps caller env and only rewrites timezo
   assert.equal(refreshed.system[4].text, first.system[4].text)
 })
 
-test('Environment inherits caller git/shell and Windows cwd', () => {
+test('legacy rewrite: Environment inherits caller git/shell and Windows cwd', () => {
   const out = applyCrsUnofficialPersona(
     {
       system: `# Environment
@@ -1199,7 +1203,7 @@ test('Environment inherits caller git/shell and Windows cwd', () => {
 `,
       messages: [{ role: 'user', content: 'hi' }],
     },
-    { officialClient: false },
+    { mode: 'rewrite', officialClient: false },
   )
   assert.equal(out.system.length, 5)
   assert.match(out.system[3].text, /Primary working directory: X:\\Users\\me\\proj/)
@@ -1240,24 +1244,22 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
       identity: { timezone: 'Asia/Shanghai' },
     },
   )
-  assert.equal(out.system.length, 5)
+  assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
   assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.ok(!/\n/.test(out.system[0].text))
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-  assert.equal(out.system[3].text, '# Environment\n - Timezone: Asia/Shanghai')
-  assert.equal(out.system[3].cache_control, undefined)
-  assert.equal(out.system[4].text, '你是一个高速收费员。')
+  assert.equal(out.system[2].text, '# Environment\n - Timezone: Asia/Shanghai')
+  assert.equal(out.system[2].cache_control, undefined)
+  assert.equal(out.system[3].text, '你是一个高速收费员。')
   assert.equal(out.system.filter((block) => String(block?.text || '').trim() === CRS_OFFICIAL_SYSTEM).length, 0)
   assert.equal(firstUserContent(out), '你好呀。')
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))
 })
 
-test('zero inject prepends standing constraints to caller_agent', () => {
+test('zero inject keeps standing and caller system in separate slots', () => {
   const agent = 'You are an interactive agent that helps users with software engineering tasks.'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-zero-standing-'))
   const routingFile = path.join(dir, 'routing.json')
@@ -1270,7 +1272,9 @@ test('zero inject prepends standing constraints to caller_agent', () => {
       },
       { mode: 'zero', routingFile },
     )
-    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n${agent}`)
+    assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+    assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.equal(out.system.at(-1).text, agent)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -1283,13 +1287,11 @@ test('zero inject ignores persona_agent and writes env timezone without agent', 
     },
     { mode: 'zero', agent: 'required', identity: { timezone: 'UTC' } },
   )
-  assert.equal(out.system.length, 4)
+  assert.equal(out.system.length, 3)
   assert.match(out.system[0].text, /prompt_version=</)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_PROMPT_REQUIRED))
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
+  assert.equal(out.system[2].text, '# Environment\n - Timezone: UTC')
 })
 
 test('zero inject with no caller system is billing plus env timezone', () => {
@@ -1299,12 +1301,11 @@ test('zero inject with no caller system is billing plus env timezone', () => {
     },
     { mode: 'zero' },
   )
-  assert.equal(out.system.length, 4)
+  assert.equal(out.system.length, 3)
   assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))
-  assert.match(out.system[3].text, /^# Environment\n - Timezone: \S+$/)
+  assert.match(out.system[2].text, /^# Environment\n - Timezone: \S+$/)
   assert.ok(!String(firstUserContent(out)).includes('<system-reminder>'))
 })
 
@@ -1315,12 +1316,11 @@ test('refreshOfficialSystemEnvironment rewrites zero inject timezone after VM pi
     },
     { mode: 'zero', identity: { timezone: 'UTC' } },
   )
-  assert.equal(first.system[3].text, '# Environment\n - Timezone: UTC')
+  assert.equal(first.system[2].text, '# Environment\n - Timezone: UTC')
   const refreshed = refreshOfficialSystemEnvironment(first, { timezone: 'Europe/London' }, 'claude-sonnet-5')
   assert.equal(refreshed.system[0].text, first.system[0].text)
   assert.equal(refreshed.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(refreshed.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.equal(refreshed.system[3].text, '# Environment\n - Timezone: Europe/London')
+  assert.equal(refreshed.system[2].text, '# Environment\n - Timezone: Europe/London')
 })
 
 test('zero env follows persona_env_presets per preset', () => {

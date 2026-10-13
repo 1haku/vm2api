@@ -231,7 +231,7 @@ test('OpenAI chat unofficial rewrite is official 4-block plus caller --system ap
     max_tokens: 16,
   })
   assert.deepEqual(claude.stop_sequences, ['END'])
-  const cleaned = applyCrsUnofficialPersona(claude, { officialClient: false })
+  const cleaned = applyCrsUnofficialPersona(claude, { mode: 'rewrite', officialClient: false })
   assert.equal(cleaned.system.length, 5)
   assert.equal(cleaned.system[1].text, CRS_OFFICIAL_SYSTEM)
   assert.equal(cleaned.system[4].text, 'you are a linter')
@@ -431,13 +431,13 @@ test('test14 OpenAI tools on /v1/messages convert to Anthropic get_weather', () 
   assert.equal(claude.tool_choice.name, 'get_weather')
 })
 
-test('test14 OpenAI chat records features and converts to official 4-block', () => {
+test('test14 OpenAI chat records features and converts to legacy rewrite 4-block', () => {
   const { claude } = toClaudeMessages('openai.chat', TEST14_OPENAI_INBOUND)
   const features = extractCaseFeatures(claude)
   assert.ok(matchesTest14Features(features))
   assert.equal(features.user_text, TEST14_FEATURES.inbound.user_text)
   assert.deepEqual(features.tool_names, ['get_weather'])
-  const after = applyCrsUnofficialPersona(claude, { officialClient: false })
+  const after = applyCrsUnofficialPersona(claude, { mode: 'rewrite', officialClient: false })
   assert.equal(after.system.length, TEST14_FEATURES.official_outbound.system_block_count)
   assert.deepEqual(officialSystemKinds(after.system), TEST14_FEATURES.official_outbound.system_kinds)
   assert.deepEqual(after.tools, claude.tools)
