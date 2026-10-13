@@ -368,6 +368,9 @@ export function validatePersonaRoutingPatch(body = {}) {
   if (compat.claude_code_only != null && typeof compat.claude_code_only !== 'boolean') {
     problems.push('claude_code_only 必须是布尔')
   }
+  if (compat.official_cc_passthrough != null && typeof compat.official_cc_passthrough !== 'boolean') {
+    problems.push('official_cc_passthrough 必须是布尔')
+  }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints
     if (typeof bp !== 'object' || Array.isArray(bp)) {

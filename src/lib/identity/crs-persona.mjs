@@ -1636,6 +1636,11 @@ export function detectProxiedOfficialCcFromRoutingFile(filePath) {
   }
 }
 
+/** Off unless the protocol tab turns it on. Official family then keeps its inbound system. */
+export function officialCcPassthroughFromRouting(routing = {}) {
+  return routing?.compatibility?.official_cc_passthrough === true
+}
+
 function stripSystemCacheControl(body) {
   if (!Array.isArray(body.system)) return body
   let changed = false
@@ -1830,6 +1835,7 @@ export function applyCrsUnofficialPersona(
   body,
   {
     officialClient = false,
+    forceConfigured = false,
     cliVersion,
     mode,
     park,
@@ -1843,7 +1849,7 @@ export function applyCrsUnofficialPersona(
   } = {},
 ) {
   if (!body || typeof body !== 'object') return body
-  if (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body)) return body
+  if (!forceConfigured && (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body))) return body
   const fromFile = routingFile ? personaOptionsFromRoutingFile(routingFile) : null
   const resolved = normalizePersonaMode(mode ?? fromFile?.mode)
   // Read the caller's agent prompt before stripLeakySystem drops it as known official text.

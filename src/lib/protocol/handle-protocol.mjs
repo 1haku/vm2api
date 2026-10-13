@@ -106,6 +106,7 @@ import {
   extractFirstUserText,
   isOfficialClaudeCodeTraffic,
   isProxiedOfficialClaudeCode,
+  officialCcPassthroughFromRouting,
   personaHidesUsageFromRoutingFile,
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
@@ -1155,52 +1156,29 @@ export function createHandleProtocol(deps) {
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
           const routingNow = getRouting()
+          const officialPassthrough = officialTraffic && officialCcPassthroughFromRouting(routingNow)
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
-            // #89 stopped applying official_full before the strip, and the strip
-            // deletes billing / identity / env that official just wrote. Both
-            // presets overwrite the configured template after the strip.
-            const panelRewrite =
-              !requestContext &&
-              !officialTraffic &&
-              (resolvedPersona === 'official' || resolvedPersona === 'official_full' || resolvedPersona === 'zero')
-            const cliAppliesNodePersona =
-              !requestContext && !officialTraffic && !panelRewrite && resolvedPersona !== 'zero'
-            if (cliAppliesNodePersona) {
-              hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
-                officialClient: false,
-                routingFile: routingConfigPath,
-                mode: resolvedPersona,
-                headers: req.headers,
-                sessionId: attemptSessionId,
-                model: personaIn?.model,
-                cliVersion: OFFICIAL_CLI_VERSION,
-                identity,
-              })
-              // The slot preset may differ from the global one; its panel mask applies.
-              personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
-                officialClient: false,
-                mode: resolvedPersona,
-                hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-                standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-              })
-            }
+            // Classifier keeps its own system. Official family keeps its inbound
+            // system only when the protocol tab turns passthrough on.
+            const panelRewrite = !requestContext && !officialPassthrough
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
+              preserveSystem: officialPassthrough,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
               hopBody = applyCrsUnofficialPersona(hopBody, {
                 officialClient: false,
+                forceConfigured: true,
                 routingFile: routingConfigPath,
                 mode: resolvedPersona,
-                headers: req.headers,
                 sessionId: attemptSessionId,
                 model: hopBody?.model || personaIn?.model,
                 cliVersion: OFFICIAL_CLI_VERSION,
@@ -1229,19 +1207,7 @@ export function createHandleProtocol(deps) {
             cacheTtl = requestedCacheTtl
             if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
-            // 0注入 hides CLI billing + env. 官方 / 官方完整 are the configured
-            // template written after the strip, so their usage stays real.
-            const cliHide =
-              requestContext || panelRewrite
-                ? 0
-                : personaHideForCliZero(personaIn, hopBody, {
-                    officialClient: officialTraffic,
-                    timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
-                    overlay: cliAppliesNodePersona ? 0 : personaHideTokens?.overlay,
-                    hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
-                  })
-            personaHideTokens =
-              cliAppliesNodePersona || panelRewrite ? (Number(personaHideTokens) || 0) + cliHide : cliHide
+            if (!panelRewrite) personaHideTokens = 0
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
             logBag.official_cc_inference = 'cli-hop'
@@ -1263,12 +1229,13 @@ export function createHandleProtocol(deps) {
           }
 
           cacheTtl = requestedCacheTtl
-          if (!requestContext && !officialTraffic && modeOverride) {
+          if (!requestContext && !officialPassthrough && (modeOverride || officialTraffic)) {
+            const configuredMode = modeOverride || resolveSlotPersonaPreset(selected.vm, routingNow)
             const rewritten = applyCrsUnofficialPersona(structuredClone(personaIn), {
-              officialClient: officialTraffic,
+              officialClient: false,
+              forceConfigured: true,
               routingFile: routingConfigPath,
-              mode: modeOverride,
-              headers: req.headers,
+              mode: configuredMode,
               sessionId: attemptSessionId,
               model: personaIn?.model,
               cliVersion: OFFICIAL_CLI_VERSION,
@@ -1276,10 +1243,10 @@ export function createHandleProtocol(deps) {
             })
             hopBody = officialMessagesBody(rewritten)
             personaHideTokens = personaHideForUnofficial(personaIn, rewritten, {
-              officialClient: officialTraffic,
-              mode: modeOverride,
-              hides: personaHidesUsageFromRoutingFile(routingConfigPath, modeOverride),
-              standing: standingUsageFromRoutingFile(routingConfigPath, modeOverride),
+              officialClient: false,
+              mode: configuredMode,
+              hides: personaHidesUsageFromRoutingFile(routingConfigPath, configuredMode),
+              standing: standingUsageFromRoutingFile(routingConfigPath, configuredMode),
             })
           }
           logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)

@@ -26,6 +26,7 @@ import {
   DEFAULT_PERSONA_MODE,
   FINGERPRINT_SALT,
   isOfficialClaudeCodeTraffic,
+  officialCcPassthroughFromRouting,
   isLeakyClientFingerprint,
   looksLikeOhMyPiSystem,
   looksLikeOfficialClaudeSystem,
@@ -90,6 +91,49 @@ test('official Claude Code client leaves system untouched', () => {
   assert.equal(out.system[0].text.length, 200)
   assert.equal(out.system.length, 1)
   assert.equal(out.messages.length, 1)
+})
+
+test('forceConfigured rewrites official and proxied-official system onto the preset', () => {
+  const omp = 'RFC 2119 keywords: MUST. <workstation> linux'
+  const body = {
+    model: 'claude-opus-5-5',
+    system: [
+      { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.280.096; cc_entrypoint=cli; cch=bdff0;' },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+      { type: 'text', text: omp, cache_control: { type: 'ephemeral' } },
+    ],
+    messages: [{ role: 'user', content: 'ping' }],
+    metadata: { user_id: JSON.stringify({ device_id: 'dev-1', account_uuid: 'acc-1', session_id: 'sess-1' }) },
+  }
+  const headers = { 'user-agent': 'claude-cli/2.1.293 (external, cli)' }
+  assert.equal(isOfficialClaudeCodeTraffic(headers, body), true)
+  const skipped = applyCrsUnofficialPersona(body, { headers, mode: 'official_full' })
+  assert.equal(skipped.system.length, 3)
+  const out = applyCrsUnofficialPersona(body, { headers, mode: 'official_full', forceConfigured: true })
+  assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.match(out.system.at(-1).text, /RFC 2119/)
+  assert.match(out.system.at(-1).text, /<workstation>/)
+  assert.ok(!out.system.some((block) => String(block?.text || '').includes('cc_entrypoint=cli')))
+})
+
+test('forceConfigured custom preset still writes billing and keeps caller system', () => {
+  const out = applyCrsUnofficialPersona(
+    {
+      system: 'caller text',
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+    { forceConfigured: true, mode: 'custom' },
+  )
+  assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
+  assert.match(out.system.at(-1).text, /caller text/)
+})
+
+test('official family passthrough is off unless the protocol switch is on', () => {
+  assert.equal(officialCcPassthroughFromRouting({}), false)
+  assert.equal(officialCcPassthroughFromRouting({ compatibility: { official_cc_passthrough: false } }), false)
+  assert.equal(officialCcPassthroughFromRouting({ compatibility: { official_cc_passthrough: true } }), true)
 })
 
 test('empty unofficial system still writes the official full prompt', () => {
