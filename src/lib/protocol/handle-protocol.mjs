@@ -1160,8 +1160,15 @@ export function createHandleProtocol(deps) {
           if (cliHop) {
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
+            // #89 stopped applying official_full before the strip, and the strip
+            // deletes billing / identity / env that official just wrote. Both
+            // presets overwrite the configured template after the strip.
+            const panelRewrite =
+              !requestContext &&
+              !officialTraffic &&
+              (resolvedPersona === 'official' || resolvedPersona === 'official_full' || resolvedPersona === 'zero')
             const cliAppliesNodePersona =
-              !requestContext && !officialTraffic && resolvedPersona !== 'zero' && resolvedPersona !== 'official_full'
+              !requestContext && !officialTraffic && !panelRewrite && resolvedPersona !== 'zero'
             if (cliAppliesNodePersona) {
               hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
                 officialClient: false,
@@ -1188,6 +1195,24 @@ export function createHandleProtocol(deps) {
               requestContext,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
+            if (panelRewrite) {
+              hopBody = applyCrsUnofficialPersona(hopBody, {
+                officialClient: false,
+                routingFile: routingConfigPath,
+                mode: resolvedPersona,
+                headers: req.headers,
+                sessionId: attemptSessionId,
+                model: hopBody?.model || personaIn?.model,
+                cliVersion: OFFICIAL_CLI_VERSION,
+                identity,
+              })
+              personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
+                officialClient: false,
+                mode: resolvedPersona,
+                hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
+                standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
+              })
+            }
             if (identity) {
               hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
                 officialClient: officialTraffic,
@@ -1204,20 +1229,19 @@ export function createHandleProtocol(deps) {
             cacheTtl = requestedCacheTtl
             if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
-            // 0注入 hides CLI billing + env and the standing Node left in the leftover.
-            // 官方提示词 must show real usage.
-            const cliHide = requestContext
-              ? 0
-              : resolvedPersona === 'official'
+            // 0注入 hides CLI billing + env. 官方 / 官方完整 are the configured
+            // template written after the strip, so their usage stays real.
+            const cliHide =
+              requestContext || panelRewrite
                 ? 0
                 : personaHideForCliZero(personaIn, hopBody, {
                     officialClient: officialTraffic,
                     timezone: selected.vm?.timezone || selected.vm?.fingerprint?.timezone,
-                    // A re-applied Node persona's hide (summed below) already counts its overlay.
                     overlay: cliAppliesNodePersona ? 0 : personaHideTokens?.overlay,
                     hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
                   })
-            personaHideTokens = cliAppliesNodePersona ? (Number(personaHideTokens) || 0) + cliHide : cliHide
+            personaHideTokens =
+              cliAppliesNodePersona || panelRewrite ? (Number(personaHideTokens) || 0) + cliHide : cliHide
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
             logBag.official_cc_inference = 'cli-hop'
