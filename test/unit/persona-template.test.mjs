@@ -303,8 +303,11 @@ test('zero preset ignores a stored overlay_preset and never parks', () => {
     const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
     assert.equal(out.messages, messages)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
-    assert.equal(out.system.length, 3)
+    assert.equal(out.system.length, 4)
+    assert.equal(out.system[1].text, '\u200b')
+    assert.equal(out.system[2].text, '\u200b')
     assert.match(out.system[0].text, /prompt_version=</)
+    assert.match(out.system[3].text, /^# Environment/)
   })
 })
 
