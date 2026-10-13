@@ -1678,7 +1678,8 @@ function rewriteOfficialSystem(
   const indexes = billingIndexesFromMessages(messages)
   const extras = park ? collectPersonaRuleAppends(body, messages, routingFile) : []
   const { env, sourceTexts } = personaEnvForBody(body, { identity, model, overwrite })
-  const leftover = collectCallerSystemAppend(body)
+  // Legacy rewrite keeps mid-conversation role=system in the message list.
+  const leftover = parkableSystemTexts(body.system).join('\n\n')
   let system
   if (shouldAttachSystemExpansion(body, routingFile)) {
     system = buildFourBlocks(firstUserText, ver, env, sessionId, sourceTexts, { overwrite, indexes })
