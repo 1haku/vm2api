@@ -12,6 +12,24 @@ import {
 } from '../../src/lib/db/subscription-snapshot.mjs'
 import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs'
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
+import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
+
+test('005 adds independent defaults without changing a v4 plan, and detects later cycle changes', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weekly-migration-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }) })
+  db.prepare("INSERT INTO groups(id,name,platform,status) VALUES(99,'Legacy','claude','active')").run()
+  db.prepare('INSERT INTO custom_subscription_plans(group_id,daily_limit_usd,weekly_limit_usd) VALUES(99,30,100)').run()
+  for (const column of ['weekly_reset_mode','weekly_reset_vm_id','weekly_window_start','weekly_window_end','weekly_source_account'])
+    db.exec(`ALTER TABLE custom_subscription_plans DROP COLUMN ${column}`)
+  db.prepare("DELETE FROM custom_schema_migrations WHERE version='005'").run()
+  const before = subscriptionSnapshot(db)
+  applyCustomMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare('SELECT weekly_reset_mode FROM custom_subscription_plans WHERE group_id=99').get().weekly_reset_mode, 'independent')
+  db.prepare("UPDATE custom_subscription_plans SET weekly_reset_vm_id='Claude' WHERE group_id=99").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /plans/)
+})
 
 test('v3 data migrates without changing ownership, amounts, limits or history; tampering with same row count is detected', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-content-'))
