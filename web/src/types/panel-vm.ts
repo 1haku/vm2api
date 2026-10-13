@@ -346,6 +346,8 @@ export type Vm = {
   today_cache_read_tokens?: number
   today_cache_creation_tokens?: number
   total_cost?: number
+  /** 累计 token（输入 + 输出，不含缓存），与 total_cost 同源。 */
+  total_tokens?: number
   expires_at?: string
   refreshed_at?: string
   oauth_source?: string
