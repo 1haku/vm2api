@@ -286,7 +286,7 @@ function collectOnboardingFacts(req, ctx) {
   const admin = getPanelAdmin()
   return {
     envPassword: admin.password,
-    envAdminExists: !!ctx.panelUsers.getByUsername(admin.username),
+    envAdmin: ctx.panelUsers.getByUsername(admin.username),
     proxyCount: (snap.proxies || []).length,
     ...vmStepFacts(visible),
     activeKeyCount: mine.filter((k) => k.status === 'active').length,
