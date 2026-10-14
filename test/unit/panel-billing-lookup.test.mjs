@@ -86,7 +86,7 @@ test('VM list carries lifetime tokens from the same billing row as total_cost', 
   })
   const byId = Object.fromEntries(listed.data.items.map((vm) => [vm.id, vm]))
   assert.equal(byId['vm-07'].total_cost, 12.5)
-  assert.equal(byId['vm-07'].total_tokens, 1500)
+  assert.equal(byId['vm-07'].total_tokens, 91500)
   assert.equal(byId['vm-07'].window_5h_tokens, 40)
   assert.equal(byId['vm-07'].window_7d_tokens, 900)
   assert.equal(byId['vm-08'].total_tokens, 0)

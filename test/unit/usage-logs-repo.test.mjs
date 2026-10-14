@@ -6,6 +6,7 @@ import path from 'node:path'
 import { createDatabase } from '../../src/lib/db/database.mjs'
 import { UsageLogsRepo } from '../../src/lib/db/repos/usage-logs-repo.mjs'
 import { codexBodyToAnthropicMessage } from '../../src/lib/protocol/codex-convert.mjs'
+import { estimateWindow } from '../../src/lib/admin/window-estimate.mjs'
 
 let seq = 0
 
@@ -226,7 +227,14 @@ test('log coverage follows recorded prunes, not the oldest row or the current re
     // Raising retention later does not bring the deleted day back.
     assert.equal(repo.cleanup({ retainDays: 7 }).usage_logs, 0)
     assert.equal(Date.parse(repo.logCoverageStart()), afterPrune)
-    assert.ok(Date.parse(repo.logCoverageStart()) > Date.parse(iso(6 * 86400_000)))
+    const week = estimateWindow({
+      spentUsd: 5,
+      usedRatio: 0.5,
+      reset: iso(-86400_000),
+      windowStart: iso(6 * 86400_000),
+      coveredSince: repo.logCoverageStart(),
+    })
+    assert.equal(week.status, 'log_gap')
   } finally {
     db.close()
   }
