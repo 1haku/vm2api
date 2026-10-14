@@ -57,6 +57,7 @@ import {
 } from '../oauth/sub2api-account.mjs'
 import { officialCcHome, readOfficialCcStatus, scheduleOfficialCcBootstrap } from '../oauth/official-cc-bootstrap.mjs'
 import { invalidateLiveCredentialCache } from './panel-live-credentials.mjs'
+import { ensureCodexKernel, stopCodexKernel } from '../transport/codex-kernel-supervisor.mjs'
 import { listOfficialModels, seedModelCatalog } from '../protocol/models.mjs'
 import { getModelPolicy, saveModelPolicy, resetModelPolicy, listPolicyModels } from '../protocol/model-policy.mjs'
 import {
@@ -2948,6 +2949,89 @@ export function createPanelHandler(ctx) {
         })
       }
 
+      // POST /api/panel/vms/:id/credential/clear - drop the account, keep the slot.
+      // local patch (patches/clear-credential): clear the credential only; the slot
+      // and its container stay exactly as they are, so a new account can be
+      // imported into the same slot afterwards.
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/credential\/clear$/.test(p)) {
+        const id = p.split('/')[4]
+        const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
+        if (!fs.existsSync(vmPath)) {
+          return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'VM not found' } })
+        }
+        await readBody(req, 32 * 1024).catch(() => ({}))
+        return await withVmLock(vmPath, async () => {
+          if (!fs.existsSync(vmPath)) {
+            return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'VM not found' } })
+          }
+          const prev = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+          prev.id = prev.id || id
+          const slotDir = path.join(cfg.paths.project, 'vms', id)
+          const removed = []
+          for (const file of [
+            path.join(slotDir, 'codex-credentials.json'),
+            path.join(slotDir, 'cli-home', '.codex', 'auth.json'),
+            path.join(slotDir, 'cli-home', '.claude', 'credentials.json'),
+            path.join(slotDir, 'cli-home', '.claude', '.credentials.json'),
+          ]) {
+            try {
+              if (fs.existsSync(file)) {
+                fs.rmSync(file, { force: true })
+                removed.push(path.relative(cfg.paths.project, file))
+              }
+            } catch {}
+          }
+          const vm =
+            patchVmRecord(cfg.paths.project, id, (record) => {
+              record.email = null
+              record.account_uuid = null
+              record.org_uuid = null
+              record.expires_at = null
+              record.codex = {}
+              record.claude = {}
+              record.worker_credential = null
+              record.refresh_status = null
+              record.refresh_error = null
+              record.restriction_reason = null
+              record.restriction_until = null
+              record.schedulable = false
+              record.schedule_disabled_reason = 'no_credential'
+              return record
+            }) || prev
+          try {
+            invalidateLiveCredentialCache()
+          } catch {}
+          // The kernel still holds the old token in memory: stop it, then bring a
+          // credential-less kernel back so the slot matches an empty slot.
+          const kernel = { stopped: false, restarted: false, error: null }
+          try {
+            kernel.stopped = !!stopCodexKernel(id)
+            if (isCodexVm(vm)) {
+              const started = await ensureCodexKernel(slotExec(cfg.paths.project, getVm(cfg.paths.project, id) || vm), {
+                timeoutMs: 8000,
+              })
+              kernel.restarted = !!started?.ok
+              if (!started?.ok) kernel.error = started?.reason || 'codex_kernel_start_failed'
+            }
+          } catch (e) {
+            kernel.error = String(e?.message || e).slice(0, 160)
+          }
+          try {
+            const repo = ctx.accountQuota?.repo
+            const row = repo && typeof repo.get === 'function' ? repo.get(id) : null
+            if (row && typeof repo.save === 'function') repo.save({ ...row, email: null, name: id })
+          } catch {}
+          const saved = getVm(cfg.paths.project, id) || vm
+          return json(
+            res,
+            200,
+            panel.ok({
+              cleared: { vm_id: id, files: removed, kernel },
+              vm: summarizeVm(saved, cfg.paths.project, ctx.routingConfig),
+            }),
+          )
+        })
+      }
       // POST /api/panel/vms/:id/reset-fingerprint
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/reset-fingerprint$/.test(p)) {
         const id = p.split('/')[4]
