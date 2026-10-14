@@ -100,6 +100,8 @@
 | GET | `/models` | 策略目录（不 hop worker） |
 | GET | `/oauth` | 全槽脱敏 credential |
 
+`/vms`、`/vms/:id`、`/usage` 的账号行带窗口估算 `estimate_5h` / `estimate_7d` / `estimate_fable`（Fable 只在有 `7d_oi` 窗口的 Claude 号上非空）和 `window_fable_cost`。结构：`{ status, spent_usd, total_usd, remaining_usd, total_tokens, used_ratio }`。总量 = 窗口内官方费用 ÷ 已用比例，按官方价算，不乘分组倍率。`status` 不是 `ok` 时 `total_usd` / `remaining_usd` 为 `null`：`no_data`（无用量读数）、`no_reset`（无重置时间或已过期）、`log_gap`（日志没覆盖窗口起点，或已用比例动了但网关内无花费）、`low_usage`（已用 < 5%）、`unpriced`（窗口内有未定价请求）。token 字段 `total_tokens` / `today_tokens` / `window_*_tokens` 都是输入 + 输出 + 缓存读 + 缓存写，每类只算一次。
+
 `cred_status`：`无凭证` / `可用` / `5h 警告` / `5h 限制` / `7d 警告` / `7d 限制` / `普通限制` / `不可用` / `被吊销` / `探测失败`。Fable 不可用 / 7d_oi / 家族冷却不抬账号级限制。等级：官方 `/usage` 有 Fable 模型或真实 7d_oi = Max；无 Fable 的 `plan_denied` = Pro。落盘 pro 不能盖掉 usage 里的 Fable。
 
 `account.runtime_window`：`rate_limited_at` / `rate_limit_reset_at` / `overload_until` / `session_window_start|end|status`。
@@ -164,10 +166,23 @@ Claude PATCH `max_sessions` 返回 400 `claude_max_sessions_forbidden`；OpenAI 
 | GET | `/model-policy` → `{ policy, models, effective }` |
 | PUT | `/model-policy` |
 | POST | `/model-policy/reset` |
-| POST | `/model-policy/sync-worker` | 只同步本地策略缓存，不 hop 烧票 |
+| POST | `/model-policy/sync-worker` | 经一个 Claude OAuth 槽拉 Anthropic `/v1/models`（最多合并 3 个号的目录）并入矩阵。返回 `added` 和 `catalog_sync`。无可用槽 400 `no_claude_slot` |
 | POST | `/model-policy/sync-codex` | 经 GPT OAuth 槽 SOCKS 拉 ChatGPT 模型目录并入矩阵。票过期时用 refresh_token 换一次新 access，写入 `codex-credentials.json`。无 Codex 槽 400 `no_codex_slot`。 |
 
+上游目录启动 5 秒后和每 6 小时自动同步一次，结果写在 settings `model_catalog_sync`。已有条目的编辑一律保留。新 Claude id 只在 `worker_only` 下直接对外，其他模式加入后默认关闭；新 GPT id 一律默认关闭，等管理员打开。models.dev 只提供新条目的显示名。
+
 `catalog_mode`：`policy_only`（默认，控制台 #/models 即目录）/ `worker_intersect_policy` / `worker_only`。矩阵行可改 `betas.pass_context_1m`、thinking 策略、`max_tokens_cap`。
+
+## 计费（仅 admin）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/pricing` | `{ models, models_dev, overrides, unpriced, policy, catalog_sync }`。`models[]` 每行有 `effective`、`source`（`override` / `models.dev` / `builtin`）、`mode_sources`、`builtin`、`models_dev`、`override`、`diff`、`in_policy` |
+| PUT | `/pricing/overrides` | `{ key, price }`。`key` 形如 `anthropic/<id>`、`openai/*`、`*/<id>`。`price` 必须有 `input` / `output` / `cache_read`；`cache_5m` / `cache_1h` 可省（Claude 按 1.25× / 2× input 补）；可带 `tiers[{above,...}]`、`modes.{fast,flex,priority}`。`price: null` 删除。字段不全 400 `invalid_price` |
+| POST | `/pricing/sync` | 立即拉 `https://models.dev/api.json`，失败保留上一份快照 |
+| POST | `/pricing/reprice` | `{ since, until }`（ISO）。按当前有效价重写该时段的官方费用列，并给 `unpriced` 行补价。不改 `actual_cost` / `rate_multiplier` / key 已扣额度。返回 `{ rows, changed, still_unpriced, delta_usd }` |
+
+价格优先级：覆盖 `provider/model` > `provider/*` > `*/model` > models.dev > 内置快照。models.dev 缺的模型和档位（fast / flex / priority、长上下文、web search 按次费）从内置快照补。models.dev 每 24 小时刷新，遇到未定价模型且上次拉取超过 6 小时会后台补拉。
 
 ## 路由 / 设置
 
