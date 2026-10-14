@@ -2,6 +2,10 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'cch',
+  'cli-hop-body',
+  'crs-clean',
+  'crs-persona-usage',
   'active-hours',
   'codex-slot-pool',
   'credential-weight',

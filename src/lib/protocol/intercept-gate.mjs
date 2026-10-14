@@ -38,6 +38,12 @@ function deviceStore(devices) {
     return null
   }
 }
+function distillEvidenceMessage(message, evidence) {
+  const text = String(message || '').trim()
+  const why = String(evidence || '').trim()
+  if (text && why) return `${text}: ${why}`
+  return text || why
+}
 
 function hardRulesFor(inbound, body, jev, distillOn) {
   const hardOn = jev?.hard_regex_enabled !== false
@@ -156,7 +162,7 @@ export async function evaluateProtocolIntercept({
       via: 'distill-detect',
       final_state: 'distill_blocked',
       error: distillBlockError(distillRules, requestId),
-      errorMessage: evidence ? `${distill.error?.message || '不允许蒸馏'}: ${evidence}` : distill.error?.message,
+      errorMessage: distillEvidenceMessage(distill.error?.message, evidence),
       intercept: gateVerdict({ kind: 'block', by: 'distill', keyword: evidence.slice(0, 40) }),
       deviceId: inboundRefusalDeviceId({ inbound, body, headers }),
       fingerprint: refusalFingerprint(body, inbound),
@@ -189,7 +195,7 @@ export async function evaluateProtocolIntercept({
         via: 'distill-detect',
         final_state: 'distill_blocked',
         error,
-        errorMessage: `${error.body?.error?.message || '不允许蒸馏'}: ${keyword}`,
+        errorMessage: distillEvidenceMessage(error.body?.error?.message, keyword),
         intercept: gateVerdict({ kind: 'block', by: 'distill', keyword: keyword.slice(0, 40) }),
         deviceId: inboundRefusalDeviceId({ inbound, body, headers }),
         fingerprint: refusalFingerprint(body, inbound),

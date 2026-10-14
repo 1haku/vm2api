@@ -254,9 +254,7 @@ export function buildOverwriteEnvironmentSection({
   const shellLine = `\n - Shell: ${sanitizeEnvToken(shell) || 'unknown'}`
   const osLine = resolvedOs
     ? `\n - OS Version: ${resolvedOs}${loc}${tz}`
-    : loc || tz
-      ? `\n - OS Version:${loc}${tz}`
-      : ''
+    : `${loc ? `\n - Locale: ${locValue}` : ''}${tz ? `\n - Timezone: ${tzValue}` : ''}`
   return `# Environment
 You have been invoked in the following environment: 
 ${cwdLine}${gitLine}${platformLine}${shellLine}${osLine}

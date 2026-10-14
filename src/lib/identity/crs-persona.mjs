@@ -365,17 +365,15 @@ function toolResultOnlyMessage(message) {
   return content.every((block) => block && typeof block === 'object' && block.type === 'tool_result')
 }
 
-/** promptIndex is the latest user prompt. turnIndex is the upcoming model turn. */
+/** First-turn indexes only. A moving cc_turn_index rewrites system[0] and invalidates every breakpoint after tools. */
 export function billingIndexesFromMessages(messages) {
   if (!Array.isArray(messages)) return null
   let prompts = 0
-  let assistants = 0
   for (const message of messages) {
-    if (message?.role === 'assistant') assistants += 1
-    else if (message?.role === 'user' && !toolResultOnlyMessage(message)) prompts += 1
+    if (message?.role === 'user' && !toolResultOnlyMessage(message)) prompts += 1
   }
   if (prompts < 1) return null
-  return { promptIndex: prompts - 1, turnIndex: assistants + 1 }
+  return { promptIndex: 0, turnIndex: 1 }
 }
 
 const BILLING_PROMPT_ID_RE = /cc_prompt_id=[^;\s]*/g
@@ -711,8 +709,14 @@ export function personaTemplateVars({
   leftover = '',
   model = '',
   timezoneOnlyEnv = false,
+  messages = null,
 } = {}) {
-  const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
+  const billing = buildBillingAttributionText(
+    firstUserText,
+    cliVersion,
+    sessionId,
+    billingIndexesFromMessages(messages),
+  )
   const envTimezoneOnly = () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false })
   return {
     billing,
@@ -1223,32 +1227,40 @@ export function prependToFirstUserMessage(messages, text) {
   return prependRawToFirstUserMessage(messages, wrapSystemReminder(text))
 }
 
-function messagePlainText(message) {
-  const content = message?.content
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((block) => (typeof block === 'string' ? block : block?.text || ''))
-    .filter(Boolean)
-    .join('\n')
-}
-
-/** Top-level system plus every role=system turn. Segment 5 owns all of it. */
+/** Top-level caller system only. role=system stays in the message list so the cached prefix can grow. */
 export function collectCallerSystemAppend(body) {
-  const parts = parkableSystemTexts(body?.system)
-  const messages = Array.isArray(body?.messages) ? body.messages : []
-  for (const message of messages) {
-    if (String(message?.role || '').toLowerCase() !== 'system') continue
-    const cleaned = dropRewriteSourceText(messagePlainText(message))
-    if (cleaned) parts.push(cleaned)
-  }
-  return parts.join('\n\n')
+  return parkableSystemTexts(body?.system).join('\n\n')
 }
 
-function withoutCallerSystemMessages(messages) {
-  if (!Array.isArray(messages)) return messages
-  if (!messages.some((message) => String(message?.role || '').toLowerCase() === 'system')) return messages
-  return messages.filter((message) => String(message?.role || '').toLowerCase() !== 'system')
+const OFFICIAL_CALLER_AGENT_CACHE = Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' })
+
+/** Stored official templates that predate {{caller_agent}} still get the prompt back, before env. */
+function insertOfficialCallerAgent(system, callerAgent) {
+  const text = String(callerAgent || '').trim()
+  if (!text || !Array.isArray(system)) return system
+  if (system.some((block) => String(block?.text || '').includes(text))) return system
+  const block = { type: 'text', text, cache_control: { ...OFFICIAL_CALLER_AGENT_CACHE } }
+  const identityAt = system.findIndex((item) => item?.text === CRS_OFFICIAL_SYSTEM)
+  const at = identityAt >= 0 ? identityAt + 1 : Math.min(system.length, 2)
+  return [...system.slice(0, at), block, ...system.slice(at)]
+}
+
+/** cch is sealed from the whole body, so it changes every turn. Keep that block after the last cache breakpoint or the 1h prefix never hits. */
+export function parkBillingAfterCacheBoundary(system) {
+  if (!Array.isArray(system) || system.length < 2) return system
+  let billingAt = -1
+  let lastCacheAt = -1
+  for (let i = 0; i < system.length; i++) {
+    const block = system[i]
+    const text = String(block?.text || '')
+    if (billingAt < 0 && /x-anthropic-billing-header:/i.test(text)) billingAt = i
+    if (block?.cache_control && i !== billingAt) lastCacheAt = i
+  }
+  if (billingAt < 0 || lastCacheAt < 0 || billingAt > lastCacheAt) return system
+  const next = system.slice(0, billingAt).concat(system.slice(billingAt + 1))
+  const cacheAt = lastCacheAt - (billingAt < lastCacheAt ? 1 : 0)
+  next.splice(cacheAt + 1, 0, system[billingAt])
+  return next
 }
 
 function collectPersonaRuleAppends(body, messages, routingFile) {
@@ -1630,6 +1642,11 @@ export function detectProxiedOfficialCcFromRoutingFile(filePath) {
   }
 }
 
+/** Off unless the protocol tab turns it on. Official family then keeps its inbound system. */
+export function officialCcPassthroughFromRouting(routing = {}) {
+  return routing?.compatibility?.official_cc_passthrough === true
+}
+
 function stripSystemCacheControl(body) {
   if (!Array.isArray(body.system)) return body
   let changed = false
@@ -1720,7 +1737,7 @@ function rewriteOfficialSystem(
       return block
     })
   }
-  system = appendOfficialSystemPrompt(system, leftover)
+  system = parkBillingAfterCacheBoundary(appendOfficialSystemPrompt(system, leftover))
   if (!extras.length) return { ...body, system, messages }
   return {
     ...body,
@@ -1777,11 +1794,13 @@ function applyTemplatePersona(
   })
   const harness = thirdPartyClientPrompt(body.system)
   if (harness) env.timezone = requiredTimezone(identity, facts)
-  if (zero) env.timezone = String(env.timezone || '').trim() || 'UTC'
-  // Only pull the caller's agent prompt out of leftover when the template has a
-  // slot for it, otherwise a template without {{caller_agent}} would drop it.
-  const usesCallerAgent = !harness && blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
-  const callerAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  env.timezone = String(env.timezone || '').trim() || requiredTimezone(identity, facts)
+  // official always keeps the extracted prompt. A stored template that never
+  // mentions {{caller_agent}} would otherwise drop it and leave only the identity line.
+  const templateWantsCallerAgent = blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
+  const usesCallerAgent = !harness && (preset === 'official' || templateWantsCallerAgent)
+  const suppliedAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
+  const callerAgent = suppliedAgent || (preset === 'official' && !harness ? CRS_OFFICIAL_AGENT_PROMPT : '')
   const leftover = harness
     ? ''
     : usesCallerAgent
@@ -1791,7 +1810,7 @@ function applyTemplatePersona(
       : collectCallerSystemAppend(body)
   const modelId = model || body.model
   const midSystem = leftoverGoesToMidSystem(preset, modelId)
-  const system = renderPersonaTemplate(
+  let system = renderPersonaTemplate(
     blocks,
     personaTemplateVars({
       firstUserText: extractFirstUserText(messages),
@@ -1806,9 +1825,11 @@ function applyTemplatePersona(
       timezoneOnlyEnv: Boolean(harness),
       leftover: midSystem ? '' : leftover,
       model: modelId,
+      messages,
     }),
   )
-  let outMessages = withoutCallerSystemMessages(messages)
+  if (preset === 'official') system = insertOfficialCallerAgent(system, callerAgent)
+  let outMessages = messages
   if (midSystem) {
     outMessages = wrapExistingMidConversationSystem(insertMidConversationSystem(outMessages, leftover))
   }
@@ -1823,6 +1844,7 @@ export function applyCrsUnofficialPersona(
   body,
   {
     officialClient = false,
+    forceConfigured = false,
     cliVersion,
     mode,
     park,
@@ -1836,7 +1858,7 @@ export function applyCrsUnofficialPersona(
   } = {},
 ) {
   if (!body || typeof body !== 'object') return body
-  if (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body)) return body
+  if (!forceConfigured && (officialClient || isOfficialClaudeCodeTraffic(headers || {}, body))) return body
   const fromFile = routingFile ? personaOptionsFromRoutingFile(routingFile) : null
   const resolved = normalizePersonaMode(mode ?? fromFile?.mode)
   // Read the caller's agent prompt before stripLeakySystem drops it as known official text.

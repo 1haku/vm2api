@@ -46,7 +46,11 @@ export type DistillRules = {
     min_max_tokens: number
     require_no_tools: boolean
     require_single_turn: boolean
+    /** 结构收割用的赛题正则。空字符串表示不做这项。 */
+    contest_pattern: string
   }
+  /** 官方客户端和 0 注入也拦。面板删掉即停，不会被代码补回。 */
+  hard_needles: string[]
   needles: string[]
   /** Extra regexes. Built-in distillation / CoT patterns live on the hard rules. */
   patterns: string[]

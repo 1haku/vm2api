@@ -266,9 +266,9 @@ Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`g
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET/PUT | `/distill` | 协议入口蒸馏拦截。命中后返回 `error` 里配置的状态和 code（默认 HTTP 403，`code=distill_blocked`，文案 `不允许蒸馏`），不 hop 凭证 |
+| GET/PUT | `/distill` | 协议入口蒸馏拦截。命中后返回 `error` 里配置的状态、code 和文案，不 hop 凭证 |
 
-`PUT` 热更新 `src/config/distill-rules.json`。字段：`enabled`、`skip_official`（官方 Claude Code 放行其它针）、`skip_zero`（`persona_preset/inject=zero` 放行其它针）、`error.{status,type,code,message}`、`needles[]`、`patterns[]`、`fingerprints[]`、`structure.{min_max_tokens,require_no_tools,require_single_turn}`。`patterns` 是正则，和 `Memory-stage-one extractor` / `MUST distill` / `MUST extract durable memory` 一样是硬拦截：官方、0 注入、面板删掉也会补回，命中即 403，不 hop。覆盖蒸馏（knowledge/model distillation，不含化学 distill）和提取思维链（extract/dump chain-of-thought、提取/蒸馏思维链）。**不含**单独的 `Persistable response items`（普通 agent 信封）。仅 admin。
+`PUT` 热更新 `src/config/distill-rules.json`。字段：`enabled`、`skip_official`（官方 Claude Code 放行普通针、指纹和结构）、`skip_zero`（`persona_preset/inject=zero` 放行这些）、`error.{status,type,code,message}`、`hard_needles[]`（收割包装：官方和 0 注入也拦；面板删掉即停，不会补回）、`needles[]`、`patterns[]`（附加正则，官方和 0 注入也拦）、`fingerprints[]`、`structure.{min_max_tokens,require_no_tools,require_single_turn,contest_pattern}`。`contest_pattern` 为空则不做赛题结构收割。思考预算是否算收割，用的是同一个 `min_max_tokens`，不是写死的 8192。确定性蒸馏短语在硬正则的 distill 类别里，不在这里补回。**不含**单独的 `Persistable response items`（普通 agent 信封）。仅 admin。
 
 ## 拒答缓存
 

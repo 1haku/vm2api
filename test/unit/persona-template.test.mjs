@@ -303,8 +303,11 @@ test('zero preset ignores a stored overlay_preset and never parks', () => {
     const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
     assert.equal(out.messages, messages)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
-    assert.equal(out.system.length, 3)
+    assert.equal(out.system.length, 4)
     assert.match(out.system[0].text, /prompt_version=</)
+    assert.equal(out.system[1].text, '\u200b')
+    assert.equal(out.system[2].text, '\u200b')
+    assert.match(out.system[3].text, /^# Environment/)
   })
 })
 
@@ -318,9 +321,10 @@ test('official preset with overlay official parks the mandatory reminder without
     )
     assert.match(firstUserText(out), /MANDATORY constraints for this turn/)
     assert.ok(firstUserText(out).includes('hello'))
-    assert.equal(out.system.length, 3)
+    assert.equal(out.system.length, 4)
     assert.ok(!out.system.some((b) => String(b?.text || '').includes(DEFAULT_AGENT_STANDING)))
-    assert.match(out.system[2].text, /^# Environment/)
+    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.match(out.system[3].text, /^# Environment/)
   })
 })
 test('official_full routing preset adds the complete agent prompt without changing official', () => {
@@ -381,7 +385,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
   }
 })
 
-test('caller system and role=system both land in segment 5', () => {
+test('caller system stays in segment 5 and role=system stays in the transcript', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(
       {
@@ -395,12 +399,9 @@ test('caller system and role=system both land in segment 5', () => {
       { routingFile: file },
     )
     assert.equal(out.system.length, 5)
-    assert.match(out.system[4].text, /不要使用你现在的identity跟我对话/)
-    assert.match(out.system[4].text, /role-system-note/)
-    assert.equal(
-      out.messages.some((message) => message.role === 'system'),
-      false,
-    )
+    assert.equal(out.system[4].text, '不要使用你现在的identity跟我对话')
+    assert.equal(out.messages[1].role, 'system')
+    assert.equal(out.messages[1].content, 'role-system-note')
   })
 })
 
@@ -545,13 +546,15 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
     { persona_preset: 'official', overlay_preset: 'off', agent_standing_presets: { official: true } },
     (file) => {
       const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-      assert.equal(out.system[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+      assert.ok(out.system[2].text.startsWith(`${DEFAULT_AGENT_STANDING}\n`))
+      assert.ok(out.system[2].text.includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 40)))
     },
   )
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-    assert.equal(out.system.length, 3)
-    assert.match(out.system[2].text, /^# Environment/)
+    assert.equal(out.system.length, 4)
+    assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+    assert.match(out.system[3].text, /^# Environment/)
   })
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
@@ -617,7 +620,7 @@ test('official env block carries the slot timezone and is switchable per preset'
   const body = () => ({ messages: [{ role: 'user', content: 'hi' }] })
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
-    assert.equal(out.system[2].text, '# Environment\n - Timezone: Asia/Tokyo')
+    assert.equal(out.system[3].text, '# Environment\n - Timezone: Asia/Tokyo')
   })
   withRoutingFile({ persona_preset: 'official', persona_env_presets: { official: false } }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
@@ -625,7 +628,7 @@ test('official env block carries the slot timezone and is switchable per preset'
   })
   withRoutingFile({ persona_preset: 'official' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-    assert.equal(out.system[2].text, '# Environment\n - Timezone: UTC')
+    assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
   })
 })
 

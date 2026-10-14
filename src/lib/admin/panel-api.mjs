@@ -368,6 +368,9 @@ export function validatePersonaRoutingPatch(body = {}) {
   if (compat.claude_code_only != null && typeof compat.claude_code_only !== 'boolean') {
     problems.push('claude_code_only 必须是布尔')
   }
+  if (compat.official_cc_passthrough != null && typeof compat.official_cc_passthrough !== 'boolean') {
+    problems.push('official_cc_passthrough 必须是布尔')
+  }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints
     if (typeof bp !== 'object' || Array.isArray(bp)) {
@@ -1216,6 +1219,7 @@ export function buildUsage({ accountQuota, cfg, requestLog = null }) {
       cache_creation_tokens: a.cache_creation_tokens || 0,
       today_cost: cost?.today_cost || 0,
       total_cost: cost?.total_cost || 0,
+      total_tokens: Number(cost?.input_tokens || 0) + Number(cost?.output_tokens || 0),
       window_5h_cost: cost?.window_5h_cost || 0,
       window_5h_requests: cost?.window_5h_requests || 0,
       window_5h_tokens: cost?.window_5h_tokens || 0,
@@ -2207,6 +2211,8 @@ function applyCostFields(target, cost, { scheme } = {}) {
   const todayOut = Number(cost?.today_output_tokens ?? (today?.output_tokens || 0))
   target.today_cost = cost?.today_cost ?? today?.total_cost ?? 0
   target.total_cost = cost?.total_cost || 0
+  // 与 total_cost 同源（计费日志累计行），口径同 window_*_tokens：输入 + 输出，不含缓存。
+  target.total_tokens = Number(cost?.input_tokens || 0) + Number(cost?.output_tokens || 0)
   target.today_requests = cost?.today_requests ?? today?.requests ?? 0
   target.today_tokens = todayInput + todayOut
   target.today_input_tokens = todayInput

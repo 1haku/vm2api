@@ -59,10 +59,7 @@ test('activeHoursOf reads policy leniently', () => {
   assert.equal(activeHoursOf({}), null)
   assert.equal(activeHoursOf({ policy: {} }), null)
   assert.equal(activeHoursOf({ policy: { active_hours: 'yes' } }), null)
-  assert.equal(
-    activeHoursOf({ policy: { active_hours: { start: '08:00', end: '08:00' } } }),
-    null,
-  )
+  assert.equal(activeHoursOf({ policy: { active_hours: { start: '08:00', end: '08:00' } } }), null)
   const vm = {
     policy: {
       active_hours: { start: '9:30', end: '22:00', timezone: 'bad/zone', days: 'x' },
