@@ -41,11 +41,7 @@ export function openaiIdentityFromJwt(token) {
     authObj.account_email,
     profileObj.email,
   )
-  const chatgpt_account_id = firstString(
-    authObj.chatgpt_account_id,
-    authObj.account_id,
-    authObj.user_id,
-  )
+  const chatgpt_account_id = firstString(authObj.chatgpt_account_id, authObj.account_id, authObj.user_id)
   return {
     email: email || null,
     chatgpt_account_id: chatgpt_account_id || null,

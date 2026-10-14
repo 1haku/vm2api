@@ -312,12 +312,7 @@ export function summarizeCodexSlot(projectRoot, vm = {}) {
     has_token: hasAccess || hasRefresh,
     has_refresh: hasRefresh,
     email:
-      first.email ||
-      vm.codex?.email ||
-      vm.email ||
-      first.chatgpt_account_id ||
-      vm.codex?.chatgpt_account_id ||
-      null,
+      first.email || vm.codex?.email || vm.email || first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
     expires_at: first.expires_at || vm.codex?.expires_at || null,
     chatgpt_account_id: first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
     account_count: accounts.length,
