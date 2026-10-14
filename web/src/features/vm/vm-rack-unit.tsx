@@ -4,6 +4,7 @@ import type { Vm } from '@/types/panel-vm'
 import { resetCountdown } from '@/lib/fable-status'
 import { fmtNum, fmtUsd } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { estimateRemaining } from '@/lib/vm-usage'
 import { RISK_SOLID, riskFg, riskLevel } from '@/features/vm/usage-meter'
 import {
   BLADE_STATE_CLASS,
@@ -22,9 +23,11 @@ import {
 
 function MiniColumn({ w, now }: { w: WindowReadout; now: number }) {
   const reset = w.reset ? resetCountdown(w.reset, now) : null
+  const remaining = estimateRemaining(w.estimate)
   const tip = [
     `${w.label} ${w.pct == null ? w.note || '未探测' : `${Math.round(w.pct)}%`}`,
     w.cost != null && fmtUsd(w.cost, 2),
+    remaining != null && `余 ${fmtUsd(remaining, 2)}`,
     w.tokens != null && `${fmtNum(w.tokens)} tok`,
     reset && `${reset} 后重置`,
   ]

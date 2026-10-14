@@ -1,6 +1,8 @@
 import type { BillingAccountRow } from '@/types/panel-overview'
+import type { WindowEstimate } from '@/types/panel-pricing'
 import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
+import { fmtNum, fmtUsd } from '@/lib/format'
 import { isCodexVm } from '@/lib/vm-kind'
 
 function num(v: unknown): number {
@@ -115,7 +117,8 @@ export function vmTodayView(vm: Vm, accounts?: UsageAccountRow[]): Vm {
       today_output_tokens: dashOut,
       today_cache_read_tokens: dashRead,
       today_cache_creation_tokens: dashWrite,
-      today_tokens: num(vm.today_tokens) || dashInn + dashOut,
+      today_tokens:
+        num(vm.today_tokens) || dashInn + dashOut + dashRead + dashWrite,
     }
   }
 
@@ -126,21 +129,26 @@ export function vmTodayView(vm: Vm, accounts?: UsageAccountRow[]): Vm {
     today_output_tokens: dashOut || accOut,
     today_cache_read_tokens: Math.max(dashRead, accRead),
     today_cache_creation_tokens: Math.max(dashWrite, accWrite),
-    today_tokens: (dashInn || accInn) + (dashOut || accOut),
+    today_tokens:
+      num(vm.today_tokens) ||
+      num(acc?.today_tokens) ||
+      (dashInn || accInn) +
+        (dashOut || accOut) +
+        Math.max(dashRead, accRead) +
+        Math.max(dashWrite, accWrite),
     today_cost: Math.max(dashCost, accCost),
     cache_hit_rate: vm.cache_hit_rate ?? null,
   }
 }
 
-/** `null` means no prompt tokens at all — distinct from a real 0% hit rate. */
+/** `null` means no prompt tokens at all — distinct from a real 0% hit rate.
+ *  Input is disjoint (excludes cache) on every platform. */
 export function cacheHitPct(
   input: unknown,
   read: unknown,
-  write: unknown,
-  scheme: 'anthropic' | 'openai' = 'anthropic'
+  write: unknown
 ): number | null {
-  const prompt =
-    scheme === 'openai' ? num(input) : num(input) + num(read) + num(write)
+  const prompt = num(input) + num(read) + num(write)
   if (!prompt) return null
   return Math.min(100, (num(read) / prompt) * 100)
 }
@@ -156,8 +164,7 @@ export function vmCacheHitPct(
   return cacheHitPct(
     row.today_input_tokens,
     row.today_cache_read_tokens,
-    row.today_cache_creation_tokens,
-    isCodexVm(vm) ? 'openai' : 'anthropic'
+    row.today_cache_creation_tokens
   )
 }
 
@@ -174,7 +181,12 @@ export function vmTodayStats(vm: Vm, accounts?: UsageAccountRow[]) {
     row,
     today: num(row.today_cost),
     req: num(row.today_requests),
-    tok: num(row.today_tokens) || inn + out,
+    tok:
+      num(row.today_tokens) ||
+      inn +
+        out +
+        num(row.today_cache_read_tokens) +
+        num(row.today_cache_creation_tokens),
     inn,
     out,
     read: num(row.today_cache_read_tokens),
@@ -224,7 +236,7 @@ export function vmWindowCosts(
   }
 }
 
-/** 5h / 7d 窗口 token（输入 + 输出，不含缓存）。取值顺序同 `vmWindowCosts`。 */
+/** 5h / 7d 窗口 token（含缓存）。取值顺序同 `vmWindowCosts`。 */
 export function vmWindowTokens(
   vm: Vm,
   accounts?: UsageAccountRow[]
@@ -254,4 +266,134 @@ export function vmTotalTokens(vm: Vm, accounts?: UsageAccountRow[]): number {
     num(vm.total_tokens),
     num(usageAccountForVm(vm, accounts)?.total_tokens)
   )
+}
+
+export const ESTIMATE_STATUS_ZH: Record<WindowEstimate['status'], string> = {
+  ok: '估算有效',
+  no_data: '无用量读数',
+  no_reset: '无重置时间',
+  log_gap: '日志未覆盖窗口',
+  low_usage: '用量<5%',
+  unpriced: '窗口内有未定价请求',
+}
+
+const ESTIMATE_CAVEAT = '按官方价估算；账号在网关外使用会偏低'
+
+export function estimateTooltip(
+  est: WindowEstimate | null | undefined
+): string {
+  const bits = [est ? ESTIMATE_STATUS_ZH[est.status] : '暂无估算']
+  if (est?.total_tokens != null && Number.isFinite(est.total_tokens)) {
+    bits.push(`约 ${fmtNum(est.total_tokens)} tok`)
+  }
+  bits.push(ESTIMATE_CAVEAT)
+  return bits.join('\n')
+}
+
+/** 剩余 USD；估算不成立时为 null（画「—」，不画 0）。 */
+export function estimateRemaining(
+  est: WindowEstimate | null | undefined
+): number | null {
+  if (est?.status !== 'ok') return null
+  const v = est.remaining_usd
+  return v != null && Number.isFinite(v) ? v : null
+}
+
+export function pickWindowEstimate(
+  vm: Vm,
+  accounts: UsageAccountRow[] | undefined,
+  key: 'estimate_5h' | 'estimate_7d' | 'estimate_fable'
+): WindowEstimate | null | undefined {
+  const acc = usageAccountForVm(vm, accounts)
+  if (acc && acc[key] !== undefined) return acc[key]
+  return vm[key]
+}
+
+export function vmFableCost(vm: Vm, accounts?: UsageAccountRow[]): number {
+  const acc = usageAccountForVm(vm, accounts)
+  return num(acc?.window_fable_cost ?? vm.window_fable_cost)
+}
+
+export function formatWindowSpend(
+  spent: number,
+  est: WindowEstimate | null | undefined
+): { costText: string; remainText: string; tooltip: string } {
+  const tooltip = estimateTooltip(est)
+  const spentUsd = fmtUsd(est?.spent_usd ?? spent, 2)
+  if (!est) {
+    return {
+      costText: spent > 0 ? fmtUsd(spent, 2) : '',
+      remainText: '',
+      tooltip,
+    }
+  }
+  if (est.status !== 'ok') {
+    return {
+      costText: `${spentUsd} / —`,
+      remainText: '—',
+      tooltip,
+    }
+  }
+  const total =
+    est.total_usd == null || !Number.isFinite(est.total_usd)
+      ? '—'
+      : fmtUsd(est.total_usd, 2)
+  const remain =
+    est.remaining_usd == null || !Number.isFinite(est.remaining_usd)
+      ? '—'
+      : `余 ${fmtUsd(est.remaining_usd, 2)}`
+  return {
+    costText: `${spentUsd} / ≈${total}`,
+    remainText: remain,
+    tooltip,
+  }
+}
+
+export type PoolUsdSide = {
+  remaining_usd: number
+  claude: number
+  gpt: number
+  counted: number
+  skipped: number
+}
+
+export type PoolUsdEstimates = {
+  h5: PoolUsdSide
+  d7: PoolUsdSide
+}
+
+function emptyUsdSide(): PoolUsdSide {
+  return { remaining_usd: 0, claude: 0, gpt: 0, counted: 0, skipped: 0 }
+}
+
+function addUsdEstimate(
+  side: PoolUsdSide,
+  vm: Vm,
+  est: WindowEstimate | null | undefined
+) {
+  if (
+    est?.status === 'ok' &&
+    est.remaining_usd != null &&
+    Number.isFinite(est.remaining_usd)
+  ) {
+    const usd = Math.max(0, est.remaining_usd)
+    side.remaining_usd += usd
+    if (isCodexVm(vm)) side.gpt += usd
+    else side.claude += usd
+    side.counted += 1
+  } else {
+    side.skipped += 1
+  }
+}
+
+/** 全池 5h/7d 剩余 USD：只计 `estimate_*`.status === 'ok' 的有票槽。 */
+export function poolUsdEstimates(vms: Vm[]): PoolUsdEstimates {
+  const h5 = emptyUsdSide()
+  const d7 = emptyUsdSide()
+  for (const vm of vms) {
+    if (!vm.has_token) continue
+    addUsdEstimate(h5, vm, vm.estimate_5h)
+    addUsdEstimate(d7, vm, vm.estimate_7d)
+  }
+  return { h5, d7 }
 }

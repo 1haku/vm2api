@@ -20,6 +20,7 @@ import {
   restrictionCopy,
   vmFailedAt,
 } from '@/lib/vm-status'
+import { estimateRemaining, estimateTooltip } from '@/lib/vm-usage'
 import { SeatCells } from '@/components/scheduler-viz'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
@@ -372,13 +373,16 @@ function UsageMatrix({
       className='grid items-center gap-x-2 gap-y-1'
       style={{
         gridTemplateColumns: `2.4rem repeat(${n}, minmax(38px, 1fr)) minmax(92px, 1.25fr)`,
-        gridTemplateRows: `auto ${large ? 92 : 56}px auto auto auto`,
+        gridTemplateRows: `auto ${large ? 92 : 56}px auto auto auto auto`,
       }}
     >
       <span style={at(4, 1)} className='text-[11px] text-muted-foreground'>
         费用
       </span>
       <span style={at(5, 1)} className='text-[11px] text-muted-foreground'>
+        余量
+      </span>
+      <span style={at(6, 1)} className='text-[11px] text-muted-foreground'>
         token
       </span>
       {r.windows.map((w, i) => {
@@ -423,6 +427,13 @@ function UsageMatrix({
             </span>
             <span
               style={at(5, c)}
+              title={estimateTooltip(w.estimate)}
+              className='text-center font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums'
+            >
+              {cell(estimateRemaining(w.estimate), (x) => fmtUsd(x, 2))}
+            </span>
+            <span
+              style={at(6, c)}
               className='text-center font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums'
             >
               {cell(w.tokens, fmtNum)}
@@ -432,7 +443,7 @@ function UsageMatrix({
       })}
       <span
         aria-hidden='true'
-        style={at('1 / 6', L)}
+        style={at('1 / 7', L)}
         className='ms-0.5 self-stretch border-l border-[color:color-mix(in_oklch,var(--tc,var(--border))_55%,transparent)]'
       />
       {r.weekShare != null ? (
@@ -475,7 +486,7 @@ function UsageMatrix({
         {fmtUsd(r.totalCost, 2)}
       </span>
       <span
-        style={at(5, L)}
+        style={at(6, L)}
         className='justify-self-end ps-3 font-mono text-xs text-muted-foreground tabular-nums'
       >
         {fmtNum(r.totalTokens)}

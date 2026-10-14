@@ -162,16 +162,17 @@ describe('rackTotals', () => {
 })
 
 describe('vmReadout', () => {
-  it('gives Fable a column only on Max, without cost or tokens', () => {
+  it('gives Fable a column only on Max, with its own spend but no tokens', () => {
     const max = vmReadout(
       vm({
         usage_has_fable: true,
         utilization_7d_oi: 0.3,
         reset_7d_oi: '2099-01-01T00:00:00Z',
+        window_fable_cost: 4.5,
       })
     )
     expect(max.windows.map((w) => w.key)).toEqual(['5h', '7d', 'fable'])
-    expect(max.windows[2]).toMatchObject({ cost: null, tokens: null })
+    expect(max.windows[2]).toMatchObject({ cost: 4.5, tokens: null })
     expect(
       vmReadout(vm({ usage_has_fable: false })).windows.map((w) => w.key)
     ).toEqual(['5h', '7d'])

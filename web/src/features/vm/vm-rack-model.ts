@@ -1,3 +1,4 @@
+import type { WindowEstimate } from '@/types/panel-pricing'
 import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
 import { expiresAtToMs } from '@/lib/fable-status'
@@ -5,6 +6,8 @@ import { usedPctOf } from '@/lib/format'
 import { windowProbed } from '@/lib/pool-quota'
 import { claudeTier, fleetGroup, type FleetGroup } from '@/lib/vm-status'
 import {
+  pickWindowEstimate,
+  vmFableCost,
   vmTotalCost,
   vmTotalTokens,
   vmWindowCosts,
@@ -113,9 +116,10 @@ export type WindowReadout = {
   /** null = 未探测；note 非空时也为 null（Fable 拒 / 满）。 */
   pct: number | null
   note: string | null
-  /** Fable 没有独立计费，恒为 null。 */
+  /** Fable 只有费用，没有单独的 token 窗口统计。 */
   cost: number | null
   tokens: number | null
+  estimate: WindowEstimate | null | undefined
   reset: unknown
 }
 
@@ -138,6 +142,7 @@ export function vmReadout(vm: Vm, accounts?: UsageAccountRow[]): VmReadout {
       note: null,
       cost: costs.h5,
       tokens: tokens.h5,
+      estimate: pickWindowEstimate(vm, accounts, 'estimate_5h'),
       reset: vm.reset_5h,
     },
     {
@@ -147,6 +152,7 @@ export function vmReadout(vm: Vm, accounts?: UsageAccountRow[]): VmReadout {
       note: null,
       cost: costs.d7,
       tokens: tokens.d7,
+      estimate: pickWindowEstimate(vm, accounts, 'estimate_7d'),
       reset: vm.reset_7d,
     },
   ]
@@ -157,8 +163,9 @@ export function vmReadout(vm: Vm, accounts?: UsageAccountRow[]): VmReadout {
       label: 'Fable',
       pct: fable?.kind === 'bar' ? fable.pct : null,
       note: fable?.kind === 'note' ? fable.text : null,
-      cost: null,
+      cost: vmFableCost(vm, accounts),
       tokens: null,
+      estimate: pickWindowEstimate(vm, accounts, 'estimate_fable'),
       reset: vm.reset_7d_oi,
     })
   }

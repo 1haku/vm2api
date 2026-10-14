@@ -60,7 +60,7 @@ const COL_CLS: Record<VmColumnKey | 'actions', string> = {
   type: 'min-w-[120px] flex-[0.75]',
   status: 'min-w-[140px] flex-[1.1]',
   req: 'min-w-[200px] flex-[1.2]',
-  usage: 'min-w-[262px] flex-[1.7]',
+  usage: 'min-w-[336px] flex-[1.9]',
   cost: 'min-w-[84px] flex-[0.55]',
   actions: 'w-[44px] shrink-0 pr-2',
 }
@@ -477,7 +477,7 @@ export function VmTable({
   }
   return (
     <div className='overflow-x-auto rounded-lg border border-border/60'>
-      <div className='min-w-[1100px]'>
+      <div className='min-w-[1180px]'>
         <div className='sticky top-0 z-10 flex h-8 items-center border-b bg-muted/30 pl-1.5 text-xs font-medium tracking-wide text-muted-foreground'>
           {columns.order.map((key) => {
             const dragging = dragKey === key
