@@ -75,6 +75,8 @@ import {
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
 import { readCatalogSync, syncClaudeCatalog, syncGptCatalog } from './catalog-monitor.mjs'
+import { setPriceOverride, listPriceOverrides, syncModelsDev } from './price-catalog.mjs'
+import { buildPricing } from './pricing-view.mjs'
 import { publicKeyView } from './api-keys.mjs'
 import { assertVmScope, normalizeKeyScope } from './key-scope.mjs'
 import {
@@ -4185,6 +4187,40 @@ export function createPanelHandler(ctx) {
             catalog_sync: readCatalogSync(),
           }),
         )
+      }
+      // GET /api/panel/pricing — effective price catalog for the 计费 tab
+      if (req.method === 'GET' && p === '/api/panel/pricing') {
+        return json(res, 200, panel.ok(buildPricing({ requestLog })))
+      }
+      // PUT /api/panel/pricing/overrides { key, price|null }
+      if (req.method === 'PUT' && p === '/api/panel/pricing/overrides') {
+        const body = await readBody(req, 256 * 1024)
+        const saved = setPriceOverride(String(body?.key || ''), body?.price ?? null)
+        if (!saved.ok) {
+          return json(res, 400, { ok: false, error: { code: 'invalid_price', message: saved.error } })
+        }
+        return json(res, 200, panel.ok({ ok: true, overrides: listPriceOverrides() }))
+      }
+      // POST /api/panel/pricing/sync — pull models.dev now
+      if (req.method === 'POST' && p === '/api/panel/pricing/sync') {
+        return json(res, 200, panel.ok({ models_dev: await syncModelsDev() }))
+      }
+      // POST /api/panel/pricing/reprice { since, until } — rewrite official cost only
+      if (req.method === 'POST' && p === '/api/panel/pricing/reprice') {
+        const body = await readBody(req, 8192)
+        const since = Date.parse(body?.since || '')
+        const until = Date.parse(body?.until || '')
+        if (!Number.isFinite(since) || !Number.isFinite(until) || since >= until) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_range', message: 'since/until must be ISO times with since < until' },
+          })
+        }
+        const result = requestLog.repo.repriceRange({
+          since: new Date(since).toISOString(),
+          until: new Date(until).toISOString(),
+        })
+        return json(res, 200, panel.ok(result))
       }
       // POST /api/panel/model-policy/sync-codex — ChatGPT GPT catalog via a Codex OAuth slot
       if (req.method === 'POST' && p === '/api/panel/model-policy/sync-codex') {
