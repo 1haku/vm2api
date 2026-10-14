@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.168 — 2026-10-14
 
 - 计费改为三层价格：手动覆盖 > models.dev > 内置官方快照。models.dev 每 24 小时同步，缺的模型和档位（Mythos、gpt-6、Claude fast、OpenAI flex / priority、长上下文、1h 写入）由内置快照补。修正 Sonnet 5.5 缓存读 $0.10、Fable 5.1 / Mythos 5.1 缓存读 $0.25；去掉 Sonnet 4 / 4.5 超 200k 的加价。Anthropic web search 按 $10 / 1000 次计入费用。缓存写没有 5m / 1h 拆分且未声明 1h 时按 5m 计。
 - token 口径统一：`usage_logs.input_tokens` 一律不含缓存，OpenAI / Codex 在写入时扣掉缓存读写。「总 Token」= 输入 + 输出 + 缓存读 + 缓存写，每类只算一次；GPT 不再重复算缓存。虚拟机窗口、`total_tokens`、`today_tokens` 现在都含缓存。`/billing` 的 `tokens_in` 改为输入 + 缓存。
@@ -10,9 +10,14 @@
 - 虚拟机列表拆清三列职责：「今日 / 7D 请求」只显示次数；「用量窗口」只显示额度占比和重置时间；「成本」统一显示 5H / 7D / 总计的官方费用与含缓存 token。网格、展开详情及「查看统计」共用同一份窗口与成本组件，移除列表和弹窗里的估算总量／剩余金额、顶部全池剩余估算及重复累计指标；完整详情页与 API 的估算能力保留。
 - 网格卡片底栏将逐格 session slot 改为按设置上限显示的席位容量条（已用 / 上限，保留宽限和排队提示），修复 20 席位挤出调度开关与菜单的问题；限额操作移到用量区，中／大卡片按实际宽度叠放或并排，金额与 token 完整对齐。
 - 新接口 `GET /api/panel/pricing`、`PUT /api/panel/pricing/overrides`、`POST /api/panel/pricing/sync`、`POST /api/panel/pricing/reprice`；`/vms`、`/vms/:id`、`/usage` 新增 `estimate_5h` / `estimate_7d` / `estimate_fable` / `window_fable_cost`。见 `docs/PANEL_API.md`。
-- 修复 GPT OAuth 授权成功后虚拟机面板仍显示「未绑定账号」：换票后从 `id_token` / `access_token` 解析邮箱与 ChatGPT 账号 id，写入 Codex 凭证与 `vm.codex` 元数据，面板可正常显示已绑定账号。（#409）
+- API 后端空 system 也会套已配置的官方提示词。`rewrite` 的计费头放在 cache 断点之后。
+- 拒答守卫改为不可重试的 400 `policy_blocked`（`code` 仍是 `refusal_guard`），不再返回 503，避免 Claude Code 误提示登录。
+- 远程节点的 egress 容器改用配置文件属主的 uid:gid 运行；崩溃循环或旧规格会重建。
+- `POST /api/panel/vms/pool-policy` 批量改权重、调度等级和并发上限。单槽 `PATCH` 也可以改 Codex `weight`。
+- 修复 GPT OAuth 授权成功后虚拟机面板仍显示「未绑定账号」：换票后从 `id_token` / `access_token` 解析邮箱与 ChatGPT 账号 id。（#409）
+- 默认环境变量管理员写入用户列表，可在面板改密码。引导是否完成看数据库密码，不再只看 `.env`。
 
-已部署机升级：**升级前先备份数据库**。迁移 037 会就地把历史 OpenAI / Codex 行的 `input_tokens` 改成不含缓存（判据与原缓存命中率完全一致，命中率分母不变），无法自动撤销，回滚只能恢复备份。更新 Node 控制面与 `web/dist`，重启一次 Node。无新依赖，不必 `wrap-cli/sync`。控制面需能访问 `https://models.dev`，访问不了时按内置快照计价。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+已部署机升级：**升级前先备份数据库**。迁移 037 会就地把历史 OpenAI / Codex 行的 `input_tokens` 改成不含缓存（判据与原缓存命中率完全一致，命中率分母不变），无法自动撤销，回滚只能恢复备份。已经跑过 037 的机器不会再改这些行。更新 Node 控制面与 `web/dist`，重启一次 Node。无新依赖，不必 `wrap-cli/sync`。控制面需能访问 `https://models.dev`，访问不了时按内置快照计价。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.167 — 2026-10-14
 
