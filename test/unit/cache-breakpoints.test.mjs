@@ -415,7 +415,9 @@ test('a caller breakpoint on system reaches the wire through the official person
       identity: IDENTITY,
       model: inbound.model,
     })
-    assert.equal(breakpoints(persona).length, 0, 'persona still drops the caller marker')
+    assert.equal(breakpoints(persona).length, 1, 'official agent carries its own cache marker')
+    assert.equal(persona.system[2].cache_control?.ttl, '1h')
+    assert.equal(persona.system.at(-1).text, 'You are our internal docs bot.')
     const envelope = prepareOutboundEnvelope({
       canonicalBody: persona,
       inbound,
