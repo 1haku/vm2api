@@ -191,13 +191,17 @@ import { normalizeVmConfig, resolveMachineSpec, validateVmConfigPatch } from '..
 import { RUNTIME_KVM } from '../vm/runtime-kind.mjs'
 import { hostProxyUrlForVm, slotHost } from '../vm/slot-host.mjs'
 import { syncIpv6ProxyEgress } from '../vm/proxy-policy-runtime.mjs'
+import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { writeSlotSeedFiles } from '../vm/slot-seed.mjs'
 import {
   egressEnabled,
   ensureProxyEgress,
   stopProxyEgress,
   hasBoundExit,
+  isLocalEgressId,
   isLocalEgressProxy,
+  localEgressIdForNode,
+  boundProxyUrl,
   dnsUpstreamChain,
 } from '../vm/egress.mjs'
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
@@ -259,6 +263,8 @@ import {
 function logsOwner(req, u) {
   return panelIdentity(req).role === 'user' ? req.panelUserId : u.searchParams.get('user_id') || null
 }
+
+const LOCAL_PROXY_MISMATCH_MESSAGE = '本地代理只能绑定到它所在 VPS 上的槽位'
 
 function clusterNodesOf(ctx) {
   try {
@@ -526,6 +532,55 @@ export function createPanelHandler(ctx) {
     const vm = getVm(cfg.paths.project, id)
     if (!vm?.proxy?.id || validTimezone(vm.timezone)) return null
     return syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, id, { force: true })
+  }
+
+  /**
+   * Geo-probe through the slot's real exit: its bound SOCKS5, or the local row
+   * of the VPS that runs it (control plane, or the node's own route). A local
+   * probe refreshes that row's geo, so the pool page shows the same answer.
+   */
+  async function probeVmExitGeo(vm) {
+    const proxy = vm?.proxy || null
+    if (!hasBoundExit(proxy)) return { ok: false, code: 'proxy_required', error: '槽位未绑定出口' }
+    const blocked = proxyBlockedReason(proxy)
+    if (blocked) return { ok: false, code: blocked, error: blocked }
+    if (!isLocalEgressProxy(proxy)) {
+      const url = boundProxyUrl(proxy)
+      if (!url) return { ok: false, code: 'proxy_url_missing', error: 'bound proxy has no URL' }
+      const r = await proxyPool.geoLookup(url, { timeoutMs: proxyPool.state?.config?.geo_timeout_ms })
+      if (!r?.ok) return { ok: false, code: 'geo_lookup_failed', error: String(r?.error || 'geo lookup failed') }
+      return { ok: true, via: 'socks5', proxy_id: proxy.id || null, geo: r.geo }
+    }
+    const host = slotHost(vm)
+    const via = host.nodeId ? 'node' : 'local'
+    if (!host.nodeId) {
+      // A control-plane Codex slot leaves through the deployment proxy, not the host route.
+      let hostUrl = ''
+      try {
+        hostUrl = host.localExitProxyUrl(vm) || ''
+      } catch {}
+      if (hostUrl) {
+        const r = await proxyPool.geoLookup(hostUrl, { timeoutMs: proxyPool.state?.config?.geo_timeout_ms })
+        if (!r?.ok) return { ok: false, code: 'geo_lookup_failed', error: String(r?.error || 'geo lookup failed') }
+        return { ok: true, via: 'deploy_proxy', node_id: null, proxy_id: proxy.id || null, geo: r.geo }
+      }
+    }
+    const rowId = localEgressIdForNode(host.nodeId)
+    if (proxyPool.getProxyByIdWithAuth(rowId)) {
+      const r = await proxyPool.detectGeo(rowId, { force: true })
+      if (!r?.ok) return { ok: false, code: 'geo_lookup_failed', error: String(r?.error || 'geo lookup failed') }
+      return { ok: true, via, node_id: host.nodeId || null, proxy_id: rowId, geo: r.geo }
+    }
+    // Local egress never seeded as a row: look up over the host's route directly.
+    let url
+    try {
+      url = host.localExitProxyUrl(vm)
+    } catch (err) {
+      return { ok: false, code: err?.code || 'node_egress_unavailable', error: String(err?.message || err) }
+    }
+    const r = await proxyPool.exitGeo(host.nodeId ? `node:${host.nodeId}` : 'local', url, { detect: true, force: true })
+    if (!r?.ok) return { ok: false, code: 'geo_lookup_failed', error: String(r?.error || 'geo lookup failed') }
+    return { ok: true, via, node_id: host.nodeId || null, proxy_id: proxy.id || null, geo: r.geo }
   }
 
   async function bringUpImportedVm(id) {
@@ -2594,6 +2649,19 @@ export function createPanelHandler(ctx) {
         if (result.status) return json(res, result.status, result.body)
         return json(res, 200, result)
       }
+      // POST /api/panel/vms/:id/exit-probe — geo probe through the slot's real exit.
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/exit-probe$/.test(p)) {
+        const id = p.split('/')[4]
+        const vm = getVm(cfg.paths.project, id)
+        if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        const result = await probeVmExitGeo(vm)
+        if (!result.ok)
+          return json(res, 502, {
+            ok: false,
+            error: { code: result.code || 'exit_probe_failed', message: result.error },
+          })
+        return json(res, 200, panel.ok({ vm_id: id, ...result }))
+      }
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/openai-quota\/refresh$/.test(p)) {
         const id = p.split('/')[4]
         const result = await panel.buildOpenaiQuotaRefresh({ cfg, id, routingConfig: ctx.routingConfig })
@@ -3321,7 +3389,18 @@ export function createPanelHandler(ctx) {
           }
         }
         // An explicit exit (e.g. local egress for a node: that VPS's own route) replaces auto-allocation.
-        const pickedProxyId = typeof body.proxy_id === 'string' ? body.proxy_id.trim() : ''
+        let pickedProxyId = typeof body.proxy_id === 'string' ? body.proxy_id.trim() : ''
+        if (pickedProxyId && isLocalEgressId(pickedProxyId)) {
+          // Local egress is per VPS: a generic pick resolves to the target machine's own row.
+          const resolved = proxyPool.resolveLocalTarget(pickedProxyId, nodeId || null)
+          if (!resolved.ok) {
+            return json(res, 409, {
+              ok: false,
+              error: { code: resolved.error, message: LOCAL_PROXY_MISMATCH_MESSAGE },
+            })
+          }
+          pickedProxyId = resolved.id
+        }
         if (pickedProxyId) {
           const row = proxyPool.snapshot().proxies.find((proxy) => proxy.id === pickedProxyId)
           const owner = ident.role === 'user' ? normalizeOwnerId(req.panelUserId) : null
@@ -4705,6 +4784,8 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/proxies/local') {
         const result = proxyPool.ensureLocal()
         if (result.created) ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(result.proxy.id))
+        // Enabling local egress on a cluster that already has nodes: each VPS gets its row now.
+        proxyPool.syncLocalNodes(clusterNodesOf(ctx).map((node) => node.id))
         return json(res, 200, panel.ok(result))
       }
       if (req.method === 'POST' && p === '/api/panel/proxies/import') {
@@ -4971,7 +5052,11 @@ export function createPanelHandler(ctx) {
         const result = proxyPool.bind(id, vmId)
         if (!result.ok) {
           const message =
-            result.error === 'proxy_bind_limit' ? `SOCKS5 最多绑定 ${result.max || 5} 台虚拟机` : result.error
+            result.error === 'proxy_bind_limit'
+              ? `SOCKS5 最多绑定 ${result.max || 5} 台虚拟机`
+              : result.error === 'local_proxy_node_mismatch'
+                ? LOCAL_PROXY_MISMATCH_MESSAGE
+                : result.error
           return json(res, 400, {
             ok: false,
             error: { type: 'invalid_request_error', code: result.error, message, details: result },
