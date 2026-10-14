@@ -230,7 +230,7 @@ Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`g
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET/PUT | `/refusal-guards` | 精确指纹，以及可选的用户正文近似（`similarity_enabled`，`similarity` 为 80/85/90/95，默认开、90）。命中 HTTP 503，`code=refusal_guard`，不 hop。相似度只比用户正文。`device_block_enabled` 默认开：命中后永久封禁入站 device id。响应带 `devices` |
+| GET/PUT | `/refusal-guards` | 精确指纹，以及可选的用户正文近似（`similarity_enabled`，`similarity` 为 80/85/90/95，默认开、90）。命中 HTTP 400 `policy_blocked`，`code=refusal_guard`，不 hop。相似度只比用户正文。`device_block_enabled` 默认开：命中后永久封禁入站 device id。响应带 `devices` |
 | DELETE | `/refusal-guards/:fingerprint` | 删除一条 64 位 hex 指纹 |
 | DELETE | `/refusal-guards` | 须 `{ "confirm": true }` 清空 |
 | DELETE | `/refusal-device-blocks` | `{ "device_id" }` 解封一条；`{ "confirm": true }` 清空。空 device、短于 8 字符的值不会入库 |
