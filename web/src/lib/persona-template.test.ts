@@ -90,17 +90,14 @@ describe('agent standing + system preview', () => {
     }
   })
 
-  it('drops billing blocks and keeps a blank zero agent slot as zero-width', () => {
+  it('drops billing and optional empty blocks while preserving the identity slot', () => {
     const zero = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
       ...vars,
       agent_standing: '',
     })
-    expect(zero.map((block) => block.id)).toEqual([
-      'identity_slot',
-      'agent_slot',
-    ])
-    expect(zero[1]?.text).toBe(EMPTY_BLOCK_TEXT)
-    expect(zero[1]?.placeholder).toBe(true)
+    expect(zero.map((block) => block.id)).toEqual(['identity_slot'])
+    expect(zero[0]?.text).toBe(EMPTY_BLOCK_TEXT)
+    expect(zero[0]?.placeholder).toBe(true)
 
     const officialDefault = previewSystemBlocks(
       DEFAULT_PERSONA_TEMPLATES.official,
@@ -131,6 +128,36 @@ describe('agent standing + system preview', () => {
       `${DEFAULT_AGENT_STANDING}\n`,
       '# Environment\n - Timezone: Asia/Tokyo',
     ])
+  })
+
+  it('keeps a nonempty optional agent slot in the zero preset', () => {
+    const blocks = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
+      ...vars,
+      agent_standing: 'Stay terse.\n',
+    })
+    expect(blocks.map((block) => block.id)).toEqual([
+      'identity_slot',
+      'agent_slot',
+    ])
+    expect(blocks[1]).toMatchObject({
+      text: 'Stay terse.\n',
+      placeholder: false,
+      ttl: '1h',
+      hide: true,
+    })
+  })
+
+  it('keeps required blank blocks as zero-width placeholders', () => {
+    const blocks = previewSystemBlocks(
+      [{ id: 'agent_slot', type: 'text', text: '{{agent_standing}}' }],
+      { agent_standing: '' }
+    )
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({
+      id: 'agent_slot',
+      text: EMPTY_BLOCK_TEXT,
+      placeholder: true,
+    })
   })
 
   it('reports whether a template can switch standing / env', () => {
