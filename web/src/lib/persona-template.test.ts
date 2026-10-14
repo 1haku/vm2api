@@ -90,14 +90,17 @@ describe('agent standing + system preview', () => {
     }
   })
 
-  it('drops billing and optional empty blocks while preserving the identity slot', () => {
+  it('drops billing blocks and keeps a blank zero agent slot as zero-width', () => {
     const zero = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
       ...vars,
       agent_standing: '',
     })
-    expect(zero.map((block) => block.id)).toEqual(['identity_slot'])
-    expect(zero[0]?.text).toBe(EMPTY_BLOCK_TEXT)
-    expect(zero[0]?.placeholder).toBe(true)
+    expect(zero.map((block) => block.id)).toEqual([
+      'identity_slot',
+      'agent_slot',
+    ])
+    expect(zero[1]?.text).toBe(EMPTY_BLOCK_TEXT)
+    expect(zero[1]?.placeholder).toBe(true)
 
     const officialDefault = previewSystemBlocks(
       DEFAULT_PERSONA_TEMPLATES.official,
