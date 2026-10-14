@@ -57,14 +57,8 @@ import {
 } from '../oauth/sub2api-account.mjs'
 import { officialCcHome, readOfficialCcStatus, scheduleOfficialCcBootstrap } from '../oauth/official-cc-bootstrap.mjs'
 import { invalidateLiveCredentialCache } from './panel-live-credentials.mjs'
-import { listOfficialModels, seedModelCatalog, getCatalogIds } from '../protocol/models.mjs'
-import {
-  getModelPolicy,
-  saveModelPolicy,
-  resetModelPolicy,
-  listPolicyModels,
-  syncWorkerModelsIntoPolicy,
-} from '../protocol/model-policy.mjs'
+import { listOfficialModels, seedModelCatalog } from '../protocol/models.mjs'
+import { getModelPolicy, saveModelPolicy, resetModelPolicy, listPolicyModels } from '../protocol/model-policy.mjs'
 import {
   getGptModelPolicy,
   listGptPolicyModels,
@@ -80,6 +74,9 @@ import {
 } from '../protocol/seed-policy.mjs'
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
+import { readCatalogSync, syncClaudeCatalog, syncGptCatalog } from './catalog-monitor.mjs'
+import { setPriceOverride, listPriceOverrides, syncModelsDev } from './price-catalog.mjs'
+import { buildPricing } from './pricing-view.mjs'
 import { publicKeyView } from './api-keys.mjs'
 import { assertVmScope, normalizeKeyScope } from './key-scope.mjs'
 import {
@@ -4168,35 +4165,67 @@ export function createPanelHandler(ctx) {
           }),
         )
       }
-      // POST /api/panel/model-policy/sync-worker
+      // POST /api/panel/model-policy/sync-worker — live Anthropic /v1/models through a Claude OAuth slot
       if (req.method === 'POST' && p === '/api/panel/model-policy/sync-worker') {
-        let workerIds = []
-        try {
-          workerIds = getCatalogIds()
-        } catch {}
-        if (!workerIds.length) {
-          try {
-            const raw = JSON.parse(fs.readFileSync('/opt/kin-gateway/data/cli-models.json', 'utf8'))
-            if (Array.isArray(raw?.ids)) workerIds = raw.ids
-          } catch {}
+        const status = await syncClaudeCatalog({ projectRoot: cfg.paths.project })
+        if (status.status !== 'ok') {
+          return json(res, status.status === 'skipped' ? 400 : 502, {
+            ok: false,
+            error: { code: status.error, message: status.error },
+            data: { synced: 0, catalog_sync: readCatalogSync() },
+          })
         }
-        const saved = syncWorkerModelsIntoPolicy(workerIds)
-        seedModelCatalog()
         return json(
           res,
           200,
           panel.ok({
-            policy: saved,
+            policy: getModelPolicy(),
             models: listPolicyModels(),
             effective: listOfficialModels(),
-            synced: workerIds.length,
+            synced: status.added.length,
+            added: status.added,
+            catalog_sync: readCatalogSync(),
           }),
         )
+      }
+      // GET /api/panel/pricing — effective price catalog for the 计费 tab
+      if (req.method === 'GET' && p === '/api/panel/pricing') {
+        return json(res, 200, panel.ok(buildPricing({ requestLog })))
+      }
+      // PUT /api/panel/pricing/overrides { key, price|null }
+      if (req.method === 'PUT' && p === '/api/panel/pricing/overrides') {
+        const body = await readBody(req, 256 * 1024)
+        const saved = setPriceOverride(String(body?.key || ''), body?.price ?? null)
+        if (!saved.ok) {
+          return json(res, 400, { ok: false, error: { code: 'invalid_price', message: saved.error } })
+        }
+        return json(res, 200, panel.ok({ ok: true, overrides: listPriceOverrides() }))
+      }
+      // POST /api/panel/pricing/sync — pull models.dev now
+      if (req.method === 'POST' && p === '/api/panel/pricing/sync') {
+        return json(res, 200, panel.ok({ models_dev: await syncModelsDev() }))
+      }
+      // POST /api/panel/pricing/reprice { since, until } — rewrite official cost only
+      if (req.method === 'POST' && p === '/api/panel/pricing/reprice') {
+        const body = await readBody(req, 8192)
+        const since = Date.parse(body?.since || '')
+        const until = Date.parse(body?.until || '')
+        if (!Number.isFinite(since) || !Number.isFinite(until) || since >= until) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_range', message: 'since/until must be ISO times with since < until' },
+          })
+        }
+        const result = requestLog.repo.repriceRange({
+          since: new Date(since).toISOString(),
+          until: new Date(until).toISOString(),
+        })
+        return json(res, 200, panel.ok(result))
       }
       // POST /api/panel/model-policy/sync-codex — ChatGPT GPT catalog via a Codex OAuth slot
       if (req.method === 'POST' && p === '/api/panel/model-policy/sync-codex') {
         const body = await readBody(req, 8192).catch(() => ({}))
-        const result = await syncCodexCatalog({
+        const result = await syncGptCatalog({
           projectRoot: cfg.paths.project,
           vmId: body?.vm_id || body?.vmId || url.searchParams.get('vm_id') || '',
           rotate: true,
@@ -4237,6 +4266,8 @@ export function createPanelHandler(ctx) {
             vm_id: result.vm_id,
             catalog_version: result.catalog_version,
             ids: result.ids,
+            added: result.added || [],
+            catalog_sync: readCatalogSync(),
           }),
         )
       }

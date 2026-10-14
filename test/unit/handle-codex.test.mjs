@@ -396,7 +396,7 @@ test('nested Responses cached_tokens reaches the request log cache column', asyn
       },
     },
   })
-  assert.equal(logBag.input_tokens, 120)
+  assert.equal(logBag.input_tokens, 112)
   assert.equal(logBag.output_tokens, 9)
   assert.equal(logBag.cache_read_tokens, 8)
   fs.rmSync(root, { recursive: true, force: true })
@@ -549,7 +549,7 @@ test('incomplete Responses stream still bills tokens from the completed event', 
       },
     },
   })
-  assert.equal(logBag.input_tokens, 40)
+  assert.equal(logBag.input_tokens, 35)
   assert.equal(logBag.output_tokens, 2)
   assert.equal(logBag.cache_read_tokens, 5)
   assert.equal(logBag.usage.service_tier, 'priority')
