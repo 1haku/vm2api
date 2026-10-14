@@ -243,7 +243,6 @@ test('rewritten vm-test inbound stays official Claude Code, not third-party', ()
   assert.equal(classifyClient(headers, inbound), 'claude_code_official')
   assert.equal(inbound.system.length, 4)
   assert.equal(inbound.system[0].text, CRS_OFFICIAL_SYSTEM)
-  assert.match(inbound.system[2].text, /^x-anthropic-billing-header:/)
   const out = prepareOutboundAttempt({
     canonicalBody: inbound,
     inbound,

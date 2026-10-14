@@ -90,6 +90,7 @@ function writeGptVm(root, id) {
 }
 
 test('quota 429 hops the next GPT slot and records 5h/7d extra', async () => {
+  let charged = 0
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-hop-'))
   writeGptVm(root, 'vm-gpt-a')
   writeGptVm(root, 'vm-gpt-b')
@@ -106,6 +107,11 @@ test('quota 429 hops the next GPT slot and records 5h/7d extra', async () => {
   }
   const logBag = {}
   const out = await handleCodexProtocol({
+    onUsage() {
+      charged++
+      assert.equal(logBag.input_tokens, 40)
+      assert.equal(logBag.cache_read_tokens, 60)
+    },
     req: { headers: {}, apiKeyKind: 'user' },
     res,
     protocol: 'openai.responses',
@@ -151,12 +157,16 @@ test('quota 429 hops the next GPT slot and records 5h/7d extra', async () => {
             'x-codex-secondary-used-percent': '3',
             'x-codex-secondary-window-minutes': '10080',
           },
-          body: { id: 'resp_ok' },
+          body: {
+            id: 'resp_ok',
+            usage: { input_tokens: 100, output_tokens: 10, input_tokens_details: { cached_tokens: 60 } },
+          },
         }
       },
     },
   })
   assert.deepEqual(seen, ['vm-gpt-a', 'vm-gpt-b'])
+  assert.equal(charged, 1, 'only the delivered request is charged, after normalization')
   assert.equal(res.statusCode, 200)
   assert.equal(out.id, 'resp_ok')
   assert.equal(logBag.codex_failed_over, true)
@@ -396,7 +406,7 @@ test('nested Responses cached_tokens reaches the request log cache column', asyn
       },
     },
   })
-  assert.equal(logBag.input_tokens, 120)
+  assert.equal(logBag.input_tokens, 112)
   assert.equal(logBag.output_tokens, 9)
   assert.equal(logBag.cache_read_tokens, 8)
   fs.rmSync(root, { recursive: true, force: true })
@@ -549,7 +559,7 @@ test('incomplete Responses stream still bills tokens from the completed event', 
       },
     },
   })
-  assert.equal(logBag.input_tokens, 40)
+  assert.equal(logBag.input_tokens, 35)
   assert.equal(logBag.output_tokens, 2)
   assert.equal(logBag.cache_read_tokens, 5)
   assert.equal(logBag.usage.service_tier, 'priority')

@@ -7,6 +7,7 @@ import { atomicWriteJson, readJsonCached } from './vm-file.mjs'
 import { isCodexVm } from '../protocol/codex-route.mjs'
 import { buildCodexUsageView, extraToCodexSnapshot } from '../protocol/codex-usage.mjs'
 import { observeCodexWeekly } from '../protocol/codex-weekly-reset.mjs'
+import { openaiIdentityFromOauthTokens } from '../oauth/openai-jwt.mjs'
 
 export { isCodexVm }
 
@@ -245,10 +246,19 @@ export function parseCodexImportPayload(body = {}) {
   return parseCodexCredentialInput(body, { mode })
 }
 
+export function enrichCodexAccountIdentity(account = {}) {
+  const next = { ...account }
+  const fromTokens = openaiIdentityFromOauthTokens(next)
+  if (!firstString(next.email)) next.email = fromTokens.email || null
+  if (!firstString(next.chatgpt_account_id)) {
+    next.chatgpt_account_id = fromTokens.chatgpt_account_id || null
+  }
+  return next
+}
+
 export function upsertCodexAccount(projectRoot, vmId, patch = {}) {
   const accounts = readCodexAccounts(projectRoot, vmId)
-  const cur = { ...(accounts[0] || {}) }
-  Object.assign(cur, patch)
+  const cur = enrichCodexAccountIdentity({ ...(accounts[0] || {}), ...patch })
   if (!cur.id) cur.id = cur.email || cur.chatgpt_account_id || 'codex'
   if (!accounts.length) accounts.push(cur)
   else accounts[0] = cur
@@ -306,7 +316,8 @@ export function summarizeCodexSlot(projectRoot, vm = {}) {
     family: 'codex',
     has_token: hasAccess || hasRefresh,
     has_refresh: hasRefresh,
-    email: first.email || vm.codex?.email || vm.email || null,
+    email:
+      first.email || vm.codex?.email || vm.email || first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
     expires_at: first.expires_at || vm.codex?.expires_at || null,
     chatgpt_account_id: first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
     account_count: accounts.length,

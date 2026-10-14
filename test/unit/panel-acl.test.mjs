@@ -1,6 +1,15 @@
 import test from 'node:test'
 
 test('custom administration and upstream shell tickets remain admin-only', () => {
+  for (const [method, path] of [
+    ['GET', '/api/panel/pricing'],
+    ['PUT', '/api/panel/pricing/overrides'],
+    ['POST', '/api/panel/pricing/sync'],
+    ['POST', '/api/panel/pricing/reprice'],
+  ]) {
+    assert.equal(authorizePanelRoute(method, path, 'admin').ok, true)
+    for (const role of ['user', 'super']) assert.equal(authorizePanelRoute(method, path, role).ok, false)
+  }
   for (const role of ['user', 'super']) {
     assert.equal(authorizePanelRoute('GET', '/api/panel/subscriptions/admin-overview', role).ok, false)
     assert.equal(authorizePanelRoute('POST', '/api/panel/subscriptions/batch', role).ok, false)

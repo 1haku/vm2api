@@ -14,19 +14,107 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 
-test('005 adds independent defaults without changing a v4 plan, and detects later cycle changes', t => {
+test('037 snapshot permits only specified historical token conversion, not cost or ownership changes', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'billing-normalize-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  const add = db.prepare(
+    'INSERT INTO usage_logs(id,request_id,model,pricing_model,via,protocol,stream,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,total_cost,actual_cost,user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  )
+  add.run(
+    'gpt',
+    'gpt',
+    'gpt-6-astra',
+    'gpt-6-astra',
+    'codex-kernel',
+    'openai.responses',
+    1,
+    100,
+    5,
+    60,
+    10,
+    1,
+    2,
+    'caller',
+    '2026-10-13T00:00:00Z',
+  )
+  add.run(
+    'claude',
+    'claude',
+    'claude-sonnet-5-5',
+    'claude-sonnet-5-5',
+    'go-worker-pool',
+    'anthropic.messages',
+    1,
+    100,
+    5,
+    60,
+    10,
+    1,
+    2,
+    'caller',
+    '2026-10-13T00:00:00Z',
+  )
+  add.run(
+    'converted',
+    'converted',
+    'gpt-6-astra',
+    'gpt-6-astra',
+    'api-kernel',
+    'anthropic.messages',
+    0,
+    100,
+    5,
+    60,
+    10,
+    1,
+    2,
+    'caller',
+    '2026-10-13T00:00:00Z',
+  )
+  for (const column of ['web_search_requests', 'web_search_cost', 'price_source', 'price_version'])
+    db.exec('ALTER TABLE usage_logs DROP COLUMN ' + column)
+  db.prepare("DELETE FROM schema_migrations WHERE version='037'").run()
+  const before = subscriptionSnapshot(db)
+  applyMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT input_tokens FROM usage_logs WHERE id='gpt'").get().input_tokens, 30)
+  assert.equal(db.prepare("SELECT input_tokens FROM usage_logs WHERE id='claude'").get().input_tokens, 100)
+  assert.equal(db.prepare("SELECT input_tokens FROM usage_logs WHERE id='converted'").get().input_tokens, 100)
+  db.prepare("UPDATE usage_logs SET actual_cost=3 WHERE id='gpt'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+  db.prepare("UPDATE usage_logs SET actual_cost=2,user_id='other' WHERE id='gpt'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+})
+
+test('005 adds independent defaults without changing a v4 plan, and detects later cycle changes', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weekly-migration-'))
   const db = createDatabase({ dataDir: dir })
-  t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }) })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
   db.prepare("INSERT INTO groups(id,name,platform,status) VALUES(99,'Legacy','claude','active')").run()
   db.prepare('INSERT INTO custom_subscription_plans(group_id,daily_limit_usd,weekly_limit_usd) VALUES(99,30,100)').run()
-  for (const column of ['weekly_reset_mode','weekly_reset_vm_id','weekly_window_start','weekly_window_end','weekly_source_account'])
+  for (const column of [
+    'weekly_reset_mode',
+    'weekly_reset_vm_id',
+    'weekly_window_start',
+    'weekly_window_end',
+    'weekly_source_account',
+  ])
     db.exec(`ALTER TABLE custom_subscription_plans DROP COLUMN ${column}`)
   db.prepare("DELETE FROM custom_schema_migrations WHERE version='005'").run()
   const before = subscriptionSnapshot(db)
   applyCustomMigrations(db)
   assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
-  assert.equal(db.prepare('SELECT weekly_reset_mode FROM custom_subscription_plans WHERE group_id=99').get().weekly_reset_mode, 'independent')
+  assert.equal(
+    db.prepare('SELECT weekly_reset_mode FROM custom_subscription_plans WHERE group_id=99').get().weekly_reset_mode,
+    'independent',
+  )
   db.prepare("UPDATE custom_subscription_plans SET weekly_reset_vm_id='Claude' WHERE group_id=99").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /plans/)
 })

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 
 const exists = (db, table) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)
 const digest = (rows) =>
@@ -15,15 +16,32 @@ const digest = (rows) =>
 
 // Keep secrets in memory only. Reports contain counts and hashes, never raw rows.
 export function subscriptionSnapshot(db) {
+  const normalizedBilling = !!db.prepare("SELECT 1 FROM schema_migrations WHERE version='037'").get()
+  // Compare pre-037 logs in the exact representation produced by the reviewed migration.
+  // All other fields (in particular actual/official costs and ownership) remain hash-checked.
+  const migration = fs.readFileSync(
+    new URL('./migrations/037_usage_logs_billing_normalize.sql', import.meta.url),
+    'utf8',
+  )
+  const rewrite = migration.match(/UPDATE usage_logs\s+SET input_tokens = ([\s\S]+?)\s+WHERE ([\s\S]+?);/)
+  if (!rewrite) throw new Error('Cannot verify migration 037 input normalization')
   const tables = ['users', 'api_keys', 'groups', 'vms', 'usage_logs', 'proxies']
   const state = {}
   for (const table of tables) {
     const rows = db
-      .prepare(`SELECT * FROM ${table}`)
+      .prepare(
+        table === 'usage_logs' && !normalizedBilling
+          ? `SELECT *, CASE WHEN ${rewrite[2]} THEN ${rewrite[1]} ELSE input_tokens END AS __expected_input FROM usage_logs`
+          : `SELECT * FROM ${table}`,
+      )
       .all()
       .map((row) => {
         // Nullable upstream additions: missing pre-upgrade fields and NULLs are equivalent.
-        if (table === 'usage_logs')
+        if (table === 'usage_logs') {
+          if (!normalizedBilling) {
+            row.input_tokens = row.__expected_input
+            delete row.__expected_input
+          }
           return {
             ...row,
             session_id: row.session_id ?? null,
@@ -31,7 +49,12 @@ export function subscriptionSnapshot(db) {
             outbound_session_id: row.outbound_session_id ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
+            web_search_requests: row.web_search_requests ?? 0,
+            web_search_cost: row.web_search_cost ?? null,
+            price_source: row.price_source ?? null,
+            price_version: row.price_version ?? null,
           }
+        }
         if (table === 'proxies') {
           const normalized = { ...row, label: row.label ?? null, domain_forward: row.domain_forward ?? 0 }
           // Upstream 033: newly added IPv6 geo fields are nullable, not rewritten data.

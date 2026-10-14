@@ -2,6 +2,16 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'price-catalog',
+  'catalog-sync',
+  'database',
+  'openai-jwt',
+  'openai-usage',
+  'codex-slot',
+  'panel-vm-pool-policy',
+  'persona-coverage.mock',
+  'window-estimate',
+  'remote-egress',
   'cch',
   'cli-hop-body',
   'crs-clean',
