@@ -3,7 +3,7 @@ import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
 import { fmtNum, fmtUsd, usedPctOf } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { poolUsdEstimates, vmTodayStats, vmWeekOutcome } from '@/lib/vm-usage'
+import { vmTodayStats, vmWeekOutcome } from '@/lib/vm-usage'
 import {
   Tooltip,
   TooltipContent,
@@ -157,7 +157,6 @@ export function FleetPulse({
   className?: string
 }) {
   const pulse = useMemo(() => computePulse(vms, accounts), [vms, accounts])
-  const usd = useMemo(() => poolUsdEstimates(vms), [vms])
   const segments = ZONES.filter((z) => pulse.counts[z.key] > 0)
   const focused = filter !== 'all'
   const headroomMax = Math.max(...pulse.headroom, 1)
@@ -167,7 +166,7 @@ export function FleetPulse({
   return (
     <div
       className={cn(
-        'grid gap-px overflow-hidden rounded-xl border bg-border/60 sm:grid-cols-2 xl:grid-cols-12',
+        'grid gap-px overflow-hidden rounded-xl border bg-border/60 sm:grid-cols-2 xl:grid-cols-10',
         className
       )}
     >
@@ -283,36 +282,6 @@ export function FleetPulse({
       </Cell>
 
       <Cell
-        title='窗口余量'
-        className='xl:col-span-2'
-        meta={<span className='text-[11px] text-muted-foreground'>官方价</span>}
-      >
-        <div className='space-y-1.5 text-[12px] leading-tight tabular-nums'>
-          <div>
-            <div className='text-[11px] text-muted-foreground'>5h</div>
-            <div className='font-medium'>
-              Claude {fmtUsd(usd.h5.claude, 2)}
-              <span className='text-muted-foreground'> · </span>
-              GPT {fmtUsd(usd.h5.gpt, 2)}
-            </div>
-            <div className='text-[11px] text-muted-foreground'>
-              已计 {usd.h5.counted} / 未计 {usd.h5.skipped}
-            </div>
-          </div>
-          <div>
-            <div className='text-[11px] text-muted-foreground'>7d</div>
-            <div className='font-medium'>
-              Claude {fmtUsd(usd.d7.claude, 2)}
-              <span className='text-muted-foreground'> · </span>
-              GPT {fmtUsd(usd.d7.gpt, 2)}
-            </div>
-            <div className='text-[11px] text-muted-foreground'>
-              已计 {usd.d7.counted} / 未计 {usd.d7.skipped}
-            </div>
-          </div>
-        </div>
-      </Cell>
-      <Cell
         title='今日消耗'
         className='xl:col-span-2'
         meta={
@@ -342,7 +311,7 @@ export function FleetPulse({
 
       <Cell
         title='7D 成败'
-        className='xl:col-span-2'
+        className='sm:col-span-2 xl:col-span-2'
         meta={
           <span className='text-[11px] text-muted-foreground tabular-nums'>
             {weekTotal > 0 ? `${fmtNum(weekTotal)} 次` : ''}

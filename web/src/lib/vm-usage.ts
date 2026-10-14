@@ -3,7 +3,6 @@ import type { WindowEstimate } from '@/types/panel-pricing'
 import type { UsageAccountRow } from '@/types/panel-usage'
 import type { Vm } from '@/types/panel-vm'
 import { fmtNum, fmtUsd } from '@/lib/format'
-import { isCodexVm } from '@/lib/vm-kind'
 
 function num(v: unknown): number {
   const n = Number(v)
@@ -268,6 +267,32 @@ export function vmTotalTokens(vm: Vm, accounts?: UsageAccountRow[]): number {
   )
 }
 
+export type VmLedgerRow = {
+  key: '5h' | '7d' | 'total'
+  label: string
+  cost: number
+  tokens: number
+}
+
+/** 一台槽位的费用与 token 只走这一份：5H / 7D 窗口 + 账号总计。 */
+export function vmCostLedger(
+  vm: Vm,
+  accounts?: UsageAccountRow[]
+): VmLedgerRow[] {
+  const cost = vmWindowCosts(vm, accounts)
+  const tok = vmWindowTokens(vm, accounts)
+  return [
+    { key: '5h', label: '5H', cost: cost.h5, tokens: tok.h5 },
+    { key: '7d', label: '7D', cost: cost.d7, tokens: tok.d7 },
+    {
+      key: 'total',
+      label: '总计',
+      cost: vmTotalCost(vm, accounts),
+      tokens: vmTotalTokens(vm, accounts),
+    },
+  ]
+}
+
 export const ESTIMATE_STATUS_ZH: Record<WindowEstimate['status'], string> = {
   ok: '估算有效',
   no_data: '无用量读数',
@@ -288,30 +313,6 @@ export function estimateTooltip(
   }
   bits.push(ESTIMATE_CAVEAT)
   return bits.join('\n')
-}
-
-/** 剩余 USD；估算不成立时为 null（画「—」，不画 0）。 */
-export function estimateRemaining(
-  est: WindowEstimate | null | undefined
-): number | null {
-  if (est?.status !== 'ok') return null
-  const v = est.remaining_usd
-  return v != null && Number.isFinite(v) ? v : null
-}
-
-export function pickWindowEstimate(
-  vm: Vm,
-  accounts: UsageAccountRow[] | undefined,
-  key: 'estimate_5h' | 'estimate_7d' | 'estimate_fable'
-): WindowEstimate | null | undefined {
-  const acc = usageAccountForVm(vm, accounts)
-  if (acc && acc[key] !== undefined) return acc[key]
-  return vm[key]
-}
-
-export function vmFableCost(vm: Vm, accounts?: UsageAccountRow[]): number {
-  const acc = usageAccountForVm(vm, accounts)
-  return num(acc?.window_fable_cost ?? vm.window_fable_cost)
 }
 
 export function formatWindowSpend(
@@ -347,53 +348,4 @@ export function formatWindowSpend(
     remainText: remain,
     tooltip,
   }
-}
-
-export type PoolUsdSide = {
-  remaining_usd: number
-  claude: number
-  gpt: number
-  counted: number
-  skipped: number
-}
-
-export type PoolUsdEstimates = {
-  h5: PoolUsdSide
-  d7: PoolUsdSide
-}
-
-function emptyUsdSide(): PoolUsdSide {
-  return { remaining_usd: 0, claude: 0, gpt: 0, counted: 0, skipped: 0 }
-}
-
-function addUsdEstimate(
-  side: PoolUsdSide,
-  vm: Vm,
-  est: WindowEstimate | null | undefined
-) {
-  if (
-    est?.status === 'ok' &&
-    est.remaining_usd != null &&
-    Number.isFinite(est.remaining_usd)
-  ) {
-    const usd = Math.max(0, est.remaining_usd)
-    side.remaining_usd += usd
-    if (isCodexVm(vm)) side.gpt += usd
-    else side.claude += usd
-    side.counted += 1
-  } else {
-    side.skipped += 1
-  }
-}
-
-/** 全池 5h/7d 剩余 USD：只计 `estimate_*`.status === 'ok' 的有票槽。 */
-export function poolUsdEstimates(vms: Vm[]): PoolUsdEstimates {
-  const h5 = emptyUsdSide()
-  const d7 = emptyUsdSide()
-  for (const vm of vms) {
-    if (!vm.has_token) continue
-    addUsdEstimate(h5, vm, vm.estimate_5h)
-    addUsdEstimate(d7, vm, vm.estimate_7d)
-  }
-  return { h5, d7 }
 }
