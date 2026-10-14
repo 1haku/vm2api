@@ -205,7 +205,10 @@ export async function ensureRemoteEgress(session, vm, { imageRef }) {
   const digest = crypto.createHash('sha256').update(body).update(imageRef).digest('hex').slice(0, 16)
   // Beside the slot tree, outside every guest bind: the guest never sees the proxy password.
   const dir = `${remoteSlotDir(session.host, vm.id)}/egress`
-  const owner = session.host.uid === 0 ? null : { uid: session.host.uid, gid: session.host.gid }
+  // The helper reads a 0600 config written by the SSH user, so it must run as that
+  // same uid. With a root login the image default (kincli) could not open the
+  // root-owned file and the container crash-looped on EACCES.
+  const owner = { uid: session.host.uid, gid: session.host.gid ?? session.host.uid }
   const existing = await inspectContainerOrNull(session.docker, names.egress)
   if (!(existing?.State?.Running && existing.Config?.Labels?.['kin.egress.cfg'] === digest)) {
     await runRemote(session.client, `umask 077 && mkdir -p ${shellQuote(dir)} && chmod 700 ${shellQuote(dir)}`)
@@ -213,7 +216,7 @@ export async function ensureRemoteEgress(session, vm, { imageRef }) {
     if (existing) await removeContainer(session.docker, names.egress)
     await createContainerRaw(session.docker, names.egress, {
       Image: imageRef,
-      ...(owner ? { User: `${owner.uid}:${owner.gid}` } : {}),
+      User: `${owner.uid}:${owner.gid}`,
       Cmd: ['/usr/local/bin/kin-egress', '-config', '/etc/kin-egress/egress.json'],
       Labels: {
         'kin.egress': '1',
