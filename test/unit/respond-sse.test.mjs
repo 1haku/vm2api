@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { applySseSocketTuning, createRespond, parseRequestUrl, readBody } from '../../src/lib/http/respond.mjs'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
+import { loadConfig } from '../../src/lib/core/config.mjs'
 
 test('applySseSocketTuning flushes headers and enables TCP_NODELAY', () => {
   let flushed = false
@@ -67,9 +68,21 @@ test('json marks non-retryable policy errors for clients', () => {
   assert.deepEqual(body.error.details, { retryable: false })
 })
 
-test('default max body fallback is 128MB', () => {
-  const src = fs.readFileSync(new URL('../../src/lib/core/config.mjs', import.meta.url), 'utf8')
-  assert.match(src, /KIN_MAX_BODY \|\| 128 \* 1024 \* 1024/)
+test('default max body is 128 MiB and explicit environment limits take precedence', () => {
+  const previous = process.env.KIN_MAX_BODY
+  const previousKey = process.env.KIN_API_KEY
+  try {
+    process.env.KIN_API_KEY = 'request-limit-test-only'
+    delete process.env.KIN_MAX_BODY
+    assert.equal(loadConfig().limits.max_body_bytes, 128 * 1024 * 1024)
+    process.env.KIN_MAX_BODY = String(64 * 1024 * 1024)
+    assert.equal(loadConfig().limits.max_body_bytes, 64 * 1024 * 1024)
+  } finally {
+    if (previous === undefined) delete process.env.KIN_MAX_BODY
+    else process.env.KIN_MAX_BODY = previous
+    if (previousKey === undefined) delete process.env.KIN_API_KEY
+    else process.env.KIN_API_KEY = previousKey
+  }
 })
 
 test('oversized protocol body returns 413 before scheduling', async () => {
