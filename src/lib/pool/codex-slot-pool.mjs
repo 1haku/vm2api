@@ -343,6 +343,9 @@ export function isCodexFailoverError(result) {
   const status = Number(result.status) || 0
   const code = String(result.body?.error?.code || result.error_code || '')
   if (status === 429 || status === 401 || status === 403) return true
+  // Uncommitted upstream 503 server_error is transient. The caller already
+  // refused committed hops and anything that has written to the client.
+  if (status === 503 && code === 'server_error') return true
   return /usage_limit_reached|upstream_auth|no_credential|sticky_unavailable/.test(code)
 }
 

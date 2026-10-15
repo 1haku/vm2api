@@ -5,7 +5,7 @@
 import crypto from 'node:crypto'
 import { withTransaction } from '../db/database.mjs'
 import { applyIntercept } from '../core/intercept.mjs'
-import { streamIdleTimeoutMs as idleTimeoutFromRouting } from '../core/config.mjs'
+import { streamIdleTimeoutMs as idleTimeoutFromRouting, inboundBodyLimit } from '../core/config.mjs'
 import { applyEagerToolStreaming } from './eager-tool-streaming.mjs'
 import {
   inboundRefusalDeviceId,
@@ -557,7 +557,7 @@ export function createHandleProtocol(deps) {
 
     let inbound
     try {
-      inbound = await readBody(req, cfg.limits.max_body_bytes)
+      inbound = await readBody(req, inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes))
     } catch (error) {
       stats.errors++
       logBag.error_code = error?.body?.error?.code || ErrorCode.INVALID_JSON
@@ -1203,9 +1203,11 @@ export function createHandleProtocol(deps) {
           } catch {}
           const identity = loadVmIdentity(selected.exec)
           const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
-          const keptSession = extra.freshSlot ? '' : stickyBound?.sessionId || ''
-          const keptAccount = extra.freshSlot ? '' : stickyBound?.accountId || ''
-          const keptVm = extra.freshSlot ? '' : stickyBound?.vmId || ''
+          // The runner snapshots after this session's queue turn, before VM prebinding.
+          const attemptBound = extra.stickyBound
+          const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
+          const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
+          const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
           const attemptSessionId = resolveOutboundSessionId(callerSession, {
             ...sessionContext,
             accountId: selected.accountId,
@@ -1327,9 +1329,9 @@ export function createHandleProtocol(deps) {
             officialClient: officialTraffic,
             sessionId: attemptSessionId,
             accountId: selected.accountId,
-            boundSessionId: stickyBound?.sessionId || '',
-            boundAccountId: stickyBound?.accountId || '',
-            boundVmId: stickyBound?.vmId || '',
+            boundSessionId: keptSession,
+            boundAccountId: keptAccount,
+            boundVmId: keptVm,
             vmId: selected.vmId,
             epoch: attemptStartedAt,
             mode: sessionMode,
@@ -1401,9 +1403,12 @@ export function createHandleProtocol(deps) {
               if (res.writableEnded || res.destroyed) return
               if (!res.headersSent) writeSSEHeaders(res)
               res.write(chunk)
+              // A ping is already a downstream byte. Commit so a later upstream
+              // failure cannot switch slots onto this socket.
+              onCommit()
             },
           })
-          keepalive.start()
+          keepalive.arm()
           try {
             return await dispatchStreamInference({
               exec: candidate.exec,
@@ -1632,7 +1637,7 @@ export function createHandleProtocol(deps) {
     }
     let body
     try {
-      body = await readBody(req, cfg.limits.max_body_bytes)
+      body = await readBody(req, inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes))
     } catch (error) {
       stats.errors++
       logBag.error_code = error?.body?.error?.code || ErrorCode.INVALID_JSON

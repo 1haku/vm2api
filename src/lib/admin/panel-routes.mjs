@@ -4878,13 +4878,13 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/notify/test') {
         const body = await readBody(req, 64 * 1024)
         const channel = String(body.channel || '').toLowerCase()
-        if (channel !== 'email' && channel !== 'telegram') {
+        if (channel !== 'email' && channel !== 'telegram' && channel !== 'wecom') {
           return json(res, 400, {
             ok: false,
             error: {
               type: 'invalid_request_error',
               code: 'missing_field',
-              message: 'channel must be email or telegram',
+              message: 'channel must be email, telegram or wecom',
               param: 'channel',
             },
           })
@@ -4892,6 +4892,7 @@ export function createPanelHandler(ctx) {
         const trial = mergeNotifyConfig(ctx.routingConfig.notify, {
           email: body.email,
           telegram: body.telegram,
+          wecom: body.wecom,
         })
         try {
           const result = await sendNotifyTest(trial, channel, {

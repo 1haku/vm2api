@@ -664,6 +664,22 @@ test('writeKernelConfig idle timeout follows the panel stream idle timeout', () 
   }
 })
 
+test('writeKernelConfig request bytes follow the panel body limit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-body-cfg-'))
+  const bytesOf = (opts) =>
+    JSON.parse(fs.readFileSync(writeKernelConfig(root, { id: 'vm-09' }, { token: 'tok', ...opts }).configPath, 'utf8'))
+      .max_request_bytes
+  try {
+    assert.equal(bytesOf({ routing: {} }), 128 * 1024 * 1024)
+    assert.equal(bytesOf({ routing: { failover: { max_request_mib: 64 } } }), 64 * 1024 * 1024)
+    assert.equal(bytesOf({ routing: { failover: { max_request_mib: 1 } } }), 8 * 1024 * 1024)
+    bytesOf({ routing: { failover: { max_request_mib: 64 } } })
+    assert.equal(bytesOf({}), 64 * 1024 * 1024)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('writeKernelConfig cli-hop writes local_cli without secrets', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-cli-hop-cfg-'))
   const written = writeKernelConfig(
@@ -721,7 +737,7 @@ test('writeKernelConfig uses identity layout when persona_inject is rewrite', ()
   assert.equal(doc.max_request_bytes, 128 * 1024 * 1024)
   doc.max_request_bytes = 32 * 1024 * 1024
   fs.writeFileSync(written.configPath, JSON.stringify(doc))
-  writeKernelConfig(root, { id: 'vm-05', inference_engine: 'rust' }, { token: 'tok' })
+  writeKernelConfig(root, { id: 'vm-05', inference_engine: 'rust' }, { token: 'tok', routing: {} })
   assert.equal(JSON.parse(fs.readFileSync(written.configPath)).max_request_bytes, 128 * 1024 * 1024)
   assert.equal(doc.system_layout, 'identity')
   assert.equal(doc.persona_preset, 'official_full')

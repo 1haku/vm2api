@@ -596,6 +596,7 @@ export async function handleCodexProtocol({
         writeCfg(projectRoot, vm, {
           proxyUrl: boundProxyUrl(vm.proxy),
           proxyRequired: true,
+          routing,
         })
         const ready = await ensure(execFor(projectRoot, vm))
         if (!ready?.ok) {

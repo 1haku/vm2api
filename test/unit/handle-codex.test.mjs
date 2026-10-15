@@ -752,6 +752,43 @@ test('#A04: the fifth GPT slot is reached after four slots fail over', async () 
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('uncommitted 503 server_error fails over to the next GPT slot', async () => {
+  const rt = await import('../../src/lib/pool/openai-account-runtime.mjs')
+  rt.resetOpenAIAccountRuntime()
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-503-'))
+  for (const id of ['vm-gpt-a', 'vm-gpt-b']) writeGptVm(root, id)
+  const seen = []
+  const logBag = {}
+  const out = await handleCodexProtocol(
+    codexArgs(
+      root,
+      {
+        ensureCodexKernel: async () => ({ ok: true }),
+        streamCodexKernel: async ({ exec, onEvent }) => {
+          seen.push(exec.vm.id)
+          if (seen.length === 1) {
+            return {
+              ok: false,
+              status: 503,
+              committed: false,
+              body: { error: { type: 'server_error', code: 'server_error', message: 'busy' } },
+            }
+          }
+          await onEvent('data: {"type":"response.completed"}')
+          return { ok: true, status: 200, terminalState: 'verified' }
+        },
+      },
+      { logBag },
+    ),
+  )
+  assert.equal(out.status, 200)
+  assert.equal(seen.length, 2)
+  assert.notEqual(seen[0], seen[1])
+  assert.equal(logBag.attempt_count, 2)
+  rt.resetOpenAIAccountRuntime()
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 test('#A11: an OpenAI pool that stays full answers 429 pool_overloaded', async () => {
   const rt = await import('../../src/lib/pool/openai-account-runtime.mjs')
   rt.resetOpenAIAccountRuntime()

@@ -2,6 +2,8 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'notify',
+  'stream-keepalive',
   'kernel-body-limit',
   'codex-kernel-client',
   'local-egress-per-node',
