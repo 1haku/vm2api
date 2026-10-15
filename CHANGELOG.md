@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.174 — 2026-10-15
+
+- 修复同一入站 session / device 的连续请求排队时，出站 Session ID 在同一 VM 上跳变：使用出队后、预绑定前的粘性快照，后续轮次复用前一轮已建立的出站会话，日志与 Node 出站请求保持一致。
+- 同账号换 VM 时，新出站 session 会正确持久化；换机后只重建一次，后续轮次继续复用。保留取消、空响应和临时借位的既有规则。
+
+已部署机升级：更新 Node 控制面，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，不必重建或重启槽位容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.173 — 2026-10-15
 
 - Sonnet 5、Haiku 4.5 以及其他不支持对话中途 `role=system` 的型号，会把每一轮的 `<total_tokens>` 提醒抬进缓存断点后面的 system 尾块。尾块每轮变长，`cache_read` 停在工具和官方前缀（这次约 80.5K），后面的对话每轮整段重写。现在整段只留一条预算提醒，官方前缀里的那条不动。
@@ -41,7 +48,6 @@
 
 ## 1.3.168 — 2026-10-14
 
-- 修复同一会话排队时出站 Session ID 跳变：按出队后、预绑定前的粘性快照重建，后续轮次复用前一轮已建立的出站会话；换 VM 仍重新生成，日志与出站请求保持一致。
 - 计费改为三层价格：手动覆盖 > models.dev > 内置官方快照。models.dev 每 24 小时同步，缺的模型和档位（Mythos、gpt-6、Claude fast、OpenAI flex / priority、长上下文、1h 写入）由内置快照补。修正 Sonnet 5.5 缓存读 $0.10、Fable 5.1 / Mythos 5.1 缓存读 $0.25；去掉 Sonnet 4 / 4.5 超 200k 的加价。Anthropic web search 按 $10 / 1000 次计入费用。缓存写没有 5m / 1h 拆分且未声明 1h 时按 5m 计。
 - token 口径统一：`usage_logs.input_tokens` 一律不含缓存，OpenAI / Codex 在写入时扣掉缓存读写。「总 Token」= 输入 + 输出 + 缓存读 + 缓存写，每类只算一次；GPT 不再重复算缓存。虚拟机窗口、`total_tokens`、`today_tokens` 现在都含缓存。`/billing` 的 `tokens_in` 改为输入 + 缓存。
 - 托管 key 扣额度与写入日志用同一份计价结果，每个请求只计价一次。
