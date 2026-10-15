@@ -8,6 +8,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { boundProxyUrl, isLocalEgressProxy, localEgressProxyUrl } from '../vm/egress.mjs'
 import { assertProxyAllowed } from '../vm/proxy-policy.mjs'
+import { maxRequestBytes } from '../core/config.mjs'
+import { openAIRuntimeSignals } from '../pool/openai-account-runtime.mjs'
 import { codexKernelHealth, codexKernelPaths } from './codex-kernel-client.mjs'
 
 const starts = new Map()
@@ -39,7 +41,7 @@ export function codexKernelBinPath() {
   return existingBin(path.resolve('bin/kin-codex-kernel'))
 }
 
-export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxyRequired } = {}) {
+export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxyRequired, routing } = {}) {
   if (!projectRoot || !vm?.id) return null
   assertProxyAllowed(vm.proxy)
   if (proxyUrl) assertProxyAllowed({ url: proxyUrl })
@@ -70,14 +72,52 @@ export function writeCodexKernelConfig(projectRoot, vm, { token, proxyUrl, proxy
     proxy_url: proxy,
     proxy_required: required,
     internal_token: secret,
-    // Keep Codex slots aligned with the 32 MiB body budget in the bundled
-    // kernel. Newer kernels can read this value; older binaries use the
-    // patched 32 MiB default directly.
-    max_request_bytes: 32 * 1024 * 1024,
+    max_request_bytes: maxRequestBytes(routing),
     test_endpoints: process.env.KIN_CODEX_TEST_ENDPOINTS === '1',
   }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
   return { runDir, socketPath, configPath, credentialPath, tokenPath }
+}
+
+export function shouldRecycleCodexKernel({ wanted, stamped, inFlight } = {}) {
+  return wanted > 0 && stamped > 0 && wanted !== stamped && inFlight <= 1
+}
+
+function limitStampPath(configPath) {
+  return configPath ? path.join(path.dirname(configPath), 'codex-kernel.limit') : ''
+}
+
+function readLimitStamp(configPath) {
+  try {
+    return Number(fs.readFileSync(limitStampPath(configPath), 'utf8')) || 0
+  } catch {
+    return 0
+  }
+}
+
+function writeLimitStamp(configPath, bytes) {
+  if (!configPath || !(bytes > 0)) return
+  fs.writeFileSync(limitStampPath(configPath), `${bytes}\n`, { mode: 0o600 })
+}
+
+function configRequestBytes(configPath) {
+  try {
+    return Number(JSON.parse(fs.readFileSync(configPath, 'utf8')).max_request_bytes) || 0
+  } catch {
+    return 0
+  }
+}
+
+function waitForChildExit(child, timeoutMs = 2000) {
+  if (!child || child.exitCode != null || child.signalCode != null) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs)
+    timer.unref?.()
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }
 
 export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
@@ -85,6 +125,21 @@ export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
   if (!bin) return { ok: false, reason: 'bin_missing' }
   const paths = codexKernelPaths(exec)
   if (!paths.configPath) return { ok: false, reason: 'config_missing' }
+  const wanted = configRequestBytes(paths.configPath)
+  const stamped = readLimitStamp(paths.configPath)
+  const inFlight = openAIRuntimeSignals(exec.vmId).inFlight
+  // Only the request that holds this seat may recycle. Wait until the old
+  // process has exited so the health probe cannot reuse a socket that is
+  // still draining.
+  if (shouldRecycleCodexKernel({ wanted, stamped, inFlight })) {
+    const child = stopCodexKernel(exec.vmId)
+    if (child) {
+      await waitForChildExit(child)
+      try {
+        if (paths.socketPath) fs.unlinkSync(paths.socketPath)
+      } catch {}
+    }
+  }
   const live = await waitForHealth(exec, Math.min(800, Math.max(200, Number(timeoutMs) || 800)))
   if (live.ok) return { ok: true, reused: true, health: live.health }
   const current = starts.get(exec.vmId)
@@ -99,6 +154,7 @@ export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
   })
   child.unref()
   starts.set(exec.vmId, child)
+  writeLimitStamp(paths.configPath, wanted)
   return waitForHealth(exec, timeoutMs)
 }
 

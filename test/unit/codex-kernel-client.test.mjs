@@ -6,6 +6,7 @@ import {
   ensureCodexKernel,
   stopCodexKernel,
   writeCodexKernelConfig,
+  shouldRecycleCodexKernel,
 } from '../../src/lib/transport/codex-kernel-supervisor.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -64,6 +65,28 @@ test('writeCodexKernelConfig writes bound SOCKS proxy', () => {
   assert.equal(cfg.internal_token, 'secret')
   assert.equal(cfg.max_request_bytes, 32 * 1024 * 1024)
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('writeCodexKernelConfig follows the panel request body limit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-body-'))
+  const vm = { id: 'vm-codex', proxy: { url: 'socks5://127.0.0.1:1080' } }
+  const written = writeCodexKernelConfig(root, vm, {
+    token: 'secret',
+    proxyUrl: 'socks5h://127.0.0.1:1080',
+    proxyRequired: true,
+    routing: { failover: { max_request_mib: 64 } },
+  })
+  const cfg = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+  assert.equal(cfg.max_request_bytes, 64 * 1024 * 1024)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('codex kernel recycles a body-limit change only when the slot is alone', () => {
+  assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 32 << 20, inFlight: 1 }), true)
+  assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 32 << 20, inFlight: 0 }), true)
+  assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 32 << 20, inFlight: 2 }), false)
+  assert.equal(shouldRecycleCodexKernel({ wanted: 32 << 20, stamped: 32 << 20, inFlight: 1 }), false)
+  assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 0, inFlight: 1 }), false)
 })
 
 test('writeCodexKernelConfig fail-closes proxy_required without a URL', () => {
