@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 面板恢复 admin 虚拟机「分配给租户 / 收回」：虚拟机列表与机架「更多操作」、详情卡与完整详情页运维 Tab 调用 `PATCH /api/panel/vms/:id/owner`；列表与详情展示租户属主读数。1.3.167–1.3.168 列表/网格改版后前端未再接线，群友反馈找不到分配按钮。
+
 ## 1.3.171 — 2026-10-15
 
 - 本地 429（例如 `fable_requires_max`，`exhausted: false` 且没有上游额度头）不再把 5h 标成 rejected。带 rejected 额度头或调用方明确 `exhausted: true` 的真实上游 429 仍拒绝。（#439）
