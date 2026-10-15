@@ -1,9 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { codexKernelPaths, withCodexKernelExec } from '../../src/lib/transport/codex-kernel-client.mjs'
 import {
   ensureCodexKernel,
+  finishCodexRecycle,
   stopCodexKernel,
   writeCodexKernelConfig,
   shouldRecycleCodexKernel,
@@ -87,6 +89,53 @@ test('codex kernel recycles a body-limit change only when the slot is alone', ()
   assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 32 << 20, inFlight: 2 }), false)
   assert.equal(shouldRecycleCodexKernel({ wanted: 32 << 20, stamped: 32 << 20, inFlight: 1 }), false)
   assert.equal(shouldRecycleCodexKernel({ wanted: 64 << 20, stamped: 0, inFlight: 1 }), false)
+})
+
+function holdProcess(exitOnTerm) {
+  const script = exitOnTerm
+    ? 'process.on("SIGTERM",()=>process.exit(0)); process.stdout.write("ready"); setInterval(()=>{},1e6)'
+    : 'process.on("SIGTERM",()=>{}); process.stdout.write("ready"); setInterval(()=>{},1e6)'
+  const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'ignore'] })
+  if (!child.pid) throw new Error('failed to spawn hold process')
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.stdout.once('data', () => resolve(child))
+  })
+}
+
+test('a child that ignores SIGTERM keeps the live socket', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-recycle-'))
+  const socket = path.join(dir, 'codex-kernel.sock')
+  fs.writeFileSync(socket, 'busy')
+  const child = await holdProcess(false)
+  try {
+    const gone = await finishCodexRecycle(child, socket, { termMs: 150, killMs: 0 })
+    assert.equal(gone.exited, false)
+    assert.equal(fs.readFileSync(socket, 'utf8'), 'busy')
+    assert.equal(child.exitCode, null)
+    assert.equal(child.signalCode, null)
+  } finally {
+    if (child.exitCode == null && child.signalCode == null) {
+      child.kill('SIGKILL')
+      await new Promise((resolve) => child.once('exit', resolve))
+    }
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the socket is removed only after the child exits', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-recycle-'))
+  const socket = path.join(dir, 'codex-kernel.sock')
+  fs.writeFileSync(socket, 'busy')
+  const child = await holdProcess(true)
+  try {
+    const gone = await finishCodexRecycle(child, socket, { termMs: 1000, killMs: 200 })
+    assert.equal(gone.exited, true)
+    assert.equal(fs.existsSync(socket), false)
+  } finally {
+    if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('writeCodexKernelConfig fail-closes proxy_required without a URL', () => {

@@ -108,16 +108,47 @@ function configRequestBytes(configPath) {
   }
 }
 
-function waitForChildExit(child, timeoutMs = 2000) {
-  if (!child || child.exitCode != null || child.signalCode != null) return Promise.resolve()
+function childHasExited(child) {
+  return !child || child.exitCode != null || child.signalCode != null
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (childHasExited(child)) return Promise.resolve(true)
+  if (!(timeoutMs > 0)) return Promise.resolve(false)
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs)
-    timer.unref?.()
-    child.once('exit', () => {
+    let settled = false
+    const finish = (exited) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
-      resolve()
-    })
+      resolve(exited)
+    }
+    const timer = setTimeout(() => finish(childHasExited(child)), timeoutMs)
+    child.once('exit', () => finish(true))
   })
+}
+
+/** SIGTERM, then SIGKILL. Unlink the socket only after the process is actually gone. */
+export async function finishCodexRecycle(child, socketPath, { termMs = 2000, killMs = 1000 } = {}) {
+  if (!childHasExited(child)) {
+    try {
+      child.kill('SIGTERM')
+    } catch {}
+  }
+  let exited = await waitForChildExit(child, termMs)
+  if (!exited && killMs > 0) {
+    try {
+      child.kill('SIGKILL')
+    } catch {}
+    exited = await waitForChildExit(child, killMs)
+  }
+  if (!exited) return { exited: false }
+  if (socketPath) {
+    try {
+      fs.unlinkSync(socketPath)
+    } catch {}
+  }
+  return { exited: true }
 }
 
 export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
@@ -128,16 +159,16 @@ export async function ensureCodexKernel(exec, { timeoutMs = 8000 } = {}) {
   const wanted = configRequestBytes(paths.configPath)
   const stamped = readLimitStamp(paths.configPath)
   const inFlight = openAIRuntimeSignals(exec.vmId).inFlight
-  // Only the request that holds this seat may recycle. Wait until the old
-  // process has exited so the health probe cannot reuse a socket that is
-  // still draining.
+  // Only the request that holds this seat may recycle. A timeout is not an
+  // exit: leave the socket and the tracked child in place.
   if (shouldRecycleCodexKernel({ wanted, stamped, inFlight })) {
     const child = stopCodexKernel(exec.vmId)
     if (child) {
-      await waitForChildExit(child)
-      try {
-        if (paths.socketPath) fs.unlinkSync(paths.socketPath)
-      } catch {}
+      const gone = await finishCodexRecycle(child, paths.socketPath)
+      if (!gone.exited) {
+        starts.set(exec.vmId, child)
+        return { ok: false, reason: 'recycle_timeout' }
+      }
     }
   }
   const live = await waitForHealth(exec, Math.min(800, Math.max(200, Number(timeoutMs) || 800)))
