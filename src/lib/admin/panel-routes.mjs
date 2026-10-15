@@ -128,7 +128,7 @@ import {
   persistVmOwner,
   persistVmTimezone,
 } from '../vm/vm-registry.mjs'
-import { syncVmTimezoneFromProxy } from '../vm/proxy-timezone.mjs'
+import { fillVmTimezoneFromExit, syncVmTimezoneFromProxy } from '../vm/proxy-timezone.mjs'
 import { validTimezone } from '../core/timezone.mjs'
 import { stampVmKind, isCodexVm } from '../vm/vm-kind.mjs'
 import { parseAllowedModelsPatch } from '../pool/slot-model-gate.mjs'
@@ -185,6 +185,7 @@ import {
   slotExec,
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
+import { diagnoseSlotServices, powerOnSlot, recoverSlot } from '../vm/slot-recovery.mjs'
 import { commitVmPackage, exportVmPackage, parseVmPackage } from '../vm/vm-package.mjs'
 import { preflightNode } from '../cluster/placement.mjs'
 import { probeLocalKvm } from '../vm/kvm-host.mjs'
@@ -528,11 +529,8 @@ export function createPanelHandler(ctx) {
     setVmSchedulable(cfg.paths.project, vmId, true)
   }
 
-  // A slot without a zone takes its exit's; a set zone (manual or already synced) stays.
-  async function fillTimezoneFromExit(id) {
-    const vm = getVm(cfg.paths.project, id)
-    if (!vm?.proxy?.id || validTimezone(vm.timezone)) return null
-    return syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, id, { force: true })
+  function fillTimezoneFromExit(id) {
+    return fillVmTimezoneFromExit(cfg.paths.project, proxyPool, id)
   }
 
   /**
@@ -3710,28 +3708,17 @@ export function createPanelHandler(ctx) {
       // POST /api/panel/vms/:id/start
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/start$/.test(p)) {
         const id = p.split('/')[4]
-        const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
-        if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-        let vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        const bound = proxyPool.ensureBoundToVm(id, vm.proxy?.id || null)
-        if (!bound) {
-          return json(res, 409, {
-            ok: false,
-            error: { code: 'proxy_required', message: 'No SOCKS5 is bound or free for this VM' },
-          })
+        const started = await powerOnSlot({
+          projectRoot: cfg.paths.project,
+          id,
+          proxyPool,
+          routing: ctx.routingConfig,
+          fillTimezone: fillTimezoneFromExit,
+        })
+        if (!started.ok) {
+          return json(res, started.status, { ok: false, error: { code: started.code, message: started.error } })
         }
-        bindVmProxy(cfg.paths.project, id, bound)
-        await fillTimezoneFromExit(id)
-        vm = getVm(cfg.paths.project, id) || vm
-        const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
-        if (!boot.ok) return json(res, 500, { ok: false, error: { message: boot.error || 'runtime start failed' } })
-        const hasCred = vmHasSchedulableCredential(vm, cfg.paths.project)
-        vm =
-          patchVmRecord(cfg.paths.project, id, {
-            status: 'running',
-            schedulable: hasCred,
-            schedule_disabled_reason: hasCred ? null : 'no_credential',
-          }) || vm
+        const { vm, bound, boot } = started
         return json(
           res,
           200,
@@ -3747,6 +3734,32 @@ export function createPanelHandler(ctx) {
             boot: panel.publicSlotBoot(boot),
           }),
         )
+      }
+      // GET /api/panel/vms/:id/diagnose — read-only check of every service the slot hop needs
+      if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/diagnose$/.test(p)) {
+        const vm = getVm(cfg.paths.project, p.split('/')[4])
+        if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'vm not found' } })
+        const diagnosis = await diagnoseSlotServices(vm, {
+          projectRoot: cfg.paths.project,
+          routing: ctx.routingConfig,
+          watchdog: ctx.kernelWatchdog,
+        })
+        return json(res, 200, panel.ok(diagnosis))
+      }
+      // POST /api/panel/vms/:id/recover — power cycle (stop → start) plus a fresh diagnosis
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/recover$/.test(p)) {
+        const recovered = await recoverSlot({
+          projectRoot: cfg.paths.project,
+          id: p.split('/')[4],
+          proxyPool,
+          routing: ctx.routingConfig,
+          fillTimezone: fillTimezoneFromExit,
+          watchdog: ctx.kernelWatchdog,
+        })
+        if (!recovered.ok) {
+          return json(res, recovered.status, { ok: false, error: { code: recovered.code, message: recovered.error } })
+        }
+        return json(res, 200, panel.ok(recovered.report))
       }
       // POST /api/panel/vms/:id/stop
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/stop$/.test(p)) {
