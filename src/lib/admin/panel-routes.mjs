@@ -211,11 +211,11 @@ import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../
 import { personaPreviewVars } from '../identity/crs-persona.mjs'
 import {
   applyGeneratedFingerprint,
-  generateWorkstationFingerprint,
   SLOT_LOCALES,
   takenFingerprintKeys,
   writeGuestMachineIdFile,
 } from '../identity/workstation-fingerprint.mjs'
+import { assignComputerFingerprint } from '../identity/slot-computer.mjs'
 import { runFleetUpdate, fleetStatus } from '../vm/fleet-update.mjs'
 import {
   captureWrapSample,
@@ -3106,10 +3106,9 @@ export function createPanelHandler(ctx) {
           return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
         let vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        const generated = generateWorkstationFingerprint(
-          { id: vm.id, kernel: vm.kernel },
-          { taken: takenFingerprintKeys(listVms(cfg.paths.project), { exceptId: id }) },
-        )
+        const generated = assignComputerFingerprint(cfg.paths.project, vm, {
+          taken: takenFingerprintKeys(listVms(cfg.paths.project), { exceptId: id }),
+        })
         vm.timezone = generated.timezone
         vm.locale = generated.locale
         vm.fingerprint = applyGeneratedFingerprint({}, generated)
@@ -3518,10 +3517,28 @@ export function createPanelHandler(ctx) {
             error: { code: 'invalid_locale', message: `语言必须是 ${SLOT_LOCALES.join('、')}` },
           })
         }
-        const generated = generateWorkstationFingerprint(
-          { id, kernel: wantKernel, timezone: requestedTimezone, locale: requestedLocale },
-          { taken: takenFingerprintKeys(existing) },
-        )
+        let generated
+        try {
+          generated = assignComputerFingerprint(
+            cfg.paths.project,
+            {
+              id,
+              kernel: wantKernel,
+              timezone: requestedTimezone,
+              locale: requestedLocale,
+              runtime: { type: runtime },
+            },
+            { taken: takenFingerprintKeys(existing) },
+          )
+        } catch (e) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              code: e.code || 'computer_create_failed',
+              message: String(e.message || e),
+            },
+          })
+        }
         const vm = {
           id,
           name: body.name || padVm(idx),
