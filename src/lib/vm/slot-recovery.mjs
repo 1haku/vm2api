@@ -13,6 +13,7 @@ import { containerLogs, inspectContainerOrNull } from '../cluster/docker-remote.
 import { slotEgressNames } from '../cluster/remote-slot.mjs'
 import { kernelFaults, rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
+import { codexKernelTracked } from '../transport/codex-kernel-supervisor.mjs'
 import {
   egressListening,
   ensureProxyEgress,
@@ -33,6 +34,9 @@ import { bindVmProxy, getVm, patchVmRecord, vmHasSchedulableCredential } from '.
 const HEALTH_TIMEOUT_MS = 1500
 const BRIDGE_HEAL_MIN_MS = 60_000
 const BOOT_SETTLE_MS = 3000
+
+// Socket errors that prove no process accepts connections (missing file / stale socket).
+const CODEX_NOT_LISTENING = new Set(['ENOENT', 'ECONNREFUSED'])
 
 function cluster() {
   try {
@@ -116,6 +120,7 @@ const DEFAULT_PROBES = Object.freeze({
     const info = await inspectContainerOrNull(slotHost(vm).dockerApi(), slotEgressNames(vm.id).egress)
     return { exists: !!info, running: info?.State?.Running === true, status: info?.State?.Status || null }
   },
+  codexTracked: (vmId) => codexKernelTracked(vmId),
   cluster,
 })
 
@@ -220,9 +225,21 @@ async function kernelCheck(vm, projectRoot, engine, hasCredential, probes, inter
   const label = '推理内核'
   const exec = slotExec(projectRoot, vm)
   if (engine === 'codex') {
-    const pub = toPublicKernelHealth(await probes.codexHealth(exec), 'codex')
+    const health = await probes.codexHealth(exec)
+    const pub = toPublicKernelHealth(health, 'codex')
     if (pub.reachable) return check('kernel', label, 'ok', null, 'Codex 内核在线')
-    return check('kernel', label, 'error', 'codex_kernel_down', 'Codex 内核未响应', { error_code: pub.error_code })
+    // Idle needs evidence: nothing listens on the socket and this Node holds no live child.
+    // Codex kernels start per request, and a Node restart leaves none behind.
+    const nothingListening = Number(health?.status) === 0 && CODEX_NOT_LISTENING.has(health?.code)
+    if (nothingListening && !probes.codexTracked(vm.id)) {
+      return check('kernel', label, 'warn', 'codex_kernel_idle', 'Codex 内核当前未运行，下一次请求会自动拉起')
+    }
+    // A timeout, an HTTP error, or a tracked child that does not answer is a fault, not idle.
+    const cause = health?.code === 'worker_timeout' ? '无应答（超时）' : `探测失败（${pub.error_code || 'unknown'}）`
+    return check('kernel', label, 'error', 'codex_kernel_down', `Codex 内核${cause}`, {
+      error_code: health?.code || pub.error_code,
+      status: Number(health?.status) || null,
+    })
   }
   if (engine !== 'rust') return check('kernel', label, 'skip', null, `推理引擎 ${engine}，不检查内核`)
   const pub = toPublicKernelHealth(await probes.rustHealth(exec), 'rust')

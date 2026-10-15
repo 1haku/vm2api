@@ -94,6 +94,63 @@ test('diagnosis separates a missing credential from a dead kernel and busy from 
   assert.equal(healthy.first_failure, null)
 })
 
+test('Codex kernel: idle only when nothing listens and no child is tracked; other failures stay errors', async () => {
+  const vm = { id: 'vm-gpt', status: 'running', platform: 'openai', family: 'codex', proxy: SOCKS }
+  const root = project([vm])
+  const kernelOf = async (health, tracked = false) =>
+    (
+      await diagnoseSlotServices(vm, {
+        projectRoot: root,
+        probes: healthyProbes({ codexHealth: async () => health, codexTracked: () => tracked }),
+      })
+    ).checks.find((c) => c.id === 'kernel')
+  const refused = { ok: false, status: 0, code: 'ECONNREFUSED' }
+  const cases = [
+    ['no socket file', { ok: false, status: 0, code: 'ENOENT' }, false, 'warn', 'codex_kernel_idle'],
+    ['stale socket', refused, false, 'warn', 'codex_kernel_idle'],
+    ['child still starting', refused, true, 'error', 'codex_kernel_down'],
+    ['hung process', { ok: false, status: 0, code: 'worker_timeout' }, false, 'error', 'codex_kernel_down'],
+    ['kernel answers non-200', { ok: false, status: 401 }, false, 'error', 'codex_kernel_down'],
+    ['permission denied', { ok: false, status: 0, code: 'EACCES' }, false, 'error', 'codex_kernel_down'],
+    ['live', { ok: true, status: 200 }, false, 'ok', null],
+  ]
+  for (const [name, health, tracked, status, code] of cases) {
+    const kernel = await kernelOf(health, tracked)
+    assert.equal(kernel.status, status, name)
+    assert.equal(kernel.code, code, name)
+  }
+  assert.match((await kernelOf({ ok: false, status: 0, code: 'worker_timeout' })).message, /超时/)
+})
+
+test('Codex kernel probe codes come from the real socket: missing, stale and hung are told apart', async () => {
+  const vm = { id: 'vm-gpt2', status: 'running', platform: 'openai', family: 'codex', proxy: SOCKS }
+  const root = project([vm])
+  const run = path.join(root, 'vms', vm.id, 'run')
+  fs.mkdirSync(run, { recursive: true })
+  const sock = path.join(run, 'codex-kernel.sock')
+  // Real codexHealth (no override): codes come from the kernel's socket, not a stub.
+  const { codexHealth: _real, ...probes } = healthyProbes()
+  const kernel = async () =>
+    (await diagnoseSlotServices(vm, { projectRoot: root, probes })).checks.find((c) => c.id === 'kernel')
+
+  assert.equal((await kernel()).code, 'codex_kernel_idle', 'no socket file')
+  // A leftover path nobody listens on refuses the connection, like a socket a killed kernel left.
+  fs.writeFileSync(sock, '')
+  assert.equal((await kernel()).code, 'codex_kernel_idle', 'stale socket path')
+  fs.rmSync(sock)
+
+  const net = await import('node:net')
+  const hung = net.createServer(() => {})
+  await new Promise((resolve) => hung.listen(sock, resolve))
+  try {
+    const result = await kernel()
+    assert.equal(result.status, 'error', 'a listener that never answers is not idle')
+    assert.equal(result.detail.error_code, 'worker_timeout')
+  } finally {
+    hung.close()
+  }
+})
+
 test('a crash-looping container is reported with its restart count and last log line', async () => {
   const vm = { id: 'vm-loop', status: 'running', claude: CRED, proxy: SOCKS }
   const root = project([vm])
