@@ -371,7 +371,7 @@ async function commitImportedCodexVm({
 }) {
   const wasCodex = isCodexVm(existing)
   const previousPolicy = existing.policy && typeof existing.policy === 'object' ? existing.policy : {}
-  const saved = upsertCodexAccount(cfg.paths.project, existing.id, account)
+  const saved = upsertCodexAccount(cfg.paths.project, existing.id, account, { replaceCredentials: true })
   existing.platform = 'openai'
   existing.family = 'codex'
   existing.codex_kernel = true
