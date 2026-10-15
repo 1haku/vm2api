@@ -1180,9 +1180,11 @@ export function createHandleProtocol(deps) {
           } catch {}
           const identity = loadVmIdentity(selected.exec)
           const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
-          const keptSession = extra.freshSlot ? '' : stickyBound?.sessionId || ''
-          const keptAccount = extra.freshSlot ? '' : stickyBound?.accountId || ''
-          const keptVm = extra.freshSlot ? '' : stickyBound?.vmId || ''
+          // The runner snapshots after this session's queue turn, before VM prebinding.
+          const attemptBound = extra.stickyBound
+          const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
+          const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
+          const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
           const attemptSessionId = resolveOutboundSessionId(callerSession, {
             ...sessionContext,
             accountId: selected.accountId,
@@ -1304,9 +1306,9 @@ export function createHandleProtocol(deps) {
             officialClient: officialTraffic,
             sessionId: attemptSessionId,
             accountId: selected.accountId,
-            boundSessionId: stickyBound?.sessionId || '',
-            boundAccountId: stickyBound?.accountId || '',
-            boundVmId: stickyBound?.vmId || '',
+            boundSessionId: keptSession,
+            boundAccountId: keptAccount,
+            boundVmId: keptVm,
             vmId: selected.vmId,
             epoch: attemptStartedAt,
             mode: sessionMode,
