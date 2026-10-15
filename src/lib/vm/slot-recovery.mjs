@@ -54,12 +54,16 @@ function slotEngine(vm, routing) {
 
 const LOG_TAIL_LINES = 5
 
-// Tenants see this text: proxy URLs and bearer/API tokens in slot logs must not reach them.
-function redactLogLine(line) {
-  return line
+const SECRET_KEY = '(?:[a-z_]*token|api[_-]?key|secret|password|passwd|authorization|cookie|session[_-]?key)'
+const SECRET_VALUE = new RegExp(`(["']?${SECRET_KEY}["']?\\s*[:=]\\s*["']?)[^"'\\s,;&}]+`, 'gi')
+
+/** Best-effort masking for admin-only raw text; tenants never receive raw text at all. */
+export function redactSecrets(text) {
+  return String(text)
     .replace(/([a-z][\w+.-]*:\/\/)[^/@\s]+@/gi, '$1***@')
     .replace(/(bearer\s+)[\w.~+/=-]+/gi, '$1***')
-    .replace(/\b(sk-[a-z]+-[\w-]{4})[\w-]+/gi, '$1***')
+    .replace(SECRET_VALUE, '$1***')
+    .replace(/\bsk-[\w-]{6,}/gi, 'sk-***')
 }
 
 /** Last non-empty log lines without Docker's timestamp prefix. */
@@ -68,7 +72,7 @@ function logTail(logs) {
     .map((chunk) => chunk.text)
     .join('')
     .split('\n')
-    .map((line) => redactLogLine(line.replace(/^\d{4}-\d{2}-\d{2}T\S+\s/, '').trimEnd()))
+    .map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T\S+\s/, '').trimEnd())
     .filter(Boolean)
     .slice(-LOG_TAIL_LINES)
 }
@@ -127,18 +131,18 @@ function credentialCheck(vm, projectRoot) {
   return check('credential', '凭证', 'error', 'no_credential', '未导入可用凭证，内核不会启动，测试对话必然失败')
 }
 
-function linkCheck(status) {
+function linkCheck(status, internal) {
   const link = status?.link
   if (!link) return check('node_link', '节点 SSH 链路', 'error', 'node_not_found', '槽位所在节点不存在')
   if (link.state === 'ready') return check('node_link', '节点 SSH 链路', 'ok', null, '已连接')
-  const why = link.error?.message ? `：${link.error.message}` : ''
+  const why = internal && link.error?.message ? `：${redactSecrets(link.error.message)}` : ''
   return check('node_link', '节点 SSH 链路', 'error', 'node_link_down', `节点未连接（${link.state}）${why}`, {
     state: link.state,
     error_code: link.error?.code || null,
   })
 }
 
-function relayCheck(status) {
+function relayCheck(status, internal) {
   const dead = []
   if (!status?.bridge?.alive) dead.push('docker 桥')
   if (!status?.relays) dead.push('内核中继（未建立）')
@@ -147,8 +151,9 @@ function relayCheck(status) {
     if (!status.relays.worker.alive) dead.push('worker.sock 中继')
   }
   if (!dead.length) return check('relay', '集群桥服务', 'ok', null, 'docker 桥与槽位中继都在监听')
-  const error = status?.bridge?.error || status?.relays?.kernel?.error || null
-  return check('relay', '集群桥服务', 'error', 'relay_down', `未在监听：${dead.join('、')}`, error ? { error } : null)
+  const error = internal ? status?.bridge?.error || status?.relays?.kernel?.error || null : null
+  const detail = error ? { error: redactSecrets(error) } : null
+  return check('relay', '集群桥服务', 'error', 'relay_down', `未在监听：${dead.join('、')}`, detail)
 }
 
 async function egressCheck(vm, projectRoot, probes) {
@@ -184,7 +189,8 @@ async function egressCheck(vm, projectRoot, probes) {
   })
 }
 
-async function containerCheck(vm, probes) {
+/** Tenants get state, exit code, restarts and OOM; Docker's error text and the log tail are admin-only. */
+async function containerCheck(vm, probes, internal) {
   const label = '槽位容器'
   const st = await probes.container(vm)
   if (st.running) return check('container', label, 'ok', null, '运行中')
@@ -193,22 +199,24 @@ async function containerCheck(vm, probes) {
   if (st.exit_code != null) bits.push(`退出码 ${st.exit_code}`)
   if (st.restarting && st.restart_count != null) bits.push(`已重启 ${st.restart_count} 次`)
   if (st.oom_killed) bits.push('内存不足被杀')
-  if (st.error) bits.push(st.error)
-  const lastLog = st.log_tail?.at(-1)
-  const why = lastLog ? `；最后日志：${lastLog}` : ''
+  const logTailLines = internal ? (st.log_tail || []).map(redactSecrets) : []
+  if (internal && st.error) bits.push(redactSecrets(st.error))
+  const lastLog = logTailLines.at(-1)
+  const why = lastLog ? `；最后日志：${lastLog}` : internal ? '' : '；详细日志请联系管理员查看'
   const code = st.restarting ? 'container_crash_loop' : 'container_stopped'
   const lead = st.restarting ? '容器反复崩溃重启' : '容器未运行'
-  return check('container', label, 'error', code, `${lead}：${bits.join('，')}${why}`, {
+  const detail = {
     status: st.status,
     exit_code: st.exit_code,
     restart_count: st.restart_count,
     oom_killed: st.oom_killed,
     finished_at: st.finished_at,
-    log_tail: st.log_tail,
-  })
+  }
+  if (internal) detail.log_tail = logTailLines
+  return check('container', label, 'error', code, `${lead}：${bits.join('，')}${why}`, detail)
 }
 
-async function kernelCheck(vm, projectRoot, engine, hasCredential, probes) {
+async function kernelCheck(vm, projectRoot, engine, hasCredential, probes, internal) {
   const label = '推理内核'
   const exec = slotExec(projectRoot, vm)
   if (engine === 'codex') {
@@ -236,7 +244,9 @@ async function kernelCheck(vm, projectRoot, engine, hasCredential, probes) {
       label,
       'error',
       'kernel_unhealthy',
-      `内核已放弃自恢复：${pub.unhealthy_reason || '原因未上报'}`,
+      internal
+        ? `内核已放弃自恢复：${redactSecrets(pub.unhealthy_reason || '原因未上报')}`
+        : '内核已放弃自恢复（CLI 多次重启仍失败）',
       detail,
     )
   }
@@ -250,11 +260,14 @@ async function kernelCheck(vm, projectRoot, engine, hasCredential, probes) {
   return check('kernel', label, 'ok', null, `内核在线${slots}`, detail)
 }
 
-function watchdogCheck(vm, engine, watchdog) {
+function watchdogCheck(vm, engine, watchdog, internal) {
   const label = '自动恢复'
   if (engine !== 'rust') return check('watchdog', label, 'skip', null, '仅 rust 内核槽有自动恢复')
   const fault = kernelFaults.get(vm.id)
-  if (fault) return check('watchdog', label, 'error', 'kernel_faulted', `自动重启已用尽，已停止调度：${fault}`)
+  if (fault) {
+    const why = internal ? `：${redactSecrets(fault)}` : ''
+    return check('watchdog', label, 'error', 'kernel_faulted', `自动重启已用尽，已停止调度${why}`)
+  }
   const n = watchdog?.restartsInWindow?.(vm.id) || 0
   if (n) return check('watchdog', label, 'warn', 'watchdog_restarting', `近一小时已自动重启容器 ${n} 次`)
   return check('watchdog', label, 'ok', null, '无故障记录')
@@ -266,16 +279,25 @@ function scheduleCheck(vm) {
   return check('schedule', '调度', 'warn', 'schedule_off', `未参与号池调度${why}；模型测试仍会直连该槽`)
 }
 
-async function guarded(id, label, fn) {
+async function guarded(id, label, internal, fn) {
   try {
     return await fn()
   } catch (error) {
-    return check(id, label, 'error', error?.code || 'check_failed', `检查失败：${error?.message || error}`)
+    const code = error?.code || 'check_failed'
+    const message = internal ? `检查失败：${redactSecrets(error?.message || error)}` : `检查失败（${code}）`
+    return check(id, label, 'error', code, message)
   }
 }
 
-/** Read-only: never starts, restarts or writes anything. */
-export async function diagnoseSlotServices(vm, { projectRoot, routing = {}, watchdog = null, probes = {} } = {}) {
+/**
+ * Read-only: never starts, restarts or writes anything. `internal` (admin)
+ * adds raw Docker/SSH/kernel text and the container log tail, secret-masked;
+ * without it every message is built from codes and numbers only.
+ */
+export async function diagnoseSlotServices(
+  vm,
+  { projectRoot, routing = {}, watchdog = null, probes = {}, internal = false } = {},
+) {
   const p = { ...DEFAULT_PROBES, ...probes }
   const engine = slotEngine(vm, routing)
   const nodeId = vmNodeId(vm)
@@ -283,13 +305,15 @@ export async function diagnoseSlotServices(vm, { projectRoot, routing = {}, watc
   const checks = [recordCheck(vm), credentialCheck(vm, projectRoot)]
   if (nodeId) {
     const status = p.cluster()?.slotBridgeStatus(nodeId, vm.id) || null
-    checks.push(linkCheck(status), relayCheck(status))
+    checks.push(linkCheck(status, internal), relayCheck(status, internal))
   }
   checks.push(
-    await guarded('egress', '出口代理 / 出口桥', () => egressCheck(vm, projectRoot, p)),
-    await guarded('container', '槽位容器', () => containerCheck(vm, p)),
-    await guarded('kernel', '推理内核', () => kernelCheck(vm, projectRoot, engine, hasCredential, p)),
-    watchdogCheck(vm, engine, watchdog),
+    await guarded('egress', '出口代理 / 出口桥', internal, () => egressCheck(vm, projectRoot, p)),
+    await guarded('container', '槽位容器', internal, () => containerCheck(vm, p, internal)),
+    await guarded('kernel', '推理内核', internal, () =>
+      kernelCheck(vm, projectRoot, engine, hasCredential, p, internal),
+    ),
+    watchdogCheck(vm, engine, watchdog, internal),
     scheduleCheck(vm),
   )
   const failed = checks.find((c) => c.status === 'error') || null
@@ -377,6 +401,7 @@ export async function recoverSlot({
   routing = {},
   fillTimezone = null,
   watchdog = null,
+  internal = false,
   ops = {},
   now = () => Date.now(),
 }) {
@@ -387,7 +412,8 @@ export async function recoverSlot({
   const manager = (ops.cluster || cluster)()
   const stop = ops.stopSlot || stopSlot
   const powerOn = ops.powerOn || ((args) => powerOnSlot(args))
-  const diagnose = ops.diagnose || ((current) => diagnoseSlotServices(current, { projectRoot, routing, watchdog }))
+  const diagnose =
+    ops.diagnose || ((current) => diagnoseSlotServices(current, { projectRoot, routing, watchdog, internal }))
   // Held through the settle wait and final check too, so the watchdog cannot bounce the slot under it.
   recovering.add(id)
   const drained = watchdog?.hold?.(id)
@@ -401,14 +427,12 @@ export async function recoverSlot({
     } catch (error) {
       r = { ok: false, code: error?.code, message: String(error?.message || error) }
     }
-    steps.push({
-      id: stepId,
-      label: STEP_LABELS[stepId],
-      ok: r.ok === true,
-      code: r.ok ? null : r.code || `${stepId}_failed`,
-      message: r.message || '',
-      ms: now() - t0,
-    })
+    const code = r.ok ? null : r.code || `${stepId}_failed`
+    // Failed steps carry raw stderr / SSH text: admins get it masked, tenants only the code.
+    let message = r.message || ''
+    if (!r.ok)
+      message = internal ? redactSecrets(message) : `${STEP_LABELS[stepId]}失败（${code}），详情请联系管理员查看`
+    steps.push({ id: stepId, label: STEP_LABELS[stepId], ok: r.ok === true, code, message, ms: now() - t0 })
     return r.ok === true
   }
   try {

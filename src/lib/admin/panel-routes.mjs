@@ -3743,6 +3743,7 @@ export function createPanelHandler(ctx) {
           projectRoot: cfg.paths.project,
           routing: ctx.routingConfig,
           watchdog: ctx.kernelWatchdog,
+          internal: panelIdentity(req).role === 'admin',
         })
         return json(res, 200, panel.ok(diagnosis))
       }
@@ -3755,6 +3756,7 @@ export function createPanelHandler(ctx) {
           routing: ctx.routingConfig,
           fillTimezone: fillTimezoneFromExit,
           watchdog: ctx.kernelWatchdog,
+          internal: panelIdentity(req).role === 'admin',
         })
         if (!recovered.ok) {
           return json(res, recovered.status, { ok: false, error: { code: recovered.code, message: recovered.error } })

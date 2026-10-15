@@ -43,6 +43,7 @@ test('diagnosis names each broken service with its own code, in dependency order
   try {
     const d = await diagnoseSlotServices(vm, {
       projectRoot: root,
+      internal: true,
       probes: healthyProbes({
         socksEgress: () => ({ ok: false, reason: 'not_running' }),
         container: async () => ({ exists: true, running: false, status: 'exited', exit_code: 137, oom_killed: true }),
@@ -98,6 +99,7 @@ test('a crash-looping container is reported with its restart count and last log 
   const root = project([vm])
   const d = await diagnoseSlotServices(vm, {
     projectRoot: root,
+    internal: true,
     probes: healthyProbes({
       container: async () => ({
         exists: true,
@@ -127,6 +129,7 @@ test('diagnosis of a node slot reports the SSH link and dead relays', async () =
   }
   const d = await diagnoseSlotServices(vm, {
     projectRoot: root,
+    internal: true,
     probes: healthyProbes({
       cluster: () => ({ slotBridgeStatus: () => status }),
       container: async () => {
@@ -142,6 +145,101 @@ test('diagnosis of a node slot reports the SSH link and dead relays', async () =
   assert.equal(by.relay.code, 'relay_down')
   assert.match(by.relay.message, /kernel\.sock/)
   assert.equal(by.container.code, 'node_not_ready', 'a failing probe becomes an error check, not a thrown request')
+})
+
+const SECRETS = ['rt-secret-1', 'ak-secret-2', 'oat01secretABC', 'sk-simplesecret3', 'bt-secret-4', 'pw-secret-5']
+const LEAKY_LOG = [
+  '{"refresh_token":"rt-secret-1","expires":1}',
+  'loading api_key=ak-secret-2 from env',
+  'oauth sk-ant-oat01secretABC and sk-simplesecret3',
+  'Authorization: Bearer bt-secret-4',
+  'dial socks5://user:pw-secret-5@203.0.113.7:1080 failed',
+]
+
+function leakyProbes() {
+  return healthyProbes({
+    cluster: () => ({
+      slotBridgeStatus: () => ({
+        link: { state: 'backoff', error: { code: 'ssh_closed', message: 'connect to 10.0.0.9 as root failed' } },
+        bridge: { alive: false, error: 'listen /var/lib/vm2api/cluster/node-a/docker.sock EACCES' },
+        relays: null,
+      }),
+    }),
+    container: async () => ({
+      exists: true,
+      running: false,
+      restarting: true,
+      restart_count: 4,
+      status: 'restarting',
+      exit_code: 126,
+      error: 'exec: "/home/kincli/.kin/kin-kernel": permission denied',
+      log_tail: LEAKY_LOG,
+    }),
+    rustHealth: async () => ({ ok: true, healthy: false, unhealthy_reason: 'cli at /home/kincli/.kin/cli-node died' }),
+    socksEgress: () => {
+      throw new Error('probe failed with api_key=ak-secret-2')
+    },
+    remoteEgress: async () => {
+      throw new Error('probe failed with api_key=ak-secret-2')
+    },
+  })
+}
+
+test('tenant diagnosis carries codes and numbers but no raw logs, paths, hosts or secrets', async () => {
+  const vm = { id: 'vm-t1', status: 'running', claude: CRED, proxy: SOCKS, node_id: 'node-a' }
+  const root = project([vm])
+  kernelFaults.set(vm.id, 'kernel unhealthy after 3 container restarts: cli at /home/kincli/.kin died')
+  try {
+    const d = await diagnoseSlotServices(vm, { projectRoot: root, probes: leakyProbes() })
+    const body = JSON.stringify(d)
+    for (const leak of [...SECRETS, '/home/kincli', '/var/lib/vm2api', '10.0.0.9', 'permission denied', 'log_tail']) {
+      assert.equal(body.includes(leak), false, `tenant response leaks ${leak}`)
+    }
+    const by = Object.fromEntries(d.checks.map((c) => [c.id, c]))
+    assert.equal(by.container.code, 'container_crash_loop')
+    assert.match(by.container.message, /退出码 126，已重启 4 次/)
+    assert.equal(by.egress.code, 'check_failed')
+    assert.equal(by.kernel.code, 'kernel_unhealthy')
+  } finally {
+    kernelFaults.delete(vm.id)
+  }
+})
+
+test('admin diagnosis shows the log tail and raw causes with secrets masked', async () => {
+  const vm = { id: 'vm-a1', status: 'running', claude: CRED, proxy: SOCKS }
+  const root = project([vm])
+  const d = await diagnoseSlotServices(vm, { projectRoot: root, probes: leakyProbes(), internal: true })
+  const body = JSON.stringify(d)
+  for (const secret of SECRETS) assert.equal(body.includes(secret), false, `admin response leaks ${secret}`)
+  const container = d.checks.find((c) => c.id === 'container')
+  assert.equal(container.detail.log_tail.length, LEAKY_LOG.length)
+  assert.match(container.message, /\/home\/kincli\/\.kin\/kin-kernel/, 'admins keep the path that names the cause')
+  assert.match(container.detail.log_tail[0], /"refresh_token":"\*\*\*"/)
+  assert.match(container.detail.log_tail[4], /socks5:\/\/\*\*\*@203\.0\.113\.7/)
+})
+
+test('tenant recover report hides failed-step stderr; admin gets it masked', async () => {
+  const vm = { id: 'vm-t2', status: 'running', claude: CRED, proxy: SOCKS }
+  const root = project([vm])
+  const ops = {
+    stopSlot: async () => ({ ok: true, action: 'stopped' }),
+    powerOn: async () => ({
+      ok: false,
+      code: 'runtime_start_failed',
+      error: 'docker: stat /home/kincli/.kin/kin-kernel: permission denied; api_key=ak-secret-2',
+    }),
+    diagnose: async () => ({ ok: false, checks: [] }),
+    settleMs: 0,
+  }
+  const tenant = await recoverSlot({ projectRoot: root, id: vm.id, proxyPool: {}, ops })
+  const tenantStart = tenant.report.steps.find((s) => s.id === 'start')
+  assert.equal(tenantStart.code, 'runtime_start_failed')
+  assert.equal(JSON.stringify(tenant.report).includes('/home/kincli'), false)
+  assert.equal(JSON.stringify(tenant.report).includes('ak-secret-2'), false)
+  const admin = await recoverSlot({ projectRoot: root, id: vm.id, proxyPool: {}, ops, internal: true })
+  const adminStart = admin.report.steps.find((s) => s.id === 'start')
+  assert.match(adminStart.message, /\/home\/kincli/)
+  assert.equal(adminStart.message.includes('ak-secret-2'), false)
 })
 
 function recorder() {
