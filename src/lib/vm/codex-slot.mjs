@@ -29,7 +29,7 @@ export function writeCodexAccounts(projectRoot, vmId, accounts) {
   if (!projectRoot || !vmId) throw new Error('projectRoot and vmId required')
   atomicWriteJson(
     codexCredentialPath(projectRoot, vmId),
-    { accounts: Array.isArray(accounts) ? accounts : [] },
+    { accounts: Array.isArray(accounts) ? accounts.map(enrichCodexAccountIdentity) : [] },
     { mode: 0o600 },
   )
 }
@@ -122,12 +122,11 @@ function accountFromTokens(source, access, refresh, idToken) {
     source?.accountId,
     nested.accountId,
   )
-  const email = firstString(source?.email, nested.email, nested.id)
+  const email = firstString(source?.email, nested.email)
   const expiresAt = Number(source?.expires_at || nested.expires_at || 0)
   const rpm = Number(source?.rpm ?? nested.rpm)
   const conc = Number(source?.max_concurrency ?? nested.max_concurrency)
-  return {
-    id: email || chatgptAccountId || 'codex',
+  const account = enrichCodexAccountIdentity({
     access_token: access,
     refresh_token: refresh,
     id_token: idToken,
@@ -136,7 +135,11 @@ function accountFromTokens(source, access, refresh, idToken) {
     email: email || null,
     rpm: Number.isFinite(rpm) && rpm > 0 ? rpm : 0,
     max_concurrency: Number.isFinite(conc) && conc > 0 ? conc : 0,
-  }
+  })
+  // Older kernel exports used the email as their account id. Other ids are not emails.
+  const legacyId = firstString(nested.id)
+  if (!account.email && /^[^\s@]+@[^\s@]+$/.test(legacyId)) account.email = legacyId
+  return { ...account, id: account.email || account.chatgpt_account_id || 'codex' }
 }
 
 function parseTokenList(text, mode) {
@@ -256,9 +259,25 @@ export function enrichCodexAccountIdentity(account = {}) {
   return next
 }
 
-export function upsertCodexAccount(projectRoot, vmId, patch = {}) {
+export function upsertCodexAccount(projectRoot, vmId, patch = {}, { replaceCredentials = false } = {}) {
   const accounts = readCodexAccounts(projectRoot, vmId)
-  const cur = enrichCodexAccountIdentity({ ...(accounts[0] || {}), ...patch })
+  const previous = { ...(accounts[0] || {}) }
+  // Importing another account must not inherit the previous account's tokens or identity.
+  // Refreshes still retain metadata when the provider omits it from the response.
+  if (replaceCredentials) {
+    for (const key of [
+      'id',
+      'email',
+      'chatgpt_account_id',
+      'access_token',
+      'refresh_token',
+      'id_token',
+      'expires_at',
+    ]) {
+      delete previous[key]
+    }
+  }
+  const cur = enrichCodexAccountIdentity({ ...previous, ...patch })
   if (!cur.id) cur.id = cur.email || cur.chatgpt_account_id || 'codex'
   if (!accounts.length) accounts.push(cur)
   else accounts[0] = cur
@@ -305,7 +324,7 @@ export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredi
 
 export function summarizeCodexSlot(projectRoot, vm = {}) {
   const accounts = projectRoot && vm?.id ? readCodexAccounts(projectRoot, vm.id) : []
-  const first = accounts[0] || {}
+  const first = enrichCodexAccountIdentity(accounts[0] || {})
   const extra = vm.codex?.extra || vm.codex_extra || {}
   // extra is the source of truth; the stored view is only a fallback for slots without extra.
   const usage = buildCodexUsageView(Object.keys(extra).length ? extraToCodexSnapshot(extra) : vm.codex?.usage || {})
@@ -316,8 +335,7 @@ export function summarizeCodexSlot(projectRoot, vm = {}) {
     family: 'codex',
     has_token: hasAccess || hasRefresh,
     has_refresh: hasRefresh,
-    email:
-      first.email || vm.codex?.email || vm.email || first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
+    email: first.email || vm.codex?.email || vm.email || null,
     expires_at: first.expires_at || vm.codex?.expires_at || null,
     chatgpt_account_id: first.chatgpt_account_id || vm.codex?.chatgpt_account_id || null,
     account_count: accounts.length,

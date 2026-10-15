@@ -718,6 +718,11 @@ test('writeKernelConfig uses identity layout when persona_inject is rewrite', ()
     },
   )
   const doc = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+  assert.equal(doc.max_request_bytes, 128 * 1024 * 1024)
+  doc.max_request_bytes = 32 * 1024 * 1024
+  fs.writeFileSync(written.configPath, JSON.stringify(doc))
+  writeKernelConfig(root, { id: 'vm-05', inference_engine: 'rust' }, { token: 'tok' })
+  assert.equal(JSON.parse(fs.readFileSync(written.configPath)).max_request_bytes, 128 * 1024 * 1024)
   assert.equal(doc.system_layout, 'identity')
   assert.equal(doc.persona_preset, 'official_full')
   fs.rmSync(root, { recursive: true, force: true })

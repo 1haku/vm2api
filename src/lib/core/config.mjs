@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { hashKey } from './security.mjs'
 import { atomicWriteJson } from '../vm/vm-file.mjs'
 import { loadDistillRules } from './distill-detect.mjs'
+import { DEFAULT_MAX_REQUEST_BYTES } from './request-size.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // this file lives at src/lib/core/ — the gateway root is src/
@@ -136,7 +137,7 @@ export function loadConfig() {
     },
     distill: loadDistillRules(path.join(ROOT, 'config', 'distill-rules.json')),
     limits: {
-      max_body_bytes: Number(process.env.KIN_MAX_BODY || 128 * 1024 * 1024),
+      max_body_bytes: Number(process.env.KIN_MAX_BODY || DEFAULT_MAX_REQUEST_BYTES),
       // First-byte wait for worker HTTP headers. Matches sub2api
       // gateway.response_header_timeout (600s). Idle is stream_idle_timeout_ms.
       upstream_timeout_ms: Number(process.env.KIN_UPSTREAM_TIMEOUT || 600000),

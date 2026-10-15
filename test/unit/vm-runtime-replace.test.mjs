@@ -185,6 +185,7 @@ test('writeWorkerFiles uses the desired kin-eg network even if the container is 
   }
   writeWorkerFiles(vm, root, { routing: {} })
   const doc = JSON.parse(fs.readFileSync(path.join(root, 'vms', 'vm-10', 'run', 'worker.json'), 'utf8'))
+  assert.equal(doc.max_request_bytes, 128 * 1024 * 1024)
   assert.equal(doc.egress_mode, 'transparent')
   assert.equal(doc.proxy_url, '')
   assert.equal(doc.proxy_required, false)

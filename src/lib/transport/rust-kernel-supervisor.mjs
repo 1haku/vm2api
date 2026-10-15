@@ -5,6 +5,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import { DEFAULT_MAX_REQUEST_BYTES } from '../core/request-size.mjs'
 import path from 'node:path'
 import {
   rustKernelHealth,
@@ -703,7 +704,7 @@ export function writeKernelConfig(
     request_timeout_seconds: 0,
     first_byte_timeout_seconds: 600,
     idle_timeout_seconds: Math.ceil(idleMs / 1000),
-    max_request_bytes: 32 * 1024 * 1024,
+    max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
     max_response_bytes: 64 * 1024 * 1024,
     max_event_bytes: 32 * 1024 * 1024,
     runtime_kind: kind,

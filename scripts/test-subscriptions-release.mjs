@@ -2,6 +2,10 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'kernel-body-limit',
+  'codex-kernel-client',
+  'local-egress-per-node',
+  'panel-vm-exit-probe',
   'price-catalog',
   'catalog-sync',
   'database',
@@ -161,6 +165,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'slot-credential-clear',
   'subscription-weekly-window',
   'panel-turnstile',
   'subscription-reassignment',
