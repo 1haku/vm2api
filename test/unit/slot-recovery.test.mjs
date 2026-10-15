@@ -94,6 +94,20 @@ test('diagnosis separates a missing credential from a dead kernel and busy from 
   assert.equal(healthy.first_failure, null)
 })
 
+test('an idle Codex kernel is a warning, not a failure: requests start it on demand', async () => {
+  const vm = { id: 'vm-gpt', status: 'running', platform: 'openai', family: 'codex', proxy: SOCKS }
+  const root = project([vm])
+  const kernelOf = async (codexHealth) =>
+    (await diagnoseSlotServices(vm, { projectRoot: root, probes: healthyProbes({ codexHealth }) })).checks.find(
+      (c) => c.id === 'kernel',
+    )
+  const idle = await kernelOf(async () => null)
+  assert.equal(idle.status, 'warn')
+  assert.equal(idle.code, 'codex_kernel_idle')
+  const live = await kernelOf(async () => ({ ok: true }))
+  assert.equal(live.status, 'ok')
+})
+
 test('a crash-looping container is reported with its restart count and last log line', async () => {
   const vm = { id: 'vm-loop', status: 'running', claude: CRED, proxy: SOCKS }
   const root = project([vm])

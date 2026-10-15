@@ -222,7 +222,10 @@ async function kernelCheck(vm, projectRoot, engine, hasCredential, probes, inter
   if (engine === 'codex') {
     const pub = toPublicKernelHealth(await probes.codexHealth(exec), 'codex')
     if (pub.reachable) return check('kernel', label, 'ok', null, 'Codex 内核在线')
-    return check('kernel', label, 'error', 'codex_kernel_down', 'Codex 内核未响应', { error_code: pub.error_code })
+    // Codex kernels start per request (handle-codex ensures one); after a Node restart none runs yet.
+    return check('kernel', label, 'warn', 'codex_kernel_idle', 'Codex 内核当前未运行，下一次请求会自动拉起', {
+      error_code: pub.error_code,
+    })
   }
   if (engine !== 'rust') return check('kernel', label, 'skip', null, `推理引擎 ${engine}，不检查内核`)
   const pub = toPublicKernelHealth(await probes.rustHealth(exec), 'rust')
