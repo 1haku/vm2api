@@ -1,3 +1,4 @@
+import '../fixtures/kin-computer-test-env.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -5,6 +6,23 @@ import os from 'node:os'
 import path from 'node:path'
 import { DEVICE_ID_RE, HOSTNAME_RE, MACHINE_ID_RE } from '../../src/lib/identity/workstation-fingerprint.mjs'
 import { assignComputerFingerprint, ensureSlotComputer } from '../../src/lib/identity/slot-computer.mjs'
+
+test('missing kin-computer binary throws computer_service_missing', () => {
+  const prev = process.env.KIN_COMPUTER_BIN
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-computer-missing-'))
+  try {
+    process.env.KIN_COMPUTER_BIN = path.join(root, 'no-such-kin-computer-bin')
+    const vm = { id: 'vm-missing-bin', kernel: 'ubuntu-24.04', runtime: { type: 'docker' } }
+    assert.throws(
+      () => ensureSlotComputer(root, vm),
+      (err) => err?.code === 'computer_service_missing',
+    )
+  } finally {
+    if (prev == null) delete process.env.KIN_COMPUTER_BIN
+    else process.env.KIN_COMPUTER_BIN = prev
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('linux computer is written once and device_id stays 64-bit', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-computer-linux-'))
