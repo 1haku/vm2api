@@ -739,6 +739,7 @@ export class FailoverRunner {
       }
       repairPending = false
       snapshotPins()
+      const attemptStickyBound = pinBaseline.get(stickyKey) || null
       lastSelected = selected
       pinnedSlot = selected.slotIndex ?? null
       if (selected.seatMoved) seatMovedTo = selected.vmId
@@ -771,6 +772,7 @@ export class FailoverRunner {
                 repaired,
                 attemptStartedAt: attemptStarted,
                 freshSlot,
+                stickyBound: attemptStickyBound,
               })
             : clone(requestBody)
         const wrappedAttempt =
@@ -785,7 +787,11 @@ export class FailoverRunner {
           outboundSessionAccountId = selected.accountId
           bindAll(
             { accountId: selected.accountId, vmId: selected.vmId, sessionId: outboundSessionId },
-            { countHit: false },
+            {
+              countHit: false,
+              // Prebinding moved the VM already; replace the previous VM's session.
+              replaceSession: !!attemptStickyBound?.vmId && attemptStickyBound.vmId !== selected.vmId,
+            },
           )
         }
         result = await callAttempt({
