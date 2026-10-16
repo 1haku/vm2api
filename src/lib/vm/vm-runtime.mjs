@@ -249,7 +249,7 @@ function applyKvmBindChown(name, vm) {
   }
 }
 
-function runtimePatch(vm, info, extra = {}) {
+export function runtimePatch(vm, info, extra = {}) {
   const kernel = vm.kernel || 'ubuntu-24.04'
   const meta = OS_CATALOG[kernel] || OS_CATALOG['ubuntu-24.04']
   const { routing, memory, ...rest } = extra
@@ -257,6 +257,7 @@ function runtimePatch(vm, info, extra = {}) {
     type: runtimeKind(vm) === 'kvm' ? 'kvm' : RUNTIME,
     container: info?.name || containerName(vm.id),
     pid: info?.pid || null,
+    stopped: info?.running !== true,
     ip: info?.ip || PUBLIC_IP,
     network: NET,
     network_mode: info?.networkMode || NET,

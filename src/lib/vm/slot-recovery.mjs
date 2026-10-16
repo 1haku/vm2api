@@ -8,6 +8,7 @@
  * Container restarts stay owned by the kernel watchdog's bounded budget: an
  * operator power cycle holds the watchdog off the VM and then resets its budget.
  */
+import { isDeepStrictEqual } from 'node:util'
 import { clusterManager, vmNodeId } from '../cluster/placement.mjs'
 import { containerLogs, inspectContainerOrNull } from '../cluster/docker-remote.mjs'
 import { slotEgressNames } from '../cluster/remote-slot.mjs'
@@ -349,7 +350,7 @@ export async function diagnoseSlotServices(
  * The POST /start boot: bind (or allocate) the exit, adopt its timezone, start
  * the container and its inference runtime, then record the running intent.
  */
-export async function powerOnSlot({ projectRoot, id, proxyPool, routing = {}, fillTimezone = null }) {
+export async function powerOnSlot({ projectRoot, id, proxyPool, routing = {}, fillTimezone = null, ops = {} }) {
   let vm = getVm(projectRoot, id)
   if (!vm) return { ok: false, status: 404, code: 'vm_not_found', error: 'vm not found' }
   const bound = proxyPool.ensureBoundToVm(id, vm.proxy?.id || null)
@@ -359,7 +360,8 @@ export async function powerOnSlot({ projectRoot, id, proxyPool, routing = {}, fi
   bindVmProxy(projectRoot, id, bound)
   await (fillTimezone || ((vmId) => fillVmTimezoneFromExit(projectRoot, proxyPool, vmId)))(id)
   vm = getVm(projectRoot, id) || vm
-  const boot = await startSlotReady(vm, projectRoot, { routing })
+  const runtimeBeforeBoot = structuredClone(vm.runtime || {})
+  const boot = await (ops.startSlotReady || startSlotReady)(vm, projectRoot, { routing })
   if (!boot.ok) {
     return {
       ok: false,
@@ -370,11 +372,25 @@ export async function powerOnSlot({ projectRoot, id, proxyPool, routing = {}, fi
     }
   }
   const hasCred = vmHasSchedulableCredential(vm, projectRoot)
+  const runtime = boot.runtime || boot.docker?.runtime
   vm =
-    patchVmRecord(projectRoot, id, {
-      status: 'running',
-      schedulable: hasCred,
-      schedule_disabled_reason: hasCred ? null : 'no_credential',
+    patchVmRecord(projectRoot, id, (record) => {
+      const next = {
+        status: 'running',
+        schedulable: hasCred,
+        schedule_disabled_reason: hasCred ? null : 'no_credential',
+      }
+      if (runtime) {
+        const currentRuntime = record.runtime || {}
+        next.runtime = { ...runtime }
+        // Readiness can yield after the boot snapshot; retain newer runtime writes.
+        for (const key of new Set([...Object.keys(runtimeBeforeBoot), ...Object.keys(currentRuntime)])) {
+          if (isDeepStrictEqual(currentRuntime[key], runtimeBeforeBoot[key])) continue
+          if (Object.hasOwn(currentRuntime, key)) next.runtime[key] = currentRuntime[key]
+          else delete next.runtime[key]
+        }
+      }
+      return next
     }) || vm
   return { ok: true, vm, bound, boot }
 }
