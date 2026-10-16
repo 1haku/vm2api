@@ -1,13 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { VIEW_TITLES } from '@/config/nav'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Popover,
   PopoverContent,
@@ -38,7 +36,6 @@ type KeyDraft = {
 }
 
 type KeyResult = {
-  label?: string
   ok?: boolean
   status?: number
   text?: string
@@ -47,9 +44,6 @@ type KeyResult = {
 }
 
 type ConsoleResult = KeyResult & {
-  mode?: CallMode
-  endpoint_name?: string | null
-  upstream_model?: string
   items?: KeyResult[]
 }
 
@@ -59,21 +53,6 @@ type ModelList = {
 
 function freshKey(): KeyDraft {
   return { id: crypto.randomUUID(), apiKey: '', proxyId: DIRECT }
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className='grid gap-1.5'>
-      <Label>{label}</Label>
-      {children}
-    </div>
-  )
-}
-
-function maskKey(value: string) {
-  const text = value.trim()
-  if (text.length <= 8) return text ? '••••' : '空 key'
-  return `${text.slice(0, 4)}…${text.slice(-4)}`
 }
 
 export function AnthropicConsolePage() {
@@ -88,7 +67,7 @@ export function AnthropicConsolePage() {
   const [maxTokens, setMaxTokens] = useState('256')
   const [message, setMessage] = useState('Hi')
   const [testing, setTesting] = useState<number | 'all' | null>(null)
-  const [result, setResult] = useState<ConsoleResult | null>(null)
+  const [results, setResults] = useState<Record<string, KeyResult>>({})
   const [openProxy, setOpenProxy] = useState<string | null>(null)
 
   function patchKey(id: string, patch: Partial<KeyDraft>) {
@@ -103,11 +82,17 @@ export function AnthropicConsolePage() {
     return found ? proxyLabel(found) : '代理不可用'
   }
 
-  const payloadKeys = () =>
-    keys.map((item) => ({
-      api_key: item.apiKey.trim(),
-      proxy_id: item.proxyId === DIRECT ? '' : item.proxyId,
-    }))
+  function storeResults(data: ConsoleResult, keyIndex: number | null) {
+    const incoming = data.items?.length ? data.items : [data]
+    setResults((current) => {
+      const next = { ...current }
+      const targets = keyIndex == null ? keys : [keys[keyIndex]].filter(Boolean)
+      targets.forEach((key, index) => {
+        if (incoming[index]) next[key.id] = incoming[index]
+      })
+      return next
+    })
+  }
 
   const send = useMutation({
     mutationFn: (keyIndex: number | null) => {
@@ -122,7 +107,10 @@ export function AnthropicConsolePage() {
               model: model.trim(),
               max_tokens,
               message,
-              keys: payloadKeys(),
+              keys: keys.map((item) => ({
+                api_key: item.apiKey.trim(),
+                proxy_id: item.proxyId === DIRECT ? '' : item.proxyId,
+              })),
               ...(keyIndex == null ? {} : { key_index: keyIndex }),
             }
       return api<ConsoleResult>('/api/panel/anthropic/messages', {
@@ -133,8 +121,8 @@ export function AnthropicConsolePage() {
     },
     onMutate: (keyIndex) => setTesting(keyIndex == null ? 'all' : keyIndex),
     onSettled: () => setTesting(null),
-    onSuccess: (data) => {
-      setResult(data)
+    onSuccess: (data, keyIndex) => {
+      storeResults(data, keyIndex)
       if (data.ok === false)
         toast.error(data.error || `上游返回 ${data.status || ''}`)
     },
@@ -144,7 +132,7 @@ export function AnthropicConsolePage() {
   const fetchModels = useMutation({
     mutationFn: () => {
       const key = keys.find((item) => item.apiKey.trim())
-      if (!key) throw new Error('先填一把 API key')
+      if (!key) throw new Error('先填一把密钥')
       return api<ModelList>('/api/panel/api-endpoints/fetch-models', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -159,89 +147,81 @@ export function AnthropicConsolePage() {
       })
     },
     onSuccess: (data) => {
-      const ids = (data.models || [])
-        .map((item) => item.alias || item.name || item.id || '')
-        .map((item) => item.trim())
-        .filter(Boolean)
-      setModels([...new Set(ids)])
+      const seen: Record<string, true> = {}
+      const ids: string[] = []
+      for (const item of data.models || []) {
+        const id = (item.alias || item.name || item.id || '').trim()
+        if (!id || seen[id]) continue
+        seen[id] = true
+        ids.push(id)
+      }
+      setModels(ids)
       if (!model && ids[0]) setModel(ids[0])
       if (!ids.length) toast.error('上游没有返回模型')
     },
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const rows = result?.items?.length ? result.items : result ? [result] : []
-
   return (
-    <PageHeader
-      title={VIEW_TITLES.anthropic}
-      description='直接调用 Anthropic Messages。不走虚拟机。'
-    >
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]'>
-        <Card>
-          <CardContent className='grid gap-3 pt-6'>
-            <Field label='方式'>
+    <PageHeader title={VIEW_TITLES.anthropic}>
+      <div className='mx-auto grid max-w-5xl gap-6'>
+        <div className='flex flex-wrap items-end gap-3 border-b pb-4'>
+          <Select
+            value={mode}
+            onValueChange={(value) => setMode(value as CallMode)}
+          >
+            <SelectTrigger className='w-36' aria-label='调用方式'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='direct'>指定地址</SelectItem>
+              <SelectItem value='scheduled'>按地址调度</SelectItem>
+            </SelectContent>
+          </Select>
+          {mode === 'direct' ? (
+            <>
+              <Input
+                className='min-w-64 flex-1'
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                aria-label='地址'
+                spellCheck={false}
+              />
               <Select
-                value={mode}
-                onValueChange={(value) => setMode(value as CallMode)}
+                value={authScheme}
+                onValueChange={(value) => setAuthScheme(value as AuthScheme)}
               >
-                <SelectTrigger className='w-full'>
+                <SelectTrigger className='w-36' aria-label='认证'>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='direct'>指定地址</SelectItem>
-                  <SelectItem value='scheduled'>按 API 地址调度</SelectItem>
+                  <SelectItem value='x_api_key'>x-api-key</SelectItem>
+                  <SelectItem value='authorization_bearer'>Bearer</SelectItem>
                 </SelectContent>
               </Select>
-            </Field>
-            {mode === 'direct' ? (
-              <>
-                <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]'>
-                  <Field label='地址'>
-                    <Input
-                      value={baseUrl}
-                      onChange={(event) => setBaseUrl(event.target.value)}
-                      placeholder={DEFAULT_URL}
-                      spellCheck={false}
-                    />
-                  </Field>
-                  <Field label='认证'>
-                    <Select
-                      value={authScheme}
-                      onValueChange={(value) =>
-                        setAuthScheme(value as AuthScheme)
-                      }
-                    >
-                      <SelectTrigger className='w-full'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='x_api_key'>x-api-key</SelectItem>
-                        <SelectItem value='authorization_bearer'>
-                          Bearer
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </div>
-                <div className='grid gap-2'>
-                  <div className='flex items-center justify-between'>
-                    <Label>密钥</Label>
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='outline'
-                      onClick={() =>
-                        setKeys((current) => [...current, freshKey()])
-                      }
-                    >
-                      添加
-                    </Button>
-                  </div>
-                  {keys.map((item, index) => (
-                    <div key={item.id} className='flex items-center gap-2'>
+            </>
+          ) : (
+            <p className='pb-2 text-sm text-muted-foreground'>
+              用已启用的 API 地址轮询，流量走那把 key 的代理。
+            </p>
+          )}
+        </div>
+
+        {mode === 'direct' ? (
+          <div>
+            <div className='mb-2 grid grid-cols-[minmax(0,1fr)_9rem_4.5rem_3rem] gap-2 px-1 text-xs text-muted-foreground'>
+              <span>密钥</span>
+              <span>代理</span>
+              <span />
+              <span />
+            </div>
+            <div className='divide-y rounded-md border'>
+              {keys.map((item, index) => {
+                const result = results[item.id]
+                return (
+                  <div key={item.id} className='px-2 py-2'>
+                    <div className='grid grid-cols-[minmax(0,1fr)_9rem_4.5rem_3rem] items-center gap-2'>
                       <Input
-                        className='min-w-0 flex-1'
                         type='password'
                         autoComplete='off'
                         value={item.apiKey}
@@ -261,7 +241,7 @@ export function AnthropicConsolePage() {
                           <Button
                             type='button'
                             variant='outline'
-                            className='w-36 justify-start'
+                            className='justify-start font-normal'
                           >
                             <span className='truncate'>
                               {proxyName(item.proxyId)}
@@ -315,128 +295,117 @@ export function AnthropicConsolePage() {
                         disabled={testing !== null}
                         onClick={() => send.mutate(index)}
                       >
-                        {testing === index ? '测试中' : '测试'}
+                        {testing === index ? '…' : '测试'}
                       </Button>
                       <Button
                         type='button'
                         variant='ghost'
                         disabled={keys.length === 1}
-                        onClick={() =>
+                        onClick={() => {
                           setKeys((current) =>
                             current.filter((key) => key.id !== item.id)
                           )
-                        }
+                          setResults((current) => {
+                            const next = { ...current }
+                            delete next[item.id]
+                            return next
+                          })
+                        }}
                       >
                         删除
                       </Button>
                     </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className='text-sm text-muted-foreground'>
-                用 API 页里已启用的地址、模型和 key。流量走对应 key 的代理。
-              </p>
-            )}
-            <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto]'>
-              <Field label='模型'>
-                {models.length ? (
-                  <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger className='w-full'>
-                      <SelectValue placeholder='选择模型' />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {models.map((id) => (
-                        <SelectItem key={id} value={id}>
-                          {id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    value={model}
-                    onChange={(event) => setModel(event.target.value)}
-                    placeholder='先获取模型，或手填'
-                    spellCheck={false}
-                  />
-                )}
-              </Field>
-              <Field label='max_tokens'>
-                <Input
-                  inputMode='numeric'
-                  value={maxTokens}
-                  onChange={(event) => setMaxTokens(event.target.value)}
-                />
-              </Field>
-              {mode === 'direct' ? (
-                <Button
-                  type='button'
-                  variant='outline'
-                  className='self-end'
-                  disabled={fetchModels.isPending}
-                  onClick={() => fetchModels.mutate()}
-                >
-                  {fetchModels.isPending ? '获取中' : '获取模型'}
-                </Button>
-              ) : null}
+                    {result ? (
+                      <p
+                        className={cn(
+                          'mt-2 px-1 text-sm whitespace-pre-wrap',
+                          result.ok ? 'text-foreground' : 'text-destructive'
+                        )}
+                      >
+                        {result.ok ? '可用' : '不可用'} · HTTP{' '}
+                        {result.status || 0}
+                        {result.proxy ? ' · 经代理' : ' · 直连'}
+                        {result.error || result.text
+                          ? `\n${result.error || result.text}`
+                          : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
-            <Field label='消息'>
-              <Textarea
-                rows={4}
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-              />
-            </Field>
             <Button
-              disabled={testing !== null}
-              onClick={() => send.mutate(null)}
+              type='button'
+              variant='ghost'
+              className='mt-1 px-2'
+              onClick={() => setKeys((current) => [...current, freshKey()])}
             >
-              {testing === 'all'
-                ? '请求中'
-                : mode === 'direct'
-                  ? '批量验证'
-                  : '发送'}
+              添加一把密钥
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        ) : null}
 
-        <Card className='min-w-0'>
-          <CardContent className='grid gap-3 pt-6'>
-            <div className='text-sm text-muted-foreground'>
-              {result ? `HTTP ${result.status || 0}` : '还没有响应'}
-              {result?.upstream_model ? ` · ${result.upstream_model}` : ''}
-            </div>
-            {result?.error ? (
-              <p className='text-sm text-destructive'>{result.error}</p>
-            ) : null}
-            {rows.map((item, index) => (
-              <div
-                key={`${item.label || index}`}
-                className='rounded-md border p-3'
-              >
-                <div className='mb-2 flex flex-wrap gap-x-3 text-sm'>
-                  <span>
-                    {item.label || maskKey(keys[index]?.apiKey || '')}
-                  </span>
-                  <span
-                    className={cn(
-                      item.ok ? 'text-foreground' : 'text-destructive'
-                    )}
-                  >
-                    {item.ok ? '可用' : '不可用'} · HTTP {item.status || 0}
-                  </span>
-                  <span className='text-muted-foreground'>
-                    {item.proxy ? '经代理' : '直连'}
-                  </span>
-                </div>
-                <pre className='max-h-48 overflow-auto text-sm whitespace-pre-wrap'>
-                  {item.error || item.text || ''}
-                </pre>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem_auto]'>
+          {models.length ? (
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger className='w-full' aria-label='模型'>
+                <SelectValue placeholder='选择模型' />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((id) => (
+                  <SelectItem key={id} value={id}>
+                    {id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder='模型'
+              aria-label='模型'
+              spellCheck={false}
+            />
+          )}
+          <Input
+            inputMode='numeric'
+            value={maxTokens}
+            onChange={(event) => setMaxTokens(event.target.value)}
+            aria-label='max_tokens'
+          />
+          {mode === 'direct' ? (
+            <Button
+              type='button'
+              variant='outline'
+              disabled={fetchModels.isPending}
+              onClick={() => fetchModels.mutate()}
+            >
+              {fetchModels.isPending ? '获取中' : '获取模型'}
+            </Button>
+          ) : (
+            <span />
+          )}
+        </div>
+        <Textarea
+          rows={3}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          aria-label='消息'
+        />
+        <div>
+          <Button
+            variant='outline'
+            disabled={testing !== null}
+            onClick={() => send.mutate(null)}
+          >
+            {testing === 'all'
+              ? '请求中'
+              : mode === 'direct'
+                ? '全部测试'
+                : '发送'}
+          </Button>
+        </div>
       </div>
     </PageHeader>
   )
