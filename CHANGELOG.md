@@ -1,6 +1,7 @@
 # Changelog
 
-## 未发布
+## 1.3.180 — 2026-10-17
+
 - 测试链接按槽位定时真实对话（延续 #467 / REQ-0466）：面板结构化调度（每小时/每天/每周 + IANA 时区，无 Cron 文本框），SettingsRepo 持久化，到点 `runVmTestChat`；全局默认模板与「同步调度时间到全部/所选槽」（仅覆盖调度字段）。依赖 `croner@10.0.1`。（#466）
 - 已有 Docker 槽可通过面板 `PATCH /api/panel/vms/:id`（`machine.memory`）或槽位详情「内存 → 提升」在线上调容器内存：先 `docker update --memory … --memory-swap …`，读回 `HostConfig.Memory` 一致后才写入 `machine.memory` / `runtime.memory`；失败不写配置。不支持降配或 KVM。（#441）
 - 面板新增 admin 专用 Anthropic 控制台（`POST /api/panel/anthropic/messages`，与 VM 测试分离；经控制面转发上游，浏览器不直连）；推理路由收紧：仅 managed 且 category 为 `api` 的协议密钥走已配置的 API 上游，master key 与 `x-kin-backend=api` 不再强制 API 后端（改走 OAuth/VM）。（#478）
@@ -9,6 +10,9 @@
 - 修复面板「采集特征」只更新 `vm.json`、不更新运行中遥测配置：采集成功后重写 `worker.json.telemetry` 并同步远端槽位文件，sidecar 热加载新硬件特征，无需重启。
 - 官方初装的遥测同步默认关闭；只有显式打开「同步遥测」或槽位种子遥测开关后才写入并运行遥测。
 - 修复 KVM / Docker 槽容器处于 `Restarting` 崩溃循环时被当成运行中：`inspectContainer()` 读取 `State.Restarting`，崩溃循环的容器视为未运行，启动和重载改为重建，不再 `already-running` 短路或对重启中的容器 `docker exec`。新建槽位容器前先 `docker pull` 浮动 tag（`kin-kvm-*` / `kin-os-*`），拉取失败才用本地镜像，旧 runner 镜像可随重建更新；`docker/kin-*/build.mjs --pull` / `--pull-only` 也会刷新已存在的镜像。`kin-kvm-entry` 降权前对容器内 `/dev/kvm` 节点执行 `chmod g+rw`，兼容宿主 `0600` 权限。（#484）
+- 修复 GitHub Release 查询失败却显示「已是最新」：失败及失效缓存返回 `check_status: failed`，`latest` / `latest_tag` / `update_available` 为 `null`；面板显示「检查失败」、隐藏失效最新版本号并禁用自动升级。自动升级发现版本失败时返回 HTTP 502 / `release_check_failed`，显式指定版本的升级仍可用。外部 API 调用方需区分未知的 `null` 与无更新的 `false`。（#480）
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次 Node。无迁移、无新依赖、无 payload 变更，不必 `wrap-cli/sync`，不必重建或重启槽位容器。在线升内存仅在主动操作时生效；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.179 — 2026-10-16
 
