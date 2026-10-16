@@ -62,20 +62,21 @@ function headerMap(raw) {
   return out
 }
 
-function directKeys(input = {}) {
+function directKeys(input = {}, store = null) {
   const listed = Array.isArray(input.keys) ? input.keys : [input]
   const keys = []
   for (const item of listed) {
     const source = item && typeof item === 'object' ? item : { api_key: item }
-    const apiKey = String(source.api_key || source.apiKey || '').trim()
+    const saved = source.key_id || source.keyId ? savedEndpointKey(store, source.key_id || source.keyId) : null
+    const apiKey = String(source.api_key || source.apiKey || saved?.api_key || '').trim()
     if (!apiKey) continue
     const label = String(source.label || '').trim().slice(0, 40)
     keys.push({
       label: label || `key ${keys.length + 1}`,
       api_key: apiKey,
-      proxy_id: String(source.proxy_id || source.proxyId || '').trim(),
-      base_url: String(source.base_url || source.baseUrl || '').trim(),
-      auth_scheme: source.auth_scheme || source.authScheme || '',
+      proxy_id: String(source.proxy_id || source.proxyId || saved?.proxy_id || '').trim(),
+      base_url: String(source.base_url || source.baseUrl || saved?.base_url || '').trim(),
+      auth_scheme: source.auth_scheme || source.authScheme || saved?.auth_scheme || '',
     })
   }
   if (!keys.length) {
@@ -87,6 +88,22 @@ function directKeys(input = {}) {
   return keys
 }
 
+export function savedEndpointKey(store, keyId) {
+  const id = String(keyId || '').trim()
+  if (!id || !store?.listRaw) return null
+  for (const endpoint of store.listRaw()) {
+    const key = (endpoint.api_key_entries || []).find((item) => item.id === id)
+    if (!key) continue
+    return {
+      api_key: key.api_key,
+      proxy_id: key.proxy_id || '',
+      proxy_url: key.proxy_url || '',
+      base_url: endpoint.base_url || '',
+      auth_scheme: endpoint.auth_scheme || endpoint.headers?.auth_scheme || '',
+    }
+  }
+  return null
+}
 export function resolveConsoleProxyUrl(proxyPool, proxyId) {
   const id = String(proxyId || '').trim()
   if (!id) return ''
@@ -209,7 +226,7 @@ async function forwardConsoleRequest(request, { cfg, forward }) {
   }
 }
 
-export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, input, forward = forwardApi }) {
+export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, store = null, input, forward = forwardApi }) {
   const scheduled = input?.mode === 'scheduled'
   if (scheduled) {
     if (!scheduler?.pick) {
@@ -219,7 +236,7 @@ export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, in
     return forwardConsoleRequest(request, { cfg, forward })
   }
 
-  const keys = directKeys(input)
+  const keys = directKeys(input, store)
   const index = Number.isInteger(Number(input?.key_index)) ? Number(input.key_index) : null
   const selected = index == null ? keys : [keys[index]].filter(Boolean)
   if (!selected.length) {

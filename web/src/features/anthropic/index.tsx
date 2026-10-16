@@ -136,6 +136,7 @@ export function AnthropicConsolePage() {
             base_url: item.baseUrl.trim() || DEFAULT_URL,
             auth_scheme: item.authScheme,
             api_key: item.apiKey.trim(),
+            key_id: item.apiKey.trim() ? '' : item.keyId || '',
             proxy_id: item.proxyId === DIRECT ? '' : item.proxyId,
           })),
           ...(index == null ? {} : { key_index: index }),
@@ -153,8 +154,10 @@ export function AnthropicConsolePage() {
 
   const fetchModels = useMutation({
     mutationFn: () => {
-      const endpoint = endpoints.find((item) => item.apiKey.trim())
-      if (!endpoint) throw new Error('先填一把密钥')
+      const endpoint = endpoints.find(
+        (item) => item.apiKey.trim() || item.keyId
+      )
+      if (!endpoint) throw new Error('先保存或填写一把密钥')
       return api<ModelList>('/api/panel/api-endpoints/fetch-models', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -163,8 +166,8 @@ export function AnthropicConsolePage() {
           protocol: 'anthropic',
           base_url: endpoint.baseUrl.trim() || DEFAULT_URL,
           api_key: endpoint.apiKey.trim(),
+          key_id: endpoint.apiKey.trim() ? '' : endpoint.keyId || '',
           auth_scheme: endpoint.authScheme,
-          proxy_id: endpoint.proxyId === DIRECT ? '' : endpoint.proxyId,
         }),
       })
     },
@@ -369,7 +372,9 @@ export function AnthropicConsolePage() {
                     <Button
                       type='button'
                       variant='outline'
-                      disabled={save.isPending || !item.apiKey.trim()}
+                      disabled={
+                        save.isPending || (!item.apiKey.trim() && !item.keyId)
+                      }
                       onClick={() => save.mutate(item)}
                     >
                       保存

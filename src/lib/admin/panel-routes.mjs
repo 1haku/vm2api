@@ -1589,15 +1589,16 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/api-endpoints/fetch-models') {
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
+          const saved = savedEndpointKey(apiEndpointStore, body?.key_id)
           const proxyUrl = body?.proxy_id
             ? resolveConsoleProxyUrl(proxyPool, body.proxy_id)
-            : body?.proxy_url
+            : saved?.proxy_url || body?.proxy_url
           const result = await fetchUpstreamModels({
             cfg,
             kind: body?.kind,
             protocol: body?.protocol,
-            base_url: body?.base_url,
-            api_key: body?.api_key,
+            base_url: body?.base_url || saved?.base_url,
+            api_key: body?.api_key || saved?.api_key,
             proxy_url: proxyUrl,
             headers: body?.headers,
             auth_scheme: body?.auth_scheme || body?.authScheme,
@@ -1617,6 +1618,7 @@ export function createPanelHandler(ctx) {
           if (Array.isArray(body?.api_key_entries)) {
             for (const entry of body.api_key_entries) {
               if (!entry.proxy_url) entry.proxy_url = proxyUrl
+              if (body?.proxy_id != null) entry.proxy_id = String(body.proxy_id || '').trim()
             }
           }
           const rec = apiEndpointStore.create(body || {})
@@ -1641,10 +1643,14 @@ export function createPanelHandler(ctx) {
           if (keyId) {
             apiEndpointStore.updateKey(keyId, {
               ...(apiKey ? { api_key: apiKey } : {}),
-              proxy_url: body?.proxy_id != null ? proxyUrl : undefined,
+              ...(body?.proxy_id != null ? { proxy_url: proxyUrl, proxy_id: String(body.proxy_id || '').trim() } : {}),
             })
           } else if (apiKey) {
-            apiEndpointStore.addKey(id, { api_key: apiKey, proxy_url: proxyUrl })
+            apiEndpointStore.addKey(id, {
+              api_key: apiKey,
+              proxy_url: proxyUrl,
+              proxy_id: String(body?.proxy_id || '').trim(),
+            })
           }
           apiScheduler.reload(apiEndpointStore.listRaw())
           const saved = apiEndpointStore.getRaw(id) || rec
