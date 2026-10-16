@@ -90,7 +90,7 @@ import {
   vmPoolsFor,
 } from './vm-pools.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
-import { runAnthropicConsole } from './anthropic-console.mjs'
+import { runAnthropicConsole, resolveConsoleProxyUrl } from './anthropic-console.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import {
@@ -1589,13 +1589,16 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/api-endpoints/fetch-models') {
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
+          const proxyUrl = body?.proxy_id
+            ? resolveConsoleProxyUrl(proxyPool, body.proxy_id)
+            : body?.proxy_url
           const result = await fetchUpstreamModels({
             cfg,
             kind: body?.kind,
             protocol: body?.protocol,
             base_url: body?.base_url,
             api_key: body?.api_key,
-            proxy_url: body?.proxy_url,
+            proxy_url: proxyUrl,
             headers: body?.headers,
             auth_scheme: body?.auth_scheme || body?.authScheme,
           })
