@@ -68,6 +68,7 @@ import {
 import { SeedPolicyCard } from '@/features/vm/seed-policy-card'
 import { usePoolSeatStream } from '@/features/vm/use-pool-seat-stream'
 import { useVmTestChat } from '@/features/vm/use-vm-test-chat'
+import { VmTestSchedule } from '@/features/vm/vm-test-schedule'
 
 function postVm<T = unknown>(id: string, path: string, body?: unknown) {
   return api<T>(`/api/panel/vms/${encodeURIComponent(id)}${path}`, {
@@ -410,6 +411,7 @@ export function VmDetailPage() {
             credType={credType}
             isCodex={isCodexVm(vm)}
             dataplane={vm.resolved_dataplane}
+            schedule={<VmTestSchedule vm={vm} {...test} />}
           />
           <VmOpsTab
             vm={vm}

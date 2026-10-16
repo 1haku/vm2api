@@ -75,6 +75,7 @@ import {
 } from '../protocol/seed-policy.mjs'
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
+import { VmTestScheduleError } from './vm-test-schedule.mjs'
 import { readCatalogSync, syncClaudeCatalog, syncGptCatalog } from './catalog-monitor.mjs'
 import { setPriceOverride, listPriceOverrides, syncModelsDev } from './price-catalog.mjs'
 import { buildPricing } from './pricing-view.mjs'
@@ -105,6 +106,7 @@ import {
   countUserCreatedVms,
   filterVmsForPanel,
   normalizeOwnerId,
+  vmOwnerId,
 } from './resource-owner.mjs'
 import { servePoolSeatStream } from './pool-seat-stream.mjs'
 import { logsToCsv, logsToJsonl } from './request-log.mjs'
@@ -505,6 +507,7 @@ export function createPanelHandler(ctx) {
   const apiScheduler = ctx.apiScheduler
   const panelUsers = ctx.panelUsers
   const requestLog = ctx.requestLog
+  const vmTestSchedule = ctx.vmTestSchedule
   const backupService = ctx.backupService
   const stats = ctx.stats
   const persistRoutingPatch = (...args) => ctx.persistRoutingPatch(...args)
@@ -630,6 +633,121 @@ export function createPanelHandler(ctx) {
       ? { ok: false, error: probed.body?.error?.message || probed.body?.error?.code || 'probe_failed' }
       : { ok: probed?.data?.ok !== false, source: probed?.data?.source || null }
     return { start_error: startError, official_cc_bootstrap: bootstrap, probe }
+  }
+
+  async function handleVmTestSchedule(req, res, id) {
+    if (!isValidVmId(id)) {
+      return json(res, 400, { ok: false, error: { code: 'invalid_vm_id', message: 'invalid vm id' } })
+    }
+    if (!getVm(cfg.paths.project, id)) {
+      return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'vm not found' } })
+    }
+    if (req.method === 'GET') {
+      return json(res, 200, panel.ok({ schedule: vmTestSchedule.get(id) }))
+    }
+    if (req.method === 'DELETE') {
+      vmTestSchedule.remove(id)
+      return json(res, 200, panel.ok({ schedule: null }))
+    }
+    let body
+    try {
+      body = await readBody(req, 64 * 1024)
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: { code: 'invalid_request', message: String(error?.message || 'invalid JSON body') },
+      })
+    }
+    try {
+      return json(res, 200, panel.ok({ schedule: vmTestSchedule.save(id, body) }))
+    } catch (error) {
+      const typed = error instanceof VmTestScheduleError
+      return json(res, typed ? error.status : 500, {
+        ok: false,
+        error: {
+          code: error?.code || 'test_schedule_save_failed',
+          message: String(error?.message || error),
+        },
+      })
+    }
+  }
+
+  async function handleVmTestScheduleDefault(req, res) {
+    if (req.method === 'GET') {
+      return json(res, 200, panel.ok({ schedule: vmTestSchedule.getDefaultTemplate() }))
+    }
+    let body
+    try {
+      body = await readBody(req, 16 * 1024)
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: { code: 'invalid_request', message: String(error?.message || 'invalid JSON body') },
+      })
+    }
+    try {
+      if (body == null || body.schedule == null) {
+        vmTestSchedule.clearDefaultTemplate()
+        return json(res, 200, panel.ok({ schedule: null }))
+      }
+      return json(res, 200, panel.ok({ schedule: vmTestSchedule.saveDefaultTemplate(body.schedule) }))
+    } catch (error) {
+      const typed = error instanceof VmTestScheduleError
+      return json(res, typed ? error.status : 500, {
+        ok: false,
+        error: {
+          code: error?.code || 'test_schedule_default_failed',
+          message: String(error?.message || error),
+        },
+      })
+    }
+  }
+
+  async function handleVmTestScheduleSync(req, res) {
+    let body
+    try {
+      body = await readBody(req, 256 * 1024)
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: { code: 'invalid_request', message: String(error?.message || 'invalid JSON body') },
+      })
+    }
+    const ident = panelIdentity(req)
+    let vmIds = body?.vm_ids
+    if (body?.scope === 'all' && ident.role === 'user') {
+      const ownerId = normalizeOwnerId(req.panelUserId)
+      vmIds = listVms(cfg.paths.project)
+        .filter((vm) => vmOwnerId(vm) === ownerId)
+        .map((vm) => vm.id)
+      body = { ...body, scope: 'ids', vm_ids: vmIds }
+    } else if (body?.scope === 'ids' && ident.role === 'user') {
+      const ownerId = normalizeOwnerId(req.panelUserId)
+      vmIds = (Array.isArray(body.vm_ids) ? body.vm_ids : [])
+        .map((id) => String(id || '').trim())
+        .filter((id) => {
+          const vm = getVm(cfg.paths.project, id)
+          return vm && vmOwnerId(vm) === ownerId
+        })
+      body = { ...body, vm_ids: vmIds }
+    }
+    try {
+      const result = vmTestSchedule.syncSchedules({
+        scope: body?.scope,
+        vmIds: body?.vm_ids,
+        schedule: body?.schedule,
+      })
+      return json(res, 200, panel.ok(result))
+    } catch (error) {
+      const typed = error instanceof VmTestScheduleError
+      return json(res, typed ? error.status : 500, {
+        ok: false,
+        error: {
+          code: error?.code || 'test_schedule_sync_failed',
+          message: String(error?.message || error),
+        },
+      })
+    }
   }
 
   function normalizePanelApiKeyInput(body = {}) {
@@ -2737,6 +2855,26 @@ export function createPanelHandler(ctx) {
         return json(res, 200, result)
       }
 
+      if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/test-schedule$/.test(p)) {
+        return await handleVmTestSchedule(req, res, p.split('/')[4])
+      }
+      if (req.method === 'PUT' && /^\/api\/panel\/vms\/[^/]+\/test-schedule$/.test(p)) {
+        return await handleVmTestSchedule(req, res, p.split('/')[4])
+      }
+      if (req.method === 'DELETE' && /^\/api\/panel\/vms\/[^/]+\/test-schedule$/.test(p)) {
+        return await handleVmTestSchedule(req, res, p.split('/')[4])
+      }
+
+      if (req.method === 'GET' && p === '/api/panel/test-schedule/default') {
+        return await handleVmTestScheduleDefault(req, res)
+      }
+      if (req.method === 'PUT' && p === '/api/panel/test-schedule/default') {
+        return await handleVmTestScheduleDefault(req, res)
+      }
+      if (req.method === 'POST' && p === '/api/panel/test-schedule/sync') {
+        return await handleVmTestScheduleSync(req, res)
+      }
+
       // POST /api/panel/vms/:id/test-chat — sub2api-style model connectivity test
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/test-chat$/.test(p)) {
         const id = p.split('/')[4]
@@ -2956,6 +3094,9 @@ export function createPanelHandler(ctx) {
         } catch {}
         fs.unlinkSync(vmPath)
         invalidateVmSlotReadCache(cfg.paths.project, id)
+        try {
+          vmTestSchedule.remove(id)
+        } catch {}
         if (active === id) {
           clearActiveVm(cfg.paths.project)
           try {
