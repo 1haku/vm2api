@@ -1636,7 +1636,16 @@ export function createPanelHandler(ctx) {
           const proxyUrl = body?.proxy_id ? resolveConsoleProxyUrl(proxyPool, body.proxy_id) : ''
           const rec = apiEndpointStore.update(id, body || {})
           if (!rec) return json(res, 404, { ok: false, error: { message: 'endpoint not found' } })
-          if (body?.api_key && proxyUrl) apiEndpointStore.addKey(id, { api_key: body.api_key, proxy_url: proxyUrl })
+          const keyId = String(body?.key_id || '').trim()
+          const apiKey = String(body?.api_key || '').trim()
+          if (keyId) {
+            apiEndpointStore.updateKey(keyId, {
+              ...(apiKey ? { api_key: apiKey } : {}),
+              proxy_url: body?.proxy_id != null ? proxyUrl : undefined,
+            })
+          } else if (apiKey) {
+            apiEndpointStore.addKey(id, { api_key: apiKey, proxy_url: proxyUrl })
+          }
           apiScheduler.reload(apiEndpointStore.listRaw())
           const saved = apiEndpointStore.getRaw(id) || rec
           return json(res, 200, { ok: true, item: publicEndpointView(saved) })

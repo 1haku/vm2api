@@ -186,33 +186,53 @@ export function AnthropicConsolePage() {
 
   const save = useMutation({
     mutationFn: async (item: EndpointDraft) => {
-      const body = {
+      const body: Record<string, unknown> = {
         kind: item.baseUrl.trim() === DEFAULT_URL ? 'claude' : 'custom',
         protocol: 'anthropic',
         name: item.baseUrl.trim() || DEFAULT_URL,
         base_url: item.baseUrl.trim() || DEFAULT_URL,
         auth_scheme: item.authScheme,
         proxy_id: item.proxyId === DIRECT ? '' : item.proxyId,
+        key_id: item.keyId || '',
+        api_key: item.apiKey.trim(),
         models: [
           {
             name: model.trim() || 'claude-sonnet-4-5',
             alias: model.trim() || 'claude-sonnet-4-5',
           },
         ],
-        ...(item.storedId || !item.apiKey.trim()
-          ? {}
-          : { api_key_entries: [{ api_key: item.apiKey.trim() }] }),
       }
+      if (!item.storedId)
+        body.api_key_entries = item.apiKey.trim()
+          ? [{ api_key: item.apiKey.trim() }]
+          : []
       const path = item.storedId
         ? `/api/panel/api-endpoints/${encodeURIComponent(item.storedId)}`
         : '/api/panel/api-endpoints'
-      await api(path, {
+      return api<{
+        item?: { id?: string; api_key_entries?: { id?: string }[] }
+      }>(path, {
         method: item.storedId ? 'PATCH' : 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       })
     },
-    onSuccess: async () => {
+    onSuccess: async (data, item) => {
+      const saved = data.item
+      if (saved?.id) {
+        setEndpoints((current) =>
+          current.map((row) =>
+            row.id === item.id
+              ? {
+                  ...row,
+                  storedId: saved.id,
+                  keyId: saved.api_key_entries?.[0]?.id || row.keyId,
+                  apiKey: '',
+                }
+              : row
+          )
+        )
+      }
       toast.success('已接入 API 密钥路径')
       await qc.invalidateQueries({
         queryKey: apiEndpointsQueryOptions().queryKey,
