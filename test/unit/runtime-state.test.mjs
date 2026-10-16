@@ -3,8 +3,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { raiseDockerSlotMemory } from '../../src/lib/vm/docker-slot-memory.mjs'
 import { powerOnSlot } from '../../src/lib/vm/slot-recovery.mjs'
 import { runtimePatch } from '../../src/lib/vm/vm-runtime.mjs'
+import { getVm, patchVmRecord } from '../../src/lib/vm/vm-registry.mjs'
 
 for (const type of ['docker', 'kvm']) {
   test(`runtime observation replaces stale stopped state (${type})`, () => {
@@ -96,4 +98,46 @@ test('successful boot without runtime metadata preserves existing runtime', asyn
   const result = await powerOnSlot({ ...options, ops: { startSlotReady: async () => ({ ok: true }) } })
   assert.equal(result.ok, true)
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).runtime.pid, 7)
+})
+
+test('power-on preserves a verified memory raise made while boot readiness is pending', async (t) => {
+  const { file, options } = fixture(t)
+  patchVmRecord(options.projectRoot, options.id, (record) => ({
+    machine: { memory: '2g' },
+    runtime: { ...record.runtime, memory: '2g' },
+  }))
+  const ready = Promise.withResolvers()
+  const resume = Promise.withResolvers()
+  t.after(() => resume.resolve())
+  const starting = powerOnSlot({
+    ...options,
+    ops: {
+      startSlotReady: async (vm) => {
+        runtimePatch(vm, { running: true, pid: 42, startedAt: 'new' }, { memory: '2g' })
+        const runtime = vm.runtime
+        ready.resolve()
+        await resume.promise
+        return { ok: true, runtime }
+      },
+    },
+  })
+  await ready.promise
+  const raised = raiseDockerSlotMemory(options.projectRoot, getVm(options.projectRoot, options.id), '4g', {
+    execImpl: (argv) => ({
+      ok: true,
+      stdout: argv[1] === 'inspect' ? String(4 * 1024 ** 3) : '',
+      stderr: '',
+    }),
+  })
+  assert.equal(raised.ok, true)
+  resume.resolve()
+  const result = await starting
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(result.ok, true)
+  assert.equal(saved.machine.memory, '4g')
+  assert.equal(saved.runtime.memory, '4g')
+  assert.equal(result.vm.runtime.memory, '4g')
+  assert.equal(saved.runtime.pid, 42)
+  assert.equal(saved.runtime.stopped, false)
+  assert.equal(saved.runtime.started_at, 'new')
 })
