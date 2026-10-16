@@ -1613,6 +1613,12 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/api-endpoints') {
         const body = await readBody(req, 1 << 20).catch(() => ({}))
         try {
+          const proxyUrl = body?.proxy_id ? resolveConsoleProxyUrl(proxyPool, body.proxy_id) : ''
+          if (Array.isArray(body?.api_key_entries)) {
+            for (const entry of body.api_key_entries) {
+              if (!entry.proxy_url) entry.proxy_url = proxyUrl
+            }
+          }
           const rec = apiEndpointStore.create(body || {})
           apiScheduler.reload(apiEndpointStore.listRaw())
           return json(res, 201, { ok: true, item: publicEndpointView(rec, { reveal: true }) })
@@ -1627,10 +1633,13 @@ export function createPanelHandler(ctx) {
         const id = p.split('/').pop()
         const body = await readBody(req, 1 << 20).catch(() => ({}))
         try {
+          const proxyUrl = body?.proxy_id ? resolveConsoleProxyUrl(proxyPool, body.proxy_id) : ''
           const rec = apiEndpointStore.update(id, body || {})
           if (!rec) return json(res, 404, { ok: false, error: { message: 'endpoint not found' } })
+          if (body?.api_key && proxyUrl) apiEndpointStore.addKey(id, { api_key: body.api_key, proxy_url: proxyUrl })
           apiScheduler.reload(apiEndpointStore.listRaw())
-          return json(res, 200, { ok: true, item: publicEndpointView(rec) })
+          const saved = apiEndpointStore.getRaw(id) || rec
+          return json(res, 200, { ok: true, item: publicEndpointView(saved) })
         } catch (e) {
           return json(res, 400, { ok: false, error: { message: String(e.message || e), code: e.code } })
         }

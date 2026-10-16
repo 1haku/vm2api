@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { VIEW_TITLES } from '@/config/nav'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader } from '@/components/page-header'
+import { apiEndpointsQueryOptions } from '@/features/api-endpoints/queries'
 import { proxyLabel } from '@/features/proxies/proxy-sort'
 import { proxiesQueryOptions } from '@/features/proxies/queries'
 
@@ -30,6 +31,8 @@ type AuthScheme = 'x_api_key' | 'authorization_bearer'
 
 type EndpointDraft = {
   id: string
+  storedId?: string
+  keyId?: string
   baseUrl: string
   authScheme: AuthScheme
   apiKey: string
@@ -63,17 +66,38 @@ function freshEndpoint(): EndpointDraft {
 }
 
 export function AnthropicConsolePage() {
+  const qc = useQueryClient()
   const proxies = useQuery(proxiesQueryOptions())
+  const stored = useQuery(apiEndpointsQueryOptions())
   const options = (proxies.data?.proxies || []).filter((item) => item.id)
+  const [loaded, setLoaded] = useState(false)
   const [endpoints, setEndpoints] = useState<EndpointDraft[]>([freshEndpoint()])
+  const [openProxy, setOpenProxy] = useState<string | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [model, setModel] = useState('')
   const [maxTokens, setMaxTokens] = useState('256')
   const [message, setMessage] = useState('Hi')
   const [testing, setTesting] = useState<number | 'all' | null>(null)
   const [results, setResults] = useState<Record<string, KeyResult>>({})
-  const [openProxy, setOpenProxy] = useState<string | null>(null)
-
+  useEffect(() => {
+    if (loaded || !stored.data) return
+    const rows = (stored.data.items || [])
+      .filter((item) => item.protocol !== 'openai')
+      .map((item) => ({
+        id: item.id,
+        storedId: item.id,
+        baseUrl: item.base_url || DEFAULT_URL,
+        authScheme:
+          item.auth_scheme === 'authorization_bearer'
+            ? ('authorization_bearer' as const)
+            : ('x_api_key' as const),
+        apiKey: '',
+        proxyId: DIRECT,
+        keyId: item.api_key_entries?.[0]?.id || '',
+      }))
+    if (rows.length) setEndpoints(rows)
+    setLoaded(true)
+  }, [loaded, stored.data])
   function patchEndpoint(id: string, patch: Partial<EndpointDraft>) {
     setEndpoints((current) =>
       current.map((item) => (item.id === id ? { ...item, ...patch } : item))
@@ -156,6 +180,43 @@ export function AnthropicConsolePage() {
       setModels(ids)
       if (!model && ids[0]) setModel(ids[0])
       if (!ids.length) toast.error('上游没有返回模型')
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
+  const save = useMutation({
+    mutationFn: async (item: EndpointDraft) => {
+      const body = {
+        kind: item.baseUrl.trim() === DEFAULT_URL ? 'claude' : 'custom',
+        protocol: 'anthropic',
+        name: item.baseUrl.trim() || DEFAULT_URL,
+        base_url: item.baseUrl.trim() || DEFAULT_URL,
+        auth_scheme: item.authScheme,
+        proxy_id: item.proxyId === DIRECT ? '' : item.proxyId,
+        models: [
+          {
+            name: model.trim() || 'claude-sonnet-4-5',
+            alias: model.trim() || 'claude-sonnet-4-5',
+          },
+        ],
+        ...(item.storedId || !item.apiKey.trim()
+          ? {}
+          : { api_key_entries: [{ api_key: item.apiKey.trim() }] }),
+      }
+      const path = item.storedId
+        ? `/api/panel/api-endpoints/${encodeURIComponent(item.storedId)}`
+        : '/api/panel/api-endpoints'
+      await api(path, {
+        method: item.storedId ? 'PATCH' : 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    },
+    onSuccess: async () => {
+      toast.success('已接入 API 密钥路径')
+      await qc.invalidateQueries({
+        queryKey: apiEndpointsQueryOptions().queryKey,
+      })
     },
     onError: (error: Error) => toast.error(error.message),
   })
@@ -284,6 +345,14 @@ export function AnthropicConsolePage() {
                       onClick={() => send.mutate(index)}
                     >
                       {testing === index ? '…' : '测试'}
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      disabled={save.isPending || !item.apiKey.trim()}
+                      onClick={() => save.mutate(item)}
+                    >
+                      保存
                     </Button>
                     <Button
                       type='button'
