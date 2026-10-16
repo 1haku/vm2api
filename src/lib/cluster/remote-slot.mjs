@@ -667,6 +667,9 @@ export async function startRemoteSlot(vm, projectRoot, { recreate = false, routi
       existing.Config?.Labels?.['kin.vm.layout'] === SLOT_LAYOUT &&
       runtimeLabelOf(existing) === runtimeKind(vm) &&
       codexRoleMatches(existing, vm) &&
+      // Running stays true during Docker restart-policy backoff. Recreate the
+      // loop just like the local runtime; otherwise watchdog revival is a no-op.
+      !existing.State?.Restarting &&
       !recreate
     const common = {
       nodeId,
