@@ -148,6 +148,39 @@ test('batch check records a failed key and continues with the next', async () =>
   assert.equal(result.items[1].ok, true)
   assert.equal(result.items[1].text, 'pong')
 })
+test('each address keeps its own url and auth, while a blank url stays official', async () => {
+  const seen = []
+  await runAnthropicConsole({
+    cfg: {},
+    input: {
+      base_url: 'https://should-not-win.example',
+      auth_scheme: 'authorization_bearer',
+      model: 'claude-sonnet-4-5',
+      message: 'Hi',
+      keys: [
+        { api_key: 'sk-one' },
+        { api_key: 'sk-two', base_url: 'https://relay.example/v1', auth_scheme: 'authorization_bearer' },
+      ],
+    },
+    forward: async (request) => {
+      seen.push({
+        url: request.url,
+        xApiKey: request.headers['x-api-key'] || '',
+        authorization: request.headers.authorization || '',
+      })
+      return {
+        statusCode: 200,
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from(JSON.stringify({ content: [{ type: 'text', text: 'pong' }] }))
+        },
+      }
+    },
+  })
+  assert.deepEqual(seen, [
+    { url: 'https://api.anthropic.com/v1/messages?beta=true', xApiKey: 'sk-one', authorization: '' },
+    { url: 'https://relay.example/v1/messages?beta=true', xApiKey: '', authorization: 'Bearer sk-two' },
+  ])
+})
 
 test('scheduled console uses the API picker, upstream model, auth, and key proxy', () => {
   const scheduler = new ApiScheduler()

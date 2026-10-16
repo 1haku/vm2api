@@ -74,6 +74,8 @@ function directKeys(input = {}) {
       label: label || `key ${keys.length + 1}`,
       api_key: apiKey,
       proxy_id: String(source.proxy_id || source.proxyId || '').trim(),
+      base_url: String(source.base_url || source.baseUrl || '').trim(),
+      auth_scheme: source.auth_scheme || source.authScheme || '',
     })
   }
   if (!keys.length) {
