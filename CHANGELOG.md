@@ -1,6 +1,7 @@
 # Changelog
 
 ## 未发布
+- 修复设置 → 健康 → 签名修复关闭时仍提前删除思维签名块：`display: omitted` 的空文本签名、`redacted_thinking` 加密块现在原样保留；cli-hop 首个出站 hop 不改写已有 thinking 指纹，缺少字段时补 `signature: ""`，仅 repaired 重试清理。签名修复仍只做一次降级重试，`cli-node` 的既有登录 / fallback 清理逻辑不变。
 - 集群节点可以创建 GPT 槽。节点容器只保留身份和出口（`sleep infinity`，标签 `kin.vm.role=codex`），Codex kernel 仍在控制面监听 `vms/<id>/run/codex-kernel.sock`。节点选「本机出口」时 kernel 走该节点的转发，不再从控制面直连。旧的节点 GPT 容器（PID 1 仍是 kin-kernel）在下次启动或重载时重建。KVM 不使用该标签，新建后再次启动不会被重建。crag 数据面、官方 CC 初装、wrap 修复和推理引擎切换仍只在本机。
 
 ## 1.3.178 — 2026-10-16
