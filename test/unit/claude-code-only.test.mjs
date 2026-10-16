@@ -123,7 +123,7 @@ function protocolHarness({ routing, body, healthMonitor }) {
     requestLog: { start: () => ({ request_id: 'cc-only-test' }), finish() {} },
     stickyRouter: {},
     accountQuota: {},
-    apiKeyStore: {},
+    apiKeyStore: { acquire: () => ({ ok: true }), release() {} },
     apiScheduler: {
       pick: () => {
         throw REACHED
@@ -143,8 +143,9 @@ async function runProtocol({ routing, body, headers, protocol = 'anthropic.messa
   const req = {
     method: 'POST',
     url: '/v1/messages',
-    headers: { authorization: 'Bearer master', 'x-kin-backend': 'api', ...headers },
-    apiKeyKind: 'master',
+    headers: { authorization: 'Bearer sk-vm-api', ...headers },
+    apiKeyKind: 'managed',
+    apiKeyRecord: { category: 'api' },
     once() {},
     off() {},
   }
