@@ -74,6 +74,7 @@ export function publicEndpointView(ep, { reveal = false } = {}) {
     api_key_entries: (ep.api_key_entries || []).map((k) => ({
       id: k.id,
       proxy_url: k.proxy_url || '',
+      proxy_id: k.proxy_id || '',
       disabled: !!k.disabled,
       cooldown_until: k.cooldown_until || null,
       api_key: reveal ? k.api_key : maskUpstreamKey(k.api_key),
