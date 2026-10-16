@@ -6,8 +6,16 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { validTimezone } from '@/lib/timezone'
 import { isCodexVm } from '@/lib/vm-kind'
-import { meQueryOptions } from '@/features/auth/queries'
-import { TimezonePicker } from '@/features/vm/timezone-picker'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -20,16 +28,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { meQueryOptions } from '@/features/auth/queries'
+import { TimezonePicker } from '@/features/vm/timezone-picker'
 
 type ScheduleFrequency = 'hourly' | 'daily' | 'weekly'
 
@@ -60,7 +60,11 @@ type ScheduleStructure = Pick<
 
 type SchedulePayload = { schedule: TestSchedule | null }
 type DefaultPayload = { schedule: ScheduleStructure | null }
-type SyncPayload = { updated: string[]; missing: string[]; schedule: ScheduleStructure }
+type SyncPayload = {
+  updated: string[]
+  missing: string[]
+  schedule: ScheduleStructure
+}
 
 type TestParams = {
   vm: Vm
@@ -115,7 +119,9 @@ function formatAt(value: string | null, timezone: string) {
   }
 }
 
-function structureFromSchedule(schedule: TestSchedule | ScheduleStructure | null) {
+function structureFromSchedule(
+  schedule: TestSchedule | ScheduleStructure | null
+) {
   if (!schedule) return defaultStructure()
   return {
     frequency: schedule.frequency || 'daily',
@@ -157,7 +163,8 @@ export function VmTestSchedule({
   const endpoint = `/api/panel/vms/${encodeURIComponent(vm.id)}/test-schedule`
   const loaded = useRef(false)
   const [enabled, setEnabled] = useState(false)
-  const [structure, setStructure] = useState<ScheduleStructure>(defaultStructure)
+  const [structure, setStructure] =
+    useState<ScheduleStructure>(defaultStructure)
   const [syncOpen, setSyncOpen] = useState(false)
   const [syncAllOpen, setSyncAllOpen] = useState(false)
   const scheduleQuery = useQuery({
@@ -421,7 +428,9 @@ export function VmTestSchedule({
                 <Label>星期</Label>
                 <div className='flex flex-wrap gap-3'>
                   {WEEKDAY_OPTIONS.map((day) => {
-                    const checked = (structure.weekdays || []).includes(day.value)
+                    const checked = (structure.weekdays || []).includes(
+                      day.value
+                    )
                     return (
                       <label
                         key={day.value}
@@ -560,7 +569,8 @@ export function VmTestSchedule({
             <AlertDialogTitle>同步到全部槽？</AlertDialogTitle>
             <AlertDialogDescription>
               将把当前表单的调度时间覆盖写入你有权限的全部槽（租户仅自己的槽）。
-              无计划的槽会创建且保持关闭；Prompt、模型、token/effort 与启用开关不会被修改。
+              无计划的槽会创建且保持关闭；Prompt、模型、token/effort
+              与启用开关不会被修改。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
