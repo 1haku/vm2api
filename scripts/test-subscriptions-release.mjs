@@ -2,6 +2,10 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'slot-computer',
+  'slot-recovery',
+  'stream-queue-keepalive',
+  'workstation-fingerprint',
   'notify',
   'stream-keepalive',
   'kernel-body-limit',
