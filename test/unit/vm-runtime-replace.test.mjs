@@ -198,7 +198,7 @@ test('reloadSlotWorker recreates on network mismatch before the KVM restart path
   )
   assert.match(reload, /slotWorkerNeedsRecreate\(existing, vm, paths\)/)
   assert.ok(
-    reload.indexOf('slotWorkerNeedsRecreate') < reload.indexOf('isKvmRuntime(vm)'),
+    reload.indexOf('slotWorkerNeedsRecreate') < reload.indexOf('if (isKvmRuntime(vm)) {'),
     'network recreate must run before systemctl restart',
   )
 })

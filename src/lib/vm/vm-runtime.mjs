@@ -394,6 +394,8 @@ export function slotWorkerNeedsRecreate(existing, vm, paths) {
  */
 export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
+  // Outside the cached-config fallback: invalid quotas must never reach restart.
+  if (!isKvmRuntime(vm)) slotDockerCpus(vm)
   const paths = workerPaths(projectRoot, vm.id)
   const name = containerName(vm.id)
   let worker

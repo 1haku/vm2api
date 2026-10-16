@@ -725,6 +725,7 @@ export async function startRemoteSlot(vm, projectRoot, { recreate = false, routi
 /** Remote twin of reloadSlotWorker: rewrite + push config, bounce the container, never remove it unless the exit moved. */
 export async function reloadRemoteSlot(vm, projectRoot, { routing } = {}) {
   try {
+    if (!isKvmRuntime(vm)) slotDockerCpus(vm)
     const p = await prepare(vm, projectRoot, routing)
     if (p.fail) return p.fail
     const { nodeId, session, image, user, remoteDir, slotDir } = p
