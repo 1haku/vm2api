@@ -8,8 +8,9 @@ import { execFileSync } from 'node:child_process'
 import { computerBin, ensureSlotComputer } from '../src/lib/identity/slot-computer.mjs'
 
 const root = path.resolve(import.meta.dirname, '..')
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'deploy/computer-payload.json'), 'utf8'))
-const entry = manifest.files[0]
+const manifest = JSON.parse(fs.readFileSync(path.join(root, 'deploy/payload.json'), 'utf8'))
+const entry = manifest.files.find((file) => file.path === 'bin/kin-computer')
+assert.ok(entry, 'official computer payload is pinned')
 const project = fs.mkdtempSync(path.join(os.tmpdir(), 'vm2api-computer-check-'))
 try {
   if (process.argv.includes('--install-image')) {

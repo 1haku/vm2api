@@ -16,7 +16,6 @@ for (const file of [
   'image-wrap-cli',
   'image-crag',
   'deploy/payload.json',
-  'deploy/computer-payload.json',
   'web/dist',
   'src/lib/db/custom-migrations',
 ])

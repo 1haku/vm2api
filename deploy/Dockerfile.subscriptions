@@ -13,8 +13,6 @@ WORKDIR /build
 COPY deploy/payload.json deploy/payload.json
 COPY scripts/fetch-payload.mjs scripts/fetch-payload.mjs
 RUN node scripts/fetch-payload.mjs --dest /payload
-COPY deploy/computer-payload.json deploy/computer-payload.json
-RUN node scripts/fetch-payload.mjs --manifest deploy/computer-payload.json --dest /payload
 
 # Complete custom build: lockfile dependencies and tested Go sources.
 FROM golang:1.26-bookworm AS worker-build
@@ -47,7 +45,6 @@ COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY --from=payload-build /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
 COPY --from=payload-build /payload/share/crag/ /opt/vm2api/image-crag/
 COPY deploy/payload.json ./deploy/payload.json
-COPY deploy/computer-payload.json ./deploy/computer-payload.json
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && cp /opt/vm2api/image-bin/kin-kernel /opt/vm2api/image-wrap-cli/kin-kernel.bin \
