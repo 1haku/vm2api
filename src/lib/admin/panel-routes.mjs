@@ -90,7 +90,7 @@ import {
   vmPoolsFor,
 } from './vm-pools.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
-import { runAnthropicConsole, resolveConsoleProxyUrl } from './anthropic-console.mjs'
+import { runAnthropicConsole, resolveConsoleProxyUrl, savedEndpointKey } from './anthropic-console.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import {
@@ -1601,7 +1601,8 @@ export function createPanelHandler(ctx) {
             api_key: body?.api_key || saved?.api_key,
             proxy_url: proxyUrl,
             headers: body?.headers,
-            auth_scheme: body?.auth_scheme || body?.authScheme,
+            auth_scheme: body?.auth_scheme || body?.authScheme || saved?.auth_scheme,
+            forward: ctx.forwardApi,
           })
           return json(res, 200, { ok: true, ...result })
         } catch (e) {
@@ -1737,6 +1738,7 @@ export function createPanelHandler(ctx) {
             cfg,
             scheduler: apiScheduler,
             proxyPool,
+            store: apiEndpointStore,
             input: body || {},
             forward: ctx.forwardApi,
           })

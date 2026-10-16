@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { ApiEndpointStore } from '../../src/lib/admin/api-endpoints.mjs'
 import { ApiScheduler } from '../../src/lib/pool/api-scheduler.mjs'
 import {
   anthropicConsoleResult,
@@ -309,4 +313,79 @@ test('anthropic console is admin-only', () => {
   assert.equal(canViewPage('super', 'anthropic'), false)
   assert.equal(authorizePanelRoute('POST', '/api/panel/anthropic/messages', 'user').ok, false)
   assert.equal(authorizePanelRoute('POST', '/api/panel/anthropic/messages', 'admin').ok, true)
+})
+test('saved Anthropic row reloads its proxy and can test or fetch models without retyping the key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-console-row-'))
+  const store = new ApiEndpointStore({ dataDir: dir })
+  const proxyPool = {
+    getProxyByIdWithAuth(id) {
+      return id === 'px-1' ? { url: 'socks5://10.0.0.8:1080' } : null
+    },
+  }
+  const response = {}
+  const seen = []
+  const handlePanel = createPanelHandler({
+    cfg: { paths: { project: dir } },
+    readBody,
+    apiEndpointStore: store,
+    apiScheduler: { reload() {}, pick() { return { ok: false, code: 'model_not_found' } } },
+    proxyPool,
+    forwardApi: async (request) => {
+      seen.push({ url: request.url, key: request.headers['x-api-key'], proxy: request.proxyUrl })
+      return {
+        statusCode: 200,
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from(JSON.stringify({ data: [{ id: 'claude-sonnet-4-5' }], content: [{ type: 'text', text: 'pong' }] }))
+        },
+      }
+    },
+    requireAuth(req) {
+      req.panelUser = 'admin'
+      req.panelRole = 'admin'
+      return true
+    },
+    json(_res, status, body) {
+      response.status = status
+      response.body = body
+    },
+  })
+  const save = Readable.from([Buffer.from(JSON.stringify({
+    kind: 'claude',
+    protocol: 'anthropic',
+    name: 'https://api.anthropic.com',
+    base_url: 'https://api.anthropic.com',
+    auth_scheme: 'x_api_key',
+    proxy_id: 'px-1',
+    api_key_entries: [{ api_key: 'sk-ant-saved' }],
+    models: [{ name: 'claude-sonnet-4-5', alias: 'claude-sonnet-4-5' }],
+  }))])
+  save.method = 'POST'
+  await handlePanel(save, {}, new URL('http://localhost/api/panel/api-endpoints'))
+  assert.equal(response.status, 201)
+  const savedKey = response.body.item.api_key_entries[0]
+  assert.equal(savedKey.proxy_id, 'px-1')
+
+  const reloaded = new ApiEndpointStore({ dataDir: dir }).list()
+  assert.equal(reloaded[0].api_key_entries[0].proxy_id, 'px-1')
+  assert.equal(reloaded[0].api_key_entries[0].api_key.includes('sk-ant-saved'), false)
+
+  const test = Readable.from([Buffer.from(JSON.stringify({
+    model: 'claude-sonnet-4-5',
+    message: 'Hi',
+    keys: [{ key_id: savedKey.id, base_url: 'https://api.anthropic.com', auth_scheme: 'x_api_key', proxy_id: 'px-1' }],
+  }))])
+  test.method = 'POST'
+  await handlePanel(test, {}, new URL('http://localhost/api/panel/anthropic/messages'))
+  const models = Readable.from([Buffer.from(JSON.stringify({
+    kind: 'custom',
+    protocol: 'anthropic',
+    base_url: 'https://api.anthropic.com',
+    key_id: savedKey.id,
+  }))])
+  models.method = 'POST'
+  await handlePanel(models, {}, new URL('http://localhost/api/panel/api-endpoints/fetch-models'))
+  assert.equal(response.status, 200)
+  assert.deepEqual(seen.map((item) => item.key), ['sk-ant-saved', 'sk-ant-saved'])
+  assert.deepEqual(seen.map((item) => item.proxy), ['socks5://10.0.0.8:1080', 'socks5://10.0.0.8:1080'])
+  assert.equal(JSON.stringify(response.body).includes('sk-ant-saved'), false)
 })
