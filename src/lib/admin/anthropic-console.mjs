@@ -13,6 +13,7 @@ export const ANTHROPIC_CONSOLE_URL = 'https://api.anthropic.com'
 export const ANTHROPIC_CONSOLE_TIMEOUT_MS = 60_000
 const MAX_MESSAGE_CHARS = 16_000
 const MAX_HEADER_PAIRS = 24
+const MAX_KEYS = 32
 
 export function anthropicMessagesUrl(baseUrl) {
   const trimmed = trimBaseUrl(baseUrl) || ANTHROPIC_CONSOLE_URL
@@ -61,7 +62,40 @@ function headerMap(raw) {
   return out
 }
 
-export function buildAnthropicConsoleRequest(input = {}, picked = null) {
+function directKeys(input = {}) {
+  const listed = Array.isArray(input.keys) ? input.keys : [input]
+  const keys = []
+  for (const item of listed) {
+    const source = item && typeof item === 'object' ? item : { api_key: item }
+    const apiKey = String(source.api_key || source.apiKey || '').trim()
+    if (!apiKey) continue
+    const label = String(source.label || '').trim().slice(0, 40)
+    keys.push({
+      label: label || `key ${keys.length + 1}`,
+      api_key: apiKey,
+      proxy_id: String(source.proxy_id || source.proxyId || '').trim(),
+    })
+  }
+  if (!keys.length) {
+    throw Object.assign(new Error('先填 API key'), { code: 'api_key_required', status: 400 })
+  }
+  if (keys.length > MAX_KEYS) {
+    throw Object.assign(new Error(`一次最多 ${MAX_KEYS} 把 key`), { code: 'too_many_keys', status: 400 })
+  }
+  return keys
+}
+
+export function resolveConsoleProxyUrl(proxyPool, proxyId) {
+  const id = String(proxyId || '').trim()
+  if (!id) return ''
+  const proxy = proxyPool?.getProxyByIdWithAuth?.(id)
+  if (!proxy?.url) {
+    throw Object.assign(new Error('所选代理不存在或没有可转发地址'), { code: 'proxy_not_found', status: 400 })
+  }
+  return anthropicProxyUrl(proxy.url)
+}
+
+export function buildAnthropicConsoleRequest(input = {}, picked = null, proxyPool = null) {
   const scheduled = input.mode === 'scheduled'
   if (scheduled && !picked?.ok) {
     const error = Object.assign(new Error(picked?.message || '没有可用的 API 上游'), {
@@ -94,7 +128,9 @@ export function buildAnthropicConsoleRequest(input = {}, picked = null) {
   }
   const scheme = normalizeAuthScheme(scheduled ? endpoint.auth_scheme : input.auth_scheme || input.authScheme) || AUTH_SCHEME_X_API_KEY
   const baseUrl = scheduled ? endpoint.base_url : input.base_url || input.baseUrl || ANTHROPIC_CONSOLE_URL
-  const proxyUrl = scheduled ? anthropicProxyUrl(picked.key?.proxy_url) : anthropicProxyUrl(input.proxy_url || input.proxyUrl)
+  const proxyUrl = scheduled
+    ? anthropicProxyUrl(picked.key?.proxy_url)
+    : resolveConsoleProxyUrl(proxyPool, input.proxy_id || input.proxyId)
   const extra = headerMap(scheduled ? endpoint.headers : input.headers)
   const headers = {
     'content-type': 'application/json',
@@ -151,16 +187,9 @@ export function anthropicConsoleResult(upstream, meta) {
   })
 }
 
-export async function runAnthropicConsole({ cfg, scheduler, input, forward = forwardApi }) {
-  const scheduled = input?.mode === 'scheduled'
-  const picked = scheduled ? scheduler?.pick?.(input?.model) : null
-  if (scheduled && !scheduler?.pick) {
-    throw Object.assign(new Error('API 调度不可用'), { code: 'scheduler_unavailable', status: 503 })
-  }
-  const request = buildAnthropicConsoleRequest(input || {}, picked)
-  let upstream
+async function forwardConsoleRequest(request, { cfg, forward }) {
   try {
-    upstream = await forward({
+    const upstream = await forward({
       cfg,
       method: request.method,
       url: request.url,
@@ -169,11 +198,45 @@ export async function runAnthropicConsole({ cfg, scheduler, input, forward = for
       proxyUrl: request.proxyUrl,
       timeoutMs: request.timeoutMs,
     })
+    return anthropicConsoleResult(upstream, request.meta)
   } catch (error) {
     throw Object.assign(new Error(String(error?.message || error).slice(0, 300)), {
       code: error?.code || 'api_kernel_transport',
       status: 502,
     })
   }
-  return anthropicConsoleResult(upstream, request.meta)
+}
+
+export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, input, forward = forwardApi }) {
+  const scheduled = input?.mode === 'scheduled'
+  if (scheduled) {
+    if (!scheduler?.pick) {
+      throw Object.assign(new Error('API 调度不可用'), { code: 'scheduler_unavailable', status: 503 })
+    }
+    const request = buildAnthropicConsoleRequest(input || {}, scheduler.pick(input?.model), proxyPool)
+    return forwardConsoleRequest(request, { cfg, forward })
+  }
+
+  const keys = directKeys(input)
+  const index = Number.isInteger(Number(input?.key_index)) ? Number(input.key_index) : null
+  const selected = index == null ? keys : [keys[index]].filter(Boolean)
+  if (!selected.length) {
+    throw Object.assign(new Error('要测试的 key 不存在'), { code: 'key_not_found', status: 400 })
+  }
+  const items = []
+  for (const key of selected) {
+    const request = buildAnthropicConsoleRequest({ ...(input || {}), ...key }, null, proxyPool)
+    const result = await forwardConsoleRequest(request, { cfg, forward })
+    items.push({ label: key.label, ...result, key_id: null })
+  }
+  if (items.length === 1 && index == null && !Array.isArray(input?.keys)) return items[0]
+  const ready = items.filter((item) => item.ok).length
+  return {
+    ok: ready === items.length,
+    status: items.find((item) => !item.ok)?.status || items[0]?.status || 200,
+    text: items.map((item) => `${item.label}: ${item.ok ? item.text || '可用' : item.error}`).join('\n'),
+    error: ready === items.length ? '' : `${items.length - ready}/${items.length} 把 key 不可用`,
+    mode: 'direct',
+    items,
+  }
 }

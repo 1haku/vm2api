@@ -1709,6 +1709,7 @@ export function createPanelHandler(ctx) {
           const result = await runAnthropicConsole({
             cfg,
             scheduler: apiScheduler,
+            proxyPool,
             input: body || {},
             forward: ctx.forwardApi,
           })

@@ -6,6 +6,8 @@ import {
   anthropicConsoleResult,
   anthropicMessagesUrl,
   buildAnthropicConsoleRequest,
+  resolveConsoleProxyUrl,
+  runAnthropicConsole,
 } from '../../src/lib/admin/anthropic-console.mjs'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import { authorizePanelRoute, canViewPage } from '../../src/lib/admin/panel-acl.mjs'
@@ -51,23 +53,69 @@ test('direct console defaults to official x-api-key and keeps the key out of met
   assert.equal(JSON.stringify(request.meta).includes('sk-ant-direct'), false)
 })
 
-test('direct console accepts a third-party url, bearer auth, and a proxy', () => {
+test('direct console resolves a configured proxy id and ignores a typed proxy URL', () => {
+  const pool = {
+    getProxyByIdWithAuth(id) {
+      if (id !== 'px-1') return null
+      return { id, url: 'socks5://user:secret@10.0.0.8:1080' }
+    },
+  }
   const request = buildAnthropicConsoleRequest({
     base_url: 'https://relay.example/v1/',
     api_key: 'sk-third',
     auth_scheme: 'authorization_bearer',
-    proxy_url: 'http://user:pass@127.0.0.1:8080',
+    proxy_id: 'px-1',
+    proxy_url: 'http://attacker.example:8080',
     model: 'alias',
     max_tokens: 32,
     message: 'ping',
-    headers: { 'x-account': 'a' },
+  }, null, pool)
+  assert.equal(request.proxyUrl, 'socks5://user:secret@10.0.0.8:1080')
+  assert.equal(JSON.stringify(request.meta).includes('secret'), false)
+  assert.equal(resolveConsoleProxyUrl(pool, ''), '')
+  assert.throws(() => resolveConsoleProxyUrl(pool, 'missing'), (error) => error.code === 'proxy_not_found')
+})
+
+test('batch check tests each key through its own configured proxy', async () => {
+  const seen = []
+  const pool = {
+    getProxyByIdWithAuth(id) {
+      return id === 'px-2' ? { url: 'socks5://10.1.1.2:1080' } : null
+    },
+  }
+  const result = await runAnthropicConsole({
+    cfg: {},
+    proxyPool: pool,
+    input: {
+      model: 'claude-sonnet-4-5',
+      message: 'Hi',
+      keys: [
+        { label: 'one', api_key: 'sk-one', proxy_id: '' },
+        { label: 'two', api_key: 'sk-two', proxy_id: 'px-2' },
+      ],
+    },
+    forward: async (request) => {
+      seen.push({ key: request.headers['x-api-key'], proxy: request.proxyUrl })
+      const statusCode = request.headers['x-api-key'] === 'sk-two' ? 401 : 200
+      return {
+        statusCode,
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from(JSON.stringify(statusCode === 200
+            ? { content: [{ type: 'text', text: 'pong' }] }
+            : { error: { message: 'bad key' } }))
+        },
+      }
+    },
   })
-  assert.equal(request.url, 'https://relay.example/v1/messages?beta=true')
-  assert.equal(request.headers.authorization, 'Bearer sk-third')
-  assert.equal(request.headers['x-api-key'], undefined)
-  assert.equal(request.headers['x-account'], 'a')
-  assert.equal(request.proxyUrl, 'http://user:pass@127.0.0.1:8080')
-  assert.equal(request.body.max_tokens, 32)
+  assert.deepEqual(seen, [
+    { key: 'sk-one', proxy: '' },
+    { key: 'sk-two', proxy: 'socks5://10.1.1.2:1080' },
+  ])
+  assert.equal(result.ok, false)
+  assert.equal(result.items[0].ok, true)
+  assert.equal(result.items[1].status, 401)
+  assert.equal(JSON.stringify(result).includes('sk-one'), false)
+  assert.equal(JSON.stringify(result).includes('sk-two'), false)
 })
 
 test('scheduled console uses the API picker, upstream model, auth, and key proxy', () => {
@@ -97,14 +145,19 @@ test('scheduled console fails before dialing when no endpoint serves the model',
   )
 })
 
-test('proxy schemes outside the kernel client are rejected', () => {
+test('unsupported schemes on a configured proxy are rejected', () => {
+  const pool = {
+    getProxyByIdWithAuth() {
+      return { url: 'ftp://127.0.0.1:21' }
+    },
+  }
   assert.throws(
     () => buildAnthropicConsoleRequest({
       api_key: 'sk-ant',
       model: 'm',
       message: 'Hi',
-      proxy_url: 'ftp://127.0.0.1:21',
-    }),
+      proxy_id: 'px-ftp',
+    }, null, pool),
     (error) => error.code === 'invalid_proxy_url',
   )
   assert.equal(anthropicMessagesUrl('http://plain.example'), 'http://plain.example/v1/messages?beta=true')
