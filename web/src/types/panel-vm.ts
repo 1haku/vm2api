@@ -154,6 +154,38 @@ export type VmMachine = {
   disk_serial?: string
 }
 
+/** `GET /vms/:id` 的脱敏客户机特征。不含 machine-id / token / 代理账密。 */
+export type VmPhysicalDmi = {
+  manufacturer?: string | null
+  product?: string | null
+  version?: string | null
+  family?: string | null
+  serial?: string | null
+  uuid?: string | null
+}
+
+export type VmPhysicalFeatures = {
+  observed_at?: string | null
+  runtime_type?: RuntimeType | string | null
+  hostname?: string | null
+  os_id?: string | null
+  os_pretty?: string | null
+  kernel_release?: string | null
+  arch?: string | null
+  machine_id_present?: boolean
+  timezone?: string | null
+  locale?: string | null
+  cpu_model?: string | null
+  cpu_cores?: number | null
+  memory_bytes?: number | null
+  root_disk?: string | null
+  mac?: string | null
+  dmi?: VmPhysicalDmi | null
+  shell?: string | null
+  package_managers?: string | null
+  runtimes?: string | null
+}
+
 export type Vm = {
   id: string
   name?: string
@@ -272,6 +304,8 @@ export type Vm = {
   runtime_type?: RuntimeType | null
   /** 创建时固化的机器规格；旧槽可能缺省。 */
   machine?: VmMachine | null
+  /** 观测到的客户机特征；列表也可能带上。缺省按未采集展示。 */
+  physical_features?: VmPhysicalFeatures | null
 
   region?: string
   /** 槽位环境时区（容器 `TZ` + persona `# Environment`）。 */
