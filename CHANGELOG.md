@@ -6,6 +6,7 @@
 - 面板新增 admin 专用 Anthropic 控制台（`POST /api/panel/anthropic/messages`，与 VM 测试分离；经控制面转发上游，浏览器不直连）；推理路由收紧：仅 managed 且 category 为 `api` 的协议密钥走已配置的 API 上游，master key 与 `x-kin-backend=api` 不再强制 API 后端（改走 OAuth/VM）。（#478）
 - 修复槽位开机成功后仍保留旧 PID、启动时间或停止标记：保存普通槽与 Codex 启动返回的运行信息，并保留等待就绪期间已写入的运行字段，避免在线升内存后 `runtime.memory` 被旧启动快照覆盖；凭证调度规则不变。（#479）
 - VM 遥测与槽位特征改为读取客户机真实状态：采集并持久化 CPU、内存、磁盘、MAC、DMI、Shell、包管理器和运行时；worker 遥测上传这些物理特征；单槽运维页展示脱敏后的当前特征，终端启动时打印实时系统特征。可选探针缺失时保留可用状态，不泄露 machine-id 或凭证。
+- 修复面板「采集特征」只更新 `vm.json`、不更新运行中遥测配置：采集成功后重写 `worker.json.telemetry` 并同步远端槽位文件，sidecar 热加载新硬件特征，无需重启。
 - 修复 KVM / Docker 槽容器处于 `Restarting` 崩溃循环时被当成运行中：`inspectContainer()` 读取 `State.Restarting`，崩溃循环的容器视为未运行，启动和重载改为重建，不再 `already-running` 短路或对重启中的容器 `docker exec`。新建槽位容器前先 `docker pull` 浮动 tag（`kin-kvm-*` / `kin-os-*`），拉取失败才用本地镜像，旧 runner 镜像可随重建更新；`docker/kin-*/build.mjs --pull` / `--pull-only` 也会刷新已存在的镜像。`kin-kvm-entry` 降权前对容器内 `/dev/kvm` 节点执行 `chmod g+rw`，兼容宿主 `0600` 权限。（#484）
 
 ## 1.3.179 — 2026-10-16

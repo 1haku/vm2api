@@ -12,6 +12,8 @@ import { readGuestIdentity, normalizeGuestHardware } from './guest-identity-read
 import { OFFICIAL_STAINLESS } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm } from '../identity/official-fingerprint.mjs'
 import { isHostKernel } from '../identity/workstation-profile.mjs'
+import { syncWorkerTelemetry } from './vm-runtime.mjs'
+import { slotHost } from './slot-host.mjs'
 import { isGeneratedHostname } from '../identity/workstation-fingerprint.mjs'
 
 export const GUEST_IDENTITY_SCHEMA = '1'
@@ -185,5 +187,26 @@ export async function collectSlotIdentity(projectRoot, vm, { callGet = readGuest
   try {
     current = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
   } catch {}
-  return { ok: true, id: vm.id, fingerprint: current.fingerprint, runtime_kind: current.runtime.type }
+  try {
+    const telemetry = syncWorkerTelemetry(current, projectRoot)
+    if (telemetry.wrote) {
+      await slotHost(current).syncRun(current, path.join(projectRoot, 'vms', current.id))
+    }
+    return {
+      ok: true,
+      id: vm.id,
+      fingerprint: current.fingerprint,
+      runtime_kind: current.runtime.type,
+      telemetry_sync: telemetry,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      id: vm.id,
+      fingerprint: current.fingerprint,
+      runtime_kind: current.runtime.type,
+      error: `telemetry sync failed: ${String(error?.message || error).slice(0, 300)}`,
+      code: 'telemetry_sync_failed',
+    }
+  }
 }

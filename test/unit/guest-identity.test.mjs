@@ -90,6 +90,62 @@ test('collectSlotIdentity writes guest fingerprint onto vm.json', async () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('collectSlotIdentity refreshes worker telemetry with new hardware', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-guest-telemetry-'))
+  const id = 'vm-02'
+  const slotDir = path.join(root, 'vms', id)
+  fs.mkdirSync(path.join(slotDir, 'cli-home', '.claude'), { recursive: true })
+  fs.mkdirSync(path.join(slotDir, 'run'), { recursive: true })
+  fs.writeFileSync(
+    path.join(slotDir, 'cli-home', '.claude.json'),
+    JSON.stringify({ userID: 'ab'.repeat(32), machineID: 'cd'.repeat(32) }),
+  )
+  fs.writeFileSync(path.join(slotDir, 'run', 'worker.json'), JSON.stringify({ vm_id: id }))
+  const vmPath = path.join(root, 'vms', `${id}.json`)
+  fs.writeFileSync(
+    vmPath,
+    JSON.stringify({
+      id,
+      seed_policy: { telemetry_disabled: false },
+      fingerprint: { device_id: 'dev-1', session_id: 'sess-1' },
+      runtime: { type: 'docker' },
+    }),
+  )
+  const out = await collectSlotIdentity(
+    root,
+    { id, runtime: { type: 'docker' } },
+    {
+      callGet: async () => ({
+        ok: true,
+        status: 200,
+        body: {
+          identity: {
+            hostname: '02',
+            os_pretty: 'Ubuntu 24.04',
+            arch: 'amd64',
+            goos: 'linux',
+            runtime_kind: 'docker',
+            collected_at: '2026-08-23T01:00:00Z',
+            hardware: {
+              cpu_model: 'Observed CPU',
+              cpu_cores: 8,
+              memory_bytes: 8589934592,
+              shell: '/bin/zsh',
+            },
+          },
+        },
+      }),
+    },
+  )
+  assert.equal(out.ok, true)
+  assert.equal(out.telemetry_sync.wrote, true)
+  const worker = JSON.parse(fs.readFileSync(path.join(slotDir, 'run', 'worker.json'), 'utf8'))
+  assert.equal(worker.telemetry.identity.cpu_model, 'Observed CPU')
+  assert.equal(worker.telemetry.identity.cpu_cores, 8)
+  assert.equal(worker.telemetry.identity.env.shell, 'zsh')
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 test('collectSlotIdentity maps missing endpoint', async () => {
   const out = await collectSlotIdentity(
     '/tmp',
