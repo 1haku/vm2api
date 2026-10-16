@@ -75,7 +75,10 @@ async function fetchThroughProxy(url, proxyUrl, { timeoutMs, fetchImpl, accept }
   const opts = { method: 'GET', headers: { accept: accept || 'application/json' } }
   if (proxyUrl) {
     const { createProxyAgent } = await import('./proxy-agent.mjs')
-    opts.agent = createProxyAgent(proxyUrl)
+    // Geo describes the proxy exit, so resolve its destination there too.
+    // Keep the shared agent factory's explicit SOCKS5 semantics unchanged.
+    const geoProxyUrl = String(proxyUrl).replace(/^socks5:/i, 'socks5h:')
+    opts.agent = createProxyAgent(geoProxyUrl)
   }
   if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(timeout)
   try {
