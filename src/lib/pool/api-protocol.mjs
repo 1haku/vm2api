@@ -19,7 +19,11 @@ import { usageFromSseLine } from '../protocol/handle-codex.mjs'
 
 export function resolveInferenceBackend(req) {
   if (req?.apiKeyKind !== 'managed') return 'oauth'
-  return String(req.apiKeyRecord?.category || '').trim().toLowerCase() === 'api' ? 'api' : 'oauth'
+  return String(req.apiKeyRecord?.category || '')
+    .trim()
+    .toLowerCase() === 'api'
+    ? 'api'
+    : 'oauth'
 }
 
 export { messagesUrl, responsesUrl } from './api-presets.mjs'

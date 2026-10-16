@@ -314,6 +314,51 @@ attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终
 
 流式 usage 由 worker SSE 校验器合并后经 trailer 回传，终态 attempt 只记一次。
 
+## API 上游 / Anthropic 控制台（仅 admin）
+
+管理第三方 Anthropic/OpenAI 兼容 API 地址与密钥（供 `/v1/messages` 等推理在 category=`api` 的 managed 密钥上调度），以及 admin 专用 Anthropic 联调页。浏览器不直连上游；出站经控制面 `forwardApi`（可挂池内 SOCKS5）。
+
+### API 上游 CRUD
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api-endpoints` | `{ items[], presets[] }`。`items` 为脱敏视图（key 掩码）；`presets` 为内置 kind 模板 |
+| POST | `/api-endpoints` | 创建 endpoint。body 可带 `proxy_id`（池内代理 id）：写入每条 `api_key_entries[].proxy_id` 并解析为 `proxy_url`；忽略客户端自填的裸 `proxy_url` 时仍可通过 `proxy_id` 绑定 |
+| PATCH | `/api-endpoints/:id` | 更新 endpoint 字段。可选 `key_id` + `api_key` 更新已有 key；可选 `proxy_id` 同时写该 key 的 `proxy_id`/`proxy_url`；无 `key_id` 时 `api_key` 会新增一条 key |
+| DELETE | `/api-endpoints/:id` | 删除 endpoint |
+| POST | `/api-endpoints/:id/keys` | `{ api_key, proxy_id?, … }` 增 key |
+| PATCH | `/api-endpoints/:id/keys/:keyId` | 改单 key（含 `proxy_id`） |
+| DELETE | `/api-endpoints/:id/keys/:keyId` | 删 key |
+| POST | `/api-endpoints/fetch-models` | 未保存草稿拉模型：`kind` / `protocol` / `base_url` / `api_key` 等；`key_id` 从库加载已存 key（可不再输入明文）。`proxy_id` 优先于行内 `proxy_url`；body 显式带 `proxy_id`（含空串）时按 id 解析，否则用已存 key 的 `proxy_url` |
+| POST | `/api-endpoints/:id/fetch-models` | 对已保存 endpoint 拉上游 `/v1/models`（可选 `key_id` 指定条目，`apply: false` 只返回不合并） |
+
+列表/详情里每条 key 含 `proxy_id`（池 id，持久化）与 `proxy_url`（解析后的转发地址，不回显账密）。
+
+### Anthropic 控制台
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/anthropic/messages` | admin 联调 `POST …/v1/messages`。成功 `{ ok: true, data }`；失败 `{ ok: false, error: { code, message } }` |
+
+**鉴权**：仅 `admin` 角色（含 master API key）；`user` / `super` 403。
+
+**请求**（JSON，≤64 KiB）：
+
+| 字段 | 说明 |
+|------|------|
+| `mode` | 省略或 `direct`：直连指定 key；`scheduled`：走 API 调度器（prefix/alias/优先级/轮询，同推理路径） |
+| `model` | 模型 id 或 alias（scheduled 必填） |
+| `message` / `prompt` | 用户正文（必填，≤16000 字符） |
+| `max_tokens` | 1–8192，默认 256 |
+| `api_key` / `base_url` / `auth_scheme` / `proxy_id` | direct 单 key；`proxy_id` 只认池内 id，忽略自填 `proxy_url` |
+| `keys` | direct 多 key：`[{ label?, api_key?, key_id?, base_url?, auth_scheme?, proxy_id? }]`；`key_id` 加载已存上游 key（无需重打明文） |
+| `key_index` | 只测 `keys` 中某一行的下标 |
+| `headers` | 额外上游头（≤24 对；禁止 `\r\n` 注入） |
+
+**响应 `data`**（单 key 或 scheduled）：`ok`、`status`、`text`（助手正文摘要）、`error`（上游失败文案）、`body`（上游 JSON）、`mode`、`auth_scheme`、`endpoint_id` / `endpoint_name`（scheduled）、`requested_model` / `upstream_model`、`proxy`（是否走代理）。**不回显**明文 API key。多 key 批量时另含 `items[]`（每行 `label` / `row` / 同上字段）及汇总 `text` / `error`。
+
+**注意**：与 `POST /vms/:id/test-chat` 独立；不走 VM OAuth 入站。scheduled 无可用上游时 503/404（`api_pool_exhausted` / `model_not_found` 等）。
+
 ## 虚拟机测试
 
 | 方法 | 路径 | 说明 |

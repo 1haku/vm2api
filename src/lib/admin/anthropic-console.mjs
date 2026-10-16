@@ -70,7 +70,9 @@ function directKeys(input = {}, store = null) {
     const saved = source.key_id || source.keyId ? savedEndpointKey(store, source.key_id || source.keyId) : null
     const apiKey = String(source.api_key || source.apiKey || saved?.api_key || '').trim()
     if (!apiKey) continue
-    const label = String(source.label || '').trim().slice(0, 40)
+    const label = String(source.label || '')
+      .trim()
+      .slice(0, 40)
     keys.push({
       label: label || `key ${keys.length + 1}`,
       api_key: apiKey,
@@ -151,7 +153,9 @@ export function buildAnthropicConsoleRequest(input = {}, picked = null, proxyPoo
   if (!key) {
     throw Object.assign(new Error('先填 API key'), { code: 'api_key_required', status: 400 })
   }
-  const scheme = normalizeAuthScheme(scheduled ? endpoint.auth_scheme : input.auth_scheme || input.authScheme) || AUTH_SCHEME_X_API_KEY
+  const scheme =
+    normalizeAuthScheme(scheduled ? endpoint.auth_scheme : input.auth_scheme || input.authScheme) ||
+    AUTH_SCHEME_X_API_KEY
   const baseUrl = scheduled ? endpoint.base_url : input.base_url || input.baseUrl || ANTHROPIC_CONSOLE_URL
   const proxyUrl = scheduled
     ? anthropicProxyUrl(picked.key?.proxy_url)
@@ -232,7 +236,14 @@ async function forwardConsoleRequest(request, { cfg, forward }) {
   }
 }
 
-export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, store = null, input, forward = forwardApi }) {
+export async function runAnthropicConsole({
+  cfg,
+  scheduler,
+  proxyPool = null,
+  store = null,
+  input,
+  forward = forwardApi,
+}) {
   const scheduled = input?.mode === 'scheduled'
   if (scheduled) {
     if (!scheduler?.pick) {
