@@ -1,0 +1,12 @@
+{
+  "repo": "dofastted/vm2api",
+  "release": "v1.3.176",
+  "files": [
+    {
+      "path": "bin/kin-computer",
+      "asset": "kin-computer",
+      "size": 6347536,
+      "sha256": "ed8664a1bd8f735eb1332d7d96d442622efbf64b887b4d694529bb3dd3b16df3"
+    }
+  ]
+}

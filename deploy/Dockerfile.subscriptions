@@ -13,6 +13,8 @@ WORKDIR /build
 COPY deploy/payload.json deploy/payload.json
 COPY scripts/fetch-payload.mjs scripts/fetch-payload.mjs
 RUN node scripts/fetch-payload.mjs --dest /payload
+COPY deploy/computer-payload.json deploy/computer-payload.json
+RUN node scripts/fetch-payload.mjs --manifest deploy/computer-payload.json --dest /payload
 
 # Complete custom build: lockfile dependencies and tested Go sources.
 FROM golang:1.26-bookworm AS worker-build
@@ -45,6 +47,7 @@ COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY --from=payload-build /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
 COPY --from=payload-build /payload/share/crag/ /opt/vm2api/image-crag/
 COPY deploy/payload.json ./deploy/payload.json
+COPY deploy/computer-payload.json ./deploy/computer-payload.json
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && cp /opt/vm2api/image-bin/kin-kernel /opt/vm2api/image-wrap-cli/kin-kernel.bin \
@@ -60,7 +63,8 @@ ENV NODE_ENV=production \
     KIN_EGRESS_BIN=/opt/vm2api/bin/kin-egress \
     KIN_WORKER_BIN=/opt/vm2api/bin/kin-worker \
     KIN_CODEX_KERNEL_BIN=/opt/vm2api/bin/kin-codex-kernel \
-    KIN_OAUTH_AUTH_BIN=/opt/vm2api/bin/kin-oauth-auth
+    KIN_OAUTH_AUTH_BIN=/opt/vm2api/bin/kin-oauth-auth \
+    KIN_COMPUTER_BIN=/opt/vm2api/bin/kin-computer
 RUN node scripts/subscriptions-manifest.mjs "$CUSTOM_REVISION"
 ENV VM2API_CUSTOM_BUILD=subscriptions-v8
 LABEL org.vm2api.variant="shared-subscriptions-v8" org.opencontainers.image.revision=$CUSTOM_REVISION

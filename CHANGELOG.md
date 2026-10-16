@@ -2,6 +2,13 @@
 
 ## 未发布
 
+## 1.3.177 — 2026-10-16
+
+- 调试日志容量按 `OCTET_LENGTH` 字节统计，避免多字节正文误算与同步清理读入全文。（#462）
+- 修复 Claude 配额闸线弹窗在短视口下无法滚到底部（明确高度 + grid 三行布局）。（#465）
+
+已部署机升级：更新 Node 控制面与 `web/dist`，重启一次；无迁移、无新依赖，不必 `wrap-cli/sync`；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.176 — 2026-10-15
 
 - 修复 Codex 槽在 Node 重启后内核按需未拉起时误报故障：仅当 socket 无监听且本进程无跟踪子进程时诊断为警告 `codex_kernel_idle`（ENOENT/ECONNREFUSED）；超时、HTTP 错误、权限错误及已跟踪子进程不响应仍为 error `codex_kernel_down`。（#459）
