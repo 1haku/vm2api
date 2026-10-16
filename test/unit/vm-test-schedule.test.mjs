@@ -64,14 +64,8 @@ function runner({
 }
 
 test('structured compile and reverse parse cover hourly daily weekly', () => {
-  assert.equal(
-    compileStructuredSchedule({ frequency: 'hourly', minute: 15, timezone: 'UTC' }),
-    '15 * * * *',
-  )
-  assert.equal(
-    compileStructuredSchedule({ frequency: 'daily', time: '09:30', timezone: 'UTC' }),
-    '30 9 * * *',
-  )
+  assert.equal(compileStructuredSchedule({ frequency: 'hourly', minute: 15, timezone: 'UTC' }), '15 * * * *')
+  assert.equal(compileStructuredSchedule({ frequency: 'daily', time: '09:30', timezone: 'UTC' }), '30 9 * * *')
   assert.equal(
     compileStructuredSchedule({
       frequency: 'weekly',

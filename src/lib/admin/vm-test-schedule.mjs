@@ -33,7 +33,9 @@ function keyFor(vmId) {
 }
 
 function parseTime(value) {
-  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/)
+  const match = String(value || '')
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})$/)
   if (!match) return null
   const hour = Number(match[1])
   const minute = Number(match[2])
@@ -108,7 +110,9 @@ function tokenIsStar(value) {
 }
 
 function tryParseStructuredCron(cron) {
-  const parts = String(cron || '').trim().split(/\s+/)
+  const parts = String(cron || '')
+    .trim()
+    .split(/\s+/)
   if (parts.length !== 5) return null
   const [minuteField, hourField, domField, monthField, dowField] = parts
   if (!tokenIsStar(domField) || !tokenIsStar(monthField)) return null
@@ -190,7 +194,9 @@ export function normalizeVmTestSchedule(input, vm) {
     if (!timezone) throw new VmTestScheduleError('timezone must be a valid IANA timezone')
     const parsed = tryParseStructuredCron(String(input.cron || '').trim())
     if (!parsed) {
-      throw new VmTestScheduleError('cron is not compatible with structured schedules; please re-select frequency and time')
+      throw new VmTestScheduleError(
+        'cron is not compatible with structured schedules; please re-select frequency and time',
+      )
     }
     structure = normalizeScheduleStructure({ ...parsed, timezone })
   } else {
