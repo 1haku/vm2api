@@ -90,6 +90,7 @@ import {
   vmPoolsFor,
 } from './vm-pools.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
+import { runAnthropicConsole, resolveConsoleProxyUrl, savedEndpointKey } from './anthropic-console.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import {
@@ -1588,15 +1589,20 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/api-endpoints/fetch-models') {
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
+          const saved = savedEndpointKey(apiEndpointStore, body?.key_id)
+          const proxyUrl = Object.prototype.hasOwnProperty.call(body || {}, 'proxy_id')
+            ? resolveConsoleProxyUrl(proxyPool, body.proxy_id)
+            : saved?.proxy_url || body?.proxy_url
           const result = await fetchUpstreamModels({
             cfg,
             kind: body?.kind,
             protocol: body?.protocol,
-            base_url: body?.base_url,
-            api_key: body?.api_key,
-            proxy_url: body?.proxy_url,
+            base_url: body?.base_url || saved?.base_url,
+            api_key: body?.api_key || saved?.api_key,
+            proxy_url: proxyUrl,
             headers: body?.headers,
-            auth_scheme: body?.auth_scheme || body?.authScheme,
+            auth_scheme: body?.auth_scheme || body?.authScheme || saved?.auth_scheme,
+            forward: ctx.forwardApi,
           })
           return json(res, 200, { ok: true, ...result })
         } catch (e) {
@@ -1609,6 +1615,13 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/api-endpoints') {
         const body = await readBody(req, 1 << 20).catch(() => ({}))
         try {
+          const proxyUrl = body?.proxy_id ? resolveConsoleProxyUrl(proxyPool, body.proxy_id) : ''
+          if (Array.isArray(body?.api_key_entries)) {
+            for (const entry of body.api_key_entries) {
+              if (!entry.proxy_url) entry.proxy_url = proxyUrl
+              if (body?.proxy_id != null) entry.proxy_id = String(body.proxy_id || '').trim()
+            }
+          }
           const rec = apiEndpointStore.create(body || {})
           apiScheduler.reload(apiEndpointStore.listRaw())
           return json(res, 201, { ok: true, item: publicEndpointView(rec, { reveal: true }) })
@@ -1623,10 +1636,26 @@ export function createPanelHandler(ctx) {
         const id = p.split('/').pop()
         const body = await readBody(req, 1 << 20).catch(() => ({}))
         try {
+          const proxyUrl = body?.proxy_id ? resolveConsoleProxyUrl(proxyPool, body.proxy_id) : ''
           const rec = apiEndpointStore.update(id, body || {})
           if (!rec) return json(res, 404, { ok: false, error: { message: 'endpoint not found' } })
+          const keyId = String(body?.key_id || '').trim()
+          const apiKey = String(body?.api_key || '').trim()
+          if (keyId) {
+            apiEndpointStore.updateKey(keyId, {
+              ...(apiKey ? { api_key: apiKey } : {}),
+              ...(body?.proxy_id != null ? { proxy_url: proxyUrl, proxy_id: String(body.proxy_id || '').trim() } : {}),
+            })
+          } else if (apiKey) {
+            apiEndpointStore.addKey(id, {
+              api_key: apiKey,
+              proxy_url: proxyUrl,
+              proxy_id: String(body?.proxy_id || '').trim(),
+            })
+          }
           apiScheduler.reload(apiEndpointStore.listRaw())
-          return json(res, 200, { ok: true, item: publicEndpointView(rec) })
+          const saved = apiEndpointStore.getRaw(id) || rec
+          return json(res, 200, { ok: true, item: publicEndpointView(saved) })
         } catch (e) {
           return json(res, 400, { ok: false, error: { message: String(e.message || e), code: e.code } })
         }
@@ -1701,6 +1730,26 @@ export function createPanelHandler(ctx) {
         const ep = apiEndpointStore.getRaw(rec.endpoint_id)
         const item = publicEndpointView(ep)?.api_key_entries?.find((k) => k.id === kid)
         return json(res, 200, { ok: true, item })
+      }
+      if (req.method === 'POST' && p === '/api/panel/anthropic/messages') {
+        const body = await readBody(req, 64 * 1024).catch(() => ({}))
+        try {
+          const result = await runAnthropicConsole({
+            cfg,
+            scheduler: apiScheduler,
+            proxyPool,
+            store: apiEndpointStore,
+            input: body || {},
+            forward: ctx.forwardApi,
+          })
+          return json(res, 200, { ok: true, data: result })
+        } catch (e) {
+          const status = e.status && e.status < 600 ? e.status : 400
+          return json(res, status, {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'anthropic_console_failed' },
+          })
+        }
       }
 
       // ---- Request logs (normal summary + debug full; DB-backed filters/pagination) ----

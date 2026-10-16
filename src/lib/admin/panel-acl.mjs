@@ -18,6 +18,7 @@ export const PANEL_VIEWS = [
   'system',
   'keys',
   'api',
+  'anthropic',
   'logs',
   'statistics',
   'database',

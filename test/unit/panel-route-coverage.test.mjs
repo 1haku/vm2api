@@ -131,6 +131,7 @@ const PANEL_ROUTE_SAMPLES = [
   ['POST', '/api/panel/api-endpoints/e1/fetch-models'],
   ['POST', '/api/panel/api-endpoints/e1/keys'],
   ['DELETE', '/api/panel/api-endpoints/e1/keys/k1'],
+  ['POST', '/api/panel/anthropic/messages'],
   ['GET', '/api/panel/proxies'],
   ['POST', '/api/panel/proxies/import'],
   ['POST', '/api/panel/proxies/probe'],
