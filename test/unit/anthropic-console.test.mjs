@@ -417,14 +417,32 @@ test('an explicit direct choice overrides a saved proxy for both test and model 
     },
     forward,
   })
-  const { fetchUpstreamModels } = await import('../../src/lib/admin/api-endpoints.mjs')
-  await fetchUpstreamModels({
+  const response = {}
+  const handlePanel = createPanelHandler({
+    cfg: { paths: { project: os.tmpdir() } },
+    readBody,
+    apiEndpointStore: store,
+    proxyPool: { getProxyByIdWithAuth: () => null },
+    forwardApi: forward,
+    requireAuth(req) {
+      req.panelUser = 'admin'
+      req.panelRole = 'admin'
+      return true
+    },
+    json(_res, status, body) {
+      response.status = status
+      response.body = body
+    },
+  })
+  const models = Readable.from([Buffer.from(JSON.stringify({
     kind: 'custom',
     protocol: 'anthropic',
     base_url: 'https://api.anthropic.com',
-    api_key: 'sk-ant-saved',
-    proxy_url: '',
-    forward,
-  })
+    key_id: 'ek_1',
+    proxy_id: '',
+  }))])
+  models.method = 'POST'
+  await handlePanel(models, {}, new URL('http://localhost/api/panel/api-endpoints/fetch-models'))
+  assert.equal(response.status, 200, JSON.stringify(response.body))
   assert.deepEqual(seen, ['', ''])
 })

@@ -1590,7 +1590,7 @@ export function createPanelHandler(ctx) {
         const body = await readBody(req, 8192).catch(() => ({}))
         try {
           const saved = savedEndpointKey(apiEndpointStore, body?.key_id)
-          const proxyUrl = body?.proxy_id
+          const proxyUrl = Object.prototype.hasOwnProperty.call(body || {}, 'proxy_id')
             ? resolveConsoleProxyUrl(proxyPool, body.proxy_id)
             : saved?.proxy_url || body?.proxy_url
           const result = await fetchUpstreamModels({
