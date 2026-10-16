@@ -90,6 +90,7 @@ import {
   vmPoolsFor,
 } from './vm-pools.mjs'
 import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from './api-endpoints.mjs'
+import { runAnthropicConsole } from './anthropic-console.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import {
@@ -1701,6 +1702,24 @@ export function createPanelHandler(ctx) {
         const ep = apiEndpointStore.getRaw(rec.endpoint_id)
         const item = publicEndpointView(ep)?.api_key_entries?.find((k) => k.id === kid)
         return json(res, 200, { ok: true, item })
+      }
+      if (req.method === 'POST' && p === '/api/panel/anthropic/messages') {
+        const body = await readBody(req, 64 * 1024).catch(() => ({}))
+        try {
+          const result = await runAnthropicConsole({
+            cfg,
+            scheduler: apiScheduler,
+            input: body || {},
+            forward: ctx.forwardApi,
+          })
+          return json(res, 200, { ok: true, data: result })
+        } catch (e) {
+          const status = e.status && e.status < 600 ? e.status : 400
+          return json(res, status, {
+            ok: false,
+            error: { message: String(e.message || e), code: e.code || 'anthropic_console_failed' },
+          })
+        }
       }
 
       // ---- Request logs (normal summary + debug full; DB-backed filters/pagination) ----
