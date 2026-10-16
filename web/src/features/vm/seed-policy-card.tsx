@@ -72,7 +72,7 @@ export function SeedPolicyCard({
   policy,
   onSave,
   saving,
-  syncTelemetry = true,
+  syncTelemetry = false,
 }: {
   policy: Record<string, unknown>
   onSave: (next: SeedPolicy) => void
