@@ -224,10 +224,24 @@ export async function runAnthropicConsole({ cfg, scheduler, proxyPool = null, in
     throw Object.assign(new Error('要测试的 key 不存在'), { code: 'key_not_found', status: 400 })
   }
   const items = []
-  for (const key of selected) {
-    const request = buildAnthropicConsoleRequest({ ...(input || {}), ...key }, null, proxyPool)
-    const result = await forwardConsoleRequest(request, { cfg, forward })
-    items.push({ label: key.label, ...result, key_id: null })
+  for (const [offset, key] of selected.entries()) {
+    const row = index == null ? keys.indexOf(key) : index + offset
+    try {
+      const request = buildAnthropicConsoleRequest({ ...(input || {}), ...key }, null, proxyPool)
+      const result = await forwardConsoleRequest(request, { cfg, forward })
+      items.push({ label: key.label, row, ...result, key_id: null })
+    } catch (error) {
+      items.push({
+        label: key.label,
+        row,
+        ok: false,
+        status: error.status && error.status < 600 ? error.status : 502,
+        text: '',
+        error: String(error.message || error).slice(0, 300),
+        proxy: Boolean(key.proxy_id),
+        key_id: null,
+      })
+    }
   }
   if (items.length === 1 && index == null && !Array.isArray(input?.keys)) return items[0]
   const ready = items.filter((item) => item.ok).length

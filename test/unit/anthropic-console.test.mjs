@@ -117,6 +117,37 @@ test('batch check tests each key through its own configured proxy', async () => 
   assert.equal(JSON.stringify(result).includes('sk-one'), false)
   assert.equal(JSON.stringify(result).includes('sk-two'), false)
 })
+test('batch check records a failed key and continues with the next', async () => {
+  const seen = []
+  const result = await runAnthropicConsole({
+    cfg: {},
+    input: {
+      model: 'claude-sonnet-4-5',
+      message: 'Hi',
+      keys: [
+        { api_key: 'sk-one' },
+        { api_key: 'sk-two' },
+      ],
+    },
+    forward: async (request) => {
+      seen.push(request.headers['x-api-key'])
+      if (request.headers['x-api-key'] === 'sk-one') {
+        throw Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' })
+      }
+      return {
+        statusCode: 200,
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from(JSON.stringify({ content: [{ type: 'text', text: 'pong' }] }))
+        },
+      }
+    },
+  })
+  assert.deepEqual(seen, ['sk-one', 'sk-two'])
+  assert.equal(result.items[0].ok, false)
+  assert.match(result.items[0].error, /connect refused/)
+  assert.equal(result.items[1].ok, true)
+  assert.equal(result.items[1].text, 'pong')
+})
 
 test('scheduled console uses the API picker, upstream model, auth, and key proxy', () => {
   const scheduler = new ApiScheduler()
