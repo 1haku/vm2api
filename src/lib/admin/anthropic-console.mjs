@@ -74,9 +74,9 @@ function directKeys(input = {}, store = null) {
     keys.push({
       label: label || `key ${keys.length + 1}`,
       api_key: apiKey,
-      proxy_id: String(source.proxy_id || source.proxyId || saved?.proxy_id || '').trim(),
-      base_url: String(source.base_url || source.baseUrl || saved?.base_url || '').trim(),
-      auth_scheme: source.auth_scheme || source.authScheme || saved?.auth_scheme || '',
+      proxy_id: chosen(source, 'proxy_id', 'proxyId', saved?.proxy_id || ''),
+      base_url: chosen(source, 'base_url', 'baseUrl', saved?.base_url || ''),
+      auth_scheme: chosen(source, 'auth_scheme', 'authScheme', saved?.auth_scheme || ''),
     })
   }
   if (!keys.length) {
@@ -86,6 +86,12 @@ function directKeys(input = {}, store = null) {
     throw Object.assign(new Error(`一次最多 ${MAX_KEYS} 把 key`), { code: 'too_many_keys', status: 400 })
   }
   return keys
+}
+
+function chosen(source, snake, camel, fallback) {
+  if (Object.prototype.hasOwnProperty.call(source, snake)) return String(source[snake] ?? '').trim()
+  if (Object.prototype.hasOwnProperty.call(source, camel)) return String(source[camel] ?? '').trim()
+  return String(fallback || '').trim()
 }
 
 export function savedEndpointKey(store, keyId) {

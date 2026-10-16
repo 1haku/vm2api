@@ -389,3 +389,42 @@ test('saved Anthropic row reloads its proxy and can test or fetch models without
   assert.deepEqual(seen.map((item) => item.proxy), ['socks5://10.0.0.8:1080', 'socks5://10.0.0.8:1080'])
   assert.equal(JSON.stringify(response.body).includes('sk-ant-saved'), false)
 })
+test('an explicit direct choice overrides a saved proxy for both test and model fetch', async () => {
+  const store = {
+    listRaw: () => [{
+      base_url: 'https://api.anthropic.com',
+      auth_scheme: 'x_api_key',
+      api_key_entries: [{ id: 'ek_1', api_key: 'sk-ant-saved', proxy_id: 'px-1', proxy_url: 'socks5://10.0.0.8:1080' }],
+    }],
+  }
+  const seen = []
+  const forward = async (request) => {
+    seen.push(request.proxyUrl)
+    return {
+      statusCode: 200,
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(JSON.stringify({ data: [{ id: 'claude-sonnet-4-5' }], content: [{ type: 'text', text: 'pong' }] }))
+      },
+    }
+  }
+  await runAnthropicConsole({
+    cfg: {},
+    store,
+    input: {
+      model: 'claude-sonnet-4-5',
+      message: 'Hi',
+      keys: [{ key_id: 'ek_1', proxy_id: '' }],
+    },
+    forward,
+  })
+  const { fetchUpstreamModels } = await import('../../src/lib/admin/api-endpoints.mjs')
+  await fetchUpstreamModels({
+    kind: 'custom',
+    protocol: 'anthropic',
+    base_url: 'https://api.anthropic.com',
+    api_key: 'sk-ant-saved',
+    proxy_url: '',
+    forward,
+  })
+  assert.deepEqual(seen, ['', ''])
+})

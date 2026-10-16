@@ -168,6 +168,7 @@ export function AnthropicConsolePage() {
           api_key: endpoint.apiKey.trim(),
           key_id: endpoint.apiKey.trim() ? '' : endpoint.keyId || '',
           auth_scheme: endpoint.authScheme,
+          proxy_id: endpoint.proxyId === DIRECT ? '' : endpoint.proxyId,
         }),
       })
     },
