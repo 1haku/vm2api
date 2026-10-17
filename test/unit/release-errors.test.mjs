@@ -11,6 +11,13 @@ import {
 } from '../../src/lib/admin/release.mjs'
 
 function fixture(t) {
+  // Exercise upstream release lookup with mocked commands; production retains its update guard.
+  const buildMarker = process.env.VM2API_CUSTOM_BUILD
+  delete process.env.VM2API_CUSTOM_BUILD
+  t.after(() => {
+    if (buildMarker == null) delete process.env.VM2API_CUSTOM_BUILD
+    else process.env.VM2API_CUSTOM_BUILD = buildMarker
+  })
   clearReleaseCache()
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-errors-'))
   fs.writeFileSync(path.join(root, 'VERSION'), '1.3.179\n')
