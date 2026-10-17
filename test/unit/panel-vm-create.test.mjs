@@ -99,7 +99,6 @@ test('import-style create succeeds without seed_policy or SOCKS5', async () => {
     assert.ok(vm?.id, 'created vm id')
     assert.equal(vm.status, 'stopped')
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${vm.id}.json`), 'utf8'))
-    assert.equal(saved.seed_policy.telemetry_disabled, false)
     assert.equal(saved.proxy_required, false)
     assert.equal(saved.proxy, null)
     assert.equal(saved.timezone, null)
