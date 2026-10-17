@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.186 — 2026-10-17
+
+- `kin-computer` 改为 Ubuntu 22.04 / GLIBC 2.35 基线。Ubuntu 22.04、Debian 12 与 Ubuntu 24.04 均可创建 Docker / KVM 身份；已有槽位身份不重算。
+
+已部署机升级：更新控制面镜像，或更新 Node 控制面并执行 `npm run fetch:payload`。不必 `wrap-cli/sync`，不必重建槽位容器。已有计算机身份不变；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.185 — 2026-10-17
 
 - 一键升级先只读检查槽内 kernel。字节没变且没有待重启标记时，不停调度、不重启。有变化时暂停当前可调度槽，等在途请求结束，再复制并重启变化的槽；crag 与 wrap 都按字节变化重启。
