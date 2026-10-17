@@ -3,6 +3,7 @@
 ## 未发布
 
 - GPT 槽在 TTL（10 分钟）内有可用 credits（`has_credits || unlimited`）时仅豁免窗口 cap；显式 park 仍优先；上游 429 清除 credits 并 park。（#508）
+- 修复 KVM 交互终端：交互/非 detach 不再包 `timeout 8`（仅保留 SSH ConnectTimeout）；`-e` 按次独立转义，保留值内换行（含 `KIN_PANEL_RC`）。（#509）
 
 ## 1.3.187 — 2026-10-17
 
