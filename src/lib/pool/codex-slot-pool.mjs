@@ -4,7 +4,12 @@
  * quota/auth before any SSE byte is committed.
  */
 import { isCodexVm } from '../vm/vm-kind.mjs'
-import { extraToCodexSnapshot, normalizeCodexLimits, codexQuotaPark } from '../protocol/codex-usage.mjs'
+import {
+  extraToCodexSnapshot,
+  normalizeCodexLimits,
+  codexQuotaPark,
+  hasSpendableCodexCredits,
+} from '../protocol/codex-usage.mjs'
 import { isLeftoverQuotaScheduleOff, isQuotaWindowReason } from './availability.mjs'
 import { orderOpenAIAccounts } from './openai-account-selector.mjs'
 import { bumpOpenAICursor, openAIRuntimeSignals, readOpenAICursor } from './openai-account-runtime.mjs'
@@ -33,8 +38,7 @@ export function isCodexSlotParked(vm, now = Date.now(), policy = null) {
 }
 
 function extraPark(vm, now) {
-  const extra = extraFromSummary(vm)
-  return codexQuotaPark(extra, now)
+  return codexQuotaPark(extraFromSummary(vm), now, { waiveWindowCaps: hasSpendableCodexCredits(vm, now) })
 }
 
 function extraFromSummary(vm) {
@@ -351,26 +355,27 @@ export function isCodexFailoverError(result) {
 
 export function codexQuotaWindowReason(vm, now = Date.now()) {
   const extra = extraFromSummary(vm)
+  const waived = hasSpendableCodexCredits(vm, now)
   const limits = normalizeCodexLimits(extraToCodexSnapshot(extra))
   const used5 = Number(limits.used_5h_percent)
   const used7 = Number(limits.used_7d_percent)
   const reset5 = Date.parse(limits.reset_5h_at || '')
   const reset7 = Date.parse(limits.reset_7d_at || '')
-  const live5 = Number.isFinite(used5) && used5 >= 100 && (!Number.isFinite(reset5) || reset5 > now)
-  const live7 = Number.isFinite(used7) && used7 >= 100 && (!Number.isFinite(reset7) || reset7 > now)
+  const live5 = !waived && Number.isFinite(used5) && used5 >= 100 && (!Number.isFinite(reset5) || reset5 > now)
+  const live7 = !waived && Number.isFinite(used7) && used7 >= 100 && (!Number.isFinite(reset7) || reset7 > now)
   if (live5) return 'quota_5h_header'
   if (live7) return 'quota_7d_header'
-  if (codexQuotaPark(extra, now).limited) return 'quota_5h_header'
+  if (codexQuotaPark(extra, now, { waiveWindowCaps: waived }).limited) return 'quota_5h_header'
   return null
 }
 
 function codexRestrictionUntil(vm, now) {
   const extra = extraFromSummary(vm)
   const limits = normalizeCodexLimits(extraToCodexSnapshot(extra))
-  const reset5 = Date.parse(limits.reset_5h_at || '')
-  const reset7 = Date.parse(limits.reset_7d_at || '')
-  const park = Date.parse(extra.codex_limited_until || '')
-  const futures = [reset5, reset7, park].filter((value) => Number.isFinite(value) && value > now)
+  const windowResets = hasSpendableCodexCredits(vm, now) ? [] : [limits.reset_5h_at, limits.reset_7d_at]
+  const futures = [...windowResets, extra.codex_limited_until]
+    .map((value) => Date.parse(value || ''))
+    .filter((value) => Number.isFinite(value) && value > now)
   return futures.length ? Math.min(...futures) : now + 5 * 60_000
 }
 
