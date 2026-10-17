@@ -27,6 +27,7 @@ import { hasClaudeCode1mSuffix } from './context-1m.mjs'
 import { withRequestProtocolBetas } from './claude-code-betas.mjs'
 import {
   refreshOfficialSystemEnvironment,
+  hasEnvironmentSection,
   stampBillingPromptId,
   collapseSystemBudgetReminders,
   CRS_OFFICIAL_SYSTEM,
@@ -75,11 +76,12 @@ export function isCliOwnedSystemText(text) {
   return false
 }
 
-export function stripCliOwnedSystem(system) {
+export function stripCliOwnedSystem(system, { preserveCallerEnvironment = false } = {}) {
   if (system == null) return undefined
-  if (typeof system === 'string') return isCliOwnedSystemText(system) ? undefined : system
+  const keep = (text) => (preserveCallerEnvironment && hasEnvironmentSection(text)) || !isCliOwnedSystemText(text)
+  if (typeof system === 'string') return keep(system) ? system : undefined
   if (!Array.isArray(system)) return system
-  const kept = system.filter((block) => !isCliOwnedSystemText(systemBlockText(block)))
+  const kept = system.filter((block) => keep(systemBlockText(block)))
   return kept.length ? kept : undefined
 }
 
@@ -181,6 +183,7 @@ export function prepareCliHopBody(
     requestContext = null,
     preserveSystem = false,
     preserveThinkingBlocks = false,
+    preserveCallerEnvironment = false,
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
@@ -188,7 +191,7 @@ export function prepareCliHopBody(
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   if (!preserveSystem) {
-    const leftover = stripCliOwnedSystem(body.system)
+    const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
     if (leftover == null) delete body.system
     else body.system = leftover
   }
@@ -238,6 +241,7 @@ export function prepareOutboundAttempt({
   cacheTtl = null,
   cacheBreakpoints = null,
   preserveThinkingBlocks = false,
+  preserveCallerEnvironment = false,
   reqHeaders = {},
   officialClient,
   sessionId: sessionIdOverride,
@@ -291,7 +295,7 @@ export function prepareOutboundAttempt({
   )
   const callerSessionId = sessionIdFromOutboundBody(identified)
   if (identity && callerSessionId) identity.callerSessionId = callerSessionId
-  if (identity && !requestContext) {
+  if (identity && !requestContext && !preserveCallerEnvironment) {
     identified = refreshOfficialSystemEnvironment(identified, identity, identified.model)
   }
   const stampOwnedBilling = String(sessionIdOverride || '').trim() && (mode !== 'passthrough' || !keepCallerSession)
@@ -340,6 +344,7 @@ export function prepareOutboundEnvelope({
   cacheTtl = null,
   cacheBreakpoints = null,
   preserveThinkingBlocks = false,
+  preserveCallerEnvironment = false,
   reqHeaders = {},
   homeDir = '',
   officialClient,
@@ -373,6 +378,7 @@ export function prepareOutboundEnvelope({
     cacheTtl,
     cacheBreakpoints,
     preserveThinkingBlocks,
+    preserveCallerEnvironment,
     reqHeaders,
     officialClient,
     sessionId,

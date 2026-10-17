@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { prepareCliHopBody, stripCliOwnedSystem } from '../../src/lib/protocol/outbound-attempt.mjs'
+import {
+  prepareCliHopBody,
+  prepareOutboundEnvelope,
+  stripCliOwnedSystem,
+} from '../../src/lib/protocol/outbound-attempt.mjs'
 import {
   applyCrsUnofficialPersona,
   CRS_OFFICIAL_SYSTEM,
@@ -76,6 +80,31 @@ test('cli-hop passthrough preserves mixed TTLs, missing TTL and caller marker po
   assert.deepEqual(body.system, before.system)
   assert.deepEqual(body.messages, before.messages)
   assert.deepEqual(input, before)
+})
+
+test('disabled persona environment preserves caller environment through CLI preparation', () => {
+  const caller = '  # Environment\n - Timezone: Pacific/Auckland\n - Caller-only fact: KEEP_ME\n '
+  const body = prepareCliHopBody(
+    { model: 'claude-opus-5-5', system: [{ type: 'text', text: caller }], messages: [{ role: 'user', content: 'hi' }] },
+    { preserveCallerEnvironment: true },
+  )
+  assert.deepEqual(body.system, [{ type: 'text', text: caller }])
+})
+
+test('environment opt-out prevents HTTP slot selection from overwriting caller timezone', () => {
+  const caller = '# Environment\n - Timezone: Pacific/Auckland\n - Caller-only fact: KEEP_ME'
+  const { body } = prepareOutboundEnvelope({
+    canonicalBody: {
+      model: 'claude-opus-5-5',
+      system: [{ type: 'text', text: caller }],
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 128,
+    },
+    identity: { timezone: 'Asia/Tokyo' },
+    preserveCallerEnvironment: true,
+    credentialMode: 'api-key',
+  })
+  assert.deepEqual(body.system, [{ type: 'text', text: caller }])
 })
 
 test('cli-hop passthrough rejects invalid caller markers instead of repairing them', () => {

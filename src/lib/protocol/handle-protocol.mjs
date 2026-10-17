@@ -113,6 +113,7 @@ import {
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
 } from '../identity/crs-persona.mjs'
+import { presetFlagEnabled } from '../identity/persona-template.mjs'
 import {
   claudeCodeOnlyError,
   claudeCodeOnlyFromRouting,
@@ -1251,9 +1252,14 @@ export function createHandleProtocol(deps) {
           const preserveCliHopThinkingBlocks = !repaired
           const officialPassthrough = officialTraffic && officialCcPassthroughFromRouting(routingNow)
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
+          const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
+          const preserveCallerEnvironment = !presetFlagEnabled(
+            routingNow?.compatibility,
+            'persona_env_presets',
+            resolvedPersona,
+          )
           let hopBody = body
           if (cliHop) {
-            const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             // Classifier keeps its own system. Official family keeps its inbound
             // system only when the protocol tab turns passthrough on.
             const panelRewrite = !requestContext && !officialPassthrough
@@ -1264,6 +1270,7 @@ export function createHandleProtocol(deps) {
               requestContext,
               preserveSystem: officialPassthrough,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
+              preserveCallerEnvironment,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
@@ -1376,6 +1383,7 @@ export function createHandleProtocol(deps) {
             cacheTtl,
             cacheBreakpoints,
             preserveThinkingBlocks,
+            preserveCallerEnvironment,
             reqHeaders: req.headers,
             homeDir: selected.exec?.homeDir || '',
             credentialMode: credMode,

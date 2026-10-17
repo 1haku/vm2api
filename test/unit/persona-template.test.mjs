@@ -109,7 +109,7 @@ test('official preset keeps user system in the optional fifth segment', () => {
 })
 
 test('official_full preset renders the complete agent prompt separately', () => {
-  const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-full' })
+  const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-full', withEnv: true })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
   assert.equal(out.length, 4)
   assert.equal(out[2].text, vars.agent_official)
@@ -631,6 +631,65 @@ test('official env block carries the slot timezone and is switchable per preset'
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
     assert.equal(out.system[3].text, '# Environment\n - Timezone: UTC')
   })
+})
+
+test('environment opt-out removes generated blocks for every preset and preserves caller environment verbatim', () => {
+  const caller = '  # Environment\n - Timezone: Pacific/Auckland\n - Caller-only fact: KEEP_ME\n '
+  for (const preset of ['official', 'official_full', 'zero', 'custom']) {
+    withRoutingFile(
+      { persona_preset: preset, overlay_preset: 'off', persona_env_presets: { [preset]: false } },
+      (file) => {
+        const options = { routingFile: file, identity: { timezone: 'Asia/Tokyo' } }
+        const bare = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, options)
+        assert.equal(
+          bare.system.some((block) => /# Environment|Asia\/Tokyo/.test(block.text)),
+          false,
+          preset,
+        )
+        const supplied = applyCrsUnofficialPersona(
+          { system: [{ type: 'text', text: caller }], messages: [{ role: 'user', content: 'hi' }] },
+          options,
+        )
+        assert.equal(supplied.system.at(-1).text, caller, preset)
+        assert.equal(
+          supplied.system.some((block) => block.text.includes('Asia/Tokyo')),
+          false,
+          preset,
+        )
+      },
+    )
+  }
+})
+
+test('disabled generated environment macros leave no empty cached block but retain literal custom environment', () => {
+  const envBlocks = ['env', 'env_timezone_only', 'env_official'].map((name) => ({
+    type: 'text',
+    text: `{{${name}}}`,
+    cache_control: { type: 'ephemeral', ttl: '1h' },
+  }))
+  const literal = { type: 'text', text: '# Environment\n - Timezone: Europe/Paris' }
+  const vars = personaTemplateVars({ env: { timezone: 'Asia/Tokyo' }, withEnv: false })
+  assert.deepEqual(renderPersonaTemplate([...envBlocks, literal], vars), [literal])
+  assert.equal(vars.timezone, '')
+})
+
+test('environment opt-out keeps a caller continuation environment instead of discarding it as generated text', () => {
+  const caller =
+    '# Text output (does not apply to tool calls)\nCaller instructions.\n\n# Environment\n - Timezone: Pacific/Auckland\n'
+  withRoutingFile(
+    { persona_preset: 'official_full', overlay_preset: 'off', persona_env_presets: { official_full: false } },
+    (file) => {
+      const output = applyCrsUnofficialPersona(
+        { system: caller, messages: [{ role: 'user', content: 'hi' }] },
+        { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
+      )
+      assert.equal(output.system.at(-1).text, caller)
+      assert.equal(
+        output.system.some((block) => block.text.includes('Asia/Tokyo')),
+        false,
+      )
+    },
+  )
 })
 
 test('per-preset switch maps are validated on PUT', () => {
