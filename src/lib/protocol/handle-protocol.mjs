@@ -123,7 +123,12 @@ import {
   isClaudeCodeFamilyRequest,
 } from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
-import { buildAnthropicSseError, createAnthropicStreamTracker, isRecoverableTruncation } from './stream-truncation.mjs'
+import {
+  buildAnthropicSseError,
+  createAnthropicSseErrorRemapper,
+  createAnthropicStreamTracker,
+  isRecoverableTruncation,
+} from './stream-truncation.mjs'
 import {
   hidePersonaUsageInSseLine,
   hidePersonaUsageOnMessage,
@@ -1115,6 +1120,8 @@ export function createHandleProtocol(deps) {
 
     const clientStream = isClientStream(inbound, req.headers)
     const streamTracker = clientStream && protocol === 'anthropic.messages' ? createAnthropicStreamTracker() : null
+    const anthropicSseErrorRemapper =
+      clientStream && protocol === 'anthropic.messages' ? createAnthropicSseErrorRemapper() : null
     // One keepalive for the whole Claude stream, including session/seat queues
     // and the gaps between failover attempts. OpenAI keeps its per-attempt one.
     let activeAttemptCommit = null
@@ -1456,7 +1463,8 @@ export function createHandleProtocol(deps) {
                 if (protocol === 'anthropic.messages') {
                   streamTracker?.observe(line)
                   if (!res.headersSent) writeSSEHeaders(res)
-                  res.write(String(line).endsWith('\n') ? String(line) : String(line) + '\n')
+                  const outbound = anthropicSseErrorRemapper ? anthropicSseErrorRemapper.remapLine(line) : line
+                  res.write(String(outbound).endsWith('\n') ? String(outbound) : String(outbound) + '\n')
                   return
                 }
                 const writeChunks = (chunks) => {
