@@ -186,7 +186,7 @@ export function VmDetailPage() {
     (seed.data?.seed_policy as Record<string, unknown> | undefined) || {}
   const syncTelemetry =
     (routing.data?.official_cc as { sync_telemetry?: boolean } | undefined)
-      ?.sync_telemetry !== false
+      ?.sync_telemetry === true
   const quotaSrc = {
     utilization_5h: acc.utilization_5h ?? vm.utilization_5h,
     utilization_7d: acc.utilization_7d ?? vm.utilization_7d,
