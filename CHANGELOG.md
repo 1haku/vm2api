@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 内核看门狗在容器级恢复/重建前先对槽位所在 Docker 主机做有界观测（运行/缺失/已停/Restarting/暂停/unknown）；HTTP/权限/传输失败或观测超时视为 unknown，不消耗重启预算、不盲重启；确认 missing/stopped/restarting 且槽位仍为运行意图时才 revival/recreate，运行中容器仍走既有 kernel 重启；远程 Restarting 崩溃循环纳入看门狗重建；单槽异常与 tick 级 promise 拒绝互不影响。（#491）
 - Docker 槽创建可选 `machine.docker_cpus`（`0` 或省略不限；`0.01`–`16` 为 CPU 时间上限）：写入槽位记录并在容器创建/重建时生效（本地 `--cpus`、集群 `NanoCpus`），KVM 与非法值拒绝；不提供在线 PATCH 或把 `vcpus` 隐式映射为 Docker 上限；损坏落盘值在 reload/恢复/重建前拒绝。（#490）
 - 修复通知监控在冷却/无事件轮询时误清 `last_error`：仅在实际投递成功时清除，保留上次投递失败；解析 `dispatchNotify` 的 `ok: false` 与部分通道失败，同批次任一失败优先于成功事件。（#483）
 - 代理出口地理查询经 SOCKS5 时由代理端解析目标域名（查询路径内将 `socks5://` 规范为 `socks5h:`），避免依赖控制面本地 DNS；IPv4 与 IPv6 两阶段探测一致，不修改已保存代理 URI，HTTP(S) 代理与本地直连行为不变。（#482）
