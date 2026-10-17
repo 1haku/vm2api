@@ -3,11 +3,7 @@
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
  */
 import { applyIntercept } from '../core/intercept.mjs'
-import {
-  streamIdleTimeoutMs as idleTimeoutFromRouting,
-  inboundBodyLimit,
-  queueKeepaliveDelayMs,
-} from '../core/config.mjs'
+import { resolveStreamIdleTimeoutMs, inboundBodyLimit, queueKeepaliveDelayMs } from '../core/config.mjs'
 import { applyEagerToolStreaming } from './eager-tool-streaming.mjs'
 import {
   inboundRefusalDeviceId,
@@ -1093,10 +1089,7 @@ export function createHandleProtocol(deps) {
     // First downstream byte during a queue wait. Short misses stay HTTP 429/529;
     // anything still waiting past this writes SSE so Cloudflare does not 524.
     const queueKeepaliveDelay = queueKeepaliveDelayMs(getRouting(), cfg.limits?.queue_keepalive_delay_ms)
-    const streamIdleTimeoutMs = idleTimeoutFromRouting(
-      getRouting(),
-      Number(cfg.limits.stream_idle_timeout_ms) || 180_000,
-    )
+    const streamIdleTimeoutMs = resolveStreamIdleTimeoutMs(getRouting(), cfg)
     const managedKey = req.apiKeyRecord || null
     if (managedKey) {
       const gate = apiKeyStore.acquire(managedKey)
