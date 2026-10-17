@@ -94,7 +94,7 @@
 | POST | `/vms/:id/allocate-proxy` | 从池分配 SOCKS5 |
 | POST | `/vms/:id/update-claude-code` | 410，`claude_cli_removed` |
 | DELETE | `/vms/:id` | 不能删 active；只解绑本槽代理 |
-| POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed` |
+| POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed`。Docker 槽可在 `machine` 里可选传 `docker_cpus`（见下） |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
 | POST | `/vms/fleet-update` | 全槽 roll / 采集 |
@@ -129,6 +129,9 @@ Claude PATCH `max_sessions` 返回 400 `claude_max_sessions_forbidden`；OpenAI 
 
 `POST /vms/create` 指定 `platform: "openai"`，省略并发/RPM/会话上限即跟随已保存的 OpenAI 全局值；显式值钉住本槽。OpenAI 凭证导入/重导入保留既有覆盖和权重，未覆盖字段采用当前 OpenAI 全局值；不新增跨平台切换入口。
 
+### Docker 槽可选 CPU 上限
+
+`POST /vms/create`（`runtime_type: "docker"`）可在 `machine` 与 `memory` 同级显式传 `docker_cpus`：`0` 或省略表示不限 CPU（与升级前一致）；`0.01`–`16` 为 CPU 时间硬上限（如 `0.5` 表示最多占用半颗宿主机 CPU 的时间，非独占核）。字符串、非有限数、越界或 KVM 创建携带该字段返回 400 `invalid_machine`。仅当请求体显式带上时才写入 `machine.docker_cpus`；不会把 KVM 的 `machine.vcpus` 隐式转成 Docker 上限。配额在**容器创建或 recreate**（含 `POST /vms/:id/reset`、带 recreate 的 start/reload、看门狗/恢复路径上的重建）时落到本地 `--cpus` 或集群 Engine `HostConfig.NanoCpus`；对已存在容器的普通 start、kernel 重启或控制面重启**不会**在线改限额，且无 `PATCH` 改配额入口。列表/详情回显已保存的 `machine.docker_cpus`。若落盘值损坏或越界，`POST /vms/:id/reload`、恢复/重建相关路径会在触达容器前先拒绝并返回 `invalid_machine`。
 
 `GET /vms/:id` 的 `kernel.rust_health` 来自 wrap `/internal/health`：`reachable`（进程在且 `ready_slots>=1`）、`process_up`、`provider`（cli-hop 为 `local_cli`）、`ready_slots`、`cli_pid`、`worker_version`。Go hop 没有 slot 字段。`reachable=false` 且 `process_up=true` 表示 kernel 在、CLI 槽未就绪。
 

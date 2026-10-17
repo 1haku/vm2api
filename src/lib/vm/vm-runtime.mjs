@@ -32,7 +32,7 @@ import {
   kvmImageForKernel,
   KVM_BUILD_DIR,
 } from './os-catalog.mjs'
-import { slotMemory, memoryMiB, VM_CONFIG_DEFAULTS } from './machine-spec.mjs'
+import { slotMemory, slotDockerCpus, memoryMiB, VM_CONFIG_DEFAULTS } from './machine-spec.mjs'
 import { probeLocalKvm } from './kvm-host.mjs'
 import { slotExecArgv } from './slot-exec.mjs'
 
@@ -394,6 +394,8 @@ export function slotWorkerNeedsRecreate(existing, vm, paths) {
  */
 export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
+  // Outside the cached-config fallback: invalid quotas must never reach restart.
+  if (!isKvmRuntime(vm)) slotDockerCpus(vm)
   const paths = workerPaths(projectRoot, vm.id)
   const name = containerName(vm.id)
   let worker
@@ -797,7 +799,15 @@ export function buildKvmRunArgs({
   ]
 }
 
+/** Creation-only resources: restarting an existing container does not change its limits. */
+export function dockerSlotResourceArgs(vm, routing) {
+  const memory = slotMemory(vm, routing)
+  const cpus = slotDockerCpus(vm)
+  return ['--memory', memory, '--memory-swap', memory, ...(cpus > 0 ? ['--cpus', String(cpus)] : [])]
+}
+
 export function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
+  if (!isKvmRuntime(vm)) slotDockerCpus(vm) // reject corrupt persisted quotas before any lifecycle changes
   if (isKvmRuntime(vm) && accelOpt !== 'kvm' && accelOpt !== 'tcg') {
     const recorded = vm.runtime?.accel
     if (recorded !== 'kvm' && recorded !== 'tcg') {
@@ -978,10 +988,7 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing, acc
       netName,
       '--restart',
       'unless-stopped',
-      '--memory',
-      mem,
-      '--memory-swap',
-      mem,
+      ...dockerSlotResourceArgs(vm, resolvedRouting),
       '--pids-limit',
       '256',
       '--user',

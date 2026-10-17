@@ -146,6 +146,8 @@ export type VmSmbios = {
 /** 创建时固化到槽位的机器规格。旧槽可能缺省。 */
 export type VmMachine = {
   memory?: string
+  /** Optional Docker hard CPU quota. Missing/zero = unlimited; separate from KVM vcpus. */
+  docker_cpus?: number
   vcpus?: number
   disk_gb?: number
   cpu_model?: string
