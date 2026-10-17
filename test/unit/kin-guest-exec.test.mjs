@@ -106,7 +106,7 @@ test('-e preserves embedded newlines in remote export script', () => {
 
 test('multiline KIN_PANEL_RC-style env survives quoting', () => {
   const h = prepareHarness()
-  const rc = "if true; then\necho ok\nfi"
+  const rc = 'if true; then\necho ok\nfi'
   const ran = runHarness(h, ['-e', `KIN_PANEL_RC=${rc}`, '-i', '-t', '--', '/bin/sh', '-c', 'true'])
   assert.equal(ran.status, 0, ran.stderr)
   const remote = remoteScript(h)
