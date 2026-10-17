@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.184 — 2026-10-17
+
+- kernel 保留 `redacted_thinking` 的签名；原来没有 `data` 时不再回写成 `null`。交付仍是未压缩动态 ELF。槽内用 bundled `ld-linux` 加载，整包 UPX 会被拒绝。更换后需要 `wrap-cli/sync`。
+
+已部署机升级：更新 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`，执行 `wrap-cli/sync`（`restart: true`）。不必重建槽位容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.183 — 2026-10-17
 
 - Opus / Sonnet / Haiku 5.5 的出站过滤对齐 sub2api：历史里出现一块无效 thinking，整段 thinking 与 `redacted_thinking` 都拆掉，只留正文；拆完没有内容的轮删掉。没有 `type` 但带 `thinking` 字段的块也算无效。`redacted_thinking` 有 `data` 就留，否则看签名；非空且非 dummy 的签名不再按 24 字符丢弃。全部有效时不拆。cli-hop 首跳和默认 HTTP 保留路径不变。更早型号仍逐块过滤，`redacted_thinking` 只在签名达到 24 字符时留。
