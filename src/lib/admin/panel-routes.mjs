@@ -448,7 +448,6 @@ async function commitImportedCodexVm({
   }
 }
 
-
 async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   const all = listVms(project)
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null

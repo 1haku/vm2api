@@ -94,7 +94,13 @@ test('a failed kernel hold restores only the slots it paused', async () => {
   fs.writeFileSync(path.join(dir, 'vm-01.json'), JSON.stringify({ id: 'vm-01', status: 'running', schedulable: true }))
   fs.writeFileSync(
     path.join(dir, 'vm-02.json'),
-    JSON.stringify({ id: 'vm-02', status: 'running', schedulable: false, schedule_manual: true, schedule_disabled_reason: 'disabled' }),
+    JSON.stringify({
+      id: 'vm-02',
+      status: 'running',
+      schedulable: false,
+      schedule_manual: true,
+      schedule_disabled_reason: 'disabled',
+    }),
   )
   const held = holdSchedulableSlots(project, 'kernel_update')
   const drain = await waitForSlotDrain({ vmInflight: new Map([['vm-01', 1]]) }, held, { timeoutMs: 1 })
@@ -107,8 +113,6 @@ test('a failed kernel hold restores only the slots it paused', async () => {
   assert.equal(manual.schedule_disabled_reason, 'disabled')
   fs.rmSync(project, { recursive: true, force: true })
 })
-
-
 
 test('restoreScheduleAfterLiveCredential keeps a manual lock', () => {
   const vm = {

@@ -115,7 +115,6 @@ test('crag inspection reports a change and sync marks the kernel for restart', (
   }
 })
 
-
 test('materializeWrapCli does not recopy identical wrap files', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-skip-'))
   try {
@@ -191,7 +190,6 @@ test('a failed kernel restart stays pending until the next sync', () => {
     fs.rmSync(project, { recursive: true, force: true })
   }
 })
-
 
 test('materializeWrapCli installs glibc wrapper over kernel.bin', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-wrap-'))
