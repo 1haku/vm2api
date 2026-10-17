@@ -10,7 +10,12 @@ import { isCodexVm } from '../vm/vm-kind.mjs'
 import { isLocalEgressProxy } from '../vm/egress.mjs'
 import { hostProxyUrlForVm } from '../vm/slot-host.mjs'
 import { readCodexAccounts, upsertCodexAccount, persistCodexQuotaSnapshot } from '../vm/codex-slot.mjs'
-import { buildCodexUsageView, extraToCodexSnapshot, normalizeCodexLimits } from '../protocol/codex-usage.mjs'
+import {
+  buildCodexUsageView,
+  extraToCodexSnapshot,
+  normalizeCodexCredits,
+  normalizeCodexLimits,
+} from '../protocol/codex-usage.mjs'
 import { CODEX_OAUTH_ORIGINATOR, makeProxyFetch, refreshCodexAccessToken } from '../protocol/codex-models.mjs'
 import { openaiIdentityFromJwt } from './openai-jwt.mjs'
 
@@ -302,13 +307,14 @@ async function rotateIfNeeded(slot, projectRoot, vmId, fetchImpl) {
   return { ...slot, access: tok.access_token, refresh: tok.refresh_token || slot.refresh }
 }
 
-function publicUsage(extra, resetCredits, usagePayload = {}) {
+function publicUsage(extra, resetCredits, credits, usagePayload = {}) {
   const view = buildCodexUsageView(extraToCodexSnapshot(extra))
   return {
     usage: view,
     quota: view.quota,
     windows: view.windows,
     reset_credits: resetCredits,
+    credits,
     plan_type: usagePayload.plan_type || usagePayload.planType || null,
     email: usagePayload.email || null,
   }
@@ -378,8 +384,10 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
     detailCredits,
   )
   const persistable = resetCredits.available_count <= 0 || resetCredits.credits.length > 0 ? resetCredits : null
+  const credits = normalizeCodexCredits(pack.usage.payload?.credits)
   persistCodexQuotaSnapshot(projectRoot, vmId, {
     extra,
+    credits,
     planType: pack.usage.payload?.plan_type || pack.usage.payload?.planType,
     ...(persistable ? { resetCredits: persistable } : {}),
   })
@@ -388,7 +396,7 @@ async function queryUpstream(slot, { fetchImpl, rotate = true, projectRoot, vmId
   })
   return {
     ok: true,
-    ...publicUsage(extra, persistable || resetCredits, pack.usage.payload || {}),
+    ...publicUsage(extra, persistable || resetCredits, credits, pack.usage.payload || {}),
     fetched_at: resetCredits.fetched_at,
     warning: persistable ? undefined : 'reset_credit_cache_refresh_failed',
   }
@@ -459,6 +467,7 @@ export async function resetOpenaiQuota({ projectRoot, vmId, fetchImpl, rotate = 
       code: res.payload?.code || 'ok',
       windows_reset: int(res.payload?.windows_reset ?? res.payload?.windowsReset) || 0,
       reset_credits: null,
+      credits: null,
       usage: null,
       quota: null,
       windows: [],

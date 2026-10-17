@@ -14,6 +14,27 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 
+test('038 preserves API endpoint credentials and proxy routing while adding an empty proxy id', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'api-proxy-migration-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  db.exec("INSERT INTO api_endpoints(id,name,base_url) VALUES('ep','fixture','https://example.invalid')")
+  db.exec(
+    "INSERT INTO api_endpoint_keys(id,endpoint_id,api_key,proxy_url) VALUES('key','ep','fixture-only','socks5://example.invalid:1080')",
+  )
+  db.exec('ALTER TABLE api_endpoint_keys DROP COLUMN proxy_id')
+  db.exec("DELETE FROM schema_migrations WHERE version='038'")
+  const before = subscriptionSnapshot(db)
+  applyMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT proxy_id FROM api_endpoint_keys WHERE id='key'").get().proxy_id, '')
+  db.exec("UPDATE api_endpoint_keys SET proxy_id='different' WHERE id='key'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_endpoint_keys/)
+})
+
 test('037 snapshot permits only specified historical token conversion, not cost or ownership changes', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'billing-normalize-'))
   const db = createDatabase({ dataDir: dir })

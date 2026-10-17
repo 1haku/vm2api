@@ -2,6 +2,25 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'anthropic-console',
+  'codex-credits',
+  'codex-quota-stale',
+  'docker-cpu-lifecycle',
+  'docker-slot-cpu',
+  'docker-slot-memory',
+  'guest-identity',
+  'kernel-watchdog-observation',
+  'kin-guest-exec',
+  'notify-delivery-state',
+  'panel-vm-memory-raise',
+  'proxy-geo-control-plane',
+  'proxy-geo-dns',
+  'release-errors',
+  'remote-slot-gpt',
+  'remote-slot-restart-loop',
+  'runtime-state',
+  'usage-probe-reset-delay',
+  'vm-test-schedule',
   'slot-computer',
   'slot-recovery',
   'stream-queue-keepalive',
@@ -171,6 +190,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'vm-test-schedule',
   'slot-credential-clear',
   'subscription-weekly-window',
   'panel-turnstile',

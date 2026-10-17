@@ -86,10 +86,22 @@ export function subscriptionSnapshot(db) {
       })
     state[table] = { count: rows.length, hash: digest(rows) }
   }
-  for (const table of ['refusal_guards', 'refusal_device_blocks', 'vm_pools', 'vm_pool_members']) {
+  for (const table of [
+    'refusal_guards',
+    'refusal_device_blocks',
+    'vm_pools',
+    'vm_pool_members',
+    'api_endpoints',
+    'api_endpoint_keys',
+    'api_endpoint_models',
+  ]) {
     const rows = exists(db, table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
     const normalized =
-      table === 'refusal_guards' ? rows.map((row) => ({ ...row, signature: row.signature ?? null })) : rows
+      table === 'refusal_guards'
+        ? rows.map((row) => ({ ...row, signature: row.signature ?? null }))
+        : table === 'api_endpoint_keys'
+          ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
+          : rows
     state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [

@@ -18,11 +18,17 @@ import {
   isToolArgumentsError,
   toCodexResponses,
 } from './codex-convert.mjs'
-import { extraFromCodexHeaders, codexQuotaPark, CODEX_DEFAULT_PARK_MS } from './codex-usage.mjs'
+import {
+  extraFromCodexHeaders,
+  codexCreditsFromHeaders,
+  codexQuotaPark,
+  CODEX_DEFAULT_PARK_MS,
+} from './codex-usage.mjs'
 import { extractOpenaiUsage, openaiAnthropicUsageFromExtract, disjointOpenaiUsage } from './openai-usage.mjs'
 import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
-import { boundProxyUrl, isLocalEgressProxy } from '../vm/egress.mjs'
+import { isLocalEgressProxy } from '../vm/egress.mjs'
+import { vmNodeId } from '../cluster/placement.mjs'
 import { hostProxyUrlForVm } from '../vm/slot-host.mjs'
 import { readCodexAccounts, upsertCodexAccount } from '../vm/codex-slot.mjs'
 import { scopeAccountFromVm } from './jev-intercept.mjs'
@@ -229,15 +235,17 @@ function ingestCodexHop(projectRoot, vmId, result, now = Date.now(), policy = nu
   const extra = extraFromCodexHeaders(headers, now)
   if (extra) extra.codex_subscription_sample_started_at = new Date(sampleStartedAt).toISOString()
   let limitedUntil = null
+  let quotaExceeded = false
   if (
     isCodexFailoverError(result) &&
     (Number(result?.status) === 429 || /usage_limit_reached/.test(String(result?.body?.error?.code || '')))
   ) {
     const park = extra ? codexQuotaPark(extra, now) : { limited: true, until: now + CODEX_DEFAULT_PARK_MS }
     limitedUntil = park.until || now + CODEX_DEFAULT_PARK_MS
+    quotaExceeded = String(result?.body?.error?.code || result?.error_code || '') === 'usage_limit_reached'
   }
-  if (!extra && !limitedUntil) return null
-  return persistCodexUsage(projectRoot, vmId, { headers, extra, limitedUntil, now, policy })
+  if (!extra && !limitedUntil && !codexCreditsFromHeaders(headers, now)) return null
+  return persistCodexUsage(projectRoot, vmId, { headers, extra, limitedUntil, quotaExceeded, now, policy })
 }
 
 function execFor(projectRoot, vm) {
@@ -593,8 +601,11 @@ export async function handleCodexProtocol({
       }
       let attemptKind = 'failed'
       try {
+        const localExit = isLocalEgressProxy(vm.proxy)
         writeCfg(projectRoot, vm, {
-          proxyUrl: boundProxyUrl(vm.proxy),
+          // Same rule as slot start: a node on local egress must leave through
+          // that node's forwarder, not the control plane's deployment proxy.
+          proxyUrl: localExit && !vmNodeId(vm) ? '' : hostProxyUrlForVm(vm),
           proxyRequired: true,
           routing,
         })

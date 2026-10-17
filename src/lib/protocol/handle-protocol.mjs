@@ -5,11 +5,7 @@
 import crypto from 'node:crypto'
 import { withTransaction } from '../db/database.mjs'
 import { applyIntercept } from '../core/intercept.mjs'
-import {
-  streamIdleTimeoutMs as idleTimeoutFromRouting,
-  inboundBodyLimit,
-  queueKeepaliveDelayMs,
-} from '../core/config.mjs'
+import { resolveStreamIdleTimeoutMs, inboundBodyLimit, queueKeepaliveDelayMs } from '../core/config.mjs'
 import { applyEagerToolStreaming } from './eager-tool-streaming.mjs'
 import {
   inboundRefusalDeviceId,
@@ -126,7 +122,12 @@ import {
   isClaudeCodeFamilyRequest,
 } from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
-import { buildAnthropicSseError, createAnthropicStreamTracker, isRecoverableTruncation } from './stream-truncation.mjs'
+import {
+  buildAnthropicSseError,
+  createAnthropicSseErrorRemapper,
+  createAnthropicStreamTracker,
+  isRecoverableTruncation,
+} from './stream-truncation.mjs'
 import {
   hidePersonaUsageInSseLine,
   hidePersonaUsageOnMessage,
@@ -1129,15 +1130,14 @@ export function createHandleProtocol(deps) {
     // First downstream byte during a queue wait. Short misses stay HTTP 429/529;
     // anything still waiting past this writes SSE so Cloudflare does not 524.
     const queueKeepaliveDelay = queueKeepaliveDelayMs(getRouting(), cfg.limits?.queue_keepalive_delay_ms)
-    const streamIdleTimeoutMs = idleTimeoutFromRouting(
-      getRouting(),
-      Number(cfg.limits.stream_idle_timeout_ms) || 180_000,
-    )
+    const streamIdleTimeoutMs = resolveStreamIdleTimeoutMs(getRouting(), cfg)
     const managedKey = req.apiKeyRecord || null
     const clientAbort = bindClientAbort(req, res)
 
     const clientStream = isClientStream(inbound, req.headers)
     const streamTracker = clientStream && protocol === 'anthropic.messages' ? createAnthropicStreamTracker() : null
+    const anthropicSseErrorRemapper =
+      clientStream && protocol === 'anthropic.messages' ? createAnthropicSseErrorRemapper() : null
     // One keepalive for the whole Claude stream, including session/seat queues
     // and the gaps between failover attempts. OpenAI keeps its per-attempt one.
     let activeAttemptCommit = null
@@ -1250,11 +1250,18 @@ export function createHandleProtocol(deps) {
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
           const routingNow = getRouting()
+          const repaired = extra.repaired === true
+          const preserveThinkingBlocks =
+            !repaired &&
+            routingNow?.failover?.signature_repair !== true &&
+            (!keptAccount || keptAccount === selected.accountId)
+          // cli-node receives the cleaned body after this boundary. Keep every
+          // thinking block on the first hop and only let a repaired retry strip it.
+          const preserveCliHopThinkingBlocks = !repaired
           const officialPassthrough = officialTraffic && officialCcPassthroughFromRouting(routingNow)
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           let hopBody = body
           if (cliHop) {
-            const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             // Classifier keeps its own system. Official family keeps its inbound
             // system only when the protocol tab turns passthrough on.
@@ -1265,6 +1272,7 @@ export function createHandleProtocol(deps) {
               cacheTtl: requestedCacheTtl,
               requestContext,
               preserveSystem: officialPassthrough,
+              preserveThinkingBlocks: preserveCliHopThinkingBlocks,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
@@ -1371,6 +1379,7 @@ export function createHandleProtocol(deps) {
             toolNameRewrite: openaiCompat ? false : getRouting()?.compatibility?.tool_name_rewrite !== false,
             cacheTtl,
             cacheBreakpoints,
+            preserveThinkingBlocks,
             reqHeaders: req.headers,
             homeDir: selected.exec?.homeDir || '',
             credentialMode: credMode,
@@ -1470,7 +1479,8 @@ export function createHandleProtocol(deps) {
                 if (protocol === 'anthropic.messages') {
                   streamTracker?.observe(line)
                   if (!res.headersSent) writeSSEHeaders(res)
-                  res.write(String(line).endsWith('\n') ? String(line) : String(line) + '\n')
+                  const outbound = anthropicSseErrorRemapper ? anthropicSseErrorRemapper.remapLine(line) : line
+                  res.write(String(outbound).endsWith('\n') ? String(outbound) : String(outbound) + '\n')
                   return
                 }
                 const writeChunks = (chunks) => {

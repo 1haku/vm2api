@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson, readJsonCached } from './vm-file.mjs'
 import { isCodexVm } from '../protocol/codex-route.mjs'
-import { buildCodexUsageView, extraToCodexSnapshot } from '../protocol/codex-usage.mjs'
+import { buildCodexUsageView, extraToCodexSnapshot, hasSpendableCodexCredits } from '../protocol/codex-usage.mjs'
 import { observeCodexWeekly } from '../protocol/codex-weekly-reset.mjs'
 import { openaiIdentityFromOauthTokens } from '../oauth/openai-jwt.mjs'
 
@@ -285,7 +285,11 @@ export function upsertCodexAccount(projectRoot, vmId, patch = {}, { replaceCrede
   return cur
 }
 
-export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredits, planType, confirmedReset } = {}) {
+export function persistCodexQuotaSnapshot(
+  projectRoot,
+  vmId,
+  { extra, resetCredits, credits, planType, confirmedReset } = {},
+) {
   if (!projectRoot || !vmId) throw new Error('projectRoot and vmId required')
   const file = path.join(projectRoot, 'vms', `${vmId}.json`)
   let vm
@@ -303,6 +307,14 @@ export function persistCodexQuotaSnapshot(projectRoot, vmId, { extra, resetCredi
     })
     vm.codex.extra = { ...(vm.codex.extra || {}), ...extra }
     vm.codex.usage = buildCodexUsageView(extraToCodexSnapshot(vm.codex.extra))
+  }
+  if (credits) {
+    vm.codex.credits = credits
+    // A fresh read that credits are spendable supersedes an older park; the next 429 parks again.
+    if (hasSpendableCodexCredits(vm) && vm.codex.extra?.codex_limited_until) {
+      vm.codex.extra = { ...vm.codex.extra }
+      delete vm.codex.extra.codex_limited_until
+    }
   }
   const plan = String(planType || '').trim()
   if (plan) vm.codex.plan_type = plan
@@ -341,6 +353,7 @@ export function summarizeCodexSlot(projectRoot, vm = {}) {
     account_count: accounts.length,
     usage,
     reset_credits: vm.codex?.reset_credits || null,
+    credits: vm.codex?.credits || null,
     plan_type: vm.codex?.plan_type || null,
   }
 }

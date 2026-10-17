@@ -24,15 +24,14 @@ function messageStart() {
   })}\n\n`
 }
 
-test('managed key category selects backend', () => {
+test('only a managed key explicitly marked api uses the Anthropic address path', () => {
   assert.equal(resolveInferenceBackend({ apiKeyKind: 'managed', apiKeyRecord: { category: 'api' } }), 'api')
+  assert.equal(resolveInferenceBackend({ apiKeyKind: 'managed', apiKeyRecord: { category: ' API ' } }), 'api')
   assert.equal(resolveInferenceBackend({ apiKeyKind: 'managed', apiKeyRecord: { category: 'oauth' } }), 'oauth')
   assert.equal(resolveInferenceBackend({ apiKeyKind: 'managed', apiKeyRecord: {} }), 'oauth')
-})
-
-test('master key defaults oauth unless x-kin-backend=api', () => {
-  assert.equal(resolveInferenceBackend({ apiKeyKind: 'master', headers: {} }), 'oauth')
-  assert.equal(resolveInferenceBackend({ apiKeyKind: 'master', headers: { 'x-kin-backend': 'api' } }), 'api')
+  assert.equal(resolveInferenceBackend({ apiKeyKind: 'master', headers: { 'x-kin-backend': 'api' } }), 'oauth')
+  assert.equal(resolveInferenceBackend({ apiKeyKind: 'master', apiKeyRecord: { category: 'api' } }), 'oauth')
+  assert.equal(resolveInferenceBackend({ headers: { 'x-kin-backend': 'api' } }), 'oauth')
 })
 
 test('messagesUrl appends /v1/messages?beta=true', () => {
@@ -90,7 +89,7 @@ test('API backend applies the global official_full persona setting', async () =>
     requestLog: { start: () => ({ request_id: 'api-persona-test' }), finish() {} },
     stickyRouter: {},
     accountQuota: {},
-    apiKeyStore: {},
+    apiKeyStore: { acquire: () => ({ ok: true }), release() {} },
     apiScheduler: {
       pick: () => ({
         ok: true,
@@ -115,8 +114,9 @@ test('API backend applies the global official_full persona setting', async () =>
   const req = {
     method: 'POST',
     url: '/v1/messages',
-    headers: { authorization: 'Bearer master', 'x-kin-backend': 'api', 'user-agent': 'test-client' },
-    apiKeyKind: 'master',
+    headers: { authorization: 'Bearer sk-vm-api', 'user-agent': 'test-client' },
+    apiKeyKind: 'managed',
+    apiKeyRecord: { category: 'api' },
     once() {},
     off() {},
   }
