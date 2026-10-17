@@ -49,6 +49,7 @@ function fixture({
     containerName: () => 'kin-fixture',
     clusterManager: () => ({ ensureSlotRelays: async () => ({}) }),
     inspectContainerOrNull: async () => info,
+    slotDockerCpus: () => 0,
     runtimeLabelOf: () => kind,
     runtimeKind: () => kind,
     codexRoleMatches: () => true,
