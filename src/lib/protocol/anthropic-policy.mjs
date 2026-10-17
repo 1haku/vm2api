@@ -225,6 +225,12 @@ export function stripInvalidThinkingBlocks(body = {}, { preserveThinkingBlocks =
         filteredThis = true
         continue
       }
+      if (type == null && block && Object.hasOwn(block, 'thinking')) {
+        changed = true
+        filteredThis = true
+        if (chainModel) chainBroken = true
+        continue
+      }
       content.push(block)
     }
     return filteredThis ? { ...message, content } : message

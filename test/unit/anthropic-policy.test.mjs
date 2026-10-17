@@ -282,6 +282,33 @@ test('5.5 preserve path still keeps an invalid signed chain', () => {
     ['thinking', 'thinking', 'redacted_thinking', 'text'],
   )
 })
+test('an untyped thinking block breaks a valid 5.5 chain and is dropped on older models', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'kept', signature: 'sig_real_1234567890abcdef' },
+        { thinking: 'bad' },
+        { type: 'text', text: 'answer' },
+      ],
+    },
+  ]
+  const newer = stripInvalidThinkingBlocks({
+    model: 'claude-opus-5-5',
+    thinking: { type: 'adaptive' },
+    messages,
+  })
+  assert.deepEqual(newer.messages[0].content, [{ type: 'text', text: 'answer' }])
+  const older = stripInvalidThinkingBlocks({
+    model: 'claude-opus-5',
+    thinking: { type: 'adaptive' },
+    messages,
+  })
+  assert.deepEqual(
+    older.messages[0].content.map((block) => block.type || 'untyped'),
+    ['thinking', 'text'],
+  )
+})
 
 test('panel preservation creates a missing thinking signature field', () => {
   const body = prepareAnthropicRequest(
