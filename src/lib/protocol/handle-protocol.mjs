@@ -136,6 +136,8 @@ import {
   cacheBreakpointsFromRoutingFile,
   pinConversationCacheTtl,
   resolveCacheTtl,
+  fillMissingCacheTtl,
+  validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import { confirmCachePrefix, describeCacheContinuity, trackCachePrefix } from './cache-prefix.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
@@ -148,6 +150,7 @@ import { getVm } from '../vm/vm-registry.mjs'
 import { credentialModeFromOauth, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import {
   prepareAnthropicRequest,
+  enforceCacheLimit,
   rewriteToolNames,
   restoreToolNames,
   restoreToolNamesInSSELine,
@@ -825,6 +828,17 @@ export function createHandleProtocol(deps) {
         return json(res, error.status, error.body)
       }
     } else ctx.body = applyMinMaxTokens(ctx.body, getRouting()?.compatibility?.min_max_tokens)
+    if (!requestContext && officialTraffic && officialCcPassthroughFromRouting(getRouting())) {
+      try {
+        validateCacheBreakpoints(ctx.body)
+      } catch (error) {
+        if (!error.body?.error) throw error
+        stats.errors++
+        logBag.error_code = error.body.error.code
+        logBag.error_message = error.body.error.message
+        return json(res, error.status, error.body)
+      }
+    }
 
     if (await applyProtocolIntercept({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
       return
@@ -1263,6 +1277,9 @@ export function createHandleProtocol(deps) {
                 cliVersion: OFFICIAL_CLI_VERSION,
                 identity,
               })
+              hopBody = fillMissingCacheTtl(hopBody, requestedCacheTtl)
+              enforceCacheLimit(hopBody)
+              validateCacheBreakpoints(hopBody)
               personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
                 officialClient: false,
                 mode: resolvedPersona,
@@ -1283,7 +1300,9 @@ export function createHandleProtocol(deps) {
               })
             }
             preserveCacheBreakpoints = true
-            cacheTtl = requestedCacheTtl
+            // Native wire may mix TTLs or leave caller TTL absent. The menu is
+            // not an accounting authority; retain the upstream 5m/1h split.
+            cacheTtl = null
             if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
             if (!panelRewrite) personaHideTokens = 0

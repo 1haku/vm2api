@@ -948,7 +948,8 @@ export class FailoverRunner {
         }
         budget.noteSwitch(selected.accountId, selected.vmId, { spill: policy.reason === 'slot_busy' })
       } catch (error) {
-        noteHop(null)
+        const invalidCache = error?.status === 400 && error.body?.error?.code === 'invalid_cache_control'
+        noteHop(invalidCache ? { upstreamExecutions: 0 } : null)
         if (error?.code === 'response_sent') {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
             upstreamStatus: 403,
@@ -967,6 +968,24 @@ export class FailoverRunner {
             accountId: selected.accountId,
             attemptCount: attemptNo,
             finalState: 'policy_block',
+          }
+        }
+        if (invalidCache) {
+          this.attemptsRepo?.complete?.(requestId, attemptNo, {
+            upstreamStatus: 0,
+            errorScope: 'request',
+            action: 'stop',
+            downstreamCommitted: false,
+            terminalState: 'invalid_request',
+            latencyMs: Date.now() - attemptStarted,
+          })
+          return {
+            ok: false,
+            status: 400,
+            body: error.body,
+            terminalState: 'invalid_request',
+            finalState: 'invalid_request',
+            ...attribution(),
           }
         }
         if (signal?.aborted || error?.code === 'selection_cancelled' || error?.code === 'request_cancelled') {

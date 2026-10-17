@@ -101,6 +101,30 @@ test('unsupported classifier runtime stops without counting execution or cooling
   assert.equal(scheduler.selectCalls, 1)
 })
 
+test('invalid panel cache layout stops before execution without rotating or cooling accounts', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const attempts = new Attempts()
+  const runner = new FailoverRunner({ scheduler, attemptsRepo: attempts })
+  const result = await runner.run({
+    requestId: 'invalid-cache-layout',
+    model: 'claude-opus-5-5',
+    canonicalBody: { model: 'claude-opus-5-5' },
+    applyAttempt: () => {
+      const error = new Error('Cache TTL must place 1h before 5m.')
+      error.status = 400
+      error.body = { error: { type: 'invalid_request_error', code: 'invalid_cache_control', message: error.message } }
+      throw error
+    },
+    callAttempt: () => assert.fail('invalid cache layout must not execute'),
+  })
+  assert.equal(result.status, 400)
+  assert.equal(result.body.error.code, 'invalid_cache_control')
+  assert.equal(result.attemptCount, 0)
+  assert.equal(scheduler.selectCalls, 1)
+  assert.deepEqual(scheduler.cooldowns, [])
+  assert.equal(attempts.items[0].errorScope, 'request')
+})
+
 test('account1 quota exhausted rotates to account2 and commits final sticky', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const attempts = new Attempts()

@@ -521,6 +521,31 @@ test('a managed key is charged exactly once for a hop billed inline', async () =
   }
 })
 
+test('native mixed TTL usage is billed from upstream buckets rather than the panel default', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-key-mixed-cache-'))
+  try {
+    const usage = {
+      input_tokens: 1000,
+      output_tokens: 200,
+      cache_creation_input_tokens: 400,
+      cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 300 },
+    }
+    const { charges, logged } = await runManagedKeyHop(root, {
+      ok: false,
+      status: 503,
+      accountId: 'account-1',
+      usage,
+      body: { error: { type: 'server_error', code: 'x', message: 'stop' } },
+    })
+    assert.deepEqual(logged[0].usage.cache_creation, usage.cache_creation)
+    assert.deepEqual(charges[0].usage.cache_creation, usage.cache_creation)
+    // Haiku 4.5 writes: 100 × $1.25/M + 300 × $2/M, not 400 × $2/M.
+    assert.ok(Math.abs(logged[0].cache_creation_cost - 0.000725) < 1e-12)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('OpenAI chat carrying claude-opus-4-8 uses the Claude pool', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-opus-platform-'))
   const routingFile = path.join(root, 'routing.json')

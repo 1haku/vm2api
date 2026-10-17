@@ -47,6 +47,7 @@ import {
   normalizeCacheTtl,
   removeCacheControlFields,
   stripIllegalCacheControlFields,
+  validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { applyModelRequestRules } from './model-policy.mjs'
@@ -183,6 +184,7 @@ export function prepareCliHopBody(
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
+  if (preserveSystem) validateCacheBreakpoints(canonicalBody)
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   if (!preserveSystem) {
@@ -190,11 +192,13 @@ export function prepareCliHopBody(
     if (leftover == null) delete body.system
     else body.system = leftover
   }
-  body = stabilizeSystemBudget(body)
-  body = stabilizeMessageBudgets(body)
+  if (!preserveSystem) {
+    body = stabilizeSystemBudget(body)
+    body = stabilizeMessageBudgets(body)
+  }
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
   if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
-  body = collapseSystemBudgetReminders(body)
+  if (!preserveSystem) body = collapseSystemBudgetReminders(body)
 
   if (!repaired) {
     body = ensureUnofficialAdaptiveThinking(body)
@@ -207,9 +211,11 @@ export function prepareCliHopBody(
   body = applyModelRequestRules(body)
   body = ensureOutputConfigSchema(body)
   body = alignSamplingWithThinking(body)
-  body = stripIllegalCacheControlFields(body)
-  body = removeCacheControlFields(body, { keepSystem: preserveSystem })
-  body = applyMessageBreakpoints(body, normalizeCacheTtl(cacheTtl), 'rewrite')
+  if (!preserveSystem) {
+    body = stripIllegalCacheControlFields(body)
+    body = removeCacheControlFields(body)
+    body = applyMessageBreakpoints(body, normalizeCacheTtl(cacheTtl), 'rewrite')
+  }
   return body
 }
 /** Only legacy Haiku rejects thinking; Haiku 5.5 supports adaptive thinking. */
