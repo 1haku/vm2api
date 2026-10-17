@@ -28,7 +28,7 @@ import {
   proxyKey,
 } from '../vm/egress.mjs'
 import { OS_CATALOG } from '../vm/os-catalog.mjs'
-import { resolveKernelDataplane } from '../vm/slot-engine.mjs'
+import { REMOTE_KERNEL_ENTRY, resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { isKvmRuntime, runtimeKind } from '../vm/runtime-kind.mjs'
@@ -42,7 +42,6 @@ import {
   normalizeTimezone,
   KVM_CAPS,
   STANDARD_LOCALE,
-  slotContainerCommand,
   writeWorkerFiles,
 } from '../vm/vm-runtime.mjs'
 import {
@@ -489,7 +488,8 @@ export function slotContainerBody(vm, { image, network, remoteDir, user, routing
       `KIN_VM_NAME=${slotName}`,
       `KIN_VM_OS=${vm.kernel}`,
     ],
-    Cmd: slotContainerCommand(vm),
+    // Node images bake the Claude kernel here; local slots bind-mount a different path.
+    Cmd: codex ? ['sleep', 'infinity'] : [REMOTE_KERNEL_ENTRY, '--gateway-worker', '--config', '/run/kin/kernel.json'],
     Labels: {
       'kin.vm': '1',
       'kin.vm.id': vm.id,
