@@ -540,6 +540,170 @@ test('search history repair still runs when the rejected hop outlived the deadli
   assert.equal(JSON.stringify(bodies[1]).includes('encrypted_content'), false)
 })
 
+function searchHistoryBody() {
+  return {
+    model: 'claude-opus-test',
+    messages: [
+      { role: 'user', content: 'find it' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: { query: 'release notes' } },
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: [
+              { type: 'web_search_result', title: 'Release', url: 'https://a.example', encrypted_content: 'old' },
+            ],
+          },
+        ],
+      },
+      { role: 'user', content: 'summarize' },
+    ],
+  }
+}
+
+function rejectedSearch() {
+  return {
+    ok: false,
+    status: 400,
+    terminalState: 'rejected',
+    body: { error: { message: 'Invalid `encrypted_content` in `search_result` block' } },
+  }
+}
+
+test('confirmed search repair is reused for unchanged history on the next turn', async () => {
+  const runner = new FailoverRunner({ scheduler: new Scheduler([candidate(1)]) })
+  const history = searchHistoryBody()
+  let executions = 0
+  const execute = ({ body }) => {
+    executions++
+    if (JSON.stringify(body).includes('encrypted_content')) {
+      return rejectedSearch()
+    }
+    return success('release summary')
+  }
+  const args = { model: history.model, stickyKey: 'search-conversation', callAttempt: execute }
+  const first = await runner.run({ ...args, requestId: 'search-first', canonicalBody: history })
+  assert.equal(first.status, 200)
+  assert.equal(first.attemptCount, 2)
+  const beforeSecond = executions
+  const second = await runner.run({
+    ...args,
+    requestId: 'search-next',
+    canonicalBody: {
+      ...history,
+      messages: [
+        ...history.messages,
+        { role: 'assistant', content: 'release summary' },
+        { role: 'user', content: 'explain the changes' },
+      ],
+    },
+  })
+  assert.equal(second.status, 200)
+  assert.equal(executions - beforeSecond, 1, 'known rejected history must not make another failing upstream call')
+  assert.equal(second.attemptCount, 1)
+  assert.equal(history.messages[1].content[1].content[0].encrypted_content, 'old')
+})
+
+for (const changed of ['session', 'account', 'vm', 'model', 'credential', 'history', 'tools', 'new search']) {
+  test(`confirmed search repair does not rewrite a different ${changed}`, async () => {
+    const scheduler = new Scheduler([{ ...candidate(1), vm: { claude: { _token_version: 1 } } }])
+    const runner = new FailoverRunner({ scheduler })
+    const history = searchHistoryBody()
+    const args = { model: history.model, stickyKey: 'search-conversation', canonicalBody: history }
+    const first = await runner.run({
+      ...args,
+      requestId: 'learn-search',
+      callAttempt: ({ body }) => (JSON.stringify(body).includes('encrypted_content') ? rejectedSearch() : success()),
+    })
+    assert.equal(first.status, 200)
+    assert.equal(first.attemptCount, 2)
+    switch (changed) {
+      case 'session':
+        args.stickyKey = 'other-conversation'
+        break
+      case 'account':
+        scheduler.candidates[0].accountId = 'other-account'
+        break
+      case 'vm':
+        scheduler.candidates[0].vmId = 'other-vm'
+        break
+      case 'model':
+        args.model = history.model = 'claude-sonnet-test'
+        break
+      case 'credential':
+        scheduler.candidates[0].vm.claude._token_version = 2
+        break
+      case 'history':
+        history.messages[1].content[1].content[0].encrypted_content = 'new-ciphertext'
+        break
+      case 'tools':
+        history.tools = [{ name: 'extra', input_schema: { type: 'object' } }]
+        break
+      case 'new search':
+        history.messages.push(
+          { ...structuredClone(history.messages[1]), content: [{ type: 'search_result', encrypted_content: 'new' }] },
+          { role: 'user', content: 'continue' },
+        )
+        break
+    }
+    const result = await runner.run({
+      ...args,
+      requestId: 'fresh-search-contract',
+      callAttempt: ({ body }) => {
+        assert.deepEqual(body, history, 'a new execution context or search history must get its original opaque data')
+        return success('original history accepted')
+      },
+    })
+    assert.equal(result.status, 200)
+    assert.equal(result.attemptCount, 1)
+  })
+}
+
+test('failed search repair is not learned for the next turn', async () => {
+  const runner = new FailoverRunner({ scheduler: new Scheduler([candidate(1)]) })
+  const history = searchHistoryBody()
+  const args = { model: history.model, stickyKey: 'failed-search', canonicalBody: history }
+  const rejected = await runner.run({ ...args, requestId: 'failed-repair', callAttempt: rejectedSearch })
+  assert.equal(rejected.status, 400)
+  assert.equal(rejected.attemptCount, 2)
+  const accepted = await runner.run({
+    ...args,
+    requestId: 'next-after-failed-repair',
+    callAttempt: ({ body }) => {
+      assert.deepEqual(body, history)
+      return success('original accepted')
+    },
+  })
+  assert.equal(accepted.status, 200)
+  assert.equal(accepted.attemptCount, 1)
+})
+
+test('a confirmed search repair does not hide a later rejection or retry the same transformed body', async () => {
+  const runner = new FailoverRunner({ scheduler: new Scheduler([candidate(1)]) })
+  const history = searchHistoryBody()
+  const args = { model: history.model, stickyKey: 'changed-upstream', canonicalBody: history }
+  const learned = await runner.run({
+    ...args,
+    requestId: 'learned-search',
+    callAttempt: ({ body }) => (JSON.stringify(body).includes('encrypted_content') ? rejectedSearch() : success()),
+  })
+  assert.equal(learned.attemptCount, 2)
+  const rejected = await runner.run({ ...args, requestId: 'search-rejected-again', callAttempt: rejectedSearch })
+  assert.equal(rejected.status, 400)
+  assert.equal(rejected.attemptCount, 1)
+  const next = await runner.run({
+    ...args,
+    requestId: 'after-stale-search-repair',
+    callAttempt: ({ body }) => {
+      assert.deepEqual(body, history, 'a failed learned repair must be discarded')
+      return success('original accepted')
+    },
+  })
+  assert.equal(next.status, 200)
+})
+
 test('signature 400 is not repaired when signature_repair is off', async () => {
   const scheduler = new Scheduler([{ ...candidate(1), vm: { family: 'codex', platform: 'openai' } }])
   const runner = new FailoverRunner({ scheduler })

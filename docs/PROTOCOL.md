@@ -106,6 +106,14 @@ Rikka / 客户端 `search_web`、`scrape_web` **不是** Anthropic 自带搜索�
 - OpenAI `response_format` → `output_config`；`refusal` → `content_filter`
 - 空 refusal 记 `content_filter_refusal`
 
+## 搜索历史重放
+
+旧 `server_tool_use` / `web_search_tool_result` / 加密 `search_result` 被当前上游拒绝时，`search_repairable` 仍只在该请求内做一次纯文本修复重试；这不是 `slot_busy`，每个执行 lease 都在 hop 的 `finally` 释放，不清除原会话 pin。
+
+若同一 VM / 账号 / 模型 / 凭据代际的修复跳确认成功，`FailoverRunner` 在进程内记录该入站会话的精确搜索历史和工具契约指纹。后续回合仅追加普通消息、指纹不变时，首跳直接复用既有修复，不再重复发送已知失败的历史。首次遇到、内容改变、新增搜索、不同会话或执行上下文均原样尝试；修复失败不记录。已知修复后来仍被拒绝时，返回真实错误并丢弃记录，不重发同一份展开体。
+
+记录只保留指纹，不保存历史正文；最多 512 项，空闲 1 小时失效，与 Anthropic cache TTL 无关。Node 重启后重新学习，因此首个携带旧历史的请求仍可能经历一次 400 → 修复 → 200。无需数据库迁移，不修改生产 persona、凭据、容器或 kernel/CLI。
+
 ## thinking 历史与签名
 
 出站前 `stripInvalidThinkingBlocks` 保留可回放的历史思维块：
