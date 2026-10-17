@@ -239,8 +239,8 @@ export type Vm = {
   circuit?: VmCircuit | null
   cooldown_until?: number
   cooldown_reason?: string
-  utilization_5h?: number
-  utilization_7d?: number
+  utilization_5h?: number | null
+  utilization_7d?: number | null
   utilization_7d_oi?: number
   utilization_7d_sonnet?: number
   status_5h?: string
@@ -252,12 +252,12 @@ export type Vm = {
   codex_usage?: {
     windows?: Array<{
       id?: string
-      used_percent?: number
+      used_percent?: number | null
       reset_at?: string | null
     }>
     quota?: {
-      utilization_5h?: number
-      utilization_7d?: number
+      utilization_5h?: number | null
+      utilization_7d?: number | null
     }
   } | null
   /** Raw OpenAI `plan_type` from wham/usage (GPT slots only). */
