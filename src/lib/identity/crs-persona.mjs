@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto'
 import { resolveWorkstationProfile } from './workstation-profile.mjs'
 import fs from 'node:fs'
 import { uuidFromSeed } from './identity-rewrite.mjs'
+import { OFFICIAL_CLI_VERSION } from './vm-identity.mjs'
 import { CCH_PLACEHOLDER } from './cch.mjs'
 import { CLAUDE_CLI_UA_RE, isOfficialClaudeUa } from './official-claude-ua.mjs'
 import { modelSupportsMidConversationSystem } from '../protocol/anthropic-policy.mjs'
@@ -80,7 +81,7 @@ export const CRS_OFFICIAL_CLI_SYSTEM = "You are Claude Code, Anthropic's officia
 export const CRS_OFFICIAL_SYSTEM = CRS_OFFICIAL_AGENT_IDENTITY
 /** 0注入 prompt_version 短身份句。cl100k 计 8 token，必带 Anthropic 与 Claude。 */
 export const CRS_COMPACT_IDENTITY = 'You are Anthropic Claude Agent SDK.'
-export const DEFAULT_CLI_VERSION = '2.1.293'
+export const DEFAULT_CLI_VERSION = OFFICIAL_CLI_VERSION
 export const PERSONA_MODES = Object.freeze(['rewrite', 'official_prompt', 'overwrite', 'zero', 'append', 'none'])
 export const DEFAULT_PERSONA_MODE = 'rewrite'
 export const DEFAULT_PERSONA_PARK = true

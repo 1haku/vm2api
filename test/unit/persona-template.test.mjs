@@ -30,6 +30,7 @@ import {
   CRS_OFFICIAL_AGENT_PROMPT,
   CRS_OFFICIAL_SYSTEM,
   CRS_STANDING_CONSTRAINT,
+  DEFAULT_CLI_VERSION,
   applyCrsUnofficialPersona,
   buildBillingAttributionText,
   buildZeroBillingText,
@@ -93,7 +94,7 @@ test('official preset renders billing + identity byte-identical to the legacy bu
   const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-1' })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
   assert.equal(out.length, 2)
-  assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', '2.1.293', 's-1') })
+  assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', DEFAULT_CLI_VERSION, 's-1') })
   assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_SYSTEM })
 })
 
