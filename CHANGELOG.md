@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.187 — 2026-10-17
+
+- 更新 Claude kernel：保留未知消息块，以及已知类型中的扩展字段（如 thinking 绑定、引用和工具调用来源），不再在传给 CLI 时静默丢弃；扩展 tool_result 仍参与 continuation ID 校验和大小限制。
+- Anthropic 流式 `event: error` 经 `mapUpstreamError` 重映射，Usage Policy 与 non-stream 一致为 `policy_blocked` / `refusal_guard`。（#503、#505）
+- 修复网关流路径忽略 `KIN_STREAM_IDLE_TIMEOUT`：与面板 `failover.stream_idle_timeout_ms`、`kernel.json` 同步走同一级联（面板 → cfg.limits → 环境变量 → 默认 180 秒）。（#485、#506）
+
+已部署机升级：更新 Node 控制面及 kernel payload；本机 Anthropic 槽在排空在途请求后同步并重启 kernel。集群节点使用镜像内置 kernel，须构建新槽位镜像并通过重载重建对应容器。已安装相同 kernel 哈希的槽无需重复替换。本次无新依赖或数据库迁移，不修改 Codex kernel；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.186 — 2026-10-17
 
 - `kin-computer` 改为 Ubuntu 22.04 / GLIBC 2.35 基线。Ubuntu 22.04、Debian 12 与 Ubuntu 24.04 均可创建 Docker / KVM 身份；已有槽位身份不重算。
@@ -24,11 +32,6 @@
 - Opus / Sonnet / Haiku 5.5 的出站过滤对齐 sub2api：历史里出现一块无效 thinking，整段 thinking 与 `redacted_thinking` 都拆掉，只留正文；拆完没有内容的轮删掉。没有 `type` 但带 `thinking` 字段的块也算无效。`redacted_thinking` 有 `data` 就留，否则看签名；非空且非 dummy 的签名不再按 24 字符丢弃。全部有效时不拆。cli-hop 首跳和默认 HTTP 保留路径不变。更早型号仍逐块过滤，`redacted_thinking` 只在签名达到 24 字符时留。
 
 已部署机升级：更新 Node 控制面，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，不必重建槽位容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
-
-## 未发布
-
-- Anthropic 流式 `event: error` 经 `mapUpstreamError` 重映射，Usage Policy 与 non-stream 一致为 `policy_blocked` / `refusal_guard`。（#503）
-- 修复网关流路径忽略 `KIN_STREAM_IDLE_TIMEOUT`：与面板 `failover.stream_idle_timeout_ms`、`kernel.json` 同步走同一级联（面板 → cfg.limits → 环境变量 → 默认 180 秒），默认仍为 180 秒（#485）。
 
 ## 1.3.182 — 2026-10-17
 

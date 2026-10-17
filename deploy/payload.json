@@ -1,12 +1,12 @@
 {
   "repo": "dofastted/vm2api",
-  "release": "payload-2026.10.17-computer",
+  "release": "payload-2026.10.17-history",
   "files": [
     {
       "path": "bin/kin-kernel",
       "asset": "kin-kernel",
-      "size": 12826520,
-      "sha256": "56527336cb386caff108af47eb5aecb8b7abfaf0c678a0e32572b1f19c20e33e"
+      "size": 12844112,
+      "sha256": "39996c1e39399cdae63aac188b1fcaa7814f3d51ca905d5f6911e95b6dd5de56"
     },
     {
       "path": "bin/kin-codex-kernel",
@@ -41,8 +41,8 @@
     {
       "path": "share/wrap-cli/kin-kernel.bin",
       "asset": "kin-kernel",
-      "size": 12826520,
-      "sha256": "56527336cb386caff108af47eb5aecb8b7abfaf0c678a0e32572b1f19c20e33e"
+      "size": 12844112,
+      "sha256": "39996c1e39399cdae63aac188b1fcaa7814f3d51ca905d5f6911e95b6dd5de56"
     },
     {
       "path": "share/wrap-cli/glibc239/ld-linux-x86-64.so.2",
