@@ -6,6 +6,7 @@
 - 远程 Claude Docker 槽改用镜像烘焙 kernel 入口（`/opt/kin/kin-kernel`，`REMOTE_KERNEL_ENTRY`），不改 GPT 与本机/KVM 命令；新建或重建容器后生效。（#489、#496）
 - 修复 Codex 返回配额耗尽（如 `usage_limit_reached`）且无利用率响应头时仍展示过期低用量：作废该槽未达上限窗口的过期利用率缓存，面板显示为未测量（`—`），保留新鲜测量与已封顶窗口；通用限流与成功无头响应行为不变。（#474、#487）
 - `docker/kin-kvm/fetch-cloud.py` 在调用 `qemu-img` 前校验源路径为常规文件且非符号链接，收紧路径处理（CWE-78 防御加深）。（#471）
+- 用量探测可选 `usage_probe.reset_delay_sec` / `reset_jitter_sec`（各 0–3600，默认 0）：在已知 Extra 5h reset 后，将已到期的周期探测推迟到 `reset + delay + 按账号稳定偏移`；不改官方退避、手动/事件探测与 Messages 健康监视；快照暴露待探测的 `next_probe_at`。（#488、#497）
 
 ## 1.3.181 — 2026-10-17
 
