@@ -26,7 +26,9 @@ import {
   extraFromCodexHeaders,
   extraToCodexSnapshot,
   buildCodexUsageView,
+  codexCreditsFromHeaders,
   codexQuotaPark,
+  hasSpendableCodexCredits,
 } from '../protocol/codex-usage.mjs'
 
 import { summarizeCodexSlot } from './codex-slot.mjs'
@@ -164,6 +166,7 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
           }
         : null,
     reset_credits: codex?.reset_credits || null,
+    codex_credits: codex?.credits || null,
     plan_type: codex?.plan_type || null,
     claude_reset_credits: kind.kind === 'codex' ? null : vm.claude_reset_credits || null,
   }
@@ -223,8 +226,14 @@ export function persistCodexUsage(
   const merged = { ...cached, ...(fromHeaders || {}), ...(extra || {}) }
   if (limitedUntil) {
     merged.codex_limited_until = new Date(limitedUntil).toISOString()
+    // The refusal outranks any credits reading until a newer one arrives.
+    delete vm.codex.credits
   } else {
-    const parked = codexQuotaPark({ ...merged, codex_limited_until: null }, now)
+    const credits = codexCreditsFromHeaders(headers || {}, now)
+    if (credits) vm.codex.credits = credits
+    const parked = codexQuotaPark({ ...merged, codex_limited_until: null }, now, {
+      waiveWindowCaps: hasSpendableCodexCredits(vm, now),
+    })
     if (parked.limited) merged.codex_limited_until = new Date(parked.until).toISOString()
     else delete merged.codex_limited_until
   }
