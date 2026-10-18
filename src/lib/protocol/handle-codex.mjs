@@ -26,7 +26,11 @@ import {
 } from './codex-usage.mjs'
 import { extractOpenaiUsage, openaiAnthropicUsageFromExtract, disjointOpenaiUsage } from './openai-usage.mjs'
 import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
-import { ensureCodexKernel, writeCodexKernelConfig } from '../transport/codex-kernel-supervisor.mjs'
+import {
+  codexKernelRequestOptions,
+  ensureCodexKernel,
+  writeCodexKernelConfig,
+} from '../transport/codex-kernel-supervisor.mjs'
 import { isLocalEgressProxy } from '../vm/egress.mjs'
 import { vmNodeId } from '../cluster/placement.mjs'
 import { hostProxyUrlForVm } from '../vm/slot-host.mjs'
@@ -590,7 +594,7 @@ export async function handleCodexProtocol({
       let attemptKind = 'failed'
       try {
         const localExit = isLocalEgressProxy(vm.proxy)
-        writeCfg(projectRoot, vm, {
+        const written = writeCfg(projectRoot, vm, {
           // Same rule as slot start: a node on local egress must leave through
           // that node's forwarder, not the control plane's deployment proxy.
           proxyUrl: localExit && !vmNodeId(vm) ? '' : hostProxyUrlForVm(vm),
@@ -665,6 +669,7 @@ export async function handleCodexProtocol({
               headers: outboundHeaders,
               stream: true,
               session,
+              options: { ...codexKernelRequestOptions(routing), installation_id: written?.installationId },
             },
           },
           onReasoningFallback: ({ body: retryBody }) => {

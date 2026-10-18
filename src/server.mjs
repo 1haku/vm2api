@@ -99,6 +99,7 @@ import { isConsoleEntry, tryServeWebDist } from './lib/http/web-dist.mjs'
 import { createRoutingRuntime } from './lib/admin/routing-runtime.mjs'
 import { createImportCommit } from './lib/oauth/import-commit.mjs'
 import { createHandleProtocol } from './lib/protocol/handle-protocol.mjs'
+import { createResponsesWsHandler } from './lib/protocol/responses-ws.mjs'
 import { handleUserCountTokens, handleUserUsage } from './lib/protocol/user-count-tokens.mjs'
 import { createPanelHandler } from './lib/admin/panel-routes.mjs'
 
@@ -862,6 +863,14 @@ const { handleProtocol, handleSearch } = createHandleProtocol({
   },
 })
 
+const responsesWs = createResponsesWsHandler({
+  handleProtocol,
+  requireAuth,
+  json,
+  getRouting: () => routingConfig,
+  maxBodyBytes: cfg.limits.max_body_bytes,
+})
+
 /**
  * One local egress row per VPS: rows for current nodes, and slots still on
  * another machine's row (the shared px-local before per-node rows) move onto
@@ -1131,6 +1140,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (p === '/v1/responses' || p === '/responses')) {
       return await handleProtocol(req, res, 'openai.responses', p)
     }
+    if (req.method === 'GET' && (p === '/v1/responses' || p === '/responses')) {
+      return json(res, 426, {
+        error: {
+          type: 'invalid_request_error',
+          code: 'websocket_upgrade_required',
+          message: 'WebSocket upgrade required',
+        },
+      })
+    }
     if (req.method === 'POST' && (p === '/v1/messages' || p === '/messages')) {
       return await handleProtocol(req, res, 'anthropic.messages', p)
     }
@@ -1153,6 +1171,7 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.on('upgrade', (req, socket, head) => {
+  if (responsesWs.handleUpgrade(req, socket, head)) return
   if (clusterRoutes.handleUpgrade(req, socket, head)) return
   if (!slotShell.handleUpgrade(req, socket, head)) socket.destroy()
 })

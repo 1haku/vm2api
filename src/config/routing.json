@@ -87,6 +87,9 @@
     "session_queue_timeout_ms": 900000,
     "eager_tool_streaming": true
   },
+  "websocket": {
+    "enabled": true
+  },
   "inference": {
     "engine": "rust",
     "fallback_to_go": false,
@@ -95,6 +98,11 @@
   "codex": {
     "enabled": true,
     "catalog_client_version": "auto",
+    "user_agent": "codex_cli_rs/0.160.0 (linux x86_64)",
+    "upstream_transport": "prefer_websocket",
+    "websocket": { "enabled": true },
+    "client_features": { "enabled": false },
+    "analytics": { "enabled": false },
     "protocols": {
       "openai.responses": { "mode": "native", "enabled": true },
       "openai.chat": { "mode": "convert", "enabled": true },

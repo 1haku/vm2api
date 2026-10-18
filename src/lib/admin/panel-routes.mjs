@@ -145,6 +145,7 @@ import { parseScheduleLevelInput, manualScheduleLevelOf } from '../pool/credenti
 import { parseActiveHoursInput } from '../pool/active-hours.mjs'
 import { parseVmQuotaOverride } from '../pool/vm-quota-override.mjs'
 import { validateOpenAIQuotaPatch, normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
+import { validateInferenceWebsocketPatch } from '../protocol/codex-route.mjs'
 import {
   normalizeInferenceConfig,
   normalizeSessionSlots,
@@ -1097,7 +1098,11 @@ export function createPanelHandler(ctx) {
         if (error instanceof TypeError || error instanceof RangeError) {
           return json(res, 400, {
             ok: false,
-            error: { type: 'invalid_request_error', code: 'invalid_openai_quota', message: error.message },
+            error: {
+              type: 'invalid_request_error',
+              code: error.code || 'invalid_openai_quota',
+              message: error.message,
+            },
           })
         }
         throw error
@@ -4887,11 +4892,16 @@ export function createPanelHandler(ctx) {
           if (body?.codex && Object.prototype.hasOwnProperty.call(body.codex, 'quota')) {
             validateOpenAIQuotaPatch(body.codex.quota)
           }
+          validateInferenceWebsocketPatch(body)
         } catch (error) {
           if (error instanceof TypeError || error instanceof RangeError) {
             return json(res, 400, {
               ok: false,
-              error: { type: 'invalid_request_error', code: 'invalid_openai_quota', message: error.message },
+              error: {
+                type: 'invalid_request_error',
+                code: error.code || 'invalid_openai_quota',
+                message: error.message,
+              },
             })
           }
           throw error

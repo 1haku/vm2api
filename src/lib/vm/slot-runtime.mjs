@@ -119,6 +119,7 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
     write(projectRoot, vm, {
       proxyUrl,
       proxyRequired: !localExit || !!proxyUrl,
+      routing,
     })
     const kernel = await start(slotExec(projectRoot, vm), { timeoutMs: opts.timeoutMs })
     if (!kernel?.ok) {
