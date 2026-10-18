@@ -2,6 +2,8 @@
 
 ## 未发布
 
+## 1.3.192 — 2026-10-18
+
 - 管理→连接支持编辑已接入节点名称与 SSH 配置：先测后存、有槽禁改用户、忙碌拒绝切换，凭证不回传。（#559/#560）
 - kin-egress UDP DNS 接收缓冲扩至 65535 字节；上游解析失败时与 TCP 一致向客户端返回带原 ID 的 SERVFAIL，避免 UDP 请求空等超时。（#531）
 - 设置 → 协议新增统一 CCH 开关（`compatibility.cch_enabled`，默认开）：开启则缺失也补并在最终请求体计算真实五位摘要；关闭仍固定写入 `cch=00000;`（5 个 0），不重新密封。不按试用 / 订阅状态分流，密封不改提示词中的同名字面量；固定 billing 参数策略和 296 / 293 两套标准 UA 不变。
@@ -12,7 +14,7 @@
 - 跨源管理台/API（`credentials: include`）在配置的受信 Origin 上回显 `Access-Control-Allow-Origin` 并启用 `Access-Control-Allow-Credentials`；未列入 `PANEL_CORS_ORIGINS` / `PUBLIC_BASE_URL` 的 Origin 仍为 `*`，不带 credentials。预检与 JSON/SSE 统一允许 `PATCH` 与完整 header 列表。（#529）
 - KVM / Docker 槽位改为挂载宿主 `run/slot-guest-bin/`（仅含 `kin-worker`、`kin-kernel`，不暴露整个 `bin/` 里其它 helper），避免单文件 bind mount 在升级替换二进制后容器内仍粘旧 inode；**已用旧单文件挂载创建的容器须重建一次** 才能切换到 staging 目录挂载。（#514）
 
-已部署机升级：更新 Node 控制面、web/dist 与配套 Claude kernel / CLI ELF；首次加载新产物按正常槽位升级流程排空、同步并重启，本机槽定向同步，镜像内置 payload 的集群槽需新镜像和单独授权重建。之后仅改上述设置无需重启。#536 默认模板修复本身只需更新 Node / 前端，无需更换凭据或改写现有自定义模板。Go 服务标准 UA 不变，无新依赖或数据库迁移；保留 `routing.json`、`vms/`、`data/`、`.env`。
+已部署机升级：更新 Node 控制面、web/dist 与配套 Claude kernel / CLI ELF（`payload-2026.10.18-cch-sticky`）；本机槽按正常流程排空后同步并重启；镜像内置 payload 的集群槽须新镜像并单独授权重建。#562 重载 egress 行为随 Node 重启生效。跨源管理台/API 若需带凭证，请配置 `PANEL_CORS_ORIGINS` / `PUBLIC_BASE_URL`（#529）。**仍用旧单文件 bind mount 创建的槽位容器须重建一次** 才能切换到 `run/slot-guest-bin/` staging 目录挂载（#514）；重建后升级 worker/kernel 不必再重建。#536 默认模板修复本身只需更新 Node / 前端。Go 服务标准 UA 不变，无新依赖或数据库迁移；保留 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.191 — 2026-10-18
 
