@@ -8,6 +8,7 @@
 - 设置 → 协议集中提供原生 sticky 槽空闲超时（`inference.session_idle_ttl_seconds`，默认 600 秒，范围 1–86400 秒），账号池不再重复显示：kernel 热读，基于最后任务完成时间回收，活动任务不回收；不复用账号绑定 TTL，不因保存设置重启 kernel / CLI。
 - 修复内置 `official_full` / `official` 模板自动生成 `cache_control.scope=global` 导致上游参数级 400；Node、预览与旧模板 agent 回填一致移除自产 scope，保留调用方 / 自定义显式字段，不增加重试或换号。（#536）
 - Claude kernel / CLI 依赖固定到不可变快照 `payload-2026.10.18-cch-sticky`；Codex kernel 与其余原生产物保持不变。
+- 重载 kin-egress 时先 SIGTERM 并等待旧进程退出（超时 SIGKILL）且监听端口释放后再启动新进程；spawn 失败返回明确错误。（#530）
 
 已部署机升级：更新 Node 控制面、web/dist 与配套 Claude kernel / CLI ELF；首次加载新产物按正常槽位升级流程排空、同步并重启，本机槽定向同步，镜像内置 payload 的集群槽需新镜像和单独授权重建。之后仅改上述设置无需重启。#536 默认模板修复本身只需更新 Node / 前端，无需更换凭据或改写现有自定义模板。Go 服务标准 UA 不变，无新依赖或数据库迁移；保留 `routing.json`、`vms/`、`data/`、`.env`。
 
