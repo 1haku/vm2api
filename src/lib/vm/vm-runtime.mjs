@@ -700,6 +700,54 @@ function readFingerprintSmbios(kvmDir) {
   }
 }
 
+/**
+ * Host directory bind-mounted into slots: only kin-worker + kin-kernel symlinks, never the
+ * full deploy bin/ (which also holds kin-egress, kin-api-kernel, etc.).
+ */
+export function ensureSlotGuestBinDir(projectRoot, { workerBin, kernelBin } = {}) {
+  if (!projectRoot) throw new Error('projectRoot required')
+  const dir = path.join(projectRoot, 'run', 'slot-guest-bin')
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 })
+  const link = (name, target) => {
+    const dest = path.join(dir, name)
+    if (!target) {
+      try {
+        fs.unlinkSync(dest)
+      } catch {}
+      return
+    }
+    const resolved = path.resolve(String(target))
+    try {
+      const cur = fs.readlinkSync(dest)
+      if (path.resolve(path.dirname(dest), cur) === resolved) return
+    } catch {}
+    try {
+      fs.unlinkSync(dest)
+    } catch {}
+    fs.symlinkSync(resolved, dest)
+  }
+  link('kin-worker', workerBin)
+  link('kin-kernel', kernelBin)
+  return dir
+}
+
+/**
+ * Mount the slot guest bin staging dir so replacing files on the host is visible inside the
+ * container without recreate (single-file bind mounts pin the old inode).
+ */
+export function slotGuestBinMountArgs({ workerBin, kernelBin, guestBinDir, hostOf = (p) => p, projectRoot }) {
+  const bins = [workerBin, kernelBin].filter(Boolean)
+  if (!bins.length) return []
+  if (projectRoot) {
+    const stage = ensureSlotGuestBinDir(projectRoot, { workerBin, kernelBin })
+    return ['-v', `${hostOf(stage)}:${guestBinDir}:ro`]
+  }
+  const args = []
+  if (workerBin) args.push('-v', `${hostOf(workerBin)}:${guestBinDir}/kin-worker:ro`)
+  if (kernelBin) args.push('-v', `${hostOf(kernelBin)}:${guestBinDir}/kin-kernel:ro`)
+  return args
+}
+
 /** Read-only persona mounts for a non-KVM kin-os container. */
 export function computerDockerArgs({ dir, mac, hostOf = (p) => p }) {
   const etc = path.join(dir, 'system', 'etc')
@@ -737,6 +785,7 @@ export function buildKvmRunArgs({
   kernelBin,
   shares = 'home,run',
   hostOf = (p) => p,
+  projectRoot,
 }) {
   const slotName = displayName(vm.id)
   const mem = kvmContainerMemory(memory)
@@ -788,8 +837,13 @@ export function buildKvmRunArgs({
     `${hostOf(runDir)}:/slot/run`,
     '-v',
     `${hostOf(kvmDir)}:/slot/kvm`,
-    ...(workerBin ? ['-v', `${hostOf(workerBin)}:/opt/kin-guest/usr/local/bin/kin-worker:ro`] : []),
-    ...(kernelBin ? ['-v', `${hostOf(kernelBin)}:/opt/kin-guest/usr/local/bin/kin-kernel:ro`] : []),
+    ...slotGuestBinMountArgs({
+      workerBin,
+      kernelBin,
+      guestBinDir: '/opt/kin-guest/usr/local/bin',
+      hostOf,
+      projectRoot,
+    }),
     ...env.flatMap((pair) => ['-e', pair]),
     ...(process.env.KIN_VM_HOST_GATEWAY === '1' ? ['--add-host', 'host.docker.internal:host-gateway'] : []),
     '--dns',
@@ -967,6 +1021,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       kernelBin: mountKernel ? kernelBin : null,
       shares: 'home,run',
       hostOf,
+      projectRoot,
     })
   } else {
     const machineMounts = machineIdFile
@@ -1016,8 +1071,13 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       `${hostOf(home)}:/home/kincli`,
       '-v',
       `${hostOf(worker.runDir)}:/run/kin`,
-      ...(fs.existsSync(WORKER_BIN) ? ['-v', `${hostOf(WORKER_BIN)}:/usr/local/bin/kin-worker:ro`] : []),
-      ...(mountKernel ? ['-v', `${hostOf(kernelBin)}:/usr/local/bin/kin-kernel:ro`] : []),
+      ...slotGuestBinMountArgs({
+        workerBin: fs.existsSync(WORKER_BIN) ? WORKER_BIN : null,
+        kernelBin: mountKernel ? kernelBin : null,
+        guestBinDir: '/usr/local/bin',
+        hostOf,
+        projectRoot,
+      }),
       ...machineMounts,
       ...computerDockerArgs({ dir: computer.dir, mac: computer.mac, hostOf }),
       '-e',

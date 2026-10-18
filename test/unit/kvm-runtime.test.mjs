@@ -4,7 +4,13 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { RFC4122_UUID_RE } from '../../src/lib/identity/rfc4122-uuid.mjs'
-import { buildKvmRunArgs, computerDockerArgs, shouldPublishComputer } from '../../src/lib/vm/vm-runtime.mjs'
+import {
+  buildKvmRunArgs,
+  computerDockerArgs,
+  shouldPublishComputer,
+  ensureSlotGuestBinDir,
+  slotGuestBinMountArgs,
+} from '../../src/lib/vm/vm-runtime.mjs'
 import { writeKernelConfig } from '../../src/lib/transport/rust-kernel-supervisor.mjs'
 
 const vm = {
@@ -31,7 +37,10 @@ const vm = {
   fingerprint: { hostname: 'guest-02', guest_machine_id: 'abc123' },
 }
 
+const kvmArgsProjectRoot = path.join(os.tmpdir(), 'kin-kvm-run-args')
+
 function argsFor(accel) {
+  fs.mkdirSync(kvmArgsProjectRoot, { recursive: true })
   return buildKvmRunArgs({
     vm,
     name: 'kin-02',
@@ -49,6 +58,7 @@ function argsFor(accel) {
     kernelBin: '/opt/kin-gateway/bin/kin-kernel',
     shares: 'home,run',
     hostOf: (p) => p,
+    projectRoot: kvmArgsProjectRoot,
   })
 }
 
@@ -62,8 +72,7 @@ test('kvm docker run mounts slot paths, stop-timeout 30, memory overhead', () =>
   assert.ok(args.includes('/data/vms/vm-02/cli-home:/slot/home'))
   assert.ok(args.includes('/data/vms/vm-02/run:/slot/run'))
   assert.ok(args.includes('/data/vms/vm-02/kvm:/slot/kvm'))
-  assert.ok(args.includes('/opt/kin-gateway/bin/kin-worker:/opt/kin-guest/usr/local/bin/kin-worker:ro'))
-  assert.ok(args.includes('/opt/kin-gateway/bin/kin-kernel:/opt/kin-guest/usr/local/bin/kin-kernel:ro'))
+  assert.ok(args.includes(`${path.join(kvmArgsProjectRoot, 'run', 'slot-guest-bin')}:/opt/kin-guest/usr/local/bin:ro`))
   assert.ok(args.includes('kin.vm.runtime=kvm'))
   assert.ok(args.includes('KIN_KVM_ACCEL=tcg'))
   assert.ok(args.includes('KIN_KVM_MEMORY_MB=1024'))
@@ -75,6 +84,45 @@ test('kvm docker run mounts slot paths, stop-timeout 30, memory overhead', () =>
     const i = args.indexOf(cap)
     assert.ok(i > 0 && args[i - 1] === '--cap-add', cap)
   }
+})
+
+test('slotGuestBinMountArgs mounts a staging dir with only kin-worker and kin-kernel', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-guest-bin-'))
+  const deployBin = path.join(root, 'deploy-bin')
+  fs.mkdirSync(deployBin, { recursive: true })
+  fs.writeFileSync(path.join(deployBin, 'kin-worker'), 'worker')
+  fs.writeFileSync(path.join(deployBin, 'kin-kernel'), 'kernel')
+  fs.writeFileSync(path.join(deployBin, 'kin-egress'), 'egress')
+  const workerBin = path.join(deployBin, 'kin-worker')
+  const kernelBin = path.join(deployBin, 'kin-kernel')
+  const stage = ensureSlotGuestBinDir(root, { workerBin, kernelBin })
+  assert.deepEqual(fs.readdirSync(stage).sort(), ['kin-kernel', 'kin-worker'])
+  assert.deepEqual(
+    slotGuestBinMountArgs({
+      projectRoot: root,
+      workerBin,
+      kernelBin,
+      guestBinDir: '/usr/local/bin',
+    }),
+    ['-v', `${stage}:/usr/local/bin:ro`],
+  )
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('slotGuestBinMountArgs falls back to file mounts without projectRoot', () => {
+  assert.deepEqual(
+    slotGuestBinMountArgs({
+      workerBin: '/opt/a/kin-worker',
+      kernelBin: '/opt/b/kin-kernel',
+      guestBinDir: '/opt/kin-guest/usr/local/bin',
+    }),
+    [
+      '-v',
+      '/opt/a/kin-worker:/opt/kin-guest/usr/local/bin/kin-worker:ro',
+      '-v',
+      '/opt/b/kin-kernel:/opt/kin-guest/usr/local/bin/kin-kernel:ro',
+    ],
+  )
 })
 
 test('kvm docker run attaches /dev/kvm only with accel kvm', () => {

@@ -10,6 +10,7 @@
 - Claude kernel / CLI 依赖固定到不可变快照 `payload-2026.10.18-cch-sticky`；Codex kernel 与其余原生产物保持不变。
 - 重载 kin-egress 时先 SIGTERM 并等待旧进程退出（超时 SIGKILL）且监听端口释放后再启动新进程；spawn 失败返回明确错误。（#530）
 - 跨源管理台/API（`credentials: include`）在配置的受信 Origin 上回显 `Access-Control-Allow-Origin` 并启用 `Access-Control-Allow-Credentials`；未列入 `PANEL_CORS_ORIGINS` / `PUBLIC_BASE_URL` 的 Origin 仍为 `*`，不带 credentials。预检与 JSON/SSE 统一允许 `PATCH` 与完整 header 列表。（#529）
+- KVM / Docker 槽位改为挂载宿主 `run/slot-guest-bin/`（仅含 `kin-worker`、`kin-kernel`，不暴露整个 `bin/` 里其它 helper），避免单文件 bind mount 在升级替换二进制后容器内仍粘旧 inode；**已用旧单文件挂载创建的容器须重建一次** 才能切换到 staging 目录挂载。（#514）
 
 已部署机升级：更新 Node 控制面、web/dist 与配套 Claude kernel / CLI ELF；首次加载新产物按正常槽位升级流程排空、同步并重启，本机槽定向同步，镜像内置 payload 的集群槽需新镜像和单独授权重建。之后仅改上述设置无需重启。#536 默认模板修复本身只需更新 Node / 前端，无需更换凭据或改写现有自定义模板。Go 服务标准 UA 不变，无新依赖或数据库迁移；保留 `routing.json`、`vms/`、`data/`、`.env`。
 
