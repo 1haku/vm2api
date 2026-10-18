@@ -393,7 +393,7 @@ export function slotWorkerNeedsRecreate(existing, vm, paths) {
  * KVM without a relay sock is still live and must not be recreated for that reason.
  * KVM restarts the guest kin-kernel unit; docker restart would reboot the VM.
  */
-export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
+export async function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
   // Outside the cached-config fallback: invalid quotas must never reach restart.
   if (!isKvmRuntime(vm)) slotDockerCpus(vm)
@@ -411,10 +411,10 @@ export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
     worker = paths
   }
   const existing = inspectContainer(name)
-  if (!existing) return startVmRuntime(vm, projectRoot, { recreate: false, routing })
+  if (!existing) return await startVmRuntime(vm, projectRoot, { recreate: false, routing })
   // Before the KVM branch so a runner on the wrong kin-eg-* is recreated too.
   if (slotWorkerNeedsRecreate(existing, vm, paths)) {
-    return startVmRuntime(vm, projectRoot, { recreate: true, routing })
+    return await startVmRuntime(vm, projectRoot, { recreate: true, routing })
   }
   if (isKvmRuntime(vm)) {
     if (!existing.running) {

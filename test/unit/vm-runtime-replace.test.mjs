@@ -193,7 +193,7 @@ test('unbound slot does not recreate for a missing desired network', (t) => {
 test('reloadSlotWorker recreates on network mismatch before the KVM restart path', () => {
   const src = fs.readFileSync(new URL('../../src/lib/vm/vm-runtime.mjs', import.meta.url), 'utf8')
   const reload = src.slice(
-    src.indexOf('export function reloadSlotWorker'),
+    src.indexOf('export async function reloadSlotWorker'),
     src.indexOf('export function slotKernelAlive'),
   )
   assert.match(reload, /slotWorkerNeedsRecreate\(existing, vm, paths\)/)
@@ -264,14 +264,14 @@ test('isSlotProxyDesynced compares worker.json to vm.json', () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-test('reload writes transparent egress for local exit without a SOCKS url', () => {
+test('reload writes transparent egress for local exit without a SOCKS url', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-reload-local-'))
   const vm = {
     id: 'vm-09',
     proxy_cli_enabled: true,
     proxy: { id: 'px-local', scheme: 'local', host: 'local', port: 0, url: null },
   }
-  const result = reloadSlotWorker(vm, root, { routing: {} })
+  const result = await reloadSlotWorker(vm, root, { routing: {} })
   const doc = JSON.parse(fs.readFileSync(path.join(root, 'vms', 'vm-09', 'run', 'worker.json'), 'utf8'))
   assert.equal(doc.proxy_url, '')
   assert.equal(doc.proxy_required, false)
