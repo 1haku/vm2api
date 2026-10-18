@@ -700,6 +700,23 @@ function readFingerprintSmbios(kvmDir) {
   }
 }
 
+/**
+ * Mount host helper binaries by directory so replacing files on the host is visible
+ * inside the container without recreate (single-file bind mounts pin the old inode).
+ */
+export function slotGuestBinMountArgs({ workerBin, kernelBin, guestBinDir, hostOf = (p) => p }) {
+  const bins = [workerBin, kernelBin].filter(Boolean)
+  if (!bins.length) return []
+  const hostDirs = [...new Set(bins.map((bin) => path.dirname(path.resolve(String(bin)))))]
+  if (hostDirs.length === 1) {
+    return ['-v', `${hostOf(hostDirs[0])}:${guestBinDir}:ro`]
+  }
+  const args = []
+  if (workerBin) args.push('-v', `${hostOf(workerBin)}:${guestBinDir}/kin-worker:ro`)
+  if (kernelBin) args.push('-v', `${hostOf(kernelBin)}:${guestBinDir}/kin-kernel:ro`)
+  return args
+}
+
 /** Read-only persona mounts for a non-KVM kin-os container. */
 export function computerDockerArgs({ dir, mac, hostOf = (p) => p }) {
   const etc = path.join(dir, 'system', 'etc')
@@ -788,8 +805,12 @@ export function buildKvmRunArgs({
     `${hostOf(runDir)}:/slot/run`,
     '-v',
     `${hostOf(kvmDir)}:/slot/kvm`,
-    ...(workerBin ? ['-v', `${hostOf(workerBin)}:/opt/kin-guest/usr/local/bin/kin-worker:ro`] : []),
-    ...(kernelBin ? ['-v', `${hostOf(kernelBin)}:/opt/kin-guest/usr/local/bin/kin-kernel:ro`] : []),
+    ...slotGuestBinMountArgs({
+      workerBin,
+      kernelBin,
+      guestBinDir: '/opt/kin-guest/usr/local/bin',
+      hostOf,
+    }),
     ...env.flatMap((pair) => ['-e', pair]),
     ...(process.env.KIN_VM_HOST_GATEWAY === '1' ? ['--add-host', 'host.docker.internal:host-gateway'] : []),
     '--dns',
@@ -1016,8 +1037,12 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       `${hostOf(home)}:/home/kincli`,
       '-v',
       `${hostOf(worker.runDir)}:/run/kin`,
-      ...(fs.existsSync(WORKER_BIN) ? ['-v', `${hostOf(WORKER_BIN)}:/usr/local/bin/kin-worker:ro`] : []),
-      ...(mountKernel ? ['-v', `${hostOf(kernelBin)}:/usr/local/bin/kin-kernel:ro`] : []),
+      ...slotGuestBinMountArgs({
+        workerBin: fs.existsSync(WORKER_BIN) ? WORKER_BIN : null,
+        kernelBin: mountKernel ? kernelBin : null,
+        guestBinDir: '/usr/local/bin',
+        hostOf,
+      }),
       ...machineMounts,
       ...computerDockerArgs({ dir: computer.dir, mac: computer.mac, hostOf }),
       '-e',

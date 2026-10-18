@@ -4,7 +4,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { RFC4122_UUID_RE } from '../../src/lib/identity/rfc4122-uuid.mjs'
-import { buildKvmRunArgs, computerDockerArgs, shouldPublishComputer } from '../../src/lib/vm/vm-runtime.mjs'
+import {
+  buildKvmRunArgs,
+  computerDockerArgs,
+  shouldPublishComputer,
+  slotGuestBinMountArgs,
+} from '../../src/lib/vm/vm-runtime.mjs'
 import { writeKernelConfig } from '../../src/lib/transport/rust-kernel-supervisor.mjs'
 
 const vm = {
@@ -62,8 +67,7 @@ test('kvm docker run mounts slot paths, stop-timeout 30, memory overhead', () =>
   assert.ok(args.includes('/data/vms/vm-02/cli-home:/slot/home'))
   assert.ok(args.includes('/data/vms/vm-02/run:/slot/run'))
   assert.ok(args.includes('/data/vms/vm-02/kvm:/slot/kvm'))
-  assert.ok(args.includes('/opt/kin-gateway/bin/kin-worker:/opt/kin-guest/usr/local/bin/kin-worker:ro'))
-  assert.ok(args.includes('/opt/kin-gateway/bin/kin-kernel:/opt/kin-guest/usr/local/bin/kin-kernel:ro'))
+  assert.ok(args.includes('/opt/kin-gateway/bin:/opt/kin-guest/usr/local/bin:ro'))
   assert.ok(args.includes('kin.vm.runtime=kvm'))
   assert.ok(args.includes('KIN_KVM_ACCEL=tcg'))
   assert.ok(args.includes('KIN_KVM_MEMORY_MB=1024'))
@@ -75,6 +79,33 @@ test('kvm docker run mounts slot paths, stop-timeout 30, memory overhead', () =>
     const i = args.indexOf(cap)
     assert.ok(i > 0 && args[i - 1] === '--cap-add', cap)
   }
+})
+
+test('slotGuestBinMountArgs uses a directory mount when worker and kernel share bin/', () => {
+  assert.deepEqual(
+    slotGuestBinMountArgs({
+      workerBin: '/opt/vm2api/bin/kin-worker',
+      kernelBin: '/opt/vm2api/bin/kin-kernel',
+      guestBinDir: '/usr/local/bin',
+    }),
+    ['-v', '/opt/vm2api/bin:/usr/local/bin:ro'],
+  )
+})
+
+test('slotGuestBinMountArgs falls back to file mounts when bins live on different dirs', () => {
+  assert.deepEqual(
+    slotGuestBinMountArgs({
+      workerBin: '/opt/a/kin-worker',
+      kernelBin: '/opt/b/kin-kernel',
+      guestBinDir: '/opt/kin-guest/usr/local/bin',
+    }),
+    [
+      '-v',
+      '/opt/a/kin-worker:/opt/kin-guest/usr/local/bin/kin-worker:ro',
+      '-v',
+      '/opt/b/kin-kernel:/opt/kin-guest/usr/local/bin/kin-kernel:ro',
+    ],
+  )
 })
 
 test('kvm docker run attaches /dev/kvm only with accel kvm', () => {
