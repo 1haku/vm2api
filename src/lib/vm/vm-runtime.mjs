@@ -202,7 +202,8 @@ function codexContainerStale(existing, vm) {
 export function containerHasKernelMount(name) {
   const r = sh(['docker', 'inspect', '--format', '{{range .Mounts}}{{println .Destination}}{{end}}', name])
   if (!r.ok) return false
-  return r.stdout.split(/\s+/).includes('/usr/local/bin/kin-kernel')
+  const dests = r.stdout.split(/\s+/)
+  return dests.includes('/usr/local/bin/kin-kernel') || dests.includes('/usr/local/bin')
 }
 
 function vmWantsOuterSocks(vm) {
@@ -393,7 +394,7 @@ export function slotWorkerNeedsRecreate(existing, vm, paths) {
  * KVM without a relay sock is still live and must not be recreated for that reason.
  * KVM restarts the guest kin-kernel unit; docker restart would reboot the VM.
  */
-export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
+export async function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
   if (!vm?.id) return { ok: false, error: 'vm required' }
   // Outside the cached-config fallback: invalid quotas must never reach restart.
   if (!isKvmRuntime(vm)) slotDockerCpus(vm)
@@ -411,10 +412,10 @@ export function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
     worker = paths
   }
   const existing = inspectContainer(name)
-  if (!existing) return startVmRuntime(vm, projectRoot, { recreate: false, routing })
+  if (!existing) return await startVmRuntime(vm, projectRoot, { recreate: false, routing })
   // Before the KVM branch so a runner on the wrong kin-eg-* is recreated too.
   if (slotWorkerNeedsRecreate(existing, vm, paths)) {
-    return startVmRuntime(vm, projectRoot, { recreate: true, routing })
+    return await startVmRuntime(vm, projectRoot, { recreate: true, routing })
   }
   if (isKvmRuntime(vm)) {
     if (!existing.running) {
@@ -700,6 +701,78 @@ function readFingerprintSmbios(kvmDir) {
   }
 }
 
+/**
+ * Host directory bind-mounted into slots: only kin-worker + kin-kernel, never the full deploy
+ * bin/ (which also holds kin-egress, kin-api-kernel, etc.). It sits under data/: the control
+ * container bind-mounts only bin/, data/, share/, vms/ and src/config, so a dir elsewhere would
+ * exist only inside it and the host would mount an empty one into the slot. Entries are hard
+ * links (copies across mounts): a symlink to the host path dangles inside the slot.
+ */
+export function slotGuestBinDir(projectRoot) {
+  return path.join(projectRoot, 'data', 'run', 'slot-guest-bin')
+}
+
+export function ensureSlotGuestBinDir(projectRoot, { workerBin, kernelBin } = {}) {
+  if (!projectRoot) throw new Error('projectRoot required')
+  const dir = slotGuestBinDir(projectRoot)
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 })
+  const link = (name, target) => {
+    // The dir is shared by every slot: a slot that does not mount a binary must not remove it.
+    if (!target) return
+    const dest = path.join(dir, name)
+    const src = fs.statSync(target, { throwIfNoEntry: false })
+    if (!src?.isFile()) {
+      try {
+        fs.unlinkSync(dest)
+      } catch {}
+      return
+    }
+    try {
+      const cur = fs.lstatSync(dest)
+      if (cur.isFile() && cur.dev === src.dev && cur.ino === src.ino) return
+      if (cur.isFile() && cur.dev !== src.dev && cur.size === src.size && cur.mtimeMs === src.mtimeMs) return
+    } catch {}
+    const tmp = `${dest}.${process.pid}.tmp`
+    fs.rmSync(tmp, { force: true })
+    try {
+      fs.linkSync(target, tmp)
+    } catch (err) {
+      if (err?.code !== 'EXDEV') throw err
+      fs.copyFileSync(target, tmp)
+      fs.chmodSync(tmp, src.mode & 0o777)
+      fs.utimesSync(tmp, src.atime, src.mtime)
+    }
+    // rename swaps the entry inside the mounted dir, so running slots see the new file.
+    fs.renameSync(tmp, dest)
+  }
+  link('kin-worker', workerBin)
+  link('kin-kernel', kernelBin)
+  return dir
+}
+
+/** Re-point an existing staging dir after host binaries were replaced (e.g. on control start). */
+export function refreshSlotGuestBinDir(projectRoot) {
+  if (!projectRoot || !fs.existsSync(slotGuestBinDir(projectRoot))) return null
+  return ensureSlotGuestBinDir(projectRoot, { workerBin: WORKER_BIN, kernelBin: kernelBinPath() || null })
+}
+
+/**
+ * Mount the slot guest bin staging dir so replacing files on the host is visible inside the
+ * container without recreate (single-file bind mounts pin the old inode).
+ */
+export function slotGuestBinMountArgs({ workerBin, kernelBin, guestBinDir, hostOf = (p) => p, projectRoot }) {
+  const bins = [workerBin, kernelBin].filter(Boolean)
+  if (!bins.length) return []
+  if (projectRoot) {
+    const stage = ensureSlotGuestBinDir(projectRoot, { workerBin, kernelBin })
+    return ['-v', `${hostOf(stage)}:${guestBinDir}:ro`]
+  }
+  const args = []
+  if (workerBin) args.push('-v', `${hostOf(workerBin)}:${guestBinDir}/kin-worker:ro`)
+  if (kernelBin) args.push('-v', `${hostOf(kernelBin)}:${guestBinDir}/kin-kernel:ro`)
+  return args
+}
+
 /** Read-only persona mounts for a non-KVM kin-os container. */
 export function computerDockerArgs({ dir, mac, hostOf = (p) => p }) {
   const etc = path.join(dir, 'system', 'etc')
@@ -737,6 +810,7 @@ export function buildKvmRunArgs({
   kernelBin,
   shares = 'home,run',
   hostOf = (p) => p,
+  projectRoot,
 }) {
   const slotName = displayName(vm.id)
   const mem = kvmContainerMemory(memory)
@@ -788,8 +862,13 @@ export function buildKvmRunArgs({
     `${hostOf(runDir)}:/slot/run`,
     '-v',
     `${hostOf(kvmDir)}:/slot/kvm`,
-    ...(workerBin ? ['-v', `${hostOf(workerBin)}:/opt/kin-guest/usr/local/bin/kin-worker:ro`] : []),
-    ...(kernelBin ? ['-v', `${hostOf(kernelBin)}:/opt/kin-guest/usr/local/bin/kin-kernel:ro`] : []),
+    ...slotGuestBinMountArgs({
+      workerBin,
+      kernelBin,
+      guestBinDir: '/opt/kin-guest/usr/local/bin',
+      hostOf,
+      projectRoot,
+    }),
     ...env.flatMap((pair) => ['-e', pair]),
     ...(process.env.KIN_VM_HOST_GATEWAY === '1' ? ['--add-host', 'host.docker.internal:host-gateway'] : []),
     '--dns',
@@ -807,7 +886,7 @@ export function dockerSlotResourceArgs(vm, routing) {
   return ['--memory', memory, '--memory-swap', memory, ...(cpus > 0 ? ['--cpus', String(cpus)] : [])]
 }
 
-export function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
+export async function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
   if (!isKvmRuntime(vm)) slotDockerCpus(vm) // reject corrupt persisted quotas before any lifecycle changes
   if (isKvmRuntime(vm) && accelOpt !== 'kvm' && accelOpt !== 'tcg') {
     const recorded = vm.runtime?.accel
@@ -842,7 +921,7 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing, acc
 
   const proxy = ensureOuterSocks(vm)
   if (!proxy.ok) return proxy
-  const eg = ensureProxyEgress(projectRoot, vm.proxy)
+  const eg = await ensureProxyEgress(projectRoot, vm.proxy)
   if (!eg.ok) return eg
   if (!eg.network && !eg.name) return { ok: false, error: 'egress network missing; refusing host fallback' }
 
@@ -967,6 +1046,7 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing, acc
       kernelBin: mountKernel ? kernelBin : null,
       shares: 'home,run',
       hostOf,
+      projectRoot,
     })
   } else {
     const machineMounts = machineIdFile
@@ -1016,8 +1096,13 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing, acc
       `${hostOf(home)}:/home/kincli`,
       '-v',
       `${hostOf(worker.runDir)}:/run/kin`,
-      ...(fs.existsSync(WORKER_BIN) ? ['-v', `${hostOf(WORKER_BIN)}:/usr/local/bin/kin-worker:ro`] : []),
-      ...(mountKernel ? ['-v', `${hostOf(kernelBin)}:/usr/local/bin/kin-kernel:ro`] : []),
+      ...slotGuestBinMountArgs({
+        workerBin: fs.existsSync(WORKER_BIN) ? WORKER_BIN : null,
+        kernelBin: mountKernel ? kernelBin : null,
+        guestBinDir: '/usr/local/bin',
+        hostOf,
+        projectRoot,
+      }),
       ...machineMounts,
       ...computerDockerArgs({ dir: computer.dir, mac: computer.mac, hostOf }),
       '-e',

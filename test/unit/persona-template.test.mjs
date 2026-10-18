@@ -113,7 +113,7 @@ test('official_full preset renders the complete agent prompt separately', () => 
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
   assert.equal(out.length, 4)
   assert.equal(out[2].text, vars.agent_official)
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(typeof out[3].text, 'string')
   assert.match(out[3].text, /# Environment|# Text output/)
   assert.deepEqual(out[3].cache_control, { type: 'ephemeral', ttl: '1h' })
@@ -333,7 +333,7 @@ test('official_full routing preset adds the complete agent prompt without changi
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
     assert.equal(out.system.length, 4)
     assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
-    assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+    assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h' })
     assert.match(String(out.system[3].text || ''), /# Environment|# Text output/)
   })
 })
@@ -481,6 +481,83 @@ test('custom template drives the outbound system verbatim', () => {
       )
       assert.equal(out.system.length, 1)
       assert.equal(out.system[0].text, `You are ${CRS_OFFICIAL_SYSTEM} at Asia/Tokyo`)
+    },
+  )
+})
+
+test('built-in templates omit cache_control.scope; custom explicit scope and caller body stay', () => {
+  const vars = personaTemplateVars({
+    firstUserText: 'hello',
+    sessionId: 's-scope',
+    leftover: 'KEEP_CALLER_SYSTEM',
+    withEnv: true,
+  })
+  const full = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
+  assert.deepEqual(full[2].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.equal(full[2].text, vars.agent_official)
+  assert.equal(full.at(-1).text, 'KEEP_CALLER_SYSTEM')
+
+  const official = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, {
+    ...vars,
+    caller_agent: 'KEEP_CALLER_AGENT',
+  })
+  const agent = official.find((block) => String(block.text).includes('KEEP_CALLER_AGENT'))
+  assert.equal(agent.text, 'KEEP_CALLER_AGENT')
+  assert.deepEqual(agent.cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.equal(official.at(-1).text, 'KEEP_CALLER_SYSTEM')
+
+  withRoutingFile(
+    {
+      persona_preset: 'custom',
+      overlay_preset: 'off',
+      persona_templates: {
+        custom: [
+          {
+            id: 'scoped',
+            type: 'text',
+            text: 'custom-scoped',
+            cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+          },
+        ],
+      },
+    },
+    (file) => {
+      const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
+      assert.equal(out.system.length, 1)
+      assert.equal(out.system[0].text, 'custom-scoped')
+      assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+    },
+  )
+
+  withRoutingFile(
+    {
+      persona_preset: 'official',
+      overlay_preset: 'off',
+      persona_templates: {
+        official: [
+          { id: 'billing', type: 'text', text: '{{billing}}' },
+          { id: 'identity', type: 'text', text: '{{identity}}' },
+          { id: 'env', drop_if_empty: true, type: 'text', text: '{{env}}' },
+          { id: 'caller_system', drop_if_empty: true, type: 'text', text: '{{caller_system}}' },
+        ],
+      },
+    },
+    (file) => {
+      const out = applyCrsUnofficialPersona(
+        {
+          system: [
+            { type: 'text', text: CRS_OFFICIAL_AGENT_PROMPT },
+            { type: 'text', text: 'KEEP_CALLER_SYSTEM' },
+          ],
+          messages: [{ role: 'user', content: 'hi' }],
+        },
+        { routingFile: file },
+      )
+      const injected = out.system.find((block) => String(block?.text || '').includes('# Doing tasks'))
+      assert.ok(injected)
+      assert.equal(injected.text, CRS_OFFICIAL_AGENT_PROMPT)
+      assert.deepEqual(injected.cache_control, { type: 'ephemeral', ttl: '1h' })
+      assert.equal(out.system.at(-1).text, 'KEEP_CALLER_SYSTEM')
     },
   )
 })

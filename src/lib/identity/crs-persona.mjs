@@ -1309,7 +1309,7 @@ export function collectCallerSystemAppend(body, options = {}) {
   return parkableSystemTexts(body?.system, options).join('\n\n')
 }
 
-const OFFICIAL_CALLER_AGENT_CACHE = Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' })
+const OFFICIAL_CALLER_AGENT_CACHE = Object.freeze({ type: 'ephemeral', ttl: '1h' })
 
 /** Stored official templates that predate {{caller_agent}} still get the prompt back, before env. */
 function insertOfficialCallerAgent(system, callerAgent) {

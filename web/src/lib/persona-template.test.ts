@@ -224,10 +224,17 @@ describe('agent standing + system preview', () => {
       'agent_official',
       'env_official',
     ])
+    expect(fullOn[1]).toMatchObject({
+      text: 'AGENT',
+      placeholder: false,
+      ttl: '1h',
+      scope: '',
+    })
     expect(fullOn[2]).toMatchObject({
       text: 'ENV',
       placeholder: false,
       ttl: '1h',
+      scope: '',
     })
 
     const fullOff = previewSystemBlocks(
@@ -358,6 +365,43 @@ describe('agent standing + system preview', () => {
     })
   })
 
+  it('preview keeps builtin 1h cache without scope and retains custom explicit scope', () => {
+    const builtin = previewSystemBlocks(
+      DEFAULT_PERSONA_TEMPLATES.official_full,
+      {
+        ...vars,
+        env_official: 'ENV',
+      }
+    )
+    expect(
+      builtin.find((block) => block.id === 'agent_official')
+    ).toMatchObject({
+      text: 'AGENT',
+      ttl: '1h',
+      scope: '',
+    })
+    const custom = previewSystemBlocks(
+      [
+        {
+          id: 'scoped',
+          type: 'text',
+          text: 'custom-scoped',
+          cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        },
+      ],
+      vars
+    )
+    expect(custom).toEqual([
+      {
+        id: 'scoped',
+        text: 'custom-scoped',
+        hide: false,
+        ttl: '1h',
+        scope: 'global',
+        placeholder: false,
+      },
+    ])
+  })
   it('toggle map is removed only when values match the field default', () => {
     const off = setPresetFlag({}, 'persona_env_presets', 'zero', false, {})
     expect(off.persona_env_presets).toEqual({

@@ -5249,7 +5249,7 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'POST' && p === '/api/panel/proxies/local') {
         const result = proxyPool.ensureLocal()
-        if (result.created) ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(result.proxy.id))
+        if (result.created) await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(result.proxy.id))
         // Enabling local egress on a cluster that already has nodes: each VPS gets its row now.
         proxyPool.syncLocalNodes(clusterNodesOf(ctx).map((node) => node.id))
         return json(res, 200, panel.ok(result))
@@ -5330,7 +5330,7 @@ export function createPanelHandler(ctx) {
           const dnsEmptyTypes = result.config.dns_disable_svcb_https ? [64, 65] : []
           for (const proxy of proxyPool.snapshot().proxies) {
             if (isLocalEgressProxy(proxy) || !proxy.bound_vm_ids?.length) continue
-            const r = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id), {
+            const r = await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id), {
               dnsUpstream,
               dnsEmptyTypes,
             })
@@ -5372,7 +5372,7 @@ export function createPanelHandler(ctx) {
           process.env.KIN_CRS_MOCK !== '1' &&
           (result.proxy.bound_vm_ids || []).length
         ) {
-          const restarted = ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(id))
+          const restarted = await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(id))
           egress = { ok: !!restarted.ok, error: restarted.ok ? null : restarted.error || 'egress_restart_failed' }
         }
         // A label is display-only; reloading every bound worker for it would
@@ -5530,7 +5530,10 @@ export function createPanelHandler(ctx) {
         }
         bindVmProxy(cfg.paths.project, vmId, proxyPool.getProxyForVm(vmId))
         if (egressEnabled()) {
-          ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId) || proxyPool.getProxyByIdWithAuth(id))
+          await ensureProxyEgress(
+            cfg.paths.project,
+            proxyPool.getProxyForVm(vmId) || proxyPool.getProxyByIdWithAuth(id),
+          )
         }
         let worker = null
         // Runs before the reload so the worker starts with the exit node's zone.
@@ -5599,7 +5602,7 @@ export function createPanelHandler(ctx) {
             error: { type: 'api_error', code: 'no_free_proxy', message: 'No free SOCKS5 in pool' },
           })
         bindVmProxy(cfg.paths.project, vmId, proxyPool.getProxyForVm(vmId))
-        if (egressEnabled()) ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId))
+        if (egressEnabled()) await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId))
         let worker = null
         const timezone = await syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, vmId, {
           proxyId: allocated?.id || null,

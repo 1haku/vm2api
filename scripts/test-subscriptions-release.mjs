@@ -2,6 +2,13 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'cluster-edit-routes',
+  'cluster-node-edit-input',
+  'cluster-node-edit-repo',
+  'cluster-node-edit',
+  'cors',
+  'vm-runtime-bin-mount',
+  'slot-engine-runtime',
   'responses-ws',
   'codex-route',
   'config-public-url',
