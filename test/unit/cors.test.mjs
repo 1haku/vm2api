@@ -28,7 +28,9 @@ test('PUBLIC_BASE_URL origin is allowlisted without extra env', () => {
   const env = { PUBLIC_BASE_URL: 'https://api.example.com/' }
   assert.equal(parsePanelCorsOrigins(env).has('https://api.example.com'), true)
   const headers = corsHeadersForRequest({ headers: { origin: 'https://api.example.com' } }, {}, env)
+  assert.equal(headers['access-control-allow-origin'], 'https://api.example.com')
   assert.equal(headers['access-control-allow-credentials'], 'true')
+  assert.equal(headers.vary, 'Origin')
 })
 
 test('OPTIONS and JSON paths share methods including PATCH', () => {
@@ -37,12 +39,15 @@ test('OPTIONS and JSON paths share methods including PATCH', () => {
   assert.equal(CORS_ALLOW_METHODS.includes('PATCH'), true)
 })
 
-test('arbitrary origin is never reflected with credentials', () => {
+test('arbitrary origin is never echoed; response remains wildcard without credentials', () => {
+  const origin = 'https://evil.example.com'
   const headers = corsHeadersForRequest(
-    { headers: { origin: 'https://evil.example.com' } },
+    { headers: { origin } },
     {},
     { PANEL_CORS_ORIGINS: 'https://panel.example.com', PUBLIC_BASE_URL: 'https://api.example.com' },
   )
   assert.equal(headers['access-control-allow-origin'], '*')
+  assert.notEqual(headers['access-control-allow-origin'], origin)
   assert.equal(headers['access-control-allow-credentials'], undefined)
+  assert.equal(headers.vary, undefined)
 })
