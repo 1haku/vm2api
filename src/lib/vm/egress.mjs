@@ -211,15 +211,28 @@ export function egressRunDir(projectRoot, proxyId) {
   return path.join(projectRoot, 'data', 'run', 'egress', proxyKey(proxyId))
 }
 
+/** True when pid exists and is not a zombie (Linux). Used by tests and stop/reload paths. */
+export function egressPidActive(pid) {
+  return pidAlive(pid)
+}
+
 function pidAlive(pid) {
   const n = Number(pid)
   if (!Number.isInteger(n) || n <= 0) return false
   try {
     process.kill(n, 0)
-    return true
   } catch {
     return false
   }
+  if (process.platform === 'linux') {
+    try {
+      const state = fs.readFileSync(`/proc/${n}/stat`, 'utf8').split(' ')[2]
+      if (state === 'Z') return false
+    } catch {
+      return false
+    }
+  }
+  return true
 }
 
 function readPid(file) {
@@ -415,6 +428,16 @@ export function startEgressProcess({
     try {
       process.kill(existing, 'SIGTERM')
     } catch {}
+    const stopped = waitEgressExit(existing)
+    if (!stopped.ok) return { ok: false, error: stopped.error, pid: existing }
+    if (tcpPort > 0) {
+      const portFree = waitPortReleased(listenHost, tcpPort)
+      if (!portFree.ok) return { ok: false, error: portFree.error, pid: existing }
+    }
+    if (dnsPort > 0) {
+      const dnsFree = waitPortReleased(listenHost, dnsPort)
+      if (!dnsFree.ok) return { ok: false, error: dnsFree.error, pid: existing }
+    }
   }
   if (!fs.existsSync(bin)) {
     return { ok: false, error: `kin-egress binary not found: ${bin}` }
@@ -429,13 +452,10 @@ export function startEgressProcess({
   if (dnsEmptyTypes.length) cfg.dns_empty_types = dnsEmptyTypes
   if (domainForward) cfg.domain_forward = true
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
-  const child = spawn(bin, ['-config', cfgPath], {
-    detached: true,
-    stdio: 'ignore',
-  })
-  child.unref()
-  fs.writeFileSync(pidFile, String(child.pid) + '\n', { mode: 0o600 })
-  return { ok: true, pid: child.pid, reused: false, configPath: cfgPath, listen_tcp: listenTcp }
+  const spawned = spawnDetachedEgress(bin, cfgPath)
+  if (!spawned.ok) return spawned
+  fs.writeFileSync(pidFile, String(spawned.pid) + '\n', { mode: 0o600 })
+  return { ok: true, pid: spawned.pid, reused: false, configPath: cfgPath, listen_tcp: listenTcp }
 }
 
 export function stopEgressProcess(projectRoot, proxyId) {
@@ -510,6 +530,67 @@ export function localEgressProxyUrl(env = process.env) {
     if (value) return value.replace(/^socks5:\/\//i, 'socks5h://')
   }
   return ''
+}
+
+const EGRESS_STOP_TIMEOUT_MS = 8000
+const EGRESS_KILL_GRACE_MS = 3000
+
+function sleepBrief() {
+  sh(['python3', '-c', 'import time; time.sleep(0.05)'], { timeout: 1000 })
+}
+
+/** Wait for an egress PID to exit after SIGTERM, then SIGKILL if needed. */
+export function waitEgressExit(
+  pid,
+  { termTimeoutMs = EGRESS_STOP_TIMEOUT_MS, killGraceMs = EGRESS_KILL_GRACE_MS } = {},
+) {
+  if (!pidAlive(pid)) return { ok: true }
+  const termStart = Date.now()
+  while (Date.now() - termStart < termTimeoutMs) {
+    if (!pidAlive(pid)) return { ok: true }
+    sleepBrief()
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch (error) {
+    if (error.code === 'ESRCH') return { ok: true }
+    return { ok: false, error: `egress_kill_failed: ${error.code || error.message}`, pid }
+  }
+  const killStart = Date.now()
+  while (Date.now() - killStart < killGraceMs) {
+    if (!pidAlive(pid)) return { ok: true }
+    sleepBrief()
+  }
+  return { ok: false, error: 'egress_stop_timeout', pid }
+}
+
+export function waitPortReleased(host, port, timeoutMs = 3000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (!waitListen(host, port, 200)) return { ok: true }
+    sleepBrief()
+  }
+  return { ok: false, error: 'egress_port_busy', port }
+}
+
+function spawnDetachedEgress(bin, cfgPath) {
+  const child = spawn(bin, ['-config', cfgPath], { detached: true, stdio: 'ignore' })
+  let spawnError = null
+  child.on('error', (error) => {
+    spawnError = error
+  })
+  const deadline = Date.now() + 500
+  while (!spawnError && !child.pid && Date.now() < deadline) {
+    sleepBrief()
+  }
+  if (spawnError) {
+    return { ok: false, error: `egress_spawn_failed: ${spawnError.code || spawnError.message}` }
+  }
+  if (!child.pid) {
+    return { ok: false, error: 'egress_spawn_failed: no pid' }
+  }
+  child.unref()
+  return { ok: true, pid: child.pid }
 }
 
 function waitListen(host, port, timeoutMs = 8000) {

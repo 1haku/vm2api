@@ -29,6 +29,8 @@ import {
   slotNetworkForVm,
   startEgressProcess,
   stopEgressProcess,
+  waitEgressExit,
+  egressPidActive,
 } from '../../src/lib/vm/egress.mjs'
 import { hostProxyUrlForVm } from '../../src/lib/vm/slot-host.mjs'
 
@@ -132,6 +134,61 @@ test('stop discards a recycled PID without signaling its new owner', {
   assert.equal(fs.existsSync(fx.pidFile), false)
   assert.equal(sleeper.signalCode, null)
   assert.equal(sleeper.exitCode, null)
+})
+
+test('egress reload waits for the previous process to exit before spawning', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  const original = fx.start()
+  await waitForProcess(() => {
+    try {
+      return path.basename(fs.readlinkSync(`/proc/${original.pid}/exe`)) === 'kin-egress'
+    } catch {
+      return false
+    }
+  })
+  const replacement = fx.start({ proxyUrl: 'socks5h://192.0.2.2:1080' })
+  assert.equal(replacement.ok, true)
+  assert.notEqual(replacement.pid, original.pid)
+  assert.equal(egressPidActive(original.pid), false, 'old egress must exit before spawn returns')
+  assert.equal(stopEgressProcess(fx.root, fx.base.proxyId).ok, true)
+  await waitForProcess(() => !fs.existsSync(`/proc/${replacement.pid}`))
+})
+
+test('egress reload surfaces spawn failure after stopping the old helper', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const fx = egressFixture(t)
+  const original = fx.start()
+  await waitForProcess(() => {
+    try {
+      return path.basename(fs.readlinkSync(`/proc/${original.pid}/exe`)) === 'kin-egress'
+    } catch {
+      return false
+    }
+  })
+  const missing = path.join(fx.root, 'missing-kin-egress')
+  const failed = fx.start({ bin: missing, proxyUrl: 'socks5h://192.0.2.3:1080' })
+  assert.equal(failed.ok, false)
+  assert.match(failed.error, /not found|spawn/i)
+  assert.equal(egressPidActive(original.pid), false)
+})
+
+test('waitEgressExit escalates SIGTERM to SIGKILL', { skip: process.platform !== 'linux' }, async (t) => {
+  const sleeper = spawn('sleep', ['120'])
+  const closed = once(sleeper, 'close')
+  t.after(async () => {
+    try {
+      sleeper.kill('SIGKILL')
+    } catch {}
+    await closed
+  })
+  await once(sleeper, 'spawn')
+  sleeper.kill('SIGTERM')
+  const result = waitEgressExit(sleeper.pid, { termTimeoutMs: 200, killGraceMs: 3000 })
+  assert.equal(result.ok, true)
+  assert.equal(egressPidActive(sleeper.pid), false)
 })
 
 test('an egress helper can be reused, replaced and stopped only by its own proxy', {
