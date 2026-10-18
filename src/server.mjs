@@ -92,6 +92,7 @@ import { normalizeCredentialMode } from './lib/oauth/credential-mode.mjs'
 import { ensureWorkerCredential } from './lib/transport/go-worker-client.mjs'
 import { stopAllRustKernels } from './lib/transport/rust-kernel-supervisor.mjs'
 import { createRespond, parseRequestUrl } from './lib/http/respond.mjs'
+import { corsHeadersForRequest } from './lib/http/cors.mjs'
 import { isConsoleEntry, tryServeWebDist } from './lib/http/web-dist.mjs'
 import { createRoutingRuntime } from './lib/admin/routing-runtime.mjs'
 import { createImportCommit } from './lib/oauth/import-commit.mjs'
@@ -1010,13 +1011,9 @@ const handlePanel = createPanelHandler({
 
 const server = http.createServer(async (req, res) => {
   try {
+    res.req = req
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'access-control-allow-origin': '*',
-        'access-control-allow-headers':
-          'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, x-kin-rewrite, x-panel-token, x-kin-vm, x-kin-backend',
-        'access-control-allow-methods': 'GET,POST,OPTIONS,PUT,DELETE',
-      })
+      res.writeHead(204, corsHeadersForRequest(req))
       return res.end()
     }
 

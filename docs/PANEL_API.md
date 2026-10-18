@@ -4,6 +4,8 @@
 
 登录：`POST /api/panel/login` `{ username, password }` → token + Cookie `kin_panel_token`（7 天，HttpOnly）。`POST /api/panel/logout` 撤销。`GET /api/panel/me` → `{ user, role, views, capabilities, version }`。`GET/PUT /onboarding` 为首配进度（见「引导」）。
 
+管理台前端固定 `credentials: include`。页面与 API **不同源** 时，须在 API 侧配置受信 Origin：`PANEL_CORS_ORIGINS`（空格或逗号分隔，如 `https://panel.example.com`）和/或 `PUBLIC_BASE_URL` 的 origin。匹配时响应回显该 `Origin`、`Access-Control-Allow-Credentials: true` 与 `Vary: Origin`；未列入的 Origin 仍为 `Access-Control-Allow-Origin: *` 且**不带** credentials（浏览器会拒绝跨源 Cookie 登录）。预检与 JSON/SSE 共用同一 methods/headers 列表（含 `PATCH`）。
+
 `/admin/*` 仅 master / admin 角色。恢复备份期间协议口 503。
 
 ## RBAC
