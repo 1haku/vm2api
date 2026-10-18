@@ -39,12 +39,29 @@ x-api-key: sk-vm-…
 | `POST` | `/v1/chat/completions` 或 `/chat/completions` | OpenAI Chat | OpenAI Chat / SSE |
 | `POST` | `/v1/completions` 或 `/completions` | OpenAI Completions | OpenAI Completions |
 | `POST` | `/v1/responses` 或 `/responses` | OpenAI Responses | OpenAI Responses |
+| `GET` + Upgrade | `/v1/responses` 或 `/responses` | Responses WebSocket | JSON `response.*` 帧，不包 SSE |
 | `GET` | `/v1/models` | — | 本地模型策略目录 |
 | `GET` | `/health` · `/` · `/v1/meta` | 无鉴权 | 能力 / 限制 / 计数 |
 
 上游 hop **永远** `stream: true`。客户端 `stream: true` 收 SSE；`stream: false` 或 `x-kin-delivery: verified` 由网关聚合成 JSON。
 
 别名路径（无 `/v1` 前缀）与上表相同处理函数。
+
+## Responses WebSocket
+
+用相同 Bearer API key 对 `GET /v1/responses` 发起标准 WebSocket Upgrade，然后发送文本帧：
+
+```json
+{"type":"response.create","model":"gpt-5.4","input":[{"role":"user","content":"hi"}]}
+```
+
+`stream` 可省略，显式指定时必须为 `true`。每轮走既有鉴权、密钥范围、限流、调度、用量与日志链路；响应为独立 JSON `response.*` 事件，不带 `event:` / `data:` 或 `[DONE]`。同连接串行执行，接收队列最多 32 条，累计排队字节还受现有请求体上限约束；超过帧/字节上限关闭 1009，队列条数超限关闭 1008，二进制帧关闭 1003。客户端断开会取消当前 hop。普通 GET 未带 Upgrade 返回 426。
+
+同连接已完成响应的 `previous_response_id` 会展开为原输入与完整输出（含 reasoning / tool items）再执行，不依赖上游保留旧 WS。回放缓存最多 32 条 / 8 MiB。未知、已淘汰或另一连接的 ID 返回 `400 previous_response_not_found`，要求携带完整上下文重发；不会假装原生跨连接续接。当前只接受 `response.create`，未实现的控制事件返回明确协议错误，不伪装已转发或成功。
+
+`websocket.enabled` 和 `codex.websocket.enabled` 必须同时为 true；任一关闭，新握手返回 `403 websocket_disabled`，已有连接的后续 create 也会复核。HTTP/SSE 不关闭，上游强制 HTTP。仅把 `codex.upstream_transport` 设为 `http` 时，入站 WS 仍可用，但每轮走 HTTP/SSE 上游；依赖 WS 的 `generate:false` 预热返回 `400 unsupported_prewarm`，零上游执行。配置入口见 [OpenAI 传输与隐私](PANEL_API.md#openai-传输与隐私)。
+
+握手后的失败形态为 `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"…","message":"…"}}`，保留已确认的真实错误；没有终态时报告 `incomplete_response`，不合成 `response.completed`。
 
 ## 公共请求头
 
