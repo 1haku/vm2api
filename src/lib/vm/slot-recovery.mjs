@@ -645,7 +645,7 @@ export function createSlotBridgeHealer({
       if (seenProxies.has(proxy.id)) continue
       seenProxies.add(proxy.id)
       if (egressAlive(proxy.id) || !due(`egress:${proxy.id}`)) continue
-      const result = startEgress(proxy)
+      const result = await startEgress(proxy)
       if (result?.ok) logger.warn(`[bridge-heal] kin-egress ${proxy.id} was down; restarted`)
       else logger.warn(`[bridge-heal] kin-egress ${proxy.id} restart failed: ${result?.error || 'unknown'}`)
     }

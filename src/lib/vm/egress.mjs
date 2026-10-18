@@ -389,7 +389,17 @@ export function configuredDnsEmptyTypes() {
   return new SettingsRepo(getDb()).get('proxy_pool_config')?.dns_disable_svcb_https === true ? [64, 65] : []
 }
 
-export function startEgressProcess({
+const EGRESS_POLL_MS = 50
+const egressWaitLock = new Int32Array(new SharedArrayBuffer(4))
+
+function sleepMsSync(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return
+  Atomics.wait(egressWaitLock, 0, 0, Math.min(Math.floor(ms), 2_147_483_647))
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+export async function startEgressProcess({
   projectRoot,
   proxyId,
   proxyUrl,
@@ -428,14 +438,14 @@ export function startEgressProcess({
     try {
       process.kill(existing, 'SIGTERM')
     } catch {}
-    const stopped = waitEgressExit(existing)
+    const stopped = await waitEgressExit(existing)
     if (!stopped.ok) return { ok: false, error: stopped.error, pid: existing }
     if (tcpPort > 0) {
-      const portFree = waitPortReleased(listenHost, tcpPort)
+      const portFree = await waitPortReleased(listenHost, tcpPort)
       if (!portFree.ok) return { ok: false, error: portFree.error, pid: existing }
     }
     if (dnsPort > 0) {
-      const dnsFree = waitPortReleased(listenHost, dnsPort)
+      const dnsFree = await waitPortReleased(listenHost, dnsPort)
       if (!dnsFree.ok) return { ok: false, error: dnsFree.error, pid: existing }
     }
   }
@@ -452,7 +462,7 @@ export function startEgressProcess({
   if (dnsEmptyTypes.length) cfg.dns_empty_types = dnsEmptyTypes
   if (domainForward) cfg.domain_forward = true
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
-  const spawned = spawnDetachedEgress(bin, cfgPath)
+  const spawned = await spawnDetachedEgress(bin, cfgPath)
   if (!spawned.ok) return spawned
   fs.writeFileSync(pidFile, String(spawned.pid) + '\n', { mode: 0o600 })
   return { ok: true, pid: spawned.pid, reused: false, configPath: cfgPath, listen_tcp: listenTcp }
@@ -535,12 +545,8 @@ export function localEgressProxyUrl(env = process.env) {
 const EGRESS_STOP_TIMEOUT_MS = 8000
 const EGRESS_KILL_GRACE_MS = 3000
 
-function sleepBrief() {
-  sh(['python3', '-c', 'import time; time.sleep(0.05)'], { timeout: 1000 })
-}
-
 /** Wait for an egress PID to exit after SIGTERM, then SIGKILL if needed. */
-export function waitEgressExit(
+export async function waitEgressExit(
   pid,
   { termTimeoutMs = EGRESS_STOP_TIMEOUT_MS, killGraceMs = EGRESS_KILL_GRACE_MS } = {},
 ) {
@@ -548,7 +554,7 @@ export function waitEgressExit(
   const termStart = Date.now()
   while (Date.now() - termStart < termTimeoutMs) {
     if (!pidAlive(pid)) return { ok: true }
-    sleepBrief()
+    await delay(EGRESS_POLL_MS)
   }
   try {
     process.kill(pid, 'SIGKILL')
@@ -559,38 +565,45 @@ export function waitEgressExit(
   const killStart = Date.now()
   while (Date.now() - killStart < killGraceMs) {
     if (!pidAlive(pid)) return { ok: true }
-    sleepBrief()
+    await delay(EGRESS_POLL_MS)
   }
   return { ok: false, error: 'egress_stop_timeout', pid }
 }
 
-export function waitPortReleased(host, port, timeoutMs = 3000) {
+export async function waitPortReleased(host, port, timeoutMs = 3000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     if (!waitListen(host, port, 200)) return { ok: true }
-    sleepBrief()
+    await delay(EGRESS_POLL_MS)
   }
   return { ok: false, error: 'egress_port_busy', port }
 }
 
 function spawnDetachedEgress(bin, cfgPath) {
-  const child = spawn(bin, ['-config', cfgPath], { detached: true, stdio: 'ignore' })
-  let spawnError = null
-  child.on('error', (error) => {
-    spawnError = error
+  return new Promise((resolve) => {
+    const child = spawn(bin, ['-config', cfgPath], { detached: true, stdio: 'ignore' })
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    child.once('error', (error) => {
+      finish({ ok: false, error: `egress_spawn_failed: ${error.code || error.message}` })
+    })
+    child.once('spawn', () => {
+      child.unref()
+      finish({ ok: true, pid: child.pid })
+    })
+    setTimeout(() => {
+      if (child.pid) {
+        child.unref()
+        finish({ ok: true, pid: child.pid })
+        return
+      }
+      finish({ ok: false, error: 'egress_spawn_failed: no pid' })
+    }, 500)
   })
-  const deadline = Date.now() + 500
-  while (!spawnError && !child.pid && Date.now() < deadline) {
-    sleepBrief()
-  }
-  if (spawnError) {
-    return { ok: false, error: `egress_spawn_failed: ${spawnError.code || spawnError.message}` }
-  }
-  if (!child.pid) {
-    return { ok: false, error: 'egress_spawn_failed: no pid' }
-  }
-  child.unref()
-  return { ok: true, pid: child.pid }
 }
 
 function waitListen(host, port, timeoutMs = 8000) {
@@ -610,7 +623,7 @@ function waitListen(host, port, timeoutMs = 8000) {
       })
     )
       return true
-    sh(['python3', '-c', 'import time; time.sleep(0.1)'], { timeout: 1000 })
+    sleepMsSync(100)
   }
   return false
 }
@@ -642,7 +655,7 @@ export function ensureLocalProxyEgress(proxy, { runDocker = docker } = {}) {
   return { ok: true, mode: 'local', ...info, reused: false, proxy_id: proxyId }
 }
 
-export function ensureProxyEgress(
+export async function ensureProxyEgress(
   projectRoot,
   proxy,
   {
@@ -671,7 +684,7 @@ export function ensureProxyEgress(
     tcpPort: ports.tcp,
     dnsPort: ports.dns,
   })
-  const started = startEgressProcess({
+  const started = await startEgressProcess({
     projectRoot,
     proxyId,
     proxyUrl,

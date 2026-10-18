@@ -807,7 +807,7 @@ export function dockerSlotResourceArgs(vm, routing) {
   return ['--memory', memory, '--memory-swap', memory, ...(cpus > 0 ? ['--cpus', String(cpus)] : [])]
 }
 
-export function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
+export async function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
   if (!isKvmRuntime(vm)) slotDockerCpus(vm) // reject corrupt persisted quotas before any lifecycle changes
   if (isKvmRuntime(vm) && accelOpt !== 'kvm' && accelOpt !== 'tcg') {
     const recorded = vm.runtime?.accel
@@ -842,7 +842,7 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing, acc
 
   const proxy = ensureOuterSocks(vm)
   if (!proxy.ok) return proxy
-  const eg = ensureProxyEgress(projectRoot, vm.proxy)
+  const eg = await ensureProxyEgress(projectRoot, vm.proxy)
   if (!eg.ok) return eg
   if (!eg.network && !eg.name) return { ok: false, error: 'egress network missing; refusing host fallback' }
 

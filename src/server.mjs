@@ -376,7 +376,7 @@ try {
   if (!proxyPool.snapshot().proxies?.length) {
     const seeded = proxyPool.ensureLocal()
     if (seeded.created) {
-      ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(seeded.proxy.id))
+      void ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(seeded.proxy.id))
       console.log('[bootstrap] seeded local egress px-local')
     }
   }
