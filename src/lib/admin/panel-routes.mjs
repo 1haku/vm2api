@@ -5464,7 +5464,10 @@ export function createPanelHandler(ctx) {
         }
         bindVmProxy(cfg.paths.project, vmId, proxyPool.getProxyForVm(vmId))
         if (egressEnabled()) {
-          await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId) || proxyPool.getProxyByIdWithAuth(id))
+          await ensureProxyEgress(
+            cfg.paths.project,
+            proxyPool.getProxyForVm(vmId) || proxyPool.getProxyByIdWithAuth(id),
+          )
         }
         let worker = null
         // Runs before the reload so the worker starts with the exit node's zone.
