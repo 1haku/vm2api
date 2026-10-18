@@ -4,6 +4,8 @@
 
 ## 1.3.191 — 2026-10-18
 
+- `deploy/install.sh` 的 schedule hold/resume 内联 Python 兼容 3.8–3.11，避免旧宿主升级时 SyntaxError。（#535）
+- access 已过期且刷新失败的凭证退出调度池；GPT 上游失败施加进程内短期账号冷却（401/403 5 分钟、429 1 分钟、408/5xx/传输 30 秒），与换号上限协同。（#537）
 - 修复未配置 PUBLIC_BASE_URL / PUBLIC_HOST 且 HOST=0.0.0.0 时 /health、/v1/meta 返回不可访问的 base_url；监听地址不再作为对外 URL 回退。（#534/#543）
 - GPT/Codex 默认同账号重试 3 次、最多换号 3 次（401/403/429 直接换号；总尝试仍为 12；首条 SSE 发出后不再重试）。已有 `routing.json` 里写过 `failover` 字段的部署，仅重启不会自动变成上述新默认，须在面板「重试与切号」修改或手动合并配置。（#538）
 - 修复 API 后端非流式路径在上游 SSE 仅有 `message_start`、或仅有 `stop_reason` 而无 `message_stop` 时仍返回 200 的问题；须见到 `message_stop`（或 SSE `error` 终态）才视为 verified，否则 `incomplete_response`（502）。（#528/#550）
