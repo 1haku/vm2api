@@ -1,11 +1,14 @@
-import { Boxes, Check, ShieldCheck } from 'lucide-react'
-import { detectProxiedOfficialCcFromCompat } from '@/lib/cache-breakpoints'
+import { Boxes, Check, Database, ShieldCheck } from 'lucide-react'
+import {
+  cacheTtlFromCompat,
+  detectProxiedOfficialCcFromCompat,
+} from '@/lib/cache-breakpoints'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/setting-row'
-import { PaneSection } from './scheduler-controls'
+import { ChipGroup, PaneSection } from './scheduler-controls'
 
 type Block = Record<string, unknown>
 
@@ -301,6 +304,30 @@ export function ProtocolPane({
         onCompatChange={onCompatChange}
         onCodexChange={onCodexChange}
       />
+      <PaneSection
+        icon={Database}
+        title='提示词缓存'
+        desc='设置默认缓存写入时长，保持现有断点布局。'
+      >
+        <SettingRow
+          label='默认缓存写入 TTL'
+          desc='请求头、请求显式 TTL 与会话锁定值优先；system 模板中的显式 TTL 不变。'
+        >
+          <ChipGroup
+            label='默认缓存写入 TTL'
+            value={cacheTtlFromCompat(compat)}
+            options={[
+              ['5m', '5 分钟（5m）'],
+              ['1h', '1 小时（1h）'],
+            ]}
+            onChange={(cache_ttl) => onCompatChange({ ...compat, cache_ttl })}
+          />
+        </SettingRow>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          保存后作为新会话和自有缺省标记的
+          TTL。已有会话锁定值不变，官方透传仍保留调用方断点及缺失 TTL。
+        </p>
+      </PaneSection>
       <GptRouteSection codex={codex} onCodexChange={onCodexChange} />
     </div>
   )

@@ -391,7 +391,12 @@ export function renderPersonaTemplate(blocks, vars = {}) {
     if (!block || typeof block !== 'object') continue
     const text = renderText(block.text, vars)
     const blank = !text.trim()
-    if (block.drop_if_empty && blank) continue
+    const emptyEnvironment =
+      blank &&
+      extractTemplateVars(block.text).some((name) =>
+        ['env', 'env_official', 'env_timezone_only', 'timezone'].includes(name),
+      )
+    if (blank && (block.drop_if_empty || emptyEnvironment)) continue
     const next = { type: 'text', text: blank ? EMPTY_BLOCK_TEXT : text }
     if (block.cache_control && typeof block.cache_control === 'object') {
       next.cache_control = { ...block.cache_control }
