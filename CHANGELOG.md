@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 2026-10-18
+## 1.3.188 — 2026-10-18
 
 - 修复同一会话反复回放已被上游拒绝的搜索历史时，每轮都先 400 再修复成功的问题：仅在同 VM / 账号 / 模型 / 凭据代际确认修复成功后，进程内有界记录精确历史指纹，后续相同历史首跳复用原修复；新搜索内容或执行上下文不预先改写，不改变占位释放、出站 session、缓存 TTL 或签名修复开关。
 - 设置 → 协议新增「默认缓存写入 TTL」，可选 5 分钟（`5m`）或 1 小时（`1h`）；复用已有配置保存与槽位热投影，不改变断点布局、透传边界、显式 TTL 或会话 pin 规则。
@@ -8,9 +8,11 @@
 - 对齐 Claude Code `2.1.296` 的面板出站身份与 CLI 运行时版本投影，避免新 CLI 被旧 `CLAUDE_CODE_VERSION` 降回 `2.1.293`。
 - native 官方透传同时保留 system/tools/messages 的 caller cache marker、显式 TTL 与缺失 TTL；超四点、thinking marker、非法 TTL / 顺序在调度前报 `400 invalid_cache_control`，不静默修复。
 - native 重写模式只补齐、裁剪自产 marker，保留模板显式 TTL；非法模板零上游执行，不换号、不冷却。日志和计费保留上游真实 5m/1h usage 分桶。
-- CLI 保留带 billing 的官方 / 子代理 wire system，不再要求 SDK identity 才能透传。本地验证使用新编译 CLI 与 kernel；未发布、未部署、未同步槽内副本。
+- CLI 保留带 billing 的官方 / 子代理 wire system，不再要求 SDK identity 才能透传；原生工具预算只保护调用方前缀，保留其显式 TTL 和缺失 TTL。
 - GPT 槽在 TTL（10 分钟）内有可用 credits（`has_credits || unlimited`）时仅豁免窗口 cap；显式 park 仍优先；上游 429 清除 credits 并 park。（#508）
 - 修复 KVM 交互终端：交互/非 detach 不再包 `timeout 8`（仅保留 SSH ConnectTimeout）；`-e` 按次独立转义，保留值内换行（含 `KIN_PANEL_RC`）。（#509）
+
+已部署机升级：搜索历史修复本身只需更新 Node 控制面并重启，不需要同步或重启槽位。要启用本版 2.1.296 的完整 native 缓存契约，还需安装相应 kernel / CLI payload；本机槽定向同步，镜像内置 payload 的集群槽需要新镜像和单独授权重建。已安装 kernel `98357559…` / CLI `244ef884…` 的槽无需重复更新。不要覆盖 `routing.json`、`vms/`、`data/` 或 `.env`。
 
 ## 1.3.187 — 2026-10-17
 
