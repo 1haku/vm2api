@@ -138,11 +138,11 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         drop_if_empty: true,
         type: 'text',
         text: '{{agent_standing}}{{caller_agent}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', ttl: '1h' },
       },
       {
         id: 'env',
-        note: '槽位 Environment（时区），按档开关，排在 agent 之后不破 global 缓存',
+        note: '槽位 Environment（时区），按档开关，排在 agent 之后不破 1h 前缀缓存',
         drop_if_empty: true,
         type: 'text',
         text: '{{env}}',
@@ -170,10 +170,10 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_official',
-        note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+        note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。2.1.263 起 1h 缓存',
         type: 'text',
         text: '{{agent_standing}}{{agent_official}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', ttl: '1h' },
       },
       {
         id: 'env_official',
