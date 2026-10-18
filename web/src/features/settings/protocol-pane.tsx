@@ -159,7 +159,7 @@ export function ProtocolPane({
           desc={
             cch
               ? '开：出站补齐 cch；试用号缺失也写。保存后热写入各槽 kernel.json，不重启 CLI。'
-              : '关：统一移除出站 billing 中的 cch，不受账号订阅状态影响。'
+              : '关：固定发送 cch=00000;（5 个 0），不计算摘要。'
           }
         >
           <Switch

@@ -74,15 +74,23 @@ test('sealClaudeCodeCch hashes the 2.1.280 projection then writes digest', () =>
   assert.equal(JSON.stringify(sealed), raw.replace(/cch=00000/, `cch=${expected}`))
 })
 
-test('projectClaudeCodeCchText edits the original text and clears every model string', () => {
-  const raw =
-    '{"z":1,"model":"sonnet","messages":[{"model":"other"}],"max_tokens":9,"fallbacks":["haiku",{"model":"inside"}],"fallback_credit_token":"tok","system":[{"text":"cch=3180f"}]}'
-  const projected = projectClaudeCodeCchText(raw)
-  assert.equal(projected, '{"z":1,"model":"","messages":[{"model":""}],"system":[{"text":"cch=00000"}]}')
-  assert.equal(
-    projectClaudeCodeCchText('{"model":"","max_tokens":"nope","system":"cch=00000"}'),
-    '{"model":"","max_tokens":"nope","system":"cch=00000"}',
-  )
+test('CCH projection resets billing only, preserving prompt literals before system', () => {
+  const raw = {
+    model: 'sonnet',
+    messages: [{ model: 'other', content: 'literal cch=3180f;' }],
+    max_tokens: 9,
+    fallbacks: ['haiku', { model: 'inside' }],
+    fallback_credit_token: 'tok',
+    system: [{ text: 'x-anthropic-billing-header: cc_version=2.1.296; cch=fffff;' }],
+  }
+  const projected = JSON.parse(projectClaudeCodeCchText(JSON.stringify(raw)))
+  assert.equal(projected.system[0].text, 'x-anthropic-billing-header: cc_version=2.1.296; cch=00000;')
+  assert.equal(projected.messages[0].content, raw.messages[0].content)
+  assert.equal(projected.model, '')
+  assert.equal(projected.messages[0].model, '')
+  assert.equal(Object.hasOwn(projected, 'max_tokens'), false)
+  assert.equal(Object.hasOwn(projected, 'fallbacks'), false)
+  assert.equal(Object.hasOwn(projected, 'fallback_credit_token'), false)
 })
 
 test('CCH fills missing values and replaces stale values without changing billing parameters', () => {
@@ -104,6 +112,10 @@ test('CCH fills missing values and replaces stale values without changing billin
     assert.equal(body.system[0].text, billing + suffix)
     assert.equal(sealClaudeCodeCch(sealed).system[0].text, text)
     assert.equal(sealClaudeCodeCch(JSON.stringify(body, null, 2)), JSON.stringify(sealed))
+    const disabled = sealClaudeCodeCch(body, { enabled: false })
+    assert.match(disabled.system[0].text, /cch=00000;/)
+    assert.equal((disabled.system[0].text.match(/cch=/g) || []).length, 1)
+    assert.equal(disabled.system[0].text.replace(/ cch=00000;/, ''), billing)
   }
 })
 
@@ -122,7 +134,7 @@ test('CCH settings apply per hop and native sealing waits for final CLI serializ
   routing.compatibility.cch_enabled = false
   for (const cliHop of [false, true]) {
     const disabled = finalizeWorkerPayload({ ...options, routing, cliHop }).body
-    assert.doesNotMatch(disabled.system[0].text, /cch=/)
+    assert.match(disabled.system[0].text, /cch=00000;/)
     assert.match(disabled.system[0].text, /cc_version=2.1.296.abc; cc_entrypoint=sdk-cli;/)
   }
   routing.compatibility.cch_enabled = true
