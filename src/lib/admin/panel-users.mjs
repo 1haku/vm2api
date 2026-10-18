@@ -10,6 +10,7 @@ import { resolveStoreDb, withTransaction } from '../db/database.mjs'
 import { RequestLimitsRepo, requestLimit } from '../db/repos/request-limits-repo.mjs'
 import { UsersRepo } from '../db/repos/users-repo.mjs'
 import { clampVmCreateQuota } from './resource-owner.mjs'
+import { reclaimAssignedVms } from '../vm/vm-registry.mjs'
 
 export const PANEL_ROLES = ['admin', 'super', 'user']
 
@@ -120,9 +121,10 @@ export function publicUserView(rec) {
 }
 
 export class PanelUserStore {
-  constructor({ dataDir, db } = {}) {
+  constructor({ dataDir, db, projectRoot = null } = {}) {
     this.db = resolveStoreDb({ db, dataDir })
     this.repo = new UsersRepo(this.db)
+    this.projectRoot = projectRoot
   }
 
   rebind(db) {
@@ -268,6 +270,8 @@ export class PanelUserStore {
       err.code = 'last_admin'
       throw err
     }
+    // Validate deletion first; a failed slot write must leave the user available for retry.
+    if (this.projectRoot) reclaimAssignedVms(this.projectRoot, new Set([rec.id]))
     return this.repo.remove(id)
   }
 }

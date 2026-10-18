@@ -15,6 +15,8 @@ execFileSync('git', [
   'src',
   'scripts',
   'worker',
+  'api-kernel',
+  'Dockerfile',
   'test',
   'share/wrap-cli',
   'docker/kin-os',

@@ -2,6 +2,14 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'responses-ws',
+  'codex-route',
+  'config-public-url',
+  'docker-control-image',
+  'kvm-fingerprint-uuid',
+  'rfc4122-uuid',
+  'schedule-eligibility',
+  'vm-db-sync',
   'cache-ttl',
   'kernel-watchdog-node-slot',
   'request-logs-export',
@@ -193,6 +201,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'responses-ws-subscriptions',
   'vm-test-schedule',
   'slot-credential-clear',
   'subscription-weekly-window',

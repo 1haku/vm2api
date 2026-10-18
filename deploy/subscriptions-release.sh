@@ -12,7 +12,7 @@ BACKUP="$ROOT/backups/$STAMP"
 # Build and test Go before interrupting the running service.
 docker build --build-arg "CUSTOM_REVISION=$REVISION" -f deploy/Dockerfile.subscriptions -t "$IMAGE" .
 docker run --rm --network none --entrypoint node "$IMAGE" scripts/verify-computer-payload.mjs --install-image
-docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" -v "$RELEASE/web/src:/opt/vm2api/web/src:ro" -v "$RELEASE/web/vite.config.ts:/opt/vm2api/web/vite.config.ts:ro" -v "$RELEASE/docker-compose.yml:/opt/vm2api/docker-compose.yml:ro" "$IMAGE" scripts/test-subscriptions-release.mjs
+docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" -v "$RELEASE/web/src:/opt/vm2api/web/src:ro" -v "$RELEASE/web/vite.config.ts:/opt/vm2api/web/vite.config.ts:ro" -v "$RELEASE/docker-compose.yml:/opt/vm2api/docker-compose.yml:ro" -v "$RELEASE/Dockerfile:/opt/vm2api/Dockerfile:ro" -v "$RELEASE/deploy/Dockerfile.arm64-control:/opt/vm2api/deploy/Dockerfile.arm64-control:ro" -v "$RELEASE/deploy/Dockerfile.subscriptions:/opt/vm2api/deploy/Dockerfile.subscriptions:ro" "$IMAGE" scripts/test-subscriptions-release.mjs
 mkdir -p "$BACKUP/migration-check"
 chmod 700 "$BACKUP"
 docker inspect vm2api --format '{{.Config.Image}}' > "$BACKUP/previous-image.txt"
