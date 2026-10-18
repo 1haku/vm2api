@@ -341,7 +341,7 @@ test('a GPT slot container is live without kernel.sock, and an old kin-kernel on
   assert.equal(slotWorkerNeedsRecreate({ running: true, networkMode: null }, { id: 'vm-03' }, paths), false)
 })
 
-test('writeWorkerFiles and startVmRuntime use defaults when routing.json is absent', () => {
+test('writeWorkerFiles and startVmRuntime use defaults when routing.json is absent', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-no-routing-'))
   const prev = process.env.KIN_ROUTING_FILE
   delete process.env.KIN_ROUTING_FILE
@@ -353,14 +353,7 @@ test('writeWorkerFiles and startVmRuntime use defaults when routing.json is abse
     }
     const paths = writeWorkerFiles(vm, root, { transparent: true })
     assert.ok(fs.existsSync(paths.config))
-    let thrown = null
-    let result
-    try {
-      result = startVmRuntime(vm, root)
-    } catch (error) {
-      thrown = error
-    }
-    assert.equal(thrown, null)
+    const result = await startVmRuntime(vm, root)
     assert.ok(result)
     assert.equal(/Routing config/.test(String(result?.error || '')), false)
   } finally {
