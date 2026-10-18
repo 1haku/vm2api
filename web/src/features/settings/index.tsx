@@ -36,8 +36,11 @@ import { OfficialCcSettingsPane } from '@/features/settings/official-cc-pane'
 import { OpenaiPane } from '@/features/settings/openai-pane'
 import { PersonaRulesPane } from '@/features/settings/persona-rules-pane'
 import { PoolPane } from '@/features/settings/pool-pane'
-import { inheritProtocolOnSlots } from '@/features/settings/protocol-authority'
-import { ProtocolPane } from '@/features/settings/protocol-pane'
+import {
+  cchEnabledFromCompat,
+  inheritProtocolOnSlots,
+  sessionIdleTtlFromInference,
+} from '@/features/settings/protocol-authority'
 import {
   notifyQueryOptions,
   routingQueryOptions,
@@ -49,6 +52,7 @@ import { SettingsSkeleton } from '@/features/settings/settings-skeleton'
 import { Socks5Pane } from '@/features/settings/socks5-pane'
 import { StickyPane } from '@/features/settings/sticky-pane'
 import { TelemetryPane } from '@/features/settings/telemetry-pane'
+import { ProtocolPane } from './protocol-pane'
 
 export function SettingsPage() {
   const { tab: raw } = useParams({ from: '/_authenticated/settings/$tab' })
@@ -107,6 +111,7 @@ export function SettingsPage() {
           detect_proxied_official_cc: detectProxiedOfficialCcFromCompat(compat),
           claude_code_only: compat.claude_code_only === true,
           official_cc_passthrough: compat.official_cc_passthrough === true,
+          cch_enabled: cchEnabledFromCompat(compat),
           persona_rules: rules,
         }
       }
@@ -120,6 +125,7 @@ export function SettingsPage() {
           ...inference,
           engine: 'rust',
           fallback_to_go: false,
+          session_idle_ttl_seconds: sessionIdleTtlFromInference(inference),
         }
       }
       return api<RoutingSaveResult>('/api/panel/routing', {
@@ -385,8 +391,19 @@ export function SettingsPage() {
                     (draft.compatibility as
                       Record<string, unknown> | undefined) || {}
                   }
+                  inference={inference}
                   onCompatChange={(next) =>
                     setDraft((current) => ({ ...current, compatibility: next }))
+                  }
+                  onInferenceChange={(patch) =>
+                    setDraft((current) => ({
+                      ...current,
+                      inference: {
+                        ...((current.inference as
+                          Record<string, unknown> | undefined) || {}),
+                        ...patch,
+                      },
+                    }))
                   }
                 />
               ) : null}
@@ -458,7 +475,7 @@ function settingsSaveToast(
     const hot =
       kernel && typeof kernel.updated === 'number'
         ? kernel.updated > 0
-          ? `缓存 TTL 已热更新 ${kernel.updated} 个槽`
+          ? `kernel 配置已热更新 ${kernel.updated} 个槽`
           : 'kernel 配置已一致'
         : '已写入'
     if (!inherited) return `已保存 · ${hot}`
