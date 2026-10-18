@@ -2,6 +2,9 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'cache-ttl',
+  'kernel-watchdog-node-slot',
+  'request-logs-export',
   'anthropic-console',
   'codex-credits',
   'codex-quota-stale',

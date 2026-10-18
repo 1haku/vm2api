@@ -2,6 +2,8 @@
 
 ## 版本与功能
 
+合入上游 v1.3.189：缓存归属/TTL、搜索历史修复复用、Claude Desktop local-agent 识别、远程槽看门狗及面板保存/权限修复，更新正式 Claude kernel 与 cli-node。保留精简控制台运维菜单并应用管理员权限限制；官方重置券操作仍只给管理员；日志导出保持按原始 user_id 隔离，缺少身份时返回空集。无新数据库迁移。发布核验扩展为现有 Claude、Codex、vm-02 三槽，保留 02 的手动优先级 10、两个 Claude 槽的 100%/95% 阈值，以及原订阅周窗口参考槽。
+
 合入上游 v1.3.187 及 main 已合并的 #508/#509：Claude 消息历史、thinking 链与流式错误映射修复，更新正式 Claude kernel 与 glibc 2.35 kin-computer；新增 Anthropic API 控制台、槽位定时测试、可选 CPU 配额与在线增加内存。保留订阅 Key 只能访问分配槽位、个人使用记录隔离、官方周窗口与提前重置观察、128 MiB 默认。Codex 可用 ChatGPT credits 仅影响上游槽位额度闸线，不绕过本站订阅额度或触发周额度清零。新增上游 038 为 API Key 增加默认空 proxy_id，发布预检扩展至 API 端点/密钥/模型并仅归一化该新增默认值，保持密钥内容及历史代理地址摘要一致。定时测试与遥测维持当前设置，不自动创建计划或修改现有槽位 CPU/内存/身份。发布后核验挂载文件及实际运行 Claude kernel 哈希，防止只更新磁盘遗留旧进程。
 
 同轮继续合入上游 v1.3.178，正式统一使用上游 deploy/payload.json 中的 kin-computer 条目（与本轮先前验证的 v1.3.176 附件 SHA256 完全一致），移除临时独立清单。定制镜像保留 KIN_COMPUTER_BIN 和启动安装步骤；断网空目录安装及真实 Docker/KVM 身份生成验收继续执行。默认组件路径跟随上游改为 bin/kin-computer。

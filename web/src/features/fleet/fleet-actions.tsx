@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
@@ -23,12 +24,18 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { meQueryOptions } from '@/features/auth/queries'
 import {
   dashboardQueryOptions,
   usageQueryOptions,
 } from '@/features/overview/queries'
 import { proxiesQueryOptions } from '@/features/proxies/queries'
 import { vmsListQueryOptions } from '@/features/vm/queries'
+import type { WrapSyncReport } from '@/features/wrap/queries'
+import {
+  syncReportFromError,
+  syncReportSummary,
+} from '@/features/wrap/sync-report'
 
 type FleetAction = 'roll' | 'collect'
 
@@ -81,6 +88,9 @@ async function invalidateFleet(qc: QueryClient) {
 
 export function FleetActions() {
   const qc = useQueryClient()
+  const me = useQuery(meQueryOptions())
+  // 额度探测、全槽更新、重装内核都是管理员接口，其它角色点了只会 403。
+  const canManage = me.data?.role === 'admin'
   const [fleetOpen, setFleetOpen] = useState(false)
   const refresh = useMutation({
     mutationFn: () => qc.invalidateQueries(),
@@ -137,29 +147,30 @@ export function FleetActions() {
   })
   const wrapSync = useMutation({
     mutationFn: () =>
-      api<{
-        ok_count?: number
-        total?: number
-        failed_count?: number
-        items?: { ok?: boolean; kernel?: { ok?: boolean } }[]
-      }>('/api/panel/wrap-cli/sync', {
+      api<WrapSyncReport>('/api/panel/wrap-cli/sync', {
         method: 'POST',
         body: JSON.stringify({ restart: true }),
       }),
-    onSuccess: async (report) => {
+    onSuccess: (report) => {
       const total = report.total ?? 0
       const ok = report.ok_count ?? 0
       const kernelFail = wrapSyncKernelFails(report.items)
       if ((report.failed_count || 0) > 0) {
-        toast.error(`kernel 重装 ${ok}/${total}`)
+        toast.error(`kernel 重装 ${syncReportSummary(report)}`)
       } else if (kernelFail > 0) {
         toast.error(`kernel 文件 ${ok}/${total}，进程未起来 ${kernelFail}`)
       } else {
         toast.success(`kernel 重装 ${ok}/${total}`)
       }
-      await invalidateFleet(qc)
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      // 部分槽失败时网关回 400，正文仍是逐槽报告。
+      const report = syncReportFromError(error)
+      toast.error(
+        report ? `kernel 重装 ${syncReportSummary(report)}` : error.message
+      )
+    },
+    onSettled: () => invalidateFleet(qc),
   })
 
   return (
@@ -175,44 +186,46 @@ export function FleetActions() {
       >
         <RefreshCw className='size-4' />
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant='ghost'
-            size='sm'
-            aria-label='运维工具'
-            className='gap-1.5 px-2'
-          >
-            <Wrench className='size-4' />
-            <span className='hidden lg:inline'>运维工具</span>
-            <ChevronDown className='hidden size-3 lg:block' />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align='end'>
-          <DropdownMenuItem
-            onSelect={() => probe.mutate()}
-            disabled={probe.isPending}
-          >
-            <Gauge className='size-4' />
-            {probe.isPending ? '正在探测…' : '额度探测'}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => setFleetOpen(true)}
-            disabled={fleet.isPending}
-          >
-            <RefreshCw className='size-4' />
-            全槽更新
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => wrapSync.mutate()}
-            disabled={wrapSync.isPending}
-          >
-            <Layers className='size-4' />
-            {wrapSync.isPending ? '正在重装…' : '重装当前内核'}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {canManage ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant='ghost'
+              size='sm'
+              aria-label='运维工具'
+              className='gap-1.5 px-2'
+            >
+              <Wrench className='size-4' />
+              <span className='hidden lg:inline'>运维工具</span>
+              <ChevronDown className='hidden size-3 lg:block' />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end'>
+            <DropdownMenuItem
+              onSelect={() => probe.mutate()}
+              disabled={probe.isPending}
+            >
+              <Gauge className='size-4' />
+              {probe.isPending ? '正在探测…' : '额度探测'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => setFleetOpen(true)}
+              disabled={fleet.isPending}
+            >
+              <RefreshCw className='size-4' />
+              全槽更新
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => wrapSync.mutate()}
+              disabled={wrapSync.isPending}
+            >
+              <Layers className='size-4' />
+              {wrapSync.isPending ? '正在重装…' : '重装当前内核'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
 
       <Dialog open={fleetOpen} onOpenChange={setFleetOpen}>
         <DialogContent>

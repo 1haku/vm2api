@@ -2,8 +2,29 @@
 
 ## 未发布
 
+## 1.3.189 — 2026-10-18
+
+- VM 详情页按角色收起无权限的查询与按钮，租户与 super 不再反复弹「当前权限无法执行此操作」；切换槽位重置页面状态（代理选择、测试结果、时区、凭证输入）；账号页与概览「今日」改用当日计数；开机 kernel 未就绪时给出警告，关机提示会关闭调度；确认框回车不再重复提交；各按钮单独显示进行中；内存提升弹窗重置目标档位。（#521）
+- 面板其它页面：Anthropic 控制台保存已有地址只提交变更字段，不再覆盖模型、名称与代理；代理池、顶栏与计费页按角色隐藏无权限操作，租户计费不再把 GPT 费用算进 Claude；全槽更新与数据面切换部分失败时显示逐槽明细；风控与模型页不再冲掉未保存草稿，「恢复默认」需确认；日志导出遵循当前筛选；系统提示词页只回写 compatibility；Key 额度用完显示「额度用完」；禁用代理前确认；若干失败误报为成功的提示改为如实报告；健康缓存间隔输入不再逐键钳制。
+- 修复集群节点上的槽被 kernel 看门狗每隔几分钟重启：节点槽改经本地中转探测 kernel（超时 3 秒，跨洋往返约 110ms 时 800ms 会误判）；中转未就绪时只在容器确实缺失、停止或重启中才拉起；节点槽启动后写回中转 socket 路径。
+- 定时测试「同步到全部槽」改为整块复制：启用开关、频率、时刻/分钟、星期、时区、模型、Prompt、token/effort；Claude 与 Codex 互为另一类的槽只同步开关与时间，保留各自模型与 Prompt；请求先整体校验，不会写一半。定时测试表单每 30 秒刷新，外部修改在未编辑时自动载入，编辑中给出提示而不再静默覆盖；切换槽位重新载入。
+
+已部署机升级：更新 Node 控制面与 web/dist 后重启；无迁移、不必 wrap-cli/sync，不必重建槽位 / 无新 kernel payload。不要覆盖 `routing.json`、`vms/`、`data/` 或 `.env`。
+
+## 1.3.188 — 2026-10-18
+
+- 修复同一会话反复回放已被上游拒绝的搜索历史时，每轮都先 400 再修复成功的问题：仅在同 VM / 账号 / 模型 / 凭据代际确认修复成功后，进程内有界记录精确历史指纹，后续相同历史首跳复用原修复；新搜索内容或执行上下文不预先改写，不改变占位释放、出站 session、缓存 TTL 或签名修复开关。
+- 设置 → 协议新增「默认缓存写入 TTL」，可选 5 分钟（`5m`）或 1 小时（`1h`）；复用已有配置保存与槽位热投影，不改变断点布局、透传边界、显式 TTL 或会话 pin 规则。
+- system 提示词关闭「Environment」时，统一停止生成环境 / 时区宏，直接省略环境块；官方完整档也可关闭。保留调用方提供的 Environment 与时区，避免 native 预处理误删或 HTTP 槽位选择后覆盖；预览、保存和最终线序按档一致。
+- 对齐 Claude Code `2.1.296` 的面板出站身份与 CLI 运行时版本投影，避免新 CLI 被旧 `CLAUDE_CODE_VERSION` 降回 `2.1.293`。
+- native 官方透传同时保留 system/tools/messages 的 caller cache marker、显式 TTL 与缺失 TTL；超四点、thinking marker、非法 TTL / 顺序在调度前报 `400 invalid_cache_control`，不静默修复。
+- native 重写模式只补齐、裁剪自产 marker，保留模板显式 TTL；非法模板零上游执行，不换号、不冷却。日志和计费保留上游真实 5m/1h usage 分桶。
+- CLI 保留带 billing 的官方 / 子代理 wire system，不再要求 SDK identity 才能透传；原生工具预算只保护调用方前缀，保留其显式 TTL 和缺失 TTL。
 - GPT 槽在 TTL（10 分钟）内有可用 credits（`has_credits || unlimited`）时仅豁免窗口 cap；显式 park 仍优先；上游 429 清除 credits 并 park。（#508）
 - 修复 KVM 交互终端：交互/非 detach 不再包 `timeout 8`（仅保留 SSH ConnectTimeout）；`-e` 按次独立转义，保留值内换行（含 `KIN_PANEL_RC`）。（#509）
+- Claude Desktop local-agent（UA 含 local-agent 与 agent-sdk、平台 desktop_app、合法 anthropic-client-version）不再仅凭 cc_entrypoint=local-agent 判成 OMP，避免 claude_code_only 误 403；OMP 专属与 body-only relay 仍保守。（#511）
+
+已部署机升级：搜索历史修复本身只需更新 Node 控制面并重启，不需要同步或重启槽位。要启用本版 2.1.296 的完整 native 缓存契约，还需安装相应 kernel / CLI payload；本机槽定向同步，镜像内置 payload 的集群槽需要新镜像和单独授权重建。已安装 kernel `98357559…` / CLI `244ef884…` 的槽无需重复更新。不要覆盖 `routing.json`、`vms/`、`data/` 或 `.env`。
 
 ## 1.3.187 — 2026-10-17
 

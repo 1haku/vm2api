@@ -254,6 +254,8 @@ Claude PATCH `max_sessions` 返回 400 `claude_max_sessions_forbidden`；OpenAI 
 
 `agent_standing_presets` 缺 map/key 默认关闭，只有显式 `true` 启用；`agent_standing` 内置文本保持不变。约束遮罩与 Environment 开关缺省仍为开启，整档遮罩仍回落既有模板/旧设置。保存显式开启的档位不改变其他缺省关闭的档位。
 
+`persona_env_presets[当前档]=false` 同时关闭生成的 `env`、`env_timezone_only`、`env_official` 和槽位 `timezone` 模板变量；官方完整档的 Environment 不再固定开启。空的生成环境块直接省略，不保留 cache / 零宽占位。调用方或自定义模板字面提供的环境和时区原样使用；关闭时 native 不剥掉调用方 Environment，HTTP 不按所选槽位改写其时区。控制台开关、预览和 Node 出站使用同一按档规则。
+
 ### OpenAI 全局额度
 
 ```json
