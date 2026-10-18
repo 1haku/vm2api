@@ -202,7 +202,8 @@ function codexContainerStale(existing, vm) {
 export function containerHasKernelMount(name) {
   const r = sh(['docker', 'inspect', '--format', '{{range .Mounts}}{{println .Destination}}{{end}}', name])
   if (!r.ok) return false
-  return r.stdout.split(/\s+/).includes('/usr/local/bin/kin-kernel')
+  const dests = r.stdout.split(/\s+/)
+  return dests.includes('/usr/local/bin/kin-kernel') || dests.includes('/usr/local/bin')
 }
 
 function vmWantsOuterSocks(vm) {
@@ -701,34 +702,58 @@ function readFingerprintSmbios(kvmDir) {
 }
 
 /**
- * Host directory bind-mounted into slots: only kin-worker + kin-kernel symlinks, never the
- * full deploy bin/ (which also holds kin-egress, kin-api-kernel, etc.).
+ * Host directory bind-mounted into slots: only kin-worker + kin-kernel, never the full deploy
+ * bin/ (which also holds kin-egress, kin-api-kernel, etc.). It sits under data/: the control
+ * container bind-mounts only bin/, data/, share/, vms/ and src/config, so a dir elsewhere would
+ * exist only inside it and the host would mount an empty one into the slot. Entries are hard
+ * links (copies across mounts): a symlink to the host path dangles inside the slot.
  */
+export function slotGuestBinDir(projectRoot) {
+  return path.join(projectRoot, 'data', 'run', 'slot-guest-bin')
+}
+
 export function ensureSlotGuestBinDir(projectRoot, { workerBin, kernelBin } = {}) {
   if (!projectRoot) throw new Error('projectRoot required')
-  const dir = path.join(projectRoot, 'run', 'slot-guest-bin')
+  const dir = slotGuestBinDir(projectRoot)
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 })
   const link = (name, target) => {
+    // The dir is shared by every slot: a slot that does not mount a binary must not remove it.
+    if (!target) return
     const dest = path.join(dir, name)
-    if (!target) {
+    const src = fs.statSync(target, { throwIfNoEntry: false })
+    if (!src?.isFile()) {
       try {
         fs.unlinkSync(dest)
       } catch {}
       return
     }
-    const resolved = path.resolve(String(target))
     try {
-      const cur = fs.readlinkSync(dest)
-      if (path.resolve(path.dirname(dest), cur) === resolved) return
+      const cur = fs.lstatSync(dest)
+      if (cur.isFile() && cur.dev === src.dev && cur.ino === src.ino) return
+      if (cur.isFile() && cur.dev !== src.dev && cur.size === src.size && cur.mtimeMs === src.mtimeMs) return
     } catch {}
+    const tmp = `${dest}.${process.pid}.tmp`
+    fs.rmSync(tmp, { force: true })
     try {
-      fs.unlinkSync(dest)
-    } catch {}
-    fs.symlinkSync(resolved, dest)
+      fs.linkSync(target, tmp)
+    } catch (err) {
+      if (err?.code !== 'EXDEV') throw err
+      fs.copyFileSync(target, tmp)
+      fs.chmodSync(tmp, src.mode & 0o777)
+      fs.utimesSync(tmp, src.atime, src.mtime)
+    }
+    // rename swaps the entry inside the mounted dir, so running slots see the new file.
+    fs.renameSync(tmp, dest)
   }
   link('kin-worker', workerBin)
   link('kin-kernel', kernelBin)
   return dir
+}
+
+/** Re-point an existing staging dir after host binaries were replaced (e.g. on control start). */
+export function refreshSlotGuestBinDir(projectRoot) {
+  if (!projectRoot || !fs.existsSync(slotGuestBinDir(projectRoot))) return null
+  return ensureSlotGuestBinDir(projectRoot, { workerBin: WORKER_BIN, kernelBin: kernelBinPath() || null })
 }
 
 /**

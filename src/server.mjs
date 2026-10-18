@@ -82,6 +82,7 @@ import { ClusterError } from './lib/cluster/ssh-link.mjs'
 import { nodeEgressProxyUrl, startNodeEgressSocks } from './lib/cluster/node-egress-socks.mjs'
 import { createSlotShell } from './lib/vm/slot-shell.mjs'
 import { vmLockBusy } from './lib/vm/vm-file.mjs'
+import { refreshSlotGuestBinDir } from './lib/vm/vm-runtime.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -370,6 +371,12 @@ proxyPool = new ProxyPool({
   egressCheck: (proxy) => proxyEgressReady(proxy, cfg.paths.project),
   repairEgress: (proxy) => ensureProxyEgress(cfg.paths.project, proxy),
 })
+// An upgrade replaces bin/ files; slots mounting data/run/slot-guest-bin must see the new ones.
+try {
+  refreshSlotGuestBinDir(cfg.paths.project)
+} catch (err) {
+  console.warn('[bootstrap] slot-guest-bin refresh failed:', err?.message || err)
+}
 proxyPool.startScheduler()
 
 // 首次安装的出口池是空的，槽没有可绑出口就起不来。本机出口永远成立，先补上。
