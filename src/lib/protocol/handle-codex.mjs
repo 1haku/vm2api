@@ -46,6 +46,7 @@ import {
 } from './codex-models.mjs'
 import { orderCodexSessionSlots, codexSlotAllowsModel, isCodexFailoverError } from '../pool/codex-slot-pool.mjs'
 import {
+  holdOpenAIAccount,
   reportOpenAIAttempt,
   tryAcquireOpenAISlot,
   waitForOpenAICapacity,
@@ -141,6 +142,17 @@ function firstUserIdentityFromCodex(body = {}) {
     }
   }
   return extractFirstUserIdentity(body?.messages) || String(body?.prompt || '')
+}
+
+/** Codex failover shares the Claude pool's attempt budget. */
+export function codexFailoverBudget(routing = {}) {
+  const failover = routing?.failover || {}
+  const attempts = Number(failover.max_total_attempts)
+  const switches = Number(failover.max_account_switches)
+  return {
+    maxAttempts: Number.isFinite(attempts) && attempts > 0 ? Math.min(64, Math.floor(attempts)) : 12,
+    maxSwitches: Number.isFinite(switches) && switches >= 0 ? Math.min(63, Math.floor(switches)) : 10,
+  }
 }
 
 function applyCodexRebuildBody(body, sessionId, mode) {
@@ -259,6 +271,32 @@ export function isRetryableCodexTransport(result) {
   if (status === 0) return true
   if (status === 502 && /upstream_transport|worker_transport|transport/i.test(`${code} ${msg}`)) return true
   return /upstream_transport|worker_transport_error/i.test(code)
+}
+
+/**
+ * Short process-local hold for an account that just failed upstream. This is
+ * not the operator scheduling switch: it expires by itself and keeps the next
+ * request from spending another turn on the same dead 401 / rate-limited
+ * account. Committed streams and request-shaped errors are never parked.
+ */
+export function codexFailureHold(result, now = Date.now()) {
+  if (!result || result.ok === true || result.committed === true) return null
+  const status = Number(result.status) || 0
+  const code = String(result.body?.error?.code || result.error_code || '')
+  const message = String(result.body?.error?.message || result.error || '')
+  if (status === 400 || status === 422) return null
+  if (
+    /content_policy|refusal|usage_policy|guard|tool_arguments_mismatch|upstream_protocol_error/i.test(
+      `${code} ${message}`,
+    )
+  )
+    return null
+  if (status === 401) return { until: now + 5 * 60_000, reason: 'oauth_401' }
+  if (status === 403) return { until: now + 5 * 60_000, reason: 'permission_denied' }
+  if (status === 429) return { until: now + 60_000, reason: 'rate_limited' }
+  if (status === 408 || status >= 500) return { until: now + 30_000, reason: 'upstream_5xx' }
+  if (result.transportError === true || status === 0) return { until: now + 30_000, reason: 'transport_error' }
+  return null
 }
 
 /** Idle SOCKS / first hop 502 is retryable only before any SSE byte is committed. */
@@ -526,10 +564,13 @@ export async function handleCodexProtocol({
   }
   const deadline = Date.now() + codexWaitTimeoutMs(routing)
   const gone = clientGoneSignal(req, res)
+  const failoverBudget = codexFailoverBudget(routing)
   logBag.via = 'codex-kernel'
   logBag.attempt_count = 0
   let last = null
   let hops = 0
+  let attempts = 0
+  let switches = 0
   let counted = false
   try {
     for (;;) {
@@ -550,6 +591,11 @@ export async function handleCodexProtocol({
         lease.release()
         pickOpts.excluded.add(admitted.vmId)
         continue
+      }
+      attempts += 1
+      if (attempts > failoverBudget.maxAttempts) {
+        lease.release()
+        break
       }
       if (!counted) {
         counted = true
@@ -617,7 +663,11 @@ export async function handleCodexProtocol({
             },
           }
           pickOpts.excluded.add(vm.id)
-          if (!res.headersSent) continue
+          switches += 1
+          if (!res.headersSent) {
+            if (switches > failoverBudget.maxSwitches || attempts >= failoverBudget.maxAttempts) break
+            continue
+          }
           stats.errors++
           logBag.error_code = 'codex_kernel_unavailable'
           return json(res, 503, last.body)
@@ -779,6 +829,8 @@ export async function handleCodexProtocol({
           return res.end()
         }
         reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
+        const failureHold = codexFailureHold(result)
+        if (failureHold) holdOpenAIAccount(vm.id, failureHold)
         if (res.headersSent) {
           stats.errors++
           logBag.error_code = result?.body?.error?.code || 'codex_upstream'
@@ -788,6 +840,8 @@ export async function handleCodexProtocol({
         if (isCodexFailoverError(result)) {
           pickOpts.excluded.add(vm.id)
           leaveSticky()
+          switches += 1
+          if (switches > failoverBudget.maxSwitches || attempts >= failoverBudget.maxAttempts) break
           continue
         }
         break
