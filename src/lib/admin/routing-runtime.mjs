@@ -35,7 +35,11 @@ import { mergeNotifyConfig } from './notify.mjs'
 import { normalizeLoggingConfig } from './request-log.mjs'
 import { markVmRefreshError } from '../oauth/oauth-credentials.mjs'
 import { shouldMarkMissingRefresh } from '../pool/schedule-eligibility.mjs'
-import { normalizeCodexRouting } from '../protocol/codex-route.mjs'
+import {
+  normalizeCodexRouting,
+  normalizeInferenceWebsocket,
+  validateInferenceWebsocketPatch,
+} from '../protocol/codex-route.mjs'
 import {
   validateOpenAIQuotaPatch,
   mergeOpenAIQuotaPolicy,
@@ -397,6 +401,7 @@ export function createRoutingRuntime(ctx) {
   function persistRoutingPatch(body = {}) {
     const hasCodexQuota = body?.codex && Object.prototype.hasOwnProperty.call(body.codex, 'quota')
     if (hasCodexQuota) validateOpenAIQuotaPatch(body.codex.quota)
+    validateInferenceWebsocketPatch(body)
     let routingConfig = getRouting()
     const prevOfficialCc = routingConfig.official_cc
     const prevHealthProbe = routingConfig.health_probe
@@ -423,6 +428,12 @@ export function createRoutingRuntime(ctx) {
     const nextSessionSlots = normalizeSessionSlots(routingConfig.inference?.session_slots)
     if (body.compatibility)
       routingConfig.compatibility = { ...(routingConfig.compatibility || {}), ...body.compatibility }
+    if (body.websocket) {
+      routingConfig.websocket = normalizeInferenceWebsocket({
+        ...(routingConfig.websocket || {}),
+        ...body.websocket,
+      })
+    }
     if (body.codex) {
       const nextCodex = { ...(routingConfig.codex || {}), ...body.codex }
       if (hasCodexQuota) {
@@ -520,6 +531,7 @@ export function createRoutingRuntime(ctx) {
     try {
       const doc = JSON.parse(raw)
       const hasOpenAIQuota = Object.prototype.hasOwnProperty.call(doc.codex || {}, 'quota')
+      doc.websocket = normalizeInferenceWebsocket(doc.websocket)
       doc.codex = normalizeCodexRouting(doc.codex)
       doc.pool = normalizePoolRouting(doc.pool)
       doc.vm = normalizeVmConfig(doc.vm)

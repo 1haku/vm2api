@@ -202,6 +202,28 @@ Claude PATCH `max_sessions` 返回 400 `claude_max_sessions_forbidden`；OpenAI 
 
 `PUT` 热更新。`tiers` 必须回传：该块是整体替换而非 patch，缺字段即置空。Claude 分档保存只传播到未手动覆盖的 Claude 槽。OpenAI `codex.quota` 按字段合并，不覆盖其它 Codex 协议/客户端配置，只更新跟随的 OpenAI 限额。
 
+### OpenAI 传输与隐私
+
+设置页的「调度 → OpenAI」和「槽位 → OpenAI」进入同一个 `#/settings/openai` 页面。GPT 协议、客户端准入、目录版本及全局配额集中在这里；Claude 配置仍在原页。保存使用现有 `PUT /api/panel/routing`。
+
+| 字段 | 默认 | 生效范围 |
+|------|------|----------|
+| `websocket.enabled` | `true` | 全局推理 WS 总闸，不影响面板终端或集群连接 |
+| `codex.websocket.enabled` | `true` | GPT 推理 WS 子闸；必须与总闸同时开启 |
+| `codex.upstream_transport` | `prefer_websocket` | `prefer_websocket` 或 `http`；入站与上游传输不是同一段连接 |
+| `codex.user_agent` | `codex_cli_rs/0.160.0 (linux x86_64)` | 上游客户端画像，不读取下游用户的系统信息 |
+| `codex.catalog_client_version` | `auto` | 模型目录同步的客户端版本，与推理 UA 分开 |
+| `codex.client_features.enabled` | `false` | 显式开启后上送槽位独立安装 UUID 与官方 `client_metadata`；不使用 VM/硬件指纹 |
+| `codex.analytics.enabled` | `false` | 显式开启后独立上报运行环境 Analytics，不是推理成功的前提 |
+
+任一 WS 闸关闭时，新 WS 握手被拒绝，HTTP/SSE 入口继续可用且上游强制 HTTP。传输、UA 与隐私选项通过每次内部 envelope 的 `options` 生效，不为修改这些设置而重启共享 kernel；已开始的请求保留其选定策略。
+
+安装 UUID 存在槽位 `run/codex-installation-id`，不取 MAC、主机名、machine-id 或调用方安装 ID。每次 envelope 的 `options.installation_id` 使用该文件的 UUID，覆盖运行中 kernel 的旧启动身份；非法安装 ID 在拨号前拒绝，避免复用旧进程时重新上传 VM 指纹。关闭安装元数据时，不生成 `client_metadata`，并从调用方的 turn 元数据移除安装 ID；会话路由所需信息保留。
+
+Analytics 按官方 [`codex_thread_initialized`](https://github.com/openai/codex/blob/main/codex-rs/analytics/src/events.rs) 的事件结构，向 `https://chatgpt.com/backend-api/codex/analytics-events/events` 单独 POST，使用所选账号鉴权并沿用该槽出口。包含真实 kernel 版本、kernel 所在宿主的系统/系统版本/架构、会话标识、模型和 Unix 秒级时间；不上传提示词、文件内容、仓库路径、主机名或 MAC。每进程每账号/会话去重（最多保留 4096 个键），队列最多 32 条，单次上传最多 10 秒，失败只记录状态、不重放推理、不重试上报。未启用时零 Analytics 请求。OTEL/Statsig 与 Sentry 反馈不随这个开关启用。官方发送实现见 [`analytics/src/client.rs`](https://github.com/openai/codex/blob/main/codex-rs/analytics/src/client.rs)。
+
+### 通用路由选项
+
 `failover.stream_idle_timeout_ms`（毫秒，30 秒–60 分钟，默认 180 秒）：上游流连续无事件即判超时；网关流路径、各槽 `kernel.json` 的 `idle_timeout_seconds` 与 job 看门狗共用。优先级：面板该字段 → 启动时写入 `cfg.limits.stream_idle_timeout_ms` → 控制面 `.env` 的 `KIN_STREAM_IDLE_TIMEOUT` → 180 秒。保存后热写各槽 `kernel.json`；运行中 kernel 在无任务时自动重启以读取新看门狗值。
 
 `compatibility.persona_preset`（`official` / `official_full` / `zero` / `custom`）和 `compatibility.cache_ttl`（`5m` / `1h`）保存后投影到每个 Claude 槽的 `vms/<id>/run/kernel.json`：`persona_preset`、`system_layout`（`zero`→`zero`，其余→`identity`）、`default_cache_ttl`。响应 `kernel_persona.updated` 是本次字节有变化的槽数。`PATCH /vms/:id` 的 `timezone` / `timezone_follow_proxy` 另把 `timezone` 热写进该槽 `kernel.json`，`timezone_sync.kernel_hot` 表示文件有变化。容器 `TZ` 不在这次写入里。Codex 槽不写。
