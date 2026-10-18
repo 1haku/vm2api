@@ -269,3 +269,21 @@ export type VmRoutingConfig = {
   mac_oui: string
   allow_tcg: boolean
 }
+
+/** `routing.websocket`：全局推理 WebSocket 总闸，不影响终端/集群 WS。 */
+export type RoutingWebsocketConfig = {
+  enabled: boolean
+}
+
+/** `routing.codex.upstream_transport`。任一 WS 闸关闭时实际强制 HTTP。 */
+export type CodexUpstreamTransport = 'prefer_websocket' | 'http'
+
+/** `routing.codex.client_features`：安装 UUID / client_metadata，默认关。 */
+export type CodexClientFeatures = {
+  enabled: boolean
+}
+
+/** `routing.codex.analytics`：官方 analytics-events，默认关。 */
+export type CodexAnalyticsConfig = {
+  enabled: boolean
+}
