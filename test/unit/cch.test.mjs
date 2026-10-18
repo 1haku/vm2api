@@ -85,19 +85,50 @@ test('projectClaudeCodeCchText edits the original text and clears every model st
   )
 })
 
-test('sealClaudeCodeCch is a no-op when billing already has a real cch', () => {
+test('CCH fills missing values and replaces stale values without changing billing parameters', () => {
+  const billing =
+    'x-anthropic-billing-header: cc_version=2.1.296.abc; cc_entrypoint=sdk-cli; cc_prompt_id=11111111-2222-4333-8444-555555555555;'
+  for (const suffix of ['', ' cch=cc746;', ' cch=bad; cch=fffff;']) {
+    const body = {
+      model: 'claude-opus-5-5',
+      max_tokens: 32,
+      system: [{ type: 'text', text: billing + suffix }],
+      messages: [{ role: 'user', content: 'hi' }],
+    }
+    const sealed = sealClaudeCodeCch(body)
+    const text = sealed.system[0].text
+    const cch = text.match(/cch=([0-9a-f]{5});/)[1]
+    assert.equal((text.match(/cch=/g) || []).length, 1)
+    assert.equal(cch, computeClaudeCodeCch(Buffer.from(projectClaudeCodeCchText(JSON.stringify(sealed)))))
+    assert.equal(text.replace(/ cch=[0-9a-f]{5};/, ''), billing)
+    assert.equal(body.system[0].text, billing + suffix)
+    assert.equal(sealClaudeCodeCch(sealed).system[0].text, text)
+    assert.equal(sealClaudeCodeCch(JSON.stringify(body, null, 2)), JSON.stringify(sealed))
+  }
+})
+
+test('CCH settings apply per hop and native sealing waits for final CLI serialization', () => {
   const body = {
+    model: 'claude-opus-5-5',
     system: [
-      {
-        type: 'text',
-        text: 'x-anthropic-billing-header: cc_version=2.1.241.abc; cc_entrypoint=cli; cch=cc746;',
-      },
+      { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.296.abc; cc_entrypoint=sdk-cli; cch=cc746;' },
     ],
     messages: [{ role: 'user', content: 'hi' }],
   }
-  const sealed = sealClaudeCodeCch(body)
-  assert.equal(sealed.system[0].text, body.system[0].text)
-  assert.equal(sealed, body)
+  const options = { body, reqHeaders: {}, exec: { vm: { claude: { mode: 'oauth' } } } }
+  const routing = { compatibility: { cch_enabled: true } }
+  const native = finalizeWorkerPayload({ ...options, routing, cliHop: true }).body
+  assert.match(native.system[0].text, /cch=00000;/)
+  routing.compatibility.cch_enabled = false
+  for (const cliHop of [false, true]) {
+    const disabled = finalizeWorkerPayload({ ...options, routing, cliHop }).body
+    assert.doesNotMatch(disabled.system[0].text, /cch=/)
+    assert.match(disabled.system[0].text, /cc_version=2.1.296.abc; cc_entrypoint=sdk-cli;/)
+  }
+  routing.compatibility.cch_enabled = true
+  const enabled = finalizeWorkerPayload({ ...options, routing }).body
+  assert.match(enabled.system[0].text, /cch=[0-9a-f]{5};/)
+  assert.doesNotMatch(enabled.system[0].text, /cch=(00000|cc746);/)
 })
 
 test('applyCrsUnofficialPersona keeps the placeholder until hop finalize', () => {

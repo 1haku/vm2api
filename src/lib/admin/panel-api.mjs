@@ -24,6 +24,7 @@ import {
   resolveInferenceEngine,
   resolveKernelDataplane,
   normalizeSessionSlots,
+  normalizeSessionIdleTtlSeconds,
   resolveSessionSlots,
   resolveSlotPersonaPreset,
 } from '../vm/slot-engine.mjs'
@@ -469,6 +470,9 @@ export function validatePersonaRoutingPatch(body = {}) {
   }
   if (compat.official_cc_passthrough != null && typeof compat.official_cc_passthrough !== 'boolean') {
     problems.push('official_cc_passthrough 必须是布尔')
+  }
+  if (Object.prototype.hasOwnProperty.call(compat, 'cch_enabled') && typeof compat.cch_enabled !== 'boolean') {
+    problems.push('cch_enabled 必须是布尔')
   }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints
@@ -1387,6 +1391,18 @@ export function buildUsage({ accountQuota, cfg, requestLog = null }) {
   })
 }
 
+function presentCompatibility(compat) {
+  const out = compat && typeof compat === 'object' && !Array.isArray(compat) ? { ...compat } : {}
+  out.cch_enabled = out.cch_enabled !== false
+  return out
+}
+
+function presentInference(inference) {
+  const out = inference && typeof inference === 'object' && !Array.isArray(inference) ? { ...inference } : {}
+  out.session_idle_ttl_seconds = normalizeSessionIdleTtlSeconds(out.session_idle_ttl_seconds)
+  return out
+}
+
 export function buildRouting({ routingConfig, stickyRouter }) {
   const tiers = normalizeTiers(routingConfig?.tiers, routingConfig?.quota, routingConfig?.concurrency)
   return ok({
@@ -1397,8 +1413,8 @@ export function buildRouting({ routingConfig, stickyRouter }) {
     logging: routingConfig?.logging || {},
     pool: normalizePoolRouting(routingConfig?.pool),
     failover: routingConfig?.failover || {},
-    compatibility: routingConfig?.compatibility || {},
-    inference: routingConfig?.inference || {},
+    compatibility: presentCompatibility(routingConfig?.compatibility),
+    inference: presentInference(routingConfig?.inference),
     websocket: normalizeInferenceWebsocket(routingConfig?.websocket),
     codex: normalizeCodexRouting(routingConfig?.codex),
     official_cc: normalizeOfficialCcConfig(routingConfig?.official_cc),

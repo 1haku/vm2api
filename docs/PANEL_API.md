@@ -230,6 +230,12 @@ Analytics 按官方 [`codex_thread_initialized`](https://github.com/openai/codex
 
 `compatibility.persona_preset`（`official` / `official_full` / `zero` / `custom`）和 `compatibility.cache_ttl`（`5m` / `1h`）保存后投影到每个 Claude 槽的 `vms/<id>/run/kernel.json`：`persona_preset`、`system_layout`（`zero`→`zero`，其余→`identity`）、`default_cache_ttl`。响应 `kernel_persona.updated` 是本次字节有变化的槽数。`PATCH /vms/:id` 的 `timezone` / `timezone_follow_proxy` 另把 `timezone` 热写进该槽 `kernel.json`，`timezone_sync.kernel_hot` 表示文件有变化。容器 `TZ` 不在这次写入里。Codex 槽不写。
 
+`compatibility.cch_enabled`（布尔，默认 `true`，设置 → 协议）：开启时统一给出站 billing 补齐或重算 `cch`，不按试用 / 订阅状态分流；关闭时移除该字段。Node 从当前 routing 对象读取，CLI 每个请求读取 `kernel.json.cch_enabled`。native hop 仅保留占位，最终紧凑 SDK JSON 才计算真实摘要；HTTP hop 在最终 Node 请求体密封。billing 的版本、entrypoint 与固定首轮索引策略不随此开关改变，Claude Messages 的 2.1.296 与 Go OAuth / 遥测的 2.1.293 标准 UA 保持各自值。
+
+`inference.session_idle_ttl_seconds`（整数 `1`–`86400`，默认 `600`，设置 → 账号池）：投影为 `kernel.json.session_idle_ttl_seconds`。原生 CLI 槽从最后一次任务完成开始计算空闲时间；到期后由既有巡检释放 session / sticky pin，活动任务不回收。修改不会重置已有空闲计时，也不重启 kernel / CLI；缩短期限可在下一轮巡检释放已空闲足够久的槽。它不是 `sticky.ttl_seconds` 的账号绑定有效期，也不是流空闲超时。
+
+两个新键保存后沿既有本机 / 节点配置同步路径热写，不触发重启；首次加载支持这些字段的新 kernel / CLI ELF 仍需按正常升级流程排空并加载新产物。`/api/panel/routing` 由 Node 校验和持久化，Go `api-kernel` 只转发 API-key 上游请求，不另设面板字段 schema。
+
 内置 `official` / `official_full` 模板及旧模板的自有 agent 回填只生成 `{type: "ephemeral", ttl: "1h"}`，不自动附加 `scope: "global"`（#536）。调用方或自定义模板显式提供的 scope 不在此处全局删除；不新增参数级 400 的换号或重试。
 
 `compatibility.agent_standing`（字符串，≤2000）与四个按档布尔 map `agent_standing_presets` / `agent_standing_hide_presets` / `persona_env_presets` / `persona_hide_presets` 控制常驻约束、约束遮罩、Environment 和整档 usage 遮罩，不投影到 `kernel.json`，Node 每次请求热读。`GET /api/panel/persona/preview-vars?timezone=<IANA>` 返回 system提示词页预览用的真实模板常量（身份句、官方 agent 全文、按该时区渲染的 Environment），不含 billing；时区非法或缺省按 UTC。

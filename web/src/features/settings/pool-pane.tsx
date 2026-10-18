@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowRightLeft,
   Armchair,
+  Clock3,
   Hourglass,
   Layers,
   Link2,
@@ -25,7 +26,13 @@ import { Switch } from '@/components/ui/switch'
 import { SEAT_CAP_MAX, SeatCells } from '@/components/scheduler-viz'
 import { SEAT_CAP_STEPS, withCurrent } from '@/features/vm/scheduling-steps'
 import { PoolLivePanel } from './pool-live-panel'
-import { ChipGroup, SliderSetting, StepperSetting } from './scheduler-controls'
+import { sessionIdleTtlFromInference } from './protocol-authority'
+import {
+  ChipGroup,
+  PaneSection,
+  SliderSetting,
+  StepperSetting,
+} from './scheduler-controls'
 
 type Obj = Record<string, unknown>
 type PoolDialog = 'strategy' | 'seats' | 'queue' | 'retry' | 'circuit'
@@ -65,6 +72,8 @@ const FAILOVER_DEFAULTS = {
   max_request_mib: 32,
   eager_tool_streaming: true,
 }
+
+const SESSION_IDLE_TTL_DEFAULT = 600
 
 function numOf(source: Obj, key: string, fallback: number): number {
   const n = Number(source[key] ?? fallback)
@@ -640,7 +649,25 @@ export function PoolPane({
           <Link2 className='size-3.5' aria-hidden /> 粘性设置
         </a>
       </div>
-
+      <PaneSection
+        icon={Clock3}
+        title='原生 sticky 槽'
+        desc='kernel 里 CLI 槽空闲回收。不是流空闲超时，也不是粘性页的账号绑定 TTL。'
+      >
+        <StepperSetting
+          id='inference-session-idle-ttl'
+          label='槽空闲超时'
+          desc='从最后一次任务完成开始计时，活动请求不回收。保存后热生效，不重启内核。'
+          value={sessionIdleTtlFromInference(inference)}
+          min={1}
+          max={86400}
+          unit='秒'
+          fallback={SESSION_IDLE_TTL_DEFAULT}
+          onChange={(value) =>
+            onInferenceChange({ session_idle_ttl_seconds: value })
+          }
+        />
+      </PaneSection>
       <Dialog
         open={open !== null}
         onOpenChange={(next) => {

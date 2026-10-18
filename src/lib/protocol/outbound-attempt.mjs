@@ -425,6 +425,8 @@ export function prepareOutboundEnvelope({
     String(headers['anthropic-beta'] || '').split(','),
     prepared.body,
   ).join(',')
-  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''))
+  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''), {
+    enabled: routing?.compatibility?.cch_enabled !== false,
+  })
   return { body, headers, toolNames: prepared.toolNames }
 }

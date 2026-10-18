@@ -1,4 +1,4 @@
-import { Check, Database, ShieldCheck } from 'lucide-react'
+import { Check, Database, Hash, ShieldCheck } from 'lucide-react'
 import {
   cacheTtlFromCompat,
   detectProxiedOfficialCcFromCompat,
@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/setting-row'
+import { cchEnabledFromCompat } from './protocol-authority'
 import { ChipGroup, PaneSection } from './scheduler-controls'
 
 type Block = Record<string, unknown>
@@ -31,7 +32,7 @@ export function ProtocolPane({
 }) {
   const strict = compat.claude_code_only === true
   const relay = detectProxiedOfficialCcFromCompat(compat)
-
+  const cch = cchEnabledFromCompat(compat)
   return (
     <div className='space-y-4'>
       <PaneSection
@@ -147,6 +148,28 @@ export function ProtocolPane({
           保存后作为新会话和自有缺省标记的
           TTL。已有会话锁定值不变，官方透传仍保留调用方断点及缺失 TTL。
         </p>
+      </PaneSection>
+      <PaneSection
+        icon={Hash}
+        title='CCH 统一附加'
+        desc='出站 billing 的 cch。开启后缺失也补，不区分试用或订阅。'
+      >
+        <SettingRow
+          label='强制附加 CCH'
+          desc={
+            cch
+              ? '开：出站补齐 cch；试用号缺失也写。保存后热写入各槽 kernel.json，不重启 CLI。'
+              : '关：统一移除出站 billing 中的 cch，不受账号订阅状态影响。'
+          }
+        >
+          <Switch
+            checked={cch}
+            onCheckedChange={(on) =>
+              onCompatChange({ ...compat, cch_enabled: on })
+            }
+            aria-label='强制附加 CCH'
+          />
+        </SettingRow>
       </PaneSection>
     </div>
   )
