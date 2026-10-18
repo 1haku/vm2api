@@ -12,9 +12,10 @@ import {
   hasRefreshPresence,
   clearVmQuotaRestriction,
   markVmRestriction,
+  expiresAtToMs,
 } from '../oauth/oauth-credentials.mjs'
 import { isManualScheduleLocked } from '../pool/schedule-policy.mjs'
-import { isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
+import { isCredentialRefreshFailed, isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
 import { manualScheduleLevelOf, parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { vmQuotaOverrideOf } from '../pool/vm-quota-override.mjs'
 import { activeHoursOf, parseActiveHoursInput } from '../pool/active-hours.mjs'
@@ -463,7 +464,14 @@ export function vmHasClaudeCredential(vm) {
  */
 export function vmHasSchedulableCredential(vm, projectRoot = null) {
   if (!vm) return false
-  if (!isCodexVm(vm)) return vmHasClaudeCredential(vm)
+  if (!isCodexVm(vm)) {
+    if (!vmHasClaudeCredential(vm)) return false
+    // An expired access token with a recorded refresh failure is not a live
+    // credential: the worker cannot rotate it, every hop will answer 401.
+    const expMs = expiresAtToMs(vm.claude?.expires_at)
+    if (expMs && expMs > Date.now()) return true
+    return !isCredentialRefreshFailed({ vm, now: Date.now() })
+  }
   const codex = summarizeCodexSlot(projectRoot, vm)
   return !!(codex?.has_token || codex?.has_refresh)
 }
