@@ -1814,24 +1814,23 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/request-logs/export') {
         const u = new URL(req.url, 'http://x')
         const format = (u.searchParams.get('format') || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl'
+        // Same filter parsing as the scrolling list, so "export current view" matches the page.
+        // Older `/request-logs` keys stay accepted as fallbacks.
+        const legacy = (k) => u.searchParams.get(k) || null
+        const listed = usageLogFilters(req, u)
+        const legacyStatus = legacy('status')
         const filters = {
-          limit: Math.min(5000, Number(u.searchParams.get('limit') || 2000)),
-          maxLimit: 5000,
-          api_key_id: u.searchParams.get('api_key_id') || null,
-          vm_id: u.searchParams.get('vm_id') || null,
-          account_id: u.searchParams.get('account_id') || null,
-          model: u.searchParams.get('model') || null,
-          protocol: u.searchParams.get('protocol') || null,
-          status: u.searchParams.get('status') || null,
-          error_class: u.searchParams.get('error_class') || null,
-          exclude_error_class: u.searchParams.get('exclude_error_class') || null,
-          include_muted: u.searchParams.get('include_muted') === '1',
-          since: u.searchParams.get('since') || null,
-          until: u.searchParams.get('until') || null,
-          q: u.searchParams.get('q') || null,
-          owner_user_id: panelIdentity(req).role === 'user' ? req.panelUserId : u.searchParams.get('user_id') || null,
+          ...listed,
+          limit: legacy('limit') || 2000,
+          key_id: listed.key_id || legacy('api_key_id'),
+          start_time: listed.start_time || legacy('since'),
+          end_time: listed.end_time || legacy('until'),
+          status_code: listed.status_code || (/^\d+$/.test(legacyStatus || '') ? legacyStatus : null),
+          errors_only: legacyStatus === 'error',
         }
-        const { items, total } = requestLog.exportRows(filters)
+        const { items, total, capped } = new UsageLogsView(getDb(), {
+          mutedErrorClasses: requestLog?.mutedErrorClasses,
+        }).exportRows(filters)
         const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')
         const body = format === 'csv' ? logsToCsv(items) : logsToJsonl(items)
         const filename = `vm2api-logs-${stamp}.${format}`
@@ -1840,7 +1839,7 @@ export function createPanelHandler(ctx) {
           'content-disposition': `attachment; filename="${filename}"`,
           'x-kin-export-count': String(items.length),
           'x-kin-export-total': String(total),
-          'x-kin-export-truncated': items.length < total ? '1' : '0',
+          'x-kin-export-truncated': items.length < total || capped ? '1' : '0',
         })
         res.end(body)
         return
