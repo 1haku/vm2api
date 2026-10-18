@@ -484,6 +484,8 @@ sessionKey / 授权码导入必须走该槽 SOCKS5。
 | POST | `/cluster/nodes/probe` | `{ host, port, username, auth_type: key\|password, private_key?, passphrase?, password?, jump_node_id? }` → `{ host_key, docker, uname, existing_id }`，拨一次即断 |
 | POST | `/cluster/nodes` | probe 同体 + `host_key_sha256`（必须，TOFU 固定）+ `host_key_alg`、`label` |
 | GET / DELETE | `/cluster/nodes/:id` | 删除前不能有节点经它跳转；远端容器不动 |
+| PATCH | `/cluster/nodes/:id` | 编辑名称或 SSH 配置，必须带 `expected_updated_at`（取列表中的 `updated_at`）；返回更新后的公开节点信息 |
+| POST | `/cluster/nodes/:id/probe` | 与 PATCH 同体；使用已保存的未更换凭证及原主机指纹测试候选配置，不保存、不切断原连接；返回 `{ host_key, docker, vm_count, dependent_count }` |
 | POST | `/cluster/nodes/:id/reconnect` | 清掉 `error` 与退避，立刻重连 |
 | POST | `/cluster/nodes/:id/shell-ticket` | 30 秒一次性终端票据 |
 | WS | `/cluster/nodes/:id/shell?ticket=&cols=&rows=` | 客户端发 `{"t":"d","d":"…"}` 输入、`{"t":"r","c":列,"r":行}` 改尺寸；服务端二进制帧为终端输出，文本帧 `{"t":"exit"\|"error"}` |
@@ -496,6 +498,10 @@ sessionKey / 授权码导入必须走该槽 SOCKS5。
 
 - 链路：keepalive 10s × 3；断开后 1s 起指数退避（±20% 抖动，封顶 60s）。**指纹不符 / 认证失败不自动重试**，停在 `error` 等人工重连。
 - 凭证（私钥、口令、密码）存 `cluster_nodes`，设了 `VM2API_DB_SECRET` 即 AES-256-GCM 加密；任何响应都不回传。
+- 编辑只接受 `label`、`host`、`port`、`username`、`auth_type`、`password`、`private_key`、`passphrase` 与 `expected_updated_at`。仅传改动字段；版本不匹配返回 `409 node_edit_conflict`，重新读取后再编辑。节点 ID、创建时间、主机指纹和跳板配置不可通过此接口修改。
+- 仅改名无需 SSH 连接，也不重连。SSH 配置保存时服务端会重新验证，不能以先前 probe 成功代替：先使用原指纹建立候选连接，验证成功再保存并接管原链路；失败保留原配置和连接。已有终端和转发连接可能在切换时断开，远端 VM 容器不会被重建。这里只修改控制面保存的连接配置，不修改远端 sshd、密码或 authorized_keys。
+- 省略凭证字段表示保留。切换认证方式必须提供新密码或新私钥，并清理旧方式的凭证；新私钥不继承旧私钥的口令，`passphrase: ""` 表示清空。空密码/空私钥不是“保持不变”，会校验失败；响应不返回凭证。
+- 已有 VM 的节点不能修改登录用户（`node_username_in_use`）。候选连接必须仍能访问现有 VM 容器、挂载目录及匹配的 UID/GID（否则 `node_runtime_mismatch`）；不用于将已有节点迁移到另一台 VPS。被其他节点用作跳板、正在安装 Docker、构建镜像、处理调度请求或有 `withVmLock` 操作（如 VM 重置）尚未完成时拒绝修改连接配置，仍可改名。主机密钥轮换、跳板拓扑修改和 VM 迁移不在此接口范围。
 - 本机 Docker 桥：每个节点在 `<data>/cluster/<id>/docker.sock`（0600）监听，`docker -H unix://…/docker.sock ps` 直接操作远端 daemon。数据目录所在文件系统不支持 unix socket（如 WSL `/mnt/*`）时设 `VM2API_CLUSTER_SOCKET_DIR`。
 
 ## 管理口（master）

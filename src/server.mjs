@@ -77,9 +77,11 @@ import { BackupService } from './lib/admin/backup-service.mjs'
 import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
-import { bindPlacement } from './lib/cluster/placement.mjs'
+import { bindPlacement, nodeImageBuildRunning } from './lib/cluster/placement.mjs'
+import { ClusterError } from './lib/cluster/ssh-link.mjs'
 import { nodeEgressProxyUrl, startNodeEgressSocks } from './lib/cluster/node-egress-socks.mjs'
 import { createSlotShell } from './lib/vm/slot-shell.mjs'
+import { vmLockBusy } from './lib/vm/vm-file.mjs'
 
 import {
   classifyCredentialRefresh,
@@ -889,6 +891,17 @@ const clusterManager = new ClusterManager({
   dataDir,
   listen: { host: cfg.host, port: cfg.port },
   vmsOnNode: (nodeId) => listVms(cfg.paths.project).filter((vm) => vm.node_id === nodeId),
+  assertNodeEditable: (nodeId) => {
+    const busy = listVms(cfg.paths.project).some(
+      (vm) =>
+        vm.node_id === nodeId &&
+        (Number(poolScheduler?.vmInflight?.get(vm.id) || 0) > 0 ||
+          vmLockBusy(path.join(cfg.paths.project, 'vms', `${vm.id}.json`))),
+    )
+    if (busy || nodeImageBuildRunning(nodeId)) {
+      throw new ClusterError(409, 'node_in_use', '节点仍有进行中的请求、虚拟机操作或镜像构建，请完成后重试')
+    }
+  },
   onNodesChanged: () => syncNodeLocalEgress(),
   // A node's local row follows its link: re-probe as soon as the link settles.
   onLinkState: (nodeId, state) => {
