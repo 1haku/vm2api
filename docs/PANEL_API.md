@@ -232,7 +232,7 @@ Analytics 按官方 [`codex_thread_initialized`](https://github.com/openai/codex
 
 `compatibility.cch_enabled`（布尔，默认 `true`，设置 → 协议）：开启时统一给出站 billing 补齐 `cch` 并计算真实五位摘要，不按试用 / 订阅状态分流；关闭时仍补齐该参数，但固定为 `cch=00000;`（5 个 0），跳过摘要计算。Node 从当前 routing 对象读取，CLI 在最终 SDK fetch 时读取 `kernel.json.cch_enabled`，不能仅凭五零占位判断是否应密封。native hop 仅保留占位，最终紧凑 SDK JSON 才计算真实摘要；HTTP hop 在最终 Node 请求体密封。密封只替换 billing 参数，不改提示词里的同名文本。billing 的版本、entrypoint 与固定首轮索引策略不随此开关改变，Claude Messages 的 2.1.296 与 Go OAuth / 遥测的 2.1.293 标准 UA 保持各自值。
 
-`inference.session_idle_ttl_seconds`（整数 `1`–`86400`，默认 `600`，设置 → 账号池）：投影为 `kernel.json.session_idle_ttl_seconds`。原生 CLI 槽从最后一次任务完成开始计算空闲时间；到期后由既有巡检释放 session / sticky pin，活动任务不回收。修改不会重置已有空闲计时，也不重启 kernel / CLI；缩短期限可在下一轮巡检释放已空闲足够久的槽。它不是 `sticky.ttl_seconds` 的账号绑定有效期，也不是流空闲超时。
+`inference.session_idle_ttl_seconds`（整数 `1`–`86400`，默认 `600`，设置 → 协议）：投影为 `kernel.json.session_idle_ttl_seconds`，与 CCH 设置集中在同一页，账号池不再重复显示。原生 CLI 槽从最后一次任务完成开始计算空闲时间；到期后由既有巡检释放 session / sticky pin，活动任务不回收。修改不会重置已有空闲计时，也不重启 kernel / CLI；缩短期限可在下一轮巡检释放已空闲足够久的槽。它不是 `sticky.ttl_seconds` 的账号绑定有效期，也不是流空闲超时。
 
 两个新键保存后沿既有本机 / 节点配置同步路径热写，不触发重启；首次加载支持这些字段的新 kernel / CLI ELF 仍需按正常升级流程排空并加载新产物。`/api/panel/routing` 由 Node 校验和持久化，Go `api-kernel` 只转发 API-key 上游请求，不另设面板字段 schema。
 

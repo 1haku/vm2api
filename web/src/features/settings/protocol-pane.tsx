@@ -1,4 +1,9 @@
-import { Check, Database, Hash, ShieldCheck } from 'lucide-react'
+import {
+  SESSION_IDLE_TTL_SECONDS_DEFAULT,
+  SESSION_IDLE_TTL_SECONDS_MAX,
+  SESSION_IDLE_TTL_SECONDS_MIN,
+} from '@/types/panel-routing'
+import { Check, Clock3, Database, Hash, ShieldCheck } from 'lucide-react'
 import {
   cacheTtlFromCompat,
   detectProxiedOfficialCcFromCompat,
@@ -7,8 +12,11 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/setting-row'
-import { cchEnabledFromCompat } from './protocol-authority'
-import { ChipGroup, PaneSection } from './scheduler-controls'
+import {
+  cchEnabledFromCompat,
+  sessionIdleTtlFromInference,
+} from './protocol-authority'
+import { ChipGroup, PaneSection, StepperSetting } from './scheduler-controls'
 
 type Block = Record<string, unknown>
 
@@ -25,10 +33,14 @@ const CLAUDE_CODE_FINGERPRINT: [string, string][] = [
 
 export function ProtocolPane({
   compat,
+  inference,
   onCompatChange,
+  onInferenceChange,
 }: {
   compat: Block
+  inference: Block
   onCompatChange: (next: Block) => void
+  onInferenceChange: (patch: Block) => void
 }) {
   const strict = compat.claude_code_only === true
   const relay = detectProxiedOfficialCcFromCompat(compat)
@@ -170,6 +182,25 @@ export function ProtocolPane({
             aria-label='强制附加 CCH'
           />
         </SettingRow>
+      </PaneSection>
+      <PaneSection
+        icon={Clock3}
+        title='原生 sticky 槽'
+        desc='kernel 里 CLI 槽空闲回收。不是流空闲超时，也不是粘性页的账号绑定 TTL。'
+      >
+        <StepperSetting
+          id='inference-session-idle-ttl'
+          label='槽空闲超时'
+          desc='从最后一次任务完成开始计时，活动请求不回收。保存后热生效，不重启内核。'
+          value={sessionIdleTtlFromInference(inference)}
+          min={SESSION_IDLE_TTL_SECONDS_MIN}
+          max={SESSION_IDLE_TTL_SECONDS_MAX}
+          unit='秒'
+          fallback={SESSION_IDLE_TTL_SECONDS_DEFAULT}
+          onChange={(value) =>
+            onInferenceChange({ session_idle_ttl_seconds: value })
+          }
+        />
       </PaneSection>
     </div>
   )

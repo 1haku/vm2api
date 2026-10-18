@@ -25,7 +25,7 @@
 - 设置新增独立 OpenAI 页面，调度与槽位导航均指向它；集中 GPT 协议/客户端准入、配额/并发/RPM/会话容量、目录版本和上游传输/UA，移除原页重复 GPT 控件。
 - Codex kernel 增加每请求传输与画像选项，修复取消后上游仍等待的问题。安装 UUID/client_metadata 和独立运行环境 Analytics 各自可选、默认关闭；Analytics 使用官方 `codex_thread_initialized` 结构并标明 vm2api 来源，沿用槽位出口，不上传提示词、文件、主机名或 MAC。字段与边界见 [PANEL_API.md](docs/PANEL_API.md#openai-传输与隐私)。
 - 设置 → 协议新增统一 CCH 开关（`compatibility.cch_enabled`，默认开）：开启则缺失也补并在最终请求体计算真实五位摘要；关闭仍固定写入 `cch=00000;`（5 个 0），不重新密封。不按试用 / 订阅状态分流，密封不改提示词中的同名字面量；固定 billing 参数策略和 296 / 293 两套标准 UA 不变。
-- 设置 → 账号池新增原生 sticky 槽空闲超时（`inference.session_idle_ttl_seconds`，默认 600 秒，范围 1–86400 秒）：kernel 热读，基于最后任务完成时间回收，活动任务不回收；不复用账号绑定 TTL，不因保存设置重启 kernel / CLI。
+- 设置 → 协议集中提供原生 sticky 槽空闲超时（`inference.session_idle_ttl_seconds`，默认 600 秒，范围 1–86400 秒），账号池不再重复显示：kernel 热读，基于最后任务完成时间回收，活动任务不回收；不复用账号绑定 TTL，不因保存设置重启 kernel / CLI。
 - 修复内置 `official_full` / `official` 模板自动生成 `cache_control.scope=global` 导致上游参数级 400；Node、预览与旧模板 agent 回填一致移除自产 scope，保留调用方 / 自定义显式字段，不增加重试或换号。（#536）
 
 已部署机升级：更新 Node 控制面、web/dist 与 Codex kernel ELF。已有宿主 Codex kernel 须排空在途请求后随 Node 一次重启加载新二进制，不必重建 GPT 容器。Anthropic kernel / CLI 不变，不必 wrap-cli/sync。既有 `routing.json`、`vms/`、`data/`、`.env` 不覆盖；安装元数据与 Analytics 默认关闭。nginx 的 `/v1/responses`（或 `/responses`）必须保留 Upgrade 并直连 Node。无新依赖或数据库迁移。

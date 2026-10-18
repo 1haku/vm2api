@@ -391,8 +391,19 @@ export function SettingsPage() {
                     (draft.compatibility as
                       Record<string, unknown> | undefined) || {}
                   }
+                  inference={inference}
                   onCompatChange={(next) =>
                     setDraft((current) => ({ ...current, compatibility: next }))
+                  }
+                  onInferenceChange={(patch) =>
+                    setDraft((current) => ({
+                      ...current,
+                      inference: {
+                        ...((current.inference as
+                          Record<string, unknown> | undefined) || {}),
+                        ...patch,
+                      },
+                    }))
                   }
                 />
               ) : null}
