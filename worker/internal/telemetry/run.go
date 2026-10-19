@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -244,10 +245,7 @@ func postBatch(ctx context.Context, deps Deps, cfg config.Config, token string, 
 		return nil
 	}
 	err := deps.HTTP.PostBatch(ctx, token, cfg.Telemetry.Headers, []Event{ev})
-	if err != nil {
-		class, status := ClassifyBatchErr(err)
-		log.Printf("telemetry sidecar: batch failed class=%s status=%d", class, status)
-	}
+	recordUpload(cfg, "batch", ev.EventData["event_name"], err, ev)
 	return err
 }
 
@@ -256,11 +254,41 @@ func postEval(ctx context.Context, deps Deps, cfg config.Config, token string, b
 		return nil
 	}
 	err := deps.HTTP.PostEval(ctx, token, cfg.Telemetry.Headers, body)
+	recordUpload(cfg, "eval", "growthbook", err, body)
+	return err
+}
+
+func recordUpload(cfg config.Config, kind string, name any, err error, payload any) {
+	if strings.TrimSpace(cfg.ConfigPath) == "" {
+		return
+	}
+	body, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		body = []byte("{}")
+	}
+	state := "ok"
 	if err != nil {
 		class, status := ClassifyBatchErr(err)
-		log.Printf("telemetry sidecar: eval failed class=%s status=%d", class, status)
+		state = class
+		log.Printf("telemetry sidecar: %s failed class=%s status=%d", kind, class, status)
+		_ = status
 	}
-	return err
+	line := time.Now().UTC().Format(time.RFC3339) + " " + kind + " " + strings.TrimSpace(fmtName(name)) + " " + state + " " + string(body) + "\n"
+	path := filepath.Join(filepath.Dir(cfg.ConfigPath), "telemetry-upload.log")
+	f, openErr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if openErr != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(line)
+}
+
+func fmtName(name any) string {
+	text, _ := name.(string)
+	if text == "" {
+		return "-"
+	}
+	return text
 }
 
 func stopOn4xx(err error) bool {
