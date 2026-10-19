@@ -579,6 +579,7 @@ function VmDetailBody({
                     syncTelemetry={syncTelemetry}
                     debug={seedDebug}
                     onDebug={setSeedDebug}
+                    proxyTimezone={proxy.geo?.timezone || ''}
                     onSave={(next) => saveSeed.mutate(next)}
                   />
                 ) : (

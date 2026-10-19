@@ -4,8 +4,16 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   REJECT_FLAGS,
   claudeSettingKeys,
@@ -40,6 +48,106 @@ function Lamp({ tone }: { tone: 'on' | 'off' | 'unknown' }) {
         />
       ) : null}
     </span>
+  )
+}
+
+const LOCALES = [
+  ['en', 'en_US.UTF-8'],
+  ['cn', 'zh_CN.UTF-8'],
+  ['jp', 'ja_JP.UTF-8'],
+] as const
+const ZONES = [
+  ['en', 'America/Los_Angeles'],
+  ['cn', 'Asia/Shanghai'],
+  ['jp', 'Asia/Tokyo'],
+] as const
+
+function namedChoice(
+  table: readonly (readonly [string, string])[],
+  value: string
+) {
+  return (
+    table.find(([key, zone]) => key === value || zone === value)?.[0] ||
+    'custom'
+  )
+}
+
+function ChoiceField({
+  label,
+  table,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string
+  table: readonly (readonly [string, string])[]
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  const selected = namedChoice(table, value)
+  return (
+    <Select
+      value={selected}
+      disabled={disabled}
+      onValueChange={(key) =>
+        onChange(table.find(([id]) => id === key)?.[1] || value)
+      }
+    >
+      <SelectTrigger className='h-8 font-mono text-xs' aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {table.map(([key, zone]) => (
+          <SelectItem key={key} value={key}>{`${key} · ${zone}`}</SelectItem>
+        ))}
+        {selected === 'custom' ? (
+          <SelectItem value='custom'>{value || '自定义'}</SelectItem>
+        ) : null}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function LocaleField(props: {
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  return <ChoiceField label='语言' table={LOCALES} {...props} />
+}
+
+function ZoneField({
+  value,
+  proxyZone,
+  disabled,
+  onChange,
+}: {
+  value: string
+  proxyZone: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className='space-y-1'>
+      <ChoiceField
+        label='时区'
+        table={ZONES}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      <Button
+        type='button'
+        size='sm'
+        variant='ghost'
+        className='h-7 px-2 text-xs'
+        disabled={disabled || !proxyZone}
+        onClick={() => onChange(proxyZone)}
+      >
+        {proxyZone ? `跟随 SOCKS5 · ${proxyZone}` : '当前 SOCKS5 没有时区'}
+      </Button>
+    </div>
   )
 }
 function TelemetryUploadLog({ lines }: { lines: unknown }) {
@@ -108,6 +216,7 @@ export function SeedPolicyCard({
   syncTelemetry = false,
   debug,
   onDebug,
+  proxyTimezone = '',
 }: {
   seed: VmSeedSettings
   telemetry?: ObservedTelemetry | null
@@ -116,13 +225,16 @@ export function SeedPolicyCard({
   syncTelemetry?: boolean
   debug: boolean
   onDebug: (next: boolean) => void
+  proxyTimezone?: string | null
 }) {
+  const [locked, setLocked] = useState(true)
+  const [askUnlock, setAskUnlock] = useState(false)
+  const [askSave, setAskSave] = useState(false)
   const saved = seedDraftOf(seed)
   const [draft, setDraft] = useState<SeedDraft>(saved)
   useEffect(() => {
     setDraft(seedDraftOf(seed))
   }, [seed])
-
   const dirty = !sameDraft(draft, saved)
   const on = telemetryEnabled(draft)
   const live = telemetryLive(seed, telemetry)
@@ -170,16 +282,37 @@ export function SeedPolicyCard({
                   )}
                   {key}
                 </span>
-                <Input
-                  aria-label={key}
-                  value={draft.env[key] ?? ''}
-                  disabled={saving}
-                  spellCheck={false}
-                  onChange={(event) =>
-                    patch({ env: { ...draft.env, [key]: event.target.value } })
-                  }
-                  className='h-8 font-mono text-xs'
-                />
+                {key === 'TZ' ? (
+                  <ZoneField
+                    value={draft.env.TZ ?? ''}
+                    proxyZone={proxyTimezone || ''}
+                    disabled={locked || saving}
+                    onChange={(value) =>
+                      patch({ env: { ...draft.env, TZ: value } })
+                    }
+                  />
+                ) : key === 'LANG' || key === 'LC_ALL' ? (
+                  <LocaleField
+                    value={draft.env[key] ?? ''}
+                    disabled={locked || saving}
+                    onChange={(value) =>
+                      patch({ env: { ...draft.env, [key]: value } })
+                    }
+                  />
+                ) : (
+                  <Input
+                    aria-label={key}
+                    value={draft.env[key] ?? ''}
+                    disabled={locked || saving}
+                    spellCheck={false}
+                    onChange={(event) =>
+                      patch({
+                        env: { ...draft.env, [key]: event.target.value },
+                      })
+                    }
+                    className='h-8 font-mono text-xs'
+                  />
+                )}
               </label>
             ))}
             <label className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'>
@@ -187,7 +320,7 @@ export function SeedPolicyCard({
               <Input
                 aria-label='theme'
                 value={draft.theme}
-                disabled={saving}
+                disabled={locked || saving}
                 spellCheck={false}
                 onChange={(event) => patch({ theme: event.target.value })}
                 className='h-8 font-mono text-xs'
@@ -247,7 +380,7 @@ export function SeedPolicyCard({
                 : '非必要流量=0，DNT 开。这两项跟着开关走。'
             }
             checked={on}
-            disabled={saving}
+            disabled={locked || saving}
             onCheckedChange={(value) => patch({ telemetry_disabled: !value })}
           />
           {REJECT_FLAGS.map(([key, label]) => (
@@ -265,7 +398,7 @@ export function SeedPolicyCard({
                     : '入站身份会留下来。'
               }
               checked={!!draft[key]}
-              disabled={saving}
+              disabled={locked || saving}
               onCheckedChange={(value) => patch({ [key]: value })}
             />
           ))}
@@ -278,7 +411,7 @@ export function SeedPolicyCard({
           <Textarea
             id='seed-claude-setting'
             value={draft.claude_setting}
-            disabled={saving}
+            disabled={locked || saving}
             onChange={(event) => patch({ claude_setting: event.target.value })}
             className='min-h-28 font-mono text-xs'
             spellCheck={false}
@@ -295,20 +428,54 @@ export function SeedPolicyCard({
         <div className='flex gap-2 border-t px-4 py-3'>
           <Button
             size='sm'
-            disabled={saving || !dirty}
-            onClick={() => onSave(seedSaveBody(draft))}
+            variant='outline'
+            disabled={saving || !locked}
+            onClick={() => setAskUnlock(true)}
+          >
+            解锁
+          </Button>
+          <Button
+            size='sm'
+            disabled={saving || locked || !dirty}
+            onClick={() => setAskSave(true)}
           >
             {saving ? '写入中…' : '播种'}
           </Button>
           <Button
             size='sm'
             variant='ghost'
-            disabled={saving || !dirty}
+            disabled={saving || locked || !dirty}
             onClick={() => setDraft(saved)}
           >
             重置
           </Button>
         </div>
+        <ConfirmDialog
+          open={askUnlock}
+          onOpenChange={setAskUnlock}
+          title='解锁种子配置'
+          desc='解锁后才能改当前槽的配置。改完仍要再次确认才会写入。'
+          confirmText='解锁'
+          cancelBtnText='取消'
+          handleConfirm={() => {
+            setLocked(false)
+            setAskUnlock(false)
+          }}
+        />
+        <ConfirmDialog
+          open={askSave}
+          onOpenChange={setAskSave}
+          title='确认播种'
+          desc='把当前改动写入这个槽的 settings.json 和 claude.setting。'
+          confirmText='确认写入'
+          cancelBtnText='取消'
+          isLoading={saving}
+          handleConfirm={() => {
+            onSave(seedSaveBody(draft))
+            setAskSave(false)
+            setLocked(true)
+          }}
+        />
         <div className='border-t px-4 py-3'>
           <ToggleRow
             id='seed-telemetry-debug'
