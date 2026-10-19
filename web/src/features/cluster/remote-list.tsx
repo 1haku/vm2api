@@ -9,6 +9,7 @@ import {
   LINK_LATENCY_WARN_MS,
   LINK_STATE_TEXT,
   LINK_TONE,
+  directLinkText,
   type ClusterNode,
 } from '@/features/cluster/model'
 import { PanelCard } from '@/features/overview/panel-card'
@@ -116,6 +117,21 @@ export function RemoteList({
                     {node.remote ? (
                       <span className='text-xs'>
                         {LINK_STATE_TEXT[node.remote.link.state]}
+                      </span>
+                    ) : null}
+                    {live && node.remote?.direct_link ? (
+                      <span
+                        className={cn(
+                          'rounded border px-1 text-[10px] leading-4',
+                          node.remote.direct_link.state === 'ok'
+                            ? 'border-primary/40 text-primary'
+                            : 'border-caution-3/50 text-caution-3'
+                        )}
+                        title={`直连通道：${directLinkText(node.remote.direct_link)}`}
+                      >
+                        {node.remote.direct_link.state === 'ok'
+                          ? '直连'
+                          : '直连→SSH'}
                       </span>
                     ) : null}
                     {lat ? (

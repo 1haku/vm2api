@@ -897,6 +897,7 @@ function syncNodeLocalEgress() {
 const clusterManager = new ClusterManager({
   repo: new ClusterNodesRepo(),
   dataDir,
+  gateBin: process.env.KIN_CLUSTER_GATE_BIN || path.join(cfg.paths.project, 'bin', 'kin-slot-gate'),
   listen: { host: cfg.host, port: cfg.port },
   vmsOnNode: (nodeId) => listVms(cfg.paths.project).filter((vm) => vm.node_id === nodeId),
   assertNodeEditable: (nodeId) => {

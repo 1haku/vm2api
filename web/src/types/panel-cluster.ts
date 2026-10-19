@@ -39,6 +39,19 @@ export type ClusterApiNode = {
     active: number
   } | null
   install: DockerInstallJob | null
+  /** 直连通道（kin-slot-gate，TLS）；未配置为 null。令牌与证书指纹从不返回。 */
+  direct_link?: ClusterDirectLink | null
+}
+
+export type ClusterDirectLink = {
+  address: string
+  port: number
+  /** ok 直连；down 已退回 SSH；pending 尚未检查。 */
+  state: 'ok' | 'down' | 'pending'
+  latency_ms: number | null
+  error: string | null
+  gate_error: string | null
+  checked_at: string | null
 }
 
 export type NodeHostStats = {
