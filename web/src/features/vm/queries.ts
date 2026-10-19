@@ -54,6 +54,25 @@ export function vmSeedQueryOptions(id: string) {
   })
 }
 
+/** Upload audit lines only — does not share the seed form query key. */
+export function vmSeedUploadLogQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: ['panel', 'vm', id, 'seed-upload-log'] as const,
+    queryFn: async () => {
+      const data = await api<VmSeedSettings>(
+        `/api/panel/vms/${encodeURIComponent(id)}/seed-settings?debug=1`
+      )
+      const lines = data.telemetry_log
+      return Array.isArray(lines)
+        ? lines.filter(
+            (line): line is string => typeof line === 'string' && line !== ''
+          )
+        : []
+    },
+    refetchInterval: false,
+  })
+}
+
 export function vmCredentialQueryOptions(id: string, enabled = true) {
   return queryOptions({
     queryKey: ['panel', 'vm', id, 'credential'] as const,
