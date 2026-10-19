@@ -11,20 +11,29 @@ import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { restartTelemetrySidecar } from './slot-process-status.mjs'
 import { vmNodeId } from '../cluster/placement.mjs'
 import { restartRemoteServices } from '../cluster/remote-slot.mjs'
-import { ensureProxyEgress, isLocalEgressProxy, stopEgressProcess } from './egress.mjs'
+import { ensureProxyEgress, isLocalEgressProxy, stopEgressProcess, waitEgressExit } from './egress.mjs'
 
 const ACTIONS = new Set(['collect', 'reload', 'roll', 'telemetry'])
 
-async function restartLocalServices({ projectRoot, vm, enabled }) {
+export async function restartLocalEgress(projectRoot, vm, opts = {}) {
+  if (isLocalEgressProxy(vm.proxy)) return { ok: true, egress: 'local' }
+  const stopped = stopEgressProcess(projectRoot, vm.proxy?.id)
+  if (!stopped.ok) return { ok: false, action: 'egress_stop_failed', error: stopped.error }
+  for (const pid of stopped.pending || []) {
+    const exited = await waitEgressExit(pid)
+    if (!exited.ok) return { ok: false, action: 'egress_stop_failed', error: exited.error, pid }
+  }
+  const started = await ensureProxyEgress(projectRoot, vm.proxy, opts)
+  if (!started?.ok) return { ok: false, action: 'egress_start_failed', error: started?.error || 'kin-egress failed' }
+  return { ok: true, egress: 'restarted', pid: started.pid }
+}
+
+async function restartLocalServices({ projectRoot, vm, enabled, egressOpts = {} }) {
   const telemetry = await restartTelemetrySidecar({ projectRoot, vm, enabled })
   if (!telemetry.ok) return telemetry
-  if (!isLocalEgressProxy(vm.proxy)) {
-    const stopped = stopEgressProcess(projectRoot, vm.proxy?.id)
-    if (!stopped.ok) return { ok: false, action: 'egress_stop_failed', error: stopped.error }
-    const started = await ensureProxyEgress(projectRoot, vm.proxy)
-    if (!started?.ok) return { ok: false, action: 'egress_start_failed', error: started?.error || 'kin-egress failed' }
-  }
-  return { ...telemetry, egress: 'restarted' }
+  const egress = await restartLocalEgress(projectRoot, vm, egressOpts)
+  if (!egress.ok) return egress
+  return { ...telemetry, egress: egress.egress }
 }
 
 function sleep(ms) {
