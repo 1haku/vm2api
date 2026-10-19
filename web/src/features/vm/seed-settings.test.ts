@@ -133,6 +133,20 @@ describe('seed draft', () => {
     ).toContain('autoUpdates')
     expect(seedSaveBody({ ...draft, theme: 'dark' }).theme).toBe('dark')
   })
+
+  it('fills an empty timezone from the current proxy when saving', () => {
+    const draft = seedDraftOf({
+      settings_json: { env: { TZ: '' } },
+      claude_setting: '',
+    })
+    expect(seedSaveBody(draft, 'Asia/Tokyo').extra_env).toMatchObject({
+      TZ: 'Asia/Tokyo',
+    })
+    expect(
+      seedSaveBody({ ...draft, env: { ...draft.env, TZ: 'UTC' } }, 'Asia/Tokyo')
+        .extra_env
+    ).toMatchObject({ TZ: 'UTC' })
+  })
 })
 
 describe('telemetry lamp', () => {

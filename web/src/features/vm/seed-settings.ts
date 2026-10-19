@@ -136,13 +136,18 @@ export function sameDraft(a: SeedDraft, b: SeedDraft): boolean {
 }
 
 /** Body for PUT /seed-settings. Mirrors follow the telemetry bit. */
-export function seedSaveBody(draft: SeedDraft): Record<string, unknown> {
+export function seedSaveBody(
+  draft: SeedDraft,
+  proxyTimezone = ''
+): Record<string, unknown> {
+  const env = { ...draft.env }
+  if (!env.TZ && proxyTimezone) env.TZ = proxyTimezone
   return {
     ...telemetrySeedFlags(telemetryEnabled(draft)),
     claude_setting: draft.claude_setting.replace(/\n+$/g, ''),
     reject_client_settings: draft.reject_client_settings,
     reject_client_metadata_identity: draft.reject_client_metadata_identity,
-    extra_env: draft.env,
+    extra_env: env,
     theme: draft.theme,
   }
 }

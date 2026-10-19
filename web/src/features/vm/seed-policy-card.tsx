@@ -128,24 +128,29 @@ function ZoneField({
   disabled: boolean
   onChange: (value: string) => void
 }) {
+  const following = value === ''
   return (
     <div className='space-y-1'>
       <ChoiceField
         label='时区'
         table={ZONES}
-        value={value}
-        disabled={disabled}
+        value={following ? proxyZone : value}
+        disabled={disabled || following}
         onChange={onChange}
       />
       <Button
         type='button'
         size='sm'
-        variant='ghost'
+        variant={following ? 'secondary' : 'ghost'}
         className='h-7 px-2 text-xs'
-        disabled={disabled || !proxyZone}
-        onClick={() => onChange(proxyZone)}
+        disabled={disabled || following}
+        onClick={() => onChange('')}
       >
-        {proxyZone ? `跟随 SOCKS5 · ${proxyZone}` : '当前 SOCKS5 没有时区'}
+        {following
+          ? proxyZone
+            ? `跟随当前 SOCKS5 · ${proxyZone}`
+            : '跟随当前 SOCKS5 · 还没有时区'
+          : '改回跟随当前 SOCKS5'}
       </Button>
     </div>
   )
@@ -424,7 +429,6 @@ export function SeedPolicyCard({
             {dirty ? ' 有未播种的改动。' : ' 与当前策略一致。'}
           </p>
         </div>
-
         <div className='flex gap-2 border-t px-4 py-3'>
           <Button
             size='sm'
@@ -471,7 +475,7 @@ export function SeedPolicyCard({
           cancelBtnText='取消'
           isLoading={saving}
           handleConfirm={() => {
-            onSave(seedSaveBody(draft))
+            onSave(seedSaveBody(draft, proxyTimezone || ''))
             setAskSave(false)
             setLocked(true)
           }}
