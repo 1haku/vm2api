@@ -83,7 +83,7 @@
 | POST | `/vms/:id/oauth/generate-auth-url` | PKCE 授权链接；无 SOCKS5 拒绝。`{ flavor: "claude_code" }` 为官方 Claude Code 授权页。`{ flavor: "setup_token" }` 为 inference-only PKCE，不启槽内 CLI |
 | POST | `/vms/:id/oauth/exchange-code` | 粘贴授权码，经槽代理换票。完整 OAuth 才排队初装。flavor 以 session 为准 |
 | GET/POST | `/vms/:id/official-cc-bootstrap` | 初装进度 / `{ manual:true }` 再跑 |
-| GET/PUT | `/vms/:id/seed-settings` | 播种；强制保留 telemetry/bedrock/vertex 等 env |
+| GET/PUT | `/vms/:id/seed-settings` | 播种；强制保留 telemetry/bedrock/vertex 等 env；`claude_setting` 可编辑并写入槽内 `.claude/claude.setting` |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`） |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
 | GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
@@ -103,7 +103,7 @@
 | POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed`。Docker 槽可在 `machine` 里可选传 `docker_cpus`（见下） |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
-| POST | `/vms/fleet-update` | 全槽 roll / 采集 |
+| POST | `/vms/fleet-update` | 全槽 roll / 采集；`action=telemetry` 只更新 Go telemetry/egress 服务，不重建 VM |
 | POST | `/vms/reconcile-fingerprints` | 用官方 `~/.claude.json` 对齐指纹 |
 | POST | `/probe` | 全量额度探测 |
 | GET/POST | `/health-probe` | 读/跑官方 hello 健康探测缓存 |
