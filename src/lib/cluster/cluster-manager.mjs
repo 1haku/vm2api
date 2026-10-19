@@ -18,6 +18,7 @@ import {
   validateNodeEditPatch,
   verifyNodeRuntimes,
 } from './node-edit.mjs'
+import { NODE_HOST_COMMAND, NODE_HOST_TIMEOUT_MS, parseNodeHost } from './node-host.mjs'
 import { shellQuote } from './remote-fs.mjs'
 import { SocketRelay } from './socket-relay.mjs'
 import { configuredIpv6Enabled } from '../vm/proxy-policy.mjs'
@@ -224,6 +225,7 @@ export class ClusterManager {
     } catch (err) {
       if (err.code === 'streamlocal_failed') latencyMs = performance.now() - t0
     }
+    const hostRead = execCollect(client, NODE_HOST_COMMAND, { timeoutMs: NODE_HOST_TIMEOUT_MS }).catch(() => null)
     let docker
     let containers = null
     try {
@@ -233,6 +235,8 @@ export class ClusterManager {
     } catch (err) {
       docker = { ok: false, error: err.message }
     }
+    const hostOut = await hostRead
+    const host = hostOut?.code === 0 ? parseNodeHost(hostOut.stdout) : null
     if (link.client !== client) return
     if (docker.ok && !configuredIpv6Enabled()) {
       const exits = await syncIpv6ProxyEgress(null, null, { nodeId: id, vms: this.vmsOnNode(id) })
@@ -244,6 +248,7 @@ export class ClusterManager {
       latency_ms: latencyMs == null ? null : Math.round(latencyMs),
       docker,
       containers,
+      host,
       checked_at: new Date().toISOString(),
     })
   }

@@ -1,4 +1,4 @@
-import { fmtNum, fmtUsd } from '@/lib/format'
+import { fmtBytes, fmtNum, fmtUsd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/empty-state'
@@ -13,10 +13,12 @@ import {
 } from '@/features/cluster/model'
 import { PanelCard } from '@/features/overview/panel-card'
 
+const HOST_HOT_PCT = 85
+
 const COL = {
   name: 'min-w-[108px] flex-[1.1] pl-3',
   host: 'min-w-[132px] flex-[1.3]',
-  link: 'min-w-[128px] flex-[1.1]',
+  link: 'min-w-[160px] flex-[1.1] whitespace-nowrap',
   metric: 'min-w-[64px] flex-[0.7] text-right',
   spend: 'min-w-[88px] flex-[0.9] pr-2 text-right',
   action: 'w-28 shrink-0 pr-2 text-right',
@@ -55,11 +57,19 @@ export function RemoteList({
         />
       ) : (
         <div className='overflow-x-auto'>
-          <div className='min-w-[840px]'>
+          <div className='min-w-[1064px]'>
             <div className='flex h-8 items-center border-b bg-muted/30 text-[11px] font-medium tracking-wide text-muted-foreground/80'>
               <div className={COL.name}>节点</div>
               <div className={COL.host}>IP</div>
               <div className={COL.link}>链路</div>
+              <div className={COL.metric}>CPU</div>
+              <div className={COL.metric}>内存</div>
+              <div
+                className={COL.metric}
+                title='全部容器内存合计（不含文件缓存）'
+              >
+                容器
+              </div>
               <div className={COL.metric} title='运行中 / 全部容器（含出口）'>
                 Docker
               </div>
@@ -79,6 +89,7 @@ export function RemoteList({
                 live &&
                 node.latencyMs != null &&
                 node.latencyMs > LINK_LATENCY_WARN_MS
+              const hs = live ? node.remote?.health?.host : null
               return (
                 <div
                   key={node.id}
@@ -117,6 +128,39 @@ export function RemoteList({
                         {lat}
                       </span>
                     ) : null}
+                  </div>
+                  <div
+                    className={cn(
+                      COL.metric,
+                      'field-metric',
+                      hs && hs.cpu_pct >= HOST_HOT_PCT && 'text-caution-3'
+                    )}
+                    title={
+                      hs
+                        ? `${hs.cpu_count} 核 · load ${[hs.load1, hs.load5, hs.load15].map((n) => (n == null ? '—' : n.toFixed(2))).join(' / ')}`
+                        : undefined
+                    }
+                  >
+                    {hs ? `${hs.cpu_pct.toFixed(0)}%` : '—'}
+                  </div>
+                  <div
+                    className={cn(
+                      COL.metric,
+                      'field-metric',
+                      hs && hs.mem_pct >= HOST_HOT_PCT && 'text-caution-3'
+                    )}
+                    title={
+                      hs
+                        ? `${fmtBytes(hs.mem_used)} / ${fmtBytes(hs.mem_total)}`
+                        : undefined
+                    }
+                  >
+                    {hs ? `${hs.mem_pct.toFixed(0)}%` : '—'}
+                  </div>
+                  <div className={cn(COL.metric, 'field-metric')}>
+                    {hs?.containers_mem != null
+                      ? fmtBytes(hs.containers_mem)
+                      : '—'}
                   </div>
                   <div
                     className={cn(COL.metric, 'field-metric')}

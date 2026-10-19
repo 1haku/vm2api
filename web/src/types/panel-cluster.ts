@@ -28,6 +28,8 @@ export type ClusterApiNode = {
     docker: { ok: boolean; error: string | null }
     /** Docker `/info` 计数；Docker 不可用时为 null。 */
     containers: { total: number | null; running: number | null } | null
+    /** 节点宿主负载，口径同本机宿主列；远端读不到时为 null。 */
+    host?: NodeHostStats | null
     checked_at: string
   } | null
   bridge: {
@@ -37,6 +39,19 @@ export type ClusterApiNode = {
     active: number
   } | null
   install: DockerInstallJob | null
+}
+
+export type NodeHostStats = {
+  cpu_count: number
+  load1: number
+  load5: number | null
+  load15: number | null
+  cpu_pct: number
+  mem_total: number
+  mem_used: number
+  mem_pct: number
+  /** 全部 Docker 容器内存合计（扣除 inactive_file）；读不到 cgroup 时为 null。 */
+  containers_mem: number | null
 }
 
 export type DockerInstallJob = {
