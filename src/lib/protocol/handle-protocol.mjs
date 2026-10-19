@@ -35,7 +35,7 @@ import {
   createClaudeMessageAssembler,
   applyClaudeSSELineToMessage,
 } from './convert.mjs'
-import { sanitizeInboundBody, defaultSeedPolicy } from './seed-policy.mjs'
+import { sanitizeInboundBody, defaultSeedPolicy, callerAutoCompactWindow } from './seed-policy.mjs'
 import { fingerprintRequest } from './client-fingerprint.mjs'
 import { validateOfficialModel } from './models.mjs'
 import { handleCodexProtocol, handleCodexSearch } from './handle-codex.mjs'
@@ -618,11 +618,13 @@ export function createHandleProtocol(deps) {
       )
     }
 
+    const autoCompactWindow = callerAutoCompactWindow(inbound)
     let ctx = {
       path: pathName,
       protocol,
       body: sanitizeInboundBody(inbound, defaultSeedPolicy()),
       headers: { ...req.headers },
+      autoCompactWindow,
     }
     ctx = applyIntercept(cfg.intercept.rules, 'before_convert', ctx)
     const bodyCheck = validateRequestBody(protocol, ctx.body)
@@ -1272,6 +1274,7 @@ export function createHandleProtocol(deps) {
               preserveSystem: officialPassthrough,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
+              autoCompactWindow: ctx.autoCompactWindow,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
