@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 面板：侧栏「GitHub / 文档」两枚链接不再折行，字体偏宽时「文档」不会逐字竖排，空间不够先缩箭头再省略文字；VM 列表搜索框关闭浏览器自动填充，不再被回填成登录邮箱。
 - 集群槽无需重建 VM 即可更新 Go 槽位服务（kin-worker / kin-egress）：持久化 `slot-bin` 挂载推送二进制，fleet `action=telemetry` 热更新遥测与 egress。（#600）
 - Codex 入站在平台探测前支持 CPR 式 `routing.codex.model_mappings` 精确模型映射；默认 `codex-auto-review` → `gpt-6-luna`（清空该键时回退 `gpt-6.1-sol`）。日志保留 `requested_model` / `upstream_model`；非法或非 GPT 目标 400，不 hop Anthropic。（#526）
 - 保留路径不再给没有可用签名的 thinking 补 `signature: ""`：缺失、空、短于 24、dummy 的删掉；签名可用的留，空正文也留。这一支里的 `redacted_thinking` 不看 data 和签名，原样留；不走保留路径时仍按原规则删。5.5 的非保留路径仍接受短的非 dummy 签名。没有按账号归属过滤签名。
