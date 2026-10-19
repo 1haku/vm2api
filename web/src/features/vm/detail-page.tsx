@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useMutation,
   useMutationState,
@@ -166,6 +166,19 @@ function VmDetailBody({
   const proxy = ((data.proxy as VmProxySnap | undefined) ||
     vm.proxy ||
     {}) as VmProxySnap
+  const seedSlot = useMemo(() => {
+    const locale =
+      typeof vm.locale === 'string'
+        ? vm.locale
+        : vm.locale === null
+          ? null
+          : undefined
+    return {
+      timezone: vm.timezone,
+      timezone_source: vm.timezone_source,
+      locale,
+    }
+  }, [vm.timezone, vm.timezone_source, vm.locale])
   const test = useVmTestChat(vm)
   const refreshAll = async () => {
     await Promise.all([
@@ -241,6 +254,7 @@ function VmDetailBody({
       }),
     onSuccess: async () => {
       toast.success('已播种')
+      await refreshAll()
       await qc.invalidateQueries({
         queryKey: ['panel', 'vm', id, 'seed'],
       })
@@ -583,12 +597,14 @@ function VmDetailBody({
                 {seed.data ? (
                   <SeedPolicyCard
                     seed={seed.data}
+                    slot={seedSlot}
                     telemetry={kernel?.telemetry}
                     saving={saveSeed.isPending}
                     syncTelemetry={syncTelemetry}
                     debug={seedDebug}
                     onDebug={setSeedDebug}
                     uploadLog={seedUploadLog.data}
+                    proxyTimezone={proxy.geo?.timezone || ''}
                     onSave={(next) => saveSeed.mutate(next)}
                   />
                 ) : (
