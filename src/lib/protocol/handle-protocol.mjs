@@ -1374,6 +1374,7 @@ export function createHandleProtocol(deps) {
             vmId: selected.vmId,
             epoch: attemptStartedAt,
             mode: sessionMode,
+            routing: routingNow,
             clientDiscriminator,
             firstUserText,
             firstUserIdentity,
