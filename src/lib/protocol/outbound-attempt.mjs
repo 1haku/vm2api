@@ -14,7 +14,13 @@ import {
   modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
 import { liftMidConversationSystemMessages } from './sanitize.mjs'
-import { ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh, normalizeThinkingForModel } from './thinking.mjs'
+import {
+  applyThinkingDisplay,
+  ensureUnofficialAdaptiveThinking,
+  ensureUnofficialEffortHigh,
+  normalizeThinkingForModel,
+  thinkingDisplayMode,
+} from './thinking.mjs'
 import { ensureOutputConfigSchema } from './request-rectifier.mjs'
 import {
   applyCrsIdentityReplace,
@@ -421,11 +427,12 @@ export function prepareOutboundEnvelope({
     const beta = ensureFastModeBeta(headers['anthropic-beta'] || '', prepared.body)
     if (beta) headers['anthropic-beta'] = beta
   }
+  const displayed = applyThinkingDisplay(prepared.body, thinkingDisplayMode(routing))
   headers['anthropic-beta'] = withRequestProtocolBetas(
     String(headers['anthropic-beta'] || '').split(','),
-    prepared.body,
+    displayed,
   ).join(',')
-  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''), {
+  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(displayed, headers?.['anthropic-beta'] || ''), {
     enabled: routing?.compatibility?.cch_enabled !== false,
   })
   return { body, headers, toolNames: prepared.toolNames }

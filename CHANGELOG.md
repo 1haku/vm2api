@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 保留路径不再给没有可用签名的 thinking 补 `signature: ""`：缺失、空、短于 24、dummy 的删掉；签名可用的留，空正文也留。这一支里的 `redacted_thinking` 不看 data 和签名，原样留；不走保留路径时仍按原规则删。5.5 的非保留路径仍接受短的非 dummy 签名。没有按账号归属过滤签名。
+- 协议页新增「thinking 显示」，`routing.compatibility.thinking_display` 默认 `summarized`。调用方打开 thinking 却要求隐藏（`omitted`、`updates`，或默认隐藏的模型上没写 display）时，出站改成 `summarized`；显式 `passthrough` 保留调用方的值。已保存的 `routing.json` 不写这个键也按 summarized 生效。
+
 ## 1.3.199 — 2026-10-19
 
 - 修复集群槽位凭据 pull 时 bytes 相同仍回填 VM 元数据；已运行容器不重建；节点凭证不被旧副本覆盖；原手动禁用 / 撤销 / 冷却保留。（#589）

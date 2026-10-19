@@ -5,6 +5,7 @@ import path from 'node:path'
 import { prepareOutboundHeaders } from '../protocol/outbound-attempt.mjs'
 import { sanitizeAnthropicBodyForBetaTokens } from '../protocol/anthropic-policy.mjs'
 import { withRequestProtocolBetas } from '../protocol/claude-code-betas.mjs'
+import { applyThinkingDisplay, thinkingDisplayMode } from '../protocol/thinking.mjs'
 import { sealClaudeCodeCch } from '../identity/cch.mjs'
 import { credentialModeFromOauth } from '../oauth/credential-mode.mjs'
 import { isCrsMock, writeCrsTrace, mockCrsPayload, emitMockSse } from './crs-mock.mjs'
@@ -436,11 +437,12 @@ export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, routin
     credentialMode: credMode,
     want1m: want1m === true,
   })
-  const betas = withRequestProtocolBetas(String(headers?.['anthropic-beta'] || '').split(','), body)
+  const displayed = applyThinkingDisplay(body, thinkingDisplayMode(routing))
+  const betas = withRequestProtocolBetas(String(headers?.['anthropic-beta'] || '').split(','), displayed)
   headers['anthropic-beta'] = betas.join(',')
   // Envelope headers are discarded; the existing MessageRequest.betas channel
   // carries request gates to the native CLI, which builds the actual HTTP wire.
-  const gated = cliHop ? { ...body, betas } : sanitizeAnthropicBodyForBetaTokens(body, headers['anthropic-beta'])
+  const gated = cliHop ? { ...displayed, betas } : sanitizeAnthropicBodyForBetaTokens(displayed, headers['anthropic-beta'])
   return {
     headers,
     body: sealClaudeCodeCch(gated, { enabled: routing?.compatibility?.cch_enabled !== false, seal: !cliHop }),
