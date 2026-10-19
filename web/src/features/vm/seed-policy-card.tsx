@@ -135,7 +135,7 @@ function ZoneField({
         label='时区'
         table={ZONES}
         value={following ? proxyZone : value}
-        disabled={disabled || following}
+        disabled={disabled}
         onChange={onChange}
       />
       <Button
