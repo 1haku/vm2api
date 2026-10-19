@@ -682,7 +682,9 @@ start_stack() {
 refresh_slot_services() {
   # The control-plane image carries the freshly built Go binaries. Publish them
   # into persistent slot-bin mounts and restart only kin-worker/kin-egress.
-  if ! docker exec "$SERVICE_NAME" node /opt/vm2api/scripts/fleet-services.mjs; then
+  if ! docker exec "$SERVICE_NAME" test -f /opt/vm2api/scripts/fleet-services.mjs >/dev/null 2>&1; then
+    warn "控制面尚未包含 Go 服务刷新脚本；下次更新将重试服务刷新"
+  elif ! docker exec "$SERVICE_NAME" node /opt/vm2api/scripts/fleet-services.mjs; then
     warn "Go slot service refresh failed; VM containers were left untouched"
   fi
 }

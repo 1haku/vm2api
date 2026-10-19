@@ -113,6 +113,7 @@ export async function pushSlotBinaries(vm, projectRoot, session = null) {
   const remote = `${remoteSlotDir(s.host, vm.id)}/slot-bin`
   const owner = ownerFor(s, vm)
   const pushed = []
+  const digest = crypto.createHash('sha256')
   for (const name of SLOT_BINARIES) {
     const local =
       process.env[name === 'kin-worker' ? 'KIN_WORKER_BIN' : 'KIN_EGRESS_BIN'] || path.join(projectRoot, 'bin', name)
