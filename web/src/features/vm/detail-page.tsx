@@ -236,7 +236,7 @@ function VmDetailBody({
     onSuccess: async () => {
       toast.success('已播种')
       await qc.invalidateQueries({
-        queryKey: vmSeedQueryOptions(id).queryKey,
+        queryKey: ['panel', 'vm', id, 'seed'],
       })
     },
     onError: (error: Error) => toast.error(error.message),
