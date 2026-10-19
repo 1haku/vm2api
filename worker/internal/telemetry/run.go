@@ -245,7 +245,7 @@ func postBatch(ctx context.Context, deps Deps, cfg config.Config, token string, 
 		return nil
 	}
 	err := deps.HTTP.PostBatch(ctx, token, cfg.Telemetry.Headers, []Event{ev})
-	recordUpload(cfg, "batch", ev.EventData["event_name"], err, ev)
+	recordUpload(cfg, "batch", ev.EventData["event_name"], err, BatchRequest{Events: []Event{ev}})
 	return err
 }
 
@@ -304,6 +304,14 @@ func redactUpload(value any) any {
 			out[i] = redactUpload(child)
 		}
 		return out
+	case []Event:
+		out := make([]any, len(item))
+		for i, child := range item {
+			out[i] = redactUpload(child)
+		}
+		return out
+	case BatchRequest:
+		return map[string]any{"events": redactUpload(item.Events)}
 	case Event:
 		return redactUpload(map[string]any{"event_type": item.EventType, "event_data": item.EventData})
 	default:

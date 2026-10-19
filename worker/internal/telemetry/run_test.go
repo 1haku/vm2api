@@ -228,7 +228,7 @@ func TestUploadLogKeepsFortyLinesAndDropsIdentity(t *testing.T) {
 		"env":        map[string]any{"platform": "linux"},
 	}}
 	for range 45 {
-		recordUpload(cfg, "batch", "tengu_init", nil, payload)
+		recordUpload(cfg, "batch", "tengu_init", nil, BatchRequest{Events: []Event{payload}})
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "telemetry-upload.log"))
 	if err != nil {
@@ -244,7 +244,7 @@ func TestUploadLogKeepsFortyLinesAndDropsIdentity(t *testing.T) {
 			t.Fatalf("log kept %s", secret)
 		}
 	}
-	if !strings.Contains(text, `"platform":"linux"`) || !strings.Contains(text, "batch tengu_init ok") {
+	if !strings.Contains(text, `"events":[`) || !strings.Contains(text, `"platform":"linux"`) || !strings.Contains(text, "batch tengu_init ok") {
 		t.Fatalf("log lost the upload shape: %s", text)
 	}
 }
