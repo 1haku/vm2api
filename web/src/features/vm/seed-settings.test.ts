@@ -108,6 +108,31 @@ describe('seed draft', () => {
       CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
     })
   })
+
+  it('keeps theme editable and leaves fixed settings visible', () => {
+    const draft = seedDraftOf({
+      settings_json: {
+        env: {},
+        theme: 'light',
+        autoUpdates: false,
+        grove_enabled: false,
+      },
+      claude_setting: '',
+    })
+    expect(draft.theme).toBe('light')
+    expect(
+      settingsRows(
+        draft.env && {
+          env: draft.env,
+          theme: 'light',
+          autoUpdates: false,
+          grove_enabled: false,
+        },
+        ''
+      ).map((row) => row.key)
+    ).toContain('autoUpdates')
+    expect(seedSaveBody({ ...draft, theme: 'dark' }).theme).toBe('dark')
+  })
 })
 
 describe('telemetry lamp', () => {

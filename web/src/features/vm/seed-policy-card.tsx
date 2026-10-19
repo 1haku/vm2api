@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   REJECT_FLAGS,
+  claudeSettingKeys,
   seedDraftOf,
   seedSaveBody,
   settingsRows,
@@ -128,6 +129,7 @@ export function SeedPolicyCard({
   const fileSetting =
     typeof seed.claude_setting === 'string' ? seed.claude_setting : ''
   const rows = settingsRows(seed.settings_json, fileSetting)
+  const claudeNamed = claudeSettingKeys(fileSetting)
   const fileMissing = seed.settings_json == null
 
   const patch = (next: Partial<SeedDraft>) =>
@@ -152,37 +154,62 @@ export function SeedPolicyCard({
           </p>
         ) : (
           <div className='divide-y'>
+            {Object.keys(draft.env).map((key) => (
+              <label
+                key={key}
+                className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'
+              >
+                <span className='inline-flex min-w-0 items-center gap-2 font-mono text-xs font-medium break-all'>
+                  {claudeNamed.has(key) ? (
+                    <span
+                      className='size-1.5 shrink-0 rounded-full bg-primary'
+                      title='也写在 claude.setting'
+                    />
+                  ) : (
+                    <span className='size-1.5 shrink-0' />
+                  )}
+                  {key}
+                </span>
+                <Input
+                  aria-label={key}
+                  value={draft.env[key] ?? ''}
+                  disabled={saving}
+                  spellCheck={false}
+                  onChange={(event) =>
+                    patch({ env: { ...draft.env, [key]: event.target.value } })
+                  }
+                  className='h-8 font-mono text-xs'
+                />
+              </label>
+            ))}
+            <label className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'>
+              <span className='font-mono text-xs font-medium'>theme</span>
+              <Input
+                aria-label='theme'
+                value={draft.theme}
+                disabled={saving}
+                spellCheck={false}
+                onChange={(event) => patch({ theme: event.target.value })}
+                className='h-8 font-mono text-xs'
+              />
+            </label>
             {rows
-              .filter((row) => row.key in draft.env)
+              .filter(
+                (row) =>
+                  row.key === 'autoUpdates' || row.key === 'grove_enabled'
+              )
               .map((row) => (
-                <label
+                <div
                   key={row.key}
                   className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'
                 >
-                  <span className='inline-flex min-w-0 items-center gap-2 font-mono text-xs font-medium break-all'>
-                    {row.inClaudeSetting ? (
-                      <span
-                        className='size-1.5 shrink-0 rounded-full bg-primary'
-                        title='也写在 claude.setting'
-                      />
-                    ) : (
-                      <span className='size-1.5 shrink-0' />
-                    )}
+                  <span className='font-mono text-xs font-medium'>
                     {row.key}
                   </span>
-                  <Input
-                    aria-label={row.key}
-                    value={draft.env[row.key] ?? ''}
-                    disabled={saving}
-                    spellCheck={false}
-                    onChange={(event) =>
-                      patch({
-                        env: { ...draft.env, [row.key]: event.target.value },
-                      })
-                    }
-                    className='h-8 font-mono text-xs'
-                  />
-                </label>
+                  <span className='font-mono text-xs text-muted-foreground'>
+                    {row.value} · 播种时固定
+                  </span>
+                </div>
               ))}
           </div>
         )}

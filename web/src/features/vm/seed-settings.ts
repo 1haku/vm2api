@@ -26,6 +26,7 @@ export type SeedDraft = TelemetrySeedFlags & {
   reject_client_settings: boolean
   reject_client_metadata_identity: boolean
   env: Record<string, string>
+  theme: string
 }
 
 type ObservedTelemetry = NonNullable<VmKernelSnapshot['telemetry']>
@@ -111,6 +112,12 @@ export function seedDraftOf(
         ? policy.reject_client_metadata_identity !== false
         : true,
     env: settingsEnv(seed?.settings_json),
+    theme:
+      typeof asRecord(seed?.settings_json)?.theme === 'string'
+        ? String(asRecord(seed?.settings_json)?.theme)
+        : typeof policy.theme === 'string'
+          ? policy.theme
+          : 'dark',
   }
 }
 
@@ -120,6 +127,7 @@ export function sameDraft(a: SeedDraft, b: SeedDraft): boolean {
     if ((a.env[key] ?? '') !== (b.env[key] ?? '')) return false
   }
   return (
+    a.theme === b.theme &&
     telemetryEnabled(a) === telemetryEnabled(b) &&
     a.claude_setting === b.claude_setting &&
     a.reject_client_settings === b.reject_client_settings &&
@@ -135,6 +143,7 @@ export function seedSaveBody(draft: SeedDraft): Record<string, unknown> {
     reject_client_settings: draft.reject_client_settings,
     reject_client_metadata_identity: draft.reject_client_metadata_identity,
     extra_env: draft.env,
+    theme: draft.theme,
   }
 }
 
