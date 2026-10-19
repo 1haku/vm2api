@@ -258,11 +258,20 @@ func postEval(ctx context.Context, deps Deps, cfg config.Config, token string, b
 	return err
 }
 
+const uploadLogLines = 40
+
+var redactedUploadKeys = map[string]struct{}{
+	"email": {}, "account_uuid": {}, "accountuuid": {},
+	"organization_uuid": {}, "organizationuuid": {},
+	"device_id": {}, "deviceid": {}, "session_id": {}, "sessionid": {},
+	"user_id": {}, "userid": {}, "id": {},
+}
+
 func recordUpload(cfg config.Config, kind string, name any, err error, payload any) {
 	if strings.TrimSpace(cfg.ConfigPath) == "" {
 		return
 	}
-	body, marshalErr := json.Marshal(payload)
+	body, marshalErr := json.Marshal(redactUpload(payload))
 	if marshalErr != nil {
 		body = []byte("{}")
 	}
@@ -273,14 +282,50 @@ func recordUpload(cfg config.Config, kind string, name any, err error, payload a
 		log.Printf("telemetry sidecar: %s failed class=%s status=%d", kind, class, status)
 		_ = status
 	}
-	line := time.Now().UTC().Format(time.RFC3339) + " " + kind + " " + strings.TrimSpace(fmtName(name)) + " " + state + " " + string(body) + "\n"
+	line := time.Now().UTC().Format(time.RFC3339) + " " + kind + " " + strings.TrimSpace(fmtName(name)) + " " + state + " " + string(body)
 	path := filepath.Join(filepath.Dir(cfg.ConfigPath), "telemetry-upload.log")
-	f, openErr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if openErr != nil {
-		return
+	_ = rewriteUploadLog(path, line)
+}
+
+func redactUpload(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(item))
+		for key, child := range item {
+			if _, drop := redactedUploadKeys[strings.ToLower(key)]; drop {
+				continue
+			}
+			out[key] = redactUpload(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(item))
+		for i, child := range item {
+			out[i] = redactUpload(child)
+		}
+		return out
+	case Event:
+		return redactUpload(map[string]any{"event_type": item.EventType, "event_data": item.EventData})
+	default:
+		return value
 	}
-	defer f.Close()
-	_, _ = f.WriteString(line)
+}
+
+func rewriteUploadLog(path, line string) error {
+	previous, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimRight(string(previous), "\n"), "\n")
+	if len(previous) == 0 {
+		lines = nil
+	}
+	lines = append(lines, line)
+	if len(lines) > uploadLogLines {
+		lines = lines[len(lines)-uploadLogLines:]
+	}
+	next := path + ".next"
+	if err := os.WriteFile(next, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(next, path)
 }
 
 func fmtName(name any) string {
