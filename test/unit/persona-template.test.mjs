@@ -444,7 +444,10 @@ test('PUT routing accepts only 5m and 1h cache TTL values', () => {
 test('PUT routing accepts summarized and passthrough thinking display', () => {
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { thinking_display: 'summarized' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { thinking_display: 'passthrough' } }), [])
-  assert.match(validatePersonaRoutingPatch({ compatibility: { thinking_display: 'omitted' } })[0], /summarized \/ passthrough/)
+  assert.match(
+    validatePersonaRoutingPatch({ compatibility: { thinking_display: 'omitted' } })[0],
+    /summarized \/ passthrough/,
+  )
 })
 
 test('legacy routing without persona_preset keeps the old rewrite path', () => {

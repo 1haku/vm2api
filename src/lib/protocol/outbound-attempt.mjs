@@ -340,6 +340,7 @@ export function prepareOutboundHeaders(reqHeaders, homeDir, identity, model, { c
 
 /** Body + headers after the context_management ↔ context-management beta gate. */
 export function prepareOutboundEnvelope({
+  requestContext = null,
   canonicalBody,
   inbound = {},
   identity,
@@ -374,6 +375,7 @@ export function prepareOutboundEnvelope({
   want1m,
 } = {}) {
   const prepared = prepareOutboundAttempt({
+    requestContext,
     canonicalBody,
     inbound,
     identity,
@@ -427,7 +429,10 @@ export function prepareOutboundEnvelope({
     const beta = ensureFastModeBeta(headers['anthropic-beta'] || '', prepared.body)
     if (beta) headers['anthropic-beta'] = beta
   }
-  const displayed = applyThinkingDisplay(prepared.body, thinkingDisplayMode(routing))
+  const displayed =
+    requestContext?.purpose === 'auto_mode_classifier'
+      ? prepared.body
+      : applyThinkingDisplay(prepared.body, thinkingDisplayMode(routing))
   headers['anthropic-beta'] = withRequestProtocolBetas(
     String(headers['anthropic-beta'] || '').split(','),
     displayed,

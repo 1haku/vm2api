@@ -1,4 +1,3 @@
-
 import { BETA_THINKING_DISPLAY_UPDATES } from './claude-code-betas.mjs'
 
 import {
