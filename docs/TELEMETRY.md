@@ -41,3 +41,13 @@ containers use the persistent `/opt/kin-live` mount. Container IDs therefore
 change, but the VM, credentials, `vms/`, routing, and network identity do not.
 After this one-time migration, subsequent updates atomically replace only the
 Go binaries in `slot-bin` and restart the service processes.
+
+## Upload audit log (debug)
+
+Each successful or failed `PostBatch` / GrowthBook eval append one line to
+`vms/<id>/run/telemetry-upload.log` (next to `worker.json`). The file keeps at
+most 40 lines. Payload JSON is the request shape (`events` wrapper for batch
+uploads) with identity fields stripped (email, account/org UUIDs, device and
+session ids). The panel seed tab exposes this only when **调试上传** is on,
+via `GET /api/panel/vms/:id/seed-settings?debug=1` → `telemetry_log` (string
+array, last 40 lines).

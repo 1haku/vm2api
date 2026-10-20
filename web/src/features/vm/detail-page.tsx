@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useMutation,
   useMutationState,
@@ -69,6 +69,7 @@ import { probeOutcome, type ProbeCheck } from '@/features/vm/probe-status'
 import {
   vmQueryOptions,
   vmSeedQueryOptions,
+  vmSeedUploadLogQueryOptions,
   vmsListQueryOptions,
 } from '@/features/vm/queries'
 import { RuntimeChip } from '@/features/vm/runtime-chip'
@@ -135,9 +136,14 @@ function VmDetailBody({
     refetchInterval: wantedTab === 'seed' ? 2000 : false,
   })
   const seed = useQuery({
-    ...vmSeedQueryOptions(id, seedDebug),
+    ...vmSeedQueryOptions(id),
     enabled: perms.admin && wantedTab === 'seed',
     refetchInterval: wantedTab === 'seed' ? 2000 : false,
+  })
+  const seedUploadLog = useQuery({
+    ...vmSeedUploadLogQueryOptions(id),
+    enabled: perms.admin && wantedTab === 'seed' && seedDebug,
+    refetchInterval: seedDebug && wantedTab === 'seed' ? 2000 : false,
   })
   const routing = useQuery({ ...routingQueryOptions(), enabled: perms.admin })
   usePoolSeatStream()
@@ -160,6 +166,19 @@ function VmDetailBody({
   const proxy = ((data.proxy as VmProxySnap | undefined) ||
     vm.proxy ||
     {}) as VmProxySnap
+  const seedSlot = useMemo(() => {
+    const locale =
+      typeof vm.locale === 'string'
+        ? vm.locale
+        : vm.locale === null
+          ? null
+          : undefined
+    return {
+      timezone: vm.timezone,
+      timezone_source: vm.timezone_source,
+      locale,
+    }
+  }, [vm.timezone, vm.timezone_source, vm.locale])
   const test = useVmTestChat(vm)
   const refreshAll = async () => {
     await Promise.all([
@@ -235,8 +254,12 @@ function VmDetailBody({
       }),
     onSuccess: async () => {
       toast.success('已播种')
+      await refreshAll()
       await qc.invalidateQueries({
         queryKey: ['panel', 'vm', id, 'seed'],
+      })
+      await qc.invalidateQueries({
+        queryKey: ['panel', 'vm', id, 'seed-upload-log'],
       })
     },
     onError: (error: Error) => toast.error(error.message),
@@ -574,11 +597,13 @@ function VmDetailBody({
                 {seed.data ? (
                   <SeedPolicyCard
                     seed={seed.data}
+                    slot={seedSlot}
                     telemetry={kernel?.telemetry}
                     saving={saveSeed.isPending}
                     syncTelemetry={syncTelemetry}
                     debug={seedDebug}
                     onDebug={setSeedDebug}
+                    uploadLog={seedUploadLog.data}
                     proxyTimezone={proxy.geo?.timezone || ''}
                     onSave={(next) => saveSeed.mutate(next)}
                   />

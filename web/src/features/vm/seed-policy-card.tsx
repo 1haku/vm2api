@@ -16,13 +16,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   REJECT_FLAGS,
+  SEED_LOCALE_OPTIONS,
+  SEED_TIMEZONE_OPTIONS,
   claudeSettingKeys,
+  partitionSeedEnvKeys,
   seedDraftOf,
   seedSaveBody,
   settingsRows,
   sameDraft,
   telemetryLive,
   type SeedDraft,
+  type SeedSlotContext,
 } from '@/features/vm/seed-settings'
 import { telemetryEnabled } from '@/features/vm/telemetry-policy'
 
@@ -50,17 +54,6 @@ function Lamp({ tone }: { tone: 'on' | 'off' | 'unknown' }) {
     </span>
   )
 }
-
-const LOCALES = [
-  ['en', 'en_US.UTF-8'],
-  ['cn', 'zh_CN.UTF-8'],
-  ['jp', 'ja_JP.UTF-8'],
-] as const
-const ZONES = [
-  ['en', 'America/Los_Angeles'],
-  ['cn', 'Asia/Shanghai'],
-  ['jp', 'Asia/Tokyo'],
-] as const
 
 function namedChoice(
   table: readonly (readonly [string, string])[],
@@ -114,47 +107,54 @@ function LocaleField(props: {
   disabled: boolean
   onChange: (value: string) => void
 }) {
-  return <ChoiceField label='语言' table={LOCALES} {...props} />
+  return <ChoiceField label='语言' table={SEED_LOCALE_OPTIONS} {...props} />
 }
 
 function ZoneField({
-  value,
+  follow,
+  fixed,
   proxyZone,
   disabled,
-  onChange,
+  onFollow,
+  onFixed,
 }: {
-  value: string
+  follow: boolean
+  fixed: string
   proxyZone: string
   disabled: boolean
-  onChange: (value: string) => void
+  onFollow: () => void
+  onFixed: (value: string) => void
 }) {
-  const following = value === ''
   return (
     <div className='space-y-1'>
       <ChoiceField
         label='时区'
-        table={ZONES}
-        value={following ? proxyZone : value}
+        table={SEED_TIMEZONE_OPTIONS}
+        value={follow ? proxyZone : fixed}
         disabled={disabled}
-        onChange={onChange}
+        onChange={onFixed}
       />
       <Button
         type='button'
         size='sm'
-        variant={following ? 'secondary' : 'ghost'}
+        variant={follow ? 'secondary' : 'ghost'}
         className='h-7 px-2 text-xs'
-        disabled={disabled || following}
-        onClick={() => onChange('')}
+        disabled={disabled || follow}
+        onClick={onFollow}
       >
-        {following
+        {follow
           ? proxyZone
             ? `跟随当前 SOCKS5 · ${proxyZone}`
             : '跟随当前 SOCKS5 · 还没有时区'
           : '改回跟随当前 SOCKS5'}
       </Button>
+      <p className='text-[11px] text-muted-foreground'>
+        播种时由槽位写入，不经 extra_env
+      </p>
     </div>
   )
 }
+
 function TelemetryUploadLog({ lines }: { lines: unknown }) {
   const rows = Array.isArray(lines)
     ? lines.filter(
@@ -215,31 +215,36 @@ function ToggleRow({
 
 export function SeedPolicyCard({
   seed,
+  slot,
   telemetry,
   onSave,
   saving,
   syncTelemetry = false,
   debug,
   onDebug,
+  uploadLog,
   proxyTimezone = '',
 }: {
   seed: VmSeedSettings
+  slot: SeedSlotContext
   telemetry?: ObservedTelemetry | null
   onSave: (next: Record<string, unknown>) => void
   saving: boolean
   syncTelemetry?: boolean
   debug: boolean
   onDebug: (next: boolean) => void
+  uploadLog?: string[] | null
   proxyTimezone?: string | null
 }) {
   const [locked, setLocked] = useState(true)
   const [askUnlock, setAskUnlock] = useState(false)
   const [askSave, setAskSave] = useState(false)
-  const saved = seedDraftOf(seed)
+  const saved = seedDraftOf(seed, slot)
   const [draft, setDraft] = useState<SeedDraft>(saved)
   useEffect(() => {
-    setDraft(seedDraftOf(seed))
-  }, [seed])
+    setDraft(seedDraftOf(seed, slot))
+  }, [seed, slot])
+
   const dirty = !sameDraft(draft, saved)
   const on = telemetryEnabled(draft)
   const live = telemetryLive(seed, telemetry)
@@ -248,6 +253,9 @@ export function SeedPolicyCard({
   const rows = settingsRows(seed.settings_json, fileSetting)
   const claudeNamed = claudeSettingKeys(fileSetting)
   const fileMissing = seed.settings_json == null
+  const { editable: editableEnvKeys, readonly: readonlyEnvKeys } =
+    partitionSeedEnvKeys(draft.env)
+  const editDisabled = locked || saving
 
   const patch = (next: Partial<SeedDraft>) =>
     setDraft((current) => ({ ...current, ...next }))
@@ -259,6 +267,7 @@ export function SeedPolicyCard({
           <h2 className='text-sm font-semibold'>当前槽 settings.json</h2>
           <p className='font-mono text-[11px] text-muted-foreground'>
             {fileMissing ? '文件未写入' : `${rows.length} 项`}
+            {locked ? ' · 已锁定' : ' · 已解锁'}
           </p>
         </header>
         {fileMissing ? (
@@ -271,8 +280,47 @@ export function SeedPolicyCard({
           </p>
         ) : (
           <div className='divide-y'>
-            {Object.keys(draft.env).map((key) => (
+            {editableEnvKeys.map((key) => (
               <label
+                key={key}
+                className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'
+              >
+                <span className='inline-flex min-w-0 items-center gap-2 font-mono text-xs font-medium break-all'>
+                  {claudeNamed.has(key) ? (
+                    <span
+                      className='size-1.5 shrink-0 rounded-full bg-primary'
+                      title='也写在 claude.setting'
+                    />
+                  ) : (
+                    <span className='size-1.5 shrink-0' />
+                  )}
+                  {key}
+                </span>
+                <Input
+                  aria-label={key}
+                  value={draft.env[key] ?? ''}
+                  disabled={editDisabled}
+                  spellCheck={false}
+                  onChange={(event) =>
+                    patch({ env: { ...draft.env, [key]: event.target.value } })
+                  }
+                  className='h-8 font-mono text-xs'
+                />
+              </label>
+            ))}
+            <label className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'>
+              <span className='font-mono text-xs font-medium'>theme</span>
+              <Input
+                aria-label='theme'
+                value={draft.theme}
+                disabled={editDisabled}
+                spellCheck={false}
+                onChange={(event) => patch({ theme: event.target.value })}
+                className='h-8 font-mono text-xs'
+              />
+            </label>
+            {readonlyEnvKeys.map((key) => (
+              <div
                 key={key}
                 className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'
               >
@@ -289,48 +337,34 @@ export function SeedPolicyCard({
                 </span>
                 {key === 'TZ' ? (
                   <ZoneField
-                    value={draft.env.TZ ?? ''}
+                    follow={draft.timezoneFollow}
+                    fixed={draft.timezoneFixed}
                     proxyZone={proxyTimezone || ''}
-                    disabled={locked || saving}
-                    onChange={(value) =>
-                      patch({ env: { ...draft.env, TZ: value } })
+                    disabled={editDisabled}
+                    onFollow={() =>
+                      patch({ timezoneFollow: true, timezoneFixed: '' })
+                    }
+                    onFixed={(value) =>
+                      patch({ timezoneFollow: false, timezoneFixed: value })
                     }
                   />
-                ) : key === 'LANG' || key === 'LC_ALL' ? (
+                ) : key === 'LANG' ? (
                   <LocaleField
-                    value={draft.env[key] ?? ''}
-                    disabled={locked || saving}
-                    onChange={(value) =>
-                      patch({ env: { ...draft.env, [key]: value } })
-                    }
+                    value={draft.locale}
+                    disabled={editDisabled}
+                    onChange={(value) => patch({ locale: value })}
                   />
+                ) : key === 'LC_ALL' ? (
+                  <span className='font-mono text-xs text-muted-foreground'>
+                    {draft.locale} · 随 LANG 播种时固定
+                  </span>
                 ) : (
-                  <Input
-                    aria-label={key}
-                    value={draft.env[key] ?? ''}
-                    disabled={locked || saving}
-                    spellCheck={false}
-                    onChange={(event) =>
-                      patch({
-                        env: { ...draft.env, [key]: event.target.value },
-                      })
-                    }
-                    className='h-8 font-mono text-xs'
-                  />
+                  <span className='font-mono text-xs text-muted-foreground'>
+                    {draft.env[key] === '' ? '空' : draft.env[key]} · 播种时固定
+                  </span>
                 )}
-              </label>
+              </div>
             ))}
-            <label className='grid items-center gap-2 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)]'>
-              <span className='font-mono text-xs font-medium'>theme</span>
-              <Input
-                aria-label='theme'
-                value={draft.theme}
-                disabled={locked || saving}
-                spellCheck={false}
-                onChange={(event) => patch({ theme: event.target.value })}
-                className='h-8 font-mono text-xs'
-              />
-            </label>
             {rows
               .filter(
                 (row) =>
@@ -385,7 +419,7 @@ export function SeedPolicyCard({
                 : '非必要流量=0，DNT 开。这两项跟着开关走。'
             }
             checked={on}
-            disabled={locked || saving}
+            disabled={editDisabled}
             onCheckedChange={(value) => patch({ telemetry_disabled: !value })}
           />
           {REJECT_FLAGS.map(([key, label]) => (
@@ -403,7 +437,7 @@ export function SeedPolicyCard({
                     : '入站身份会留下来。'
               }
               checked={!!draft[key]}
-              disabled={locked || saving}
+              disabled={editDisabled}
               onCheckedChange={(value) => patch({ [key]: value })}
             />
           ))}
@@ -416,7 +450,7 @@ export function SeedPolicyCard({
           <Textarea
             id='seed-claude-setting'
             value={draft.claude_setting}
-            disabled={locked || saving}
+            disabled={editDisabled}
             onChange={(event) => patch({ claude_setting: event.target.value })}
             className='min-h-28 font-mono text-xs'
             spellCheck={false}
@@ -429,6 +463,7 @@ export function SeedPolicyCard({
             {dirty ? ' 有未播种的改动。' : ' 与当前策略一致。'}
           </p>
         </div>
+
         <div className='flex gap-2 border-t px-4 py-3'>
           <Button
             size='sm'
@@ -470,12 +505,12 @@ export function SeedPolicyCard({
           open={askSave}
           onOpenChange={setAskSave}
           title='确认播种'
-          desc='把当前改动写入这个槽的 settings.json 和 claude.setting。'
+          desc='把当前改动写入这个槽的 settings.json 和 claude.setting。时区/语言会按槽位规则写入，不会经 extra_env 覆盖契约键。'
           confirmText='确认写入'
           cancelBtnText='取消'
           isLoading={saving}
           handleConfirm={() => {
-            onSave(seedSaveBody(draft, proxyTimezone || ''))
+            onSave(seedSaveBody(draft))
             setAskSave(false)
             setLocked(true)
           }}
@@ -491,7 +526,7 @@ export function SeedPolicyCard({
             disabled={saving}
             onCheckedChange={onDebug}
           />
-          {debug ? <TelemetryUploadLog lines={seed.telemetry_log} /> : null}
+          {debug ? <TelemetryUploadLog lines={uploadLog} /> : null}
         </div>
       </aside>
     </div>

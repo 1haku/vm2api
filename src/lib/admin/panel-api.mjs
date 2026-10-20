@@ -1516,7 +1516,7 @@ function hostStats() {
     load1,
     load5,
     load15,
-    cpu_pct: Math.round(Math.min(100, (load1 / n) * 1000) / 10),
+    cpu_pct: Math.round(Math.min(1000, (load1 / n) * 1000)) / 10,
     mem_total: total,
     mem_free: free,
     mem_used: used,

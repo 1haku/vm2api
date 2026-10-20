@@ -11,21 +11,49 @@ import { rustKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { restartTelemetrySidecar } from './slot-process-status.mjs'
 import { vmNodeId } from '../cluster/placement.mjs'
 import { restartRemoteServices } from '../cluster/remote-slot.mjs'
-import { ensureProxyEgress, isLocalEgressProxy, stopEgressProcess, waitEgressExit } from './egress.mjs'
+import {
+  drainEgressForProxyConfig,
+  egressPidsForProxyConfig,
+  inspectEgressProcess,
+  isLocalEgressProxy,
+  readEgressListenTcp,
+  runExclusiveProxyEgress,
+  startProxyEgress,
+  stopEgressProcess,
+  waitEgressExit,
+  waitPortReleased,
+} from './egress.mjs'
 
 const ACTIONS = new Set(['collect', 'reload', 'roll', 'telemetry'])
 
 export async function restartLocalEgress(projectRoot, vm, opts = {}) {
   if (isLocalEgressProxy(vm.proxy)) return { ok: true, egress: 'local' }
-  const stopped = stopEgressProcess(projectRoot, vm.proxy?.id)
-  if (!stopped.ok) return { ok: false, action: 'egress_stop_failed', error: stopped.error }
-  for (const pid of stopped.pending || []) {
-    const exited = await waitEgressExit(pid)
-    if (!exited.ok) return { ok: false, action: 'egress_stop_failed', error: exited.error, pid }
-  }
-  const started = await ensureProxyEgress(projectRoot, vm.proxy, opts)
-  if (!started?.ok) return { ok: false, action: 'egress_start_failed', error: started?.error || 'kin-egress failed' }
-  return { ok: true, egress: 'restarted', pid: started.pid }
+  const proxyId = vm.proxy?.id
+  return runExclusiveProxyEgress(projectRoot, proxyId, async () => {
+    const running = inspectEgressProcess(projectRoot, proxyId)
+    const stopped = stopEgressProcess(projectRoot, proxyId)
+    if (!stopped.ok) return { ok: false, action: 'egress_stop_failed', error: stopped.error }
+    const pending = new Set(stopped.pending || [])
+    for (const pid of egressPidsForProxyConfig(projectRoot, proxyId)) pending.add(pid)
+    if (running.ok && running.pid) pending.add(running.pid)
+    for (const pid of pending) {
+      const exited = await waitEgressExit(pid)
+      if (!exited.ok) return { ok: false, action: 'egress_stop_failed', error: exited.error, pid }
+    }
+    const drained = await drainEgressForProxyConfig(projectRoot, proxyId)
+    if (!drained.ok) return { ok: false, action: 'egress_stop_failed', error: drained.error, pid: drained.pid }
+    const spec = running.ok ? String(running.listen_tcp || '') : readEgressListenTcp(projectRoot, proxyId)
+    const colon = spec.lastIndexOf(':')
+    const host = colon > 0 ? spec.slice(0, colon) : ''
+    const port = colon > 0 ? Number(spec.slice(colon + 1)) : 0
+    if (host && Number.isFinite(port) && port > 0) {
+      const portFree = await waitPortReleased(host, port)
+      if (!portFree.ok) return { ok: false, action: 'egress_stop_failed', error: portFree.error }
+    }
+    const started = await startProxyEgress(projectRoot, vm.proxy, opts)
+    if (!started?.ok) return { ok: false, action: 'egress_start_failed', error: started?.error || 'kin-egress failed' }
+    return { ok: true, egress: 'restarted', pid: started.pid }
+  })
 }
 
 async function restartLocalServices({ projectRoot, vm, enabled, egressOpts = {} }) {
@@ -119,12 +147,12 @@ export async function updateOneSlot(
     if (action === 'telemetry') {
       const enabled =
         telemetryEnabled === undefined ? vm.seed_policy?.telemetry_disabled === false : telemetryEnabled === true
-      const changed = await (telemetryFn || (vmNodeId(vm) ? restartRemoteServices : restartLocalServices))({
-        projectRoot,
-        vm: getVm(projectRoot, id) || vm,
-        telemetryEnabled: enabled,
-        enabled,
-      })
+      const vmRef = getVm(projectRoot, id) || vm
+      const changed = telemetryFn
+        ? await telemetryFn({ projectRoot, vm: vmRef, telemetryEnabled: enabled, enabled })
+        : vmNodeId(vm)
+          ? await restartRemoteServices(vmRef, projectRoot, { telemetryEnabled: enabled })
+          : await restartLocalServices({ projectRoot, vm: vmRef, enabled })
       result.telemetry = changed
       if (!changed?.ok) {
         result.error = changed?.error || 'telemetry service update failed'
