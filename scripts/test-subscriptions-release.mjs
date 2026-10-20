@@ -130,6 +130,7 @@ const unit = [
   'auto-mode',
   'haiku-55-policy',
   'claude-code-betas',
+  'thread-betas',
   'max-tokens-default',
   'models',
   'pricing',

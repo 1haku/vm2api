@@ -633,7 +633,7 @@ export function SubscriptionsPage() {
                     revoked: '撤销',
                     plan_created: '创建方案',
                     plan_updated: '修改方案',
-                    official_weekly_reset: '跟随官方提前重置周额度',
+                    official_weekly_reset: '跟随官方提前重置额度',
                     interrupted_reservation_released:
                       '中断请求待核查（已释放预留）',
                   } as Record<string, string>
@@ -813,7 +813,7 @@ export function SubscriptionsPage() {
               分组总 RPM 由所有用户共享，每人 RPM
               合并该用户在本分组的所有密钥；按最近 60 秒计数，0
               表示不限。每日额度于北京时间 00:00
-              重置；周额度按上方所选周期重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
+              重置；周周期重置时也会同时恢复日额度。周额度按上方所选周期重置。请求会预留预计用量，结束后按实际用量结算。上游账号限额独立生效。
             </p>
             <Button
               type='submit'

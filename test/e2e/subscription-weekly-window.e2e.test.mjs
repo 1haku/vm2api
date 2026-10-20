@@ -72,11 +72,18 @@ test('Codex plan follows a same-deadline early reset through real panel routes w
     put(now, 0)
     const after = await own()
     assert.equal(after.weekly_used, 0)
-    assert.equal(after.daily_used, 40)
+    assert.equal(after.daily_used, 0)
     assert.equal(after.weekly_reset_at, end)
     assert.equal(after.weekly_source_account, undefined)
     assert.equal(after.weekly_reset_vm_id, undefined)
     assert.equal((await own()).weekly_used, 0)
+    assert.equal((await own()).daily_used, 0)
+    db.prepare(
+      'INSERT INTO custom_subscription_ledger(request_id,subscription_id,amount,created_at) VALUES(?,?,?,?)',
+    ).run('new-codex-spend', id, 1.5, new Date().toISOString())
+    const newSpend = await own()
+    assert.equal(newSpend.daily_used, 1.5)
+    assert.equal(newSpend.weekly_used, 1.5)
     assert.equal(
       db.prepare("SELECT COUNT(*) n FROM custom_subscription_events WHERE action='official_weekly_reset'").get().n,
       1,
@@ -136,9 +143,27 @@ test('official weekly plan is configurable by admins only and user views hide th
       body: { weekly_reset_mode: 'independent' },
     })
     assert.equal(denied.status, 403)
+    const selfReset = await api(gw, 'PATCH', '/api/panel/subscriptions/' + sub.id, {
+      headers,
+      body: { action: 'reset' },
+    })
+    assert.equal(selfReset.status, 403)
+    db.prepare(
+      'INSERT INTO custom_subscription_ledger(request_id,subscription_id,amount,created_at) VALUES(?,?,?,?)',
+    ).run('before-admin-reset', sub.id, 2.5, new Date().toISOString())
+    const beforeReset = (await api(gw, 'GET', '/api/panel/subscriptions', { headers })).json.data.items[0]
+    assert.equal(beforeReset.daily_used, 2.5)
+    assert.equal(beforeReset.weekly_used, 2.5)
     const reset = await api(gw, 'PATCH', '/api/panel/subscriptions/' + sub.id, { body: { action: 'reset' } })
     assert.equal(reset.status, 200)
     assert.equal(reset.json.data.weekly_reset_at, end)
+    assert.equal(reset.json.data.daily_used, 0)
+    assert.equal(reset.json.data.weekly_used, 0)
+    assert.equal(reset.json.data.expires_at, sub.expires_at)
+    assert.equal(
+      db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger WHERE subscription_id=?').get(sub.id).n,
+      1,
+    )
     const bad = await api(gw, 'PATCH', '/api/panel/subscription-plans/' + plan.id, {
       body: { weekly_reset_vm_id: 'unbound' },
     })

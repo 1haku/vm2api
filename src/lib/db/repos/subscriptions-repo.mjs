@@ -297,8 +297,15 @@ export class SubscriptionsRepo {
       official && Number.isFinite(official.start)
         ? official.start
         : anchor + Math.max(0, Math.floor((now - anchor) / (7 * DAY))) * 7 * DAY
-    const dayStart = sub.reset_at > day ? sub.reset_at : day
+    // A confirmed weekly rollover (including an official early reset) starts
+    // fresh daily quota too. Deadline-only changes keep the existing start.
+    // This is a reporting/admission boundary, never a rewrite of the ledger.
+    const dailyWindowStart = iso(Math.max(Date.parse(day), Number.isFinite(week) ? week : 0))
+    const dayStart = sub.reset_at > dailyWindowStart ? sub.reset_at : dailyWindowStart
     const weekStart = sub.reset_at > iso(week) ? sub.reset_at : iso(week)
+    const weekEnd = official ? official.end : week + 7 * DAY
+    const midnight = Date.parse(day) + DAY
+    const dailyReset = Number.isFinite(weekEnd) && weekEnd > now ? Math.min(midnight, weekEnd) : midnight
     const spent = (since) =>
       this.db
         .prepare(
@@ -308,8 +315,8 @@ export class SubscriptionsRepo {
     return {
       daily_used: spent(dayStart),
       weekly_used: spent(weekStart),
-      daily_reset_at: iso(Date.parse(day) + DAY),
-      weekly_reset_at: official ? (Number.isFinite(official.end) ? iso(official.end) : null) : iso(week + 7 * DAY),
+      daily_reset_at: iso(dailyReset),
+      weekly_reset_at: Number.isFinite(weekEnd) ? iso(weekEnd) : null,
       weekly_reset_mode: plan?.weekly_reset_mode || 'independent',
       weekly_sync_status: official?.status || 'independent',
     }

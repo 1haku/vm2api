@@ -10,7 +10,7 @@ import { readClaudeWeeklyReset, WEEK_MS } from '../../src/lib/admin/subscription
 import { VmsRepo } from '../../src/lib/db/repos/vms-repo.mjs'
 import { observeCodexWeekly } from '../../src/lib/protocol/codex-weekly-reset.mjs'
 
-test('Codex early official reset clears each following plan once, preserves daily spend, ledger and reservations', (t) => {
+test('Codex early official reset clears daily and weekly spend once while preserving ledger and reservations', (t) => {
   const { db, repo, time } = setup(t)
   const vms = new VmsRepo(db)
   const vm = { id: 'Codex', platform: 'openai', codex: { chatgpt_account_id: 'test-account' } }
@@ -50,12 +50,13 @@ test('Codex early official reset clears each following plan once, preserves dail
   time(initial + 10000)
   sample(initial + 10000, 0)
   assert.equal(repo.progress(raw(subscriptions[0])).weekly_used, 80)
+  assert.equal(repo.progress(raw(subscriptions[0])).daily_used, 80)
   time(initial + 16000)
   sample(initial + 16000, 0)
   for (const id of subscriptions) {
     const p = repo.progress(raw(id))
     assert.equal(p.weekly_used, 0)
-    assert.equal(p.daily_used, 80)
+    assert.equal(p.daily_used, 0)
     assert.equal(p.weekly_reset_at, new Date(boundary).toISOString())
   }
   assert.equal(
@@ -66,9 +67,11 @@ test('Codex early official reset clears each following plan once, preserves dail
   repo.settle('still-running', subscriptions[0], 1.5)
   const restarted = new SubscriptionsRepo(db)
   assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 1.5)
+  assert.equal(restarted.progress(raw(subscriptions[0])).daily_used, 1.5)
   time(initial + 30000)
   sample(initial + 30000, 0)
   assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 1.5)
+  assert.equal(restarted.progress(raw(subscriptions[0])).daily_used, 1.5)
   assert.equal(
     db.prepare("SELECT COUNT(*) n FROM custom_subscription_events WHERE action='official_weekly_reset'").get().n,
     2,
@@ -78,6 +81,7 @@ test('Codex early official reset clears each following plan once, preserves dail
   time(initial + 50000)
   sample(initial + 50000, 0, initial + 50000 + WEEK_MS)
   assert.equal(restarted.progress(raw(subscriptions[0])).weekly_used, 0)
+  assert.equal(restarted.progress(raw(subscriptions[0])).daily_used, 0)
   assert.equal(
     restarted.progress(raw(subscriptions[0])).weekly_reset_at,
     new Date(initial + 50000 + WEEK_MS).toISOString(),
@@ -164,9 +168,14 @@ test('selected official 7d total boundary is shared, spend stays per user, manua
   time(initial + 1000)
   repo.update(a, { action: 'reset' }, 'admin')
   assert.equal(repo.progress(raw(a)).weekly_used, 0)
+  assert.equal(repo.progress(raw(a)).daily_used, 0)
   assert.equal(repo.progress(raw(b)).weekly_used, 23)
+  assert.equal(repo.progress(raw(b)).daily_used, 23)
   assert.equal(repo.progress(raw(a)).weekly_reset_at, new Date(boundary).toISOString())
   assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger').get().n, 2)
+  repo.settle('after-manual-reset-same-ms', a, 4)
+  assert.equal(repo.progress(raw(a)).daily_used, 4)
+  assert.equal(repo.progress(raw(a)).weekly_used, 4)
   const before = raw(a).expires_at
   repo.update(a, { action: 'renew', days: 2 }, 'admin')
   assert.notEqual(raw(a).expires_at, before)
@@ -177,11 +186,15 @@ test('selected official 7d total boundary is shared, spend stays per user, manua
 
 test('expired or missing upstream reset never fabricates a new window; fresh snapshot resumes after restart', (t) => {
   const { db, repo, plan, a, raw, time, setReset } = setup(t)
+  time(boundary - 60000)
   repo.settle('before', a, 7)
+  assert.equal(repo.progress(raw(a)).daily_used, 7)
+  assert.equal(repo.progress(raw(a)).daily_reset_at, new Date(boundary).toISOString())
   setReset(null)
   assert.equal(repo.progress(raw(a)).weekly_sync_status, 'cached')
   time(boundary)
   assert.equal(repo.progress(raw(a)).weekly_used, 7)
+  assert.equal(repo.progress(raw(a)).daily_used, 7)
   assert.equal(repo.progress(raw(a)).weekly_sync_status, 'waiting')
   assert.throws(
     () => repo.reserve({ user_id: 'a', group_id: plan.id }, 'denied', { model: 'claude-haiku-4-5', max_tokens: 1 }),
@@ -191,10 +204,15 @@ test('expired or missing upstream reset never fabricates a new window; fresh sna
   setReset(String((boundary + WEEK_MS) / 1000))
   const restarted = new SubscriptionsRepo(db)
   assert.equal(restarted.progress(raw(a)).weekly_used, 0)
+  assert.equal(restarted.progress(raw(a)).daily_used, 0)
   assert.equal(restarted.progress(raw(a)).weekly_sync_status, 'synced')
   repo.settle('late-settlement', a, 3)
   assert.equal(restarted.progress(raw(a)).weekly_used, 3)
+  assert.equal(restarted.progress(raw(a)).daily_used, 3)
   assert.equal(restarted.progress(raw(a)).weekly_reset_at, new Date(boundary + WEEK_MS).toISOString())
+  time(Date.parse('2026-10-14T16:00:00Z'))
+  assert.equal(restarted.progress(raw(a)).daily_used, 0)
+  assert.equal(restarted.progress(raw(a)).weekly_used, 3)
 })
 
 test('changing deadline within a current window never clears consumption', (t) => {
@@ -203,6 +221,7 @@ test('changing deadline within a current window never clears consumption', (t) =
   setReset(new Date(boundary + 3600000).toISOString())
   const progress = repo.progress(raw(a))
   assert.equal(progress.weekly_used, 12)
+  assert.equal(progress.daily_used, 12)
   assert.equal(progress.weekly_reset_at, new Date(boundary + 3600000).toISOString())
 })
 

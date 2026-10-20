@@ -367,12 +367,14 @@ test('manual quota reset restarts the weekly window, enforces it past the old bo
   assert.equal(reset.weekly_reset_at, new Date(boundary).toISOString())
   assert.equal(reset.daily_reset_at, '2026-10-04T16:00:00.000Z')
   assert.equal(reset.weekly_used, 0)
+  assert.equal(reset.daily_used, 0)
   assert.equal(reset.starts_at, original.starts_at)
   assert.equal(reset.expires_at, original.expires_at)
   assert.equal(repo.progress(other).weekly_reset_at, new Date(start + 7 * day).toISOString())
   // Settlement in the same millisecond as reset is counted by ledger sequence.
   repo.settle('after-reset', original.id, 10)
   assert.equal(repo.progress(repo.entitlement(a)).weekly_used, 10)
+  assert.equal(repo.progress(repo.entitlement(a)).daily_used, 10)
   t.mock.timers.setTime(start + 7 * day + 1)
   assert.equal(
     repo.progress(repo.entitlement(a)).weekly_used,
@@ -398,6 +400,29 @@ test('manual quota reset restarts the weekly window, enforces it past the old bo
   )
   const raw = repo.entitlement(a)
   assert.equal(repo.progress({ ...raw, reset_at: undefined }).weekly_reset_at, new Date(start + 14 * day).toISOString())
+})
+
+test('independent weekly rollover restores daily and weekly quota before calendar midnight', (t) => {
+  const start = Date.parse('2026-10-01T04:00:00Z'),
+    day = 86400000
+  t.mock.timers.enable({ apis: ['Date'], now: start })
+  const { db, repo, a } = setup(t, { daily_limit_usd: 100, weekly_limit_usd: 100 })
+  const id = repo.entitlement(a).id,
+    boundary = start + 7 * day
+  t.mock.timers.setTime(boundary - 60000)
+  repo.settle('old-week-same-day', id, 50)
+  assert.equal(repo.list('a')[0].daily_used, 50)
+  assert.equal(repo.list('a')[0].daily_reset_at, new Date(boundary).toISOString())
+  t.mock.timers.setTime(boundary)
+  assert.equal(repo.list('a')[0].daily_used, 0)
+  assert.equal(repo.list('a')[0].weekly_used, 0)
+  repo.settle('new-week', id, 2)
+  assert.equal(repo.list('a')[0].daily_used, 2)
+  assert.equal(repo.list('a')[0].weekly_used, 2)
+  t.mock.timers.setTime(Date.parse('2026-10-08T16:00:00Z'))
+  assert.equal(repo.list('a')[0].daily_used, 0)
+  assert.equal(repo.list('a')[0].weekly_used, 2)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger WHERE subscription_id=?').get(id).n, 2)
 })
 
 test('batch updates validate all members before modifying and retain quota history', (t) => {
