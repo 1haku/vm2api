@@ -98,6 +98,13 @@ function valueStamp(value, depth = 0) {
   return { t: typeof value }
 }
 
+function onlyCounter(delta) {
+  if (!delta || delta.added || delta.removed || delta.key_order) return null
+  if (delta.change === 'counter_only') return delta
+  if (!delta.changed || delta.changed.length !== 1) return null
+  return onlyCounter(delta.changed[0])
+}
+
 function stampDelta(prev, next) {
   if (!prev || !next) return { change: 'missing' }
   if (prev.d && prev.d === next.d) return null
@@ -118,7 +125,17 @@ function stampDelta(prev, next) {
   }
   if (prev.t === 'a') {
     if (prev.n !== next.n) return { change: 'length', prev_n: prev.n, next_n: next.n }
-    return { change: 'value', prev_n: prev.n, next_n: next.n }
+    const changed = []
+    const seen = Math.min(prev.items?.length || 0, next.items?.length || 0)
+    for (let i = 0; i < seen; i++) {
+      const delta = stampDelta(prev.items[i], next.items[i])
+      if (delta) changed.push({ index: i, ...delta })
+    }
+    if (!changed.length) return { change: 'value', prev_n: prev.n, next_n: next.n, capped: seen < prev.n }
+    const counter = changed.length === 1 ? onlyCounter(changed[0]) : null
+    if (counter)
+      return { change: 'counter_only', index: changed[0].index, prev_n: counter.prev_n, next_n: counter.next_n }
+    return { change: 'items', prev_n: prev.n, next_n: next.n, changed: changed.slice(0, 8) }
   }
   if (prev.t === 'o') {
     const added = next.keys.filter((key) => !prev.keys.includes(key))
@@ -248,28 +265,36 @@ function toolsDiff(previous, current) {
   }
 }
 
-function comparePrefix(previous, current) {
-  if (!previous) return { turn: 1, break: null }
-  const turn = (previous.turn || 0) + 1
-  if (previous.tools !== current.tools) {
-    return { turn, break: { section: 'tools', kind: 'structure', diff: toolsDiff(previous, current) } }
-  }
-  if (previous.system !== current.system) return { turn, break: { section: 'system', kind: 'text' } }
+function messageBreak(previous, current) {
   const prevHashes = previous.messages.map((message) => message.hash)
   const currHashes = current.messages.map((message) => message.hash)
   const index = firstDivergence(prevHashes, currHashes)
-  if (index >= 0) {
-    return {
-      turn,
-      break: {
-        section: 'messages',
-        index,
-        kind: classifyParts(previous.messages[index], current.messages[index]),
-        diff: messageDiff(previous.messages[index], current.messages[index]),
-      },
-    }
+  if (index < 0) return null
+  return {
+    section: 'messages',
+    index,
+    kind: classifyParts(previous.messages[index], current.messages[index]),
+    diff: messageDiff(previous.messages[index], current.messages[index]),
   }
-  return { turn, break: null }
+}
+
+function sectionDiffs(previous, current) {
+  const sections = []
+  if (previous.tools !== current.tools) {
+    sections.push({ section: 'tools', index: null, kind: 'structure', diff: toolsDiff(previous, current) })
+  }
+  if (previous.system !== current.system) sections.push({ section: 'system', index: null, kind: 'text' })
+  const messages = messageBreak(previous, current)
+  if (messages) sections.push(messages)
+  return sections
+}
+
+function comparePrefix(previous, current) {
+  if (!previous) return { turn: 1, break: null }
+  const turn = (previous.turn || 0) + 1
+  const sections = sectionDiffs(previous, current)
+  if (!sections.length) return { turn, break: null }
+  return { turn, break: sections.length > 1 ? { ...sections[0], sections } : sections[0] }
 }
 
 function classifyParts(previous, current) {
@@ -285,30 +310,19 @@ function classifyParts(previous, current) {
 }
 
 /**
- * Same-request inbound vs Node outbound first difference. No prompt/image bytes.
- * `kind=structure` is not a wire field and does not prove the block list changed:
- * a tool_result body edit, an extra key, or key order also land here.
+ * Same-request inbound vs Node outbound differences. No prompt/image bytes.
+ * Every changed section is returned. A tools difference must not hide a
+ * message difference. `kind=structure` is not a wire field and does not prove
+ * the block list changed: a tool_result body edit, an extra key, or key order
+ * also land here.
  */
 export function firstHistoryDiff(inbound, outbound) {
   if (!inbound || !outbound || typeof inbound !== 'object' || typeof outbound !== 'object') {
-    return { section: null, index: null, kind: null }
+    return { section: null, index: null, kind: null, sections: [] }
   }
-  const previous = snapshotBody(inbound)
-  const current = snapshotBody(outbound)
-  if (previous.tools !== current.tools) {
-    return { section: 'tools', index: null, kind: 'structure', diff: toolsDiff(previous, current) }
-  }
-  if (previous.system !== current.system) return { section: 'system', index: null, kind: 'text' }
-  const prevHashes = previous.messages.map((message) => message.hash)
-  const currHashes = current.messages.map((message) => message.hash)
-  const index = firstDivergence(prevHashes, currHashes)
-  if (index < 0) return { section: null, index: null, kind: null }
-  return {
-    section: 'messages',
-    index,
-    kind: classifyParts(previous.messages[index], current.messages[index]),
-    diff: messageDiff(previous.messages[index], current.messages[index]),
-  }
+  const sections = sectionDiffs(snapshotBody(inbound), snapshotBody(outbound))
+  if (!sections.length) return { section: null, index: null, kind: null, sections: [] }
+  return { ...sections[0], sections }
 }
 
 export function formatCacheBreak(entry) {
@@ -323,6 +337,12 @@ export function formatCacheBreak(entry) {
     detail = ` ${diff.type || 'part'}:${diff.fields.change}`
   } else if (diff?.reason) {
     detail = ` ${diff.reason}`
+  }
+  if (Array.isArray(br.sections) && br.sections.length > 1) {
+    detail += `; also ${br.sections
+      .slice(1)
+      .map((item) => (item.section === 'messages' ? `messages[${item.index}]` : item.section))
+      .join(',')}`
   }
   return `${where} ${br.kind}${detail}`
 }

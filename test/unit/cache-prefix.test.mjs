@@ -170,3 +170,46 @@ test('extra message fields and key order are not called a block-shape change', (
   const order = trackCachePrefix('s', reordered, 1).break
   assert.equal(order.diff.fields.key_order, true)
 })
+
+test('a counter nested in tool_result.content[] is counter_only', () => {
+  clearCachePrefixSessions()
+  const tool = (n) => ({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't1',
+            content: [{ type: 'text', text: `<total_tokens>${n} tokens left</total_tokens>` }],
+          },
+        ],
+      },
+    ],
+  })
+  trackCachePrefix('s', tool(100), 0)
+  const broke = trackCachePrefix('s', tool(90), 1).break
+  assert.equal(broke.diff.fields.changed[0].key, 'content')
+  assert.equal(broke.diff.fields.changed[0].change, 'counter_only')
+  assert.equal(JSON.stringify(broke).includes('tokens left'), false)
+})
+
+test('a tools difference does not hide a message difference', () => {
+  const inbound = {
+    tools: [{ name: 'Read', input_schema: { type: 'object' } }],
+    messages: [{ role: 'user', content: 'u1' }],
+  }
+  const outbound = {
+    tools: [{ name: 'Read', input_schema: { type: 'object', required: ['path'] } }],
+    messages: [{ role: 'user', content: 'u1 changed' }],
+  }
+  const diff = firstHistoryDiff(inbound, outbound)
+  assert.equal(diff.section, 'tools')
+  assert.deepEqual(
+    diff.sections.map((item) => item.section),
+    ['tools', 'messages'],
+  )
+  assert.equal(diff.sections[1].index, 0)
+  assert.equal(diff.sections[1].diff.reason, 'part')
+  assert.equal(JSON.stringify(diff).includes('u1 changed'), false)
+})
