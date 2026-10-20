@@ -1,6 +1,6 @@
 # Changelog
 
-## 未发布
+## 1.3.203 — 2026-10-21
 
 - 实验性 macOS 原生节点（Apple Silicon，#585）：节点连上后按 `uname -s` 记录平台（迁移 040 `cluster_nodes.platform`）；macOS 节点不用 Docker，每个槽是 SSH 用户 `gui/<uid>` 域里的两个 launchd 服务（kernel、telemetry），plist、日志、套接字都在 `~/.vm2api/vms/<id>/`，kernel.json 写节点真实路径。产物取自 `payload/darwin-arm64/`（`KIN_DARWIN_PAYLOAD_DIR`），按内容哈希上传到 `~/.vm2api/native/<digest>/`；kin-kernel / cli-node / cc-node 需另行提供 darwin/arm64 构建。预检检查 arm64、图形登录、目录、套接字长度、产物与休眠；看门狗与 supervisor 经 `launchctl` 观察、重启、补加载。首版只支持 Claude 槽与节点本机出口，终端、槽内登录、直连通道、内存在线调整返回 `native_node_unsupported`。见 `docs/MACOS_NODE.md`。
 - 集群节点 SSH 断开（离线、休眠、重启）期间，调度器跳过该节点上的槽位（`node_offline`），重连后自动恢复。
@@ -9,7 +9,7 @@
 - 自动/手动备份流水线改到 worker 线程执行（VACUUM INTO + tar），避免主线程长时间阻塞网关导致 Cloudflare 524。（#638，#639）
 - cli-hop 出站收成官方两段 system（identity + 调用方正文，ephemeral 无 TTL）、缓存标记打最新 user、去掉 eager_input_streaming/工具 cache_control/temperature/context_management，thinking display 默认 summarized 等。（#641）
 - 设置 → 遥测新增日志总开关和保存时间（默认 24 小时，1–168）。这是各槽上传日志的唯一启动源：关闭不写、不显示；打开后槽位运维页直接显示该槽保留窗口内已有记录。sidecar 按同一窗口裁 `telemetry-upload.log`。
-- 槽内 cli-node 进入 native loop 前丢掉 `settings.json` 里安全名单以外的 env（如 `LD_PRELOAD`）。
+- 槽内 cli-node 进入 native loop 前丢掉 `settings.json` 里安全名单以外的 env（如 `LD_PRELOAD`）。cli-node 2.1.296 UPX，sha256 `b5054cb8494670354e61f3e0a0f7b2c3b768832c841140a4e22407fec24ab009`。
 - 授权页默认 OAuth。顺序为 Claude Code、Cookie、授权链接；Setup Token 为授权链接、Cookie。去掉 Console 导入。
 - 入站 device 迁移改为 `041_usage_logs_inbound_device`，避开 macOS 节点占用的 040。
 
