@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- Docker 槽在线扩容：面板成功须 HostConfig 内存与 swap 一致；可读 cgroup 时核对 v2 `memory.max` 或 v1 `memory.limit_in_bytes`（`max`/无上限哨兵在 HostConfig 已匹配时跳过）。扩容后校验失败会 docker update 回滚至扩容前限额且不写 vm 配置。（#623，REQ-0441）
+
 ## 1.3.201 — 2026-10-20
 
 - 消息线程 beta 在控制面按消息 id 记住 24 小时（最多 1 万条）：同模型的 `continue` 补回上一轮 beta，并保留本轮新算出的；换模型、过期或未知 id 用现算值，不失败。create 轮对支持的模型仅凭 `thread` 带上 `mid-conversation-output-config`，continue 不再回放 effort 控件也能带上该门。命中 / 未命中 / 换模型记在 `hop_meta.thread_betas`。进程重启后 pin 丢失，按未命中处理。（#621）
