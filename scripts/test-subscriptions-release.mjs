@@ -173,6 +173,7 @@ const unit = [
   'crs-usage-probe',
   'openai-quota',
   'quota-window',
+  'weekly-split',
   'upstream-error-policy',
   'user-count-tokens',
   'web-search',

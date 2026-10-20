@@ -114,6 +114,26 @@ test('an elapsed Extra window is probed once, then held for the gap', () => {
   })
 })
 
+test('expired Fable windows refresh without expiring the total weekly window, with probe backoff', () => {
+  const now = Date.parse('2026-10-20T02:00:00Z')
+  for (const inHeaders of [false, true]) {
+    for (const reset of [new Date(now - 60000).toISOString(), (now - 60000) / 1000]) {
+      const weekly = { utilization: 0.4, status: 'allowed', reset: new Date(now + 86400000).toISOString() }
+      const unified = { headers: { '7d': weekly } }
+      const target = inHeaders ? unified.headers : unified
+      target['7d_oi'] = { utilization: 1, status: 'rejected', reset }
+      assert.deepEqual(isUsageProbeDue({ unified }, { now }), { due: true, reason: 'extra_window_elapsed' })
+      assert.deepEqual(unified.headers['7d'], weekly)
+      assert.deepEqual(
+        isUsageProbeDue({ unified, last_probe: { at: new Date(now - 10000).toISOString() } }, { now }),
+        { due: false, reason: 'probed_recently' },
+      )
+      target['7d_oi'].reset = new Date(now + 60000).toISOString()
+      assert.deepEqual(isUsageProbeDue({ unified }, { now }), { due: false, reason: 'list_passive_only' })
+    }
+  }
+})
+
 test('invalid_grant slots are not usage-probe targets', () => {
   assert.equal(
     isUsageProbeTarget({
