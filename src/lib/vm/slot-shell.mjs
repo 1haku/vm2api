@@ -22,6 +22,7 @@ import { ensureOfficialCredentialLink, writeWorkerCredentialFile } from '../oaut
 import { assertAuthLoginReady, officialLoginCredentialToOauth } from '../oauth/claude-auth-login.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
+import { ensureRemoteOfficialCredentialLink, reconcileSlotCredentials } from '../cluster/remote-slot-files.mjs'
 import { officialCcUidGid } from './vm-runtime.mjs'
 
 const SHELL_RE = /^\/api\/panel\/vms\/([^/]+)\/shell$/
@@ -44,8 +45,47 @@ function readJsonFile(file) {
  * worker notification, and vm.json metadata. The terminal keeps reading that
  * same file through .credentials.json.
  */
-export async function adoptShellLogin(projectRoot, vm, { importOauth = null } = {}) {
+/** Cluster slots write OAuth on the node claude/ mount; mirror it before adopt. */
+export async function syncShellLoginCredentials(
+  projectRoot,
+  vm,
+  {
+    phase,
+    host = slotHost(vm),
+    reconcile = reconcileSlotCredentials,
+    ensureRemoteLink = ensureRemoteOfficialCredentialLink,
+  } = {},
+) {
+  if (host.kind !== 'node') return { synced: false }
+  const slotDir = path.join(projectRoot, 'vms', vm.id)
+  if (phase === 'prepare') {
+    const reconciled = await reconcile(vm, slotDir)
+    await ensureRemoteLink(vm, slotDir)
+    return reconciled
+  }
+  if (phase === 'adopt') return host.afterRefresh(vm, slotDir)
+  return { synced: false }
+}
+
+export async function preparePanelShellLogin(projectRoot, vm) {
   const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
+  const linked = ensureOfficialCredentialLink(home, {
+    ...officialCcUidGid(vm.id),
+    create: true,
+  })
+  if (!linked?.linked) {
+    const err = new Error(linked?.error || '官方凭证链接失败')
+    err.code = 'credential_link_failed'
+    throw err
+  }
+  await syncShellLoginCredentials(projectRoot, vm, { phase: 'prepare' })
+  return linked
+}
+
+export async function adoptShellLogin(projectRoot, vm, { importOauth = null, loginHost = null } = {}) {
+  const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
+  await syncShellLoginCredentials(projectRoot, vm, { phase: 'adopt', host: loginHost || slotHost(vm) })
+  ensureOfficialCredentialLink(home, officialCcUidGid(vm.id))
   const official = path.join(home, '.claude', '.credentials.json')
   const oauth = officialLoginCredentialToOauth(readJsonFile(official) || {})
   const vmPath = path.join(projectRoot, 'vms', `${vm.id}.json`)
@@ -311,8 +351,7 @@ export function createSlotShell({
       try {
         await (authLoginReady || assertAuthLoginReady)(projectRoot, vm)
       } catch (err) {
-        const remote = err.code === 'remote_unsupported'
-        return refuse(remote ? 409 : 400, err.code || 'auth_login_not_ready', err.message)
+        return refuse(409, err.code || 'auth_login_not_ready', err.message)
       }
     }
     if (sessions >= MAX_SESSIONS) return refuse(429, 'shell_limit', `终端会话已达上限 ${MAX_SESSIONS}`)
@@ -377,8 +416,14 @@ export function createSlotShell({
       accept()
       return true
     }
-    ;(upgradeLoginReady || authLoginReady || assertAuthLoginReady)(projectRoot, vm).then(accept, () =>
-      rejectUpgrade(socket, 409, 'Conflict'),
+    ;(upgradeLoginReady || authLoginReady || assertAuthLoginReady)(projectRoot, vm).then(accept, (err) =>
+      rejectUpgrade(
+        socket,
+        409,
+        String(err?.message || 'Conflict')
+          .replace(/[\r\n]+/g, ' ')
+          .slice(0, 120) || 'Conflict',
+      ),
     )
     return true
   }
@@ -437,14 +482,7 @@ export function createSlotShell({
     })
     try {
       connect = slotHost(vm).dockerApi()
-      if (size.login) {
-        const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
-        const linked = ensureOfficialCredentialLink(home, {
-          ...officialCcUidGid(vm.id),
-          create: true,
-        })
-        if (!linked?.linked) throw new Error(linked?.error || '官方凭证链接失败')
-      }
+      if (size.login) await preparePanelShellLogin(projectRoot, vm)
       const launch = panelShellLaunch(slotHost(vm).bins.cli)
       const env = ['TERM=xterm-256color', `${SESSION_ENV}=${token}`, `${RC_ENV}=${launch.rc}`]
       if (size.login) env.push('KIN_PANEL_LOGIN=1')
