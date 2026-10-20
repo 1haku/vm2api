@@ -239,6 +239,27 @@ function officialMessageMarker(messages) {
   }
   return next
 }
+/** Official Claude Code omits this field. A panel switch or a caller value must not put it back. */
+function stripEagerInputStreaming(tools) {
+  if (!Array.isArray(tools)) return tools
+  let changed = false
+  const next = tools.map((tool) => {
+    if (!tool || typeof tool !== 'object') return tool
+    const hasOwn = Object.prototype.hasOwnProperty.call(tool, 'eager_input_streaming')
+    const fn = tool.function
+    const fnHas = fn && typeof fn === 'object' && Object.prototype.hasOwnProperty.call(fn, 'eager_input_streaming')
+    if (!hasOwn && !fnHas) return tool
+    changed = true
+    const copy = { ...tool }
+    delete copy.eager_input_streaming
+    if (fnHas) {
+      copy.function = { ...fn }
+      delete copy.function.eager_input_streaming
+    }
+    return copy
+  })
+  return changed ? next : tools
+}
 
 /**
  * Every cli-hop request leaves as the captured Claude Code shape: the identity
@@ -387,6 +408,7 @@ export function prepareCliHopBody(
   if (!requestContext) {
     body = { ...body, system: officialSystemTemplate(body.system) }
     body.messages = officialMessageMarker(body.messages)
+    if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
   return body
 }
