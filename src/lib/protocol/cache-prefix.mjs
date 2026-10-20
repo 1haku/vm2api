@@ -77,18 +77,34 @@ function stringStamp(text) {
   return stamp
 }
 
+function normalizeCounters(value) {
+  if (typeof value === 'string') {
+    return value.includes('<total_tokens>') ? value.replace(VOLATILE_CONTEXT_BUDGET, CONTEXT_BUDGET_PLACEHOLDER) : value
+  }
+  if (Array.isArray(value)) return value.map(normalizeCounters)
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const key of Object.keys(value)) {
+      if (key === 'cache_control') continue
+      out[key] = normalizeCounters(value[key])
+    }
+    return out
+  }
+  return value
+}
+
 function valueStamp(value, depth = 0) {
   if (typeof value === 'string') return stringStamp(value)
   if (typeof value === 'number' || typeof value === 'boolean') return { t: typeof value, v: value, d: digest(value) }
   if (value == null) return { t: 'null', d: digest(null) }
   if (Array.isArray(value)) {
-    const stamp = { t: 'a', n: value.length, d: digest(value) }
+    const stamp = { t: 'a', n: value.length, d: digest(value), norm: digest(normalizeCounters(value)) }
     if (depth < 3) stamp.items = value.slice(0, 6).map((item) => valueStamp(item, depth + 1))
     return stamp
   }
   if (typeof value === 'object') {
     const keys = Object.keys(value).filter((key) => key !== 'cache_control')
-    const stamp = { t: 'o', keys, d: digest(value) }
+    const stamp = { t: 'o', keys, d: digest(value), norm: digest(normalizeCounters(value)) }
     if (depth < 3) {
       stamp.fields = {}
       for (const key of keys) stamp.fields[key] = valueStamp(value[key], depth + 1)
@@ -98,16 +114,12 @@ function valueStamp(value, depth = 0) {
   return { t: typeof value }
 }
 
-function onlyCounter(delta) {
-  if (!delta || delta.added || delta.removed || delta.key_order) return null
-  if (delta.change === 'counter_only') return delta
-  if (!delta.changed || delta.changed.length !== 1) return null
-  return onlyCounter(delta.changed[0])
-}
-
 function stampDelta(prev, next) {
   if (!prev || !next) return { change: 'missing' }
   if (prev.d && prev.d === next.d) return null
+  if (prev.norm && next.norm && prev.norm === next.norm) {
+    return { change: 'counter_only', prev_n: prev.n, next_n: next.n }
+  }
   if (prev.t !== next.t) return { change: 'type', prev_t: prev.t, next_t: next.t }
   if (prev.t === 's') {
     if (prev.norm && next.norm && prev.norm === next.norm) {
@@ -131,25 +143,32 @@ function stampDelta(prev, next) {
       const delta = stampDelta(prev.items[i], next.items[i])
       if (delta) changed.push({ index: i, ...delta })
     }
-    if (!changed.length) return { change: 'value', prev_n: prev.n, next_n: next.n, capped: seen < prev.n }
-    const counter = changed.length === 1 ? onlyCounter(changed[0]) : null
-    if (counter)
-      return { change: 'counter_only', index: changed[0].index, prev_n: counter.prev_n, next_n: counter.next_n }
+    if (seen < prev.n) {
+      return {
+        change: 'unknown',
+        capped: true,
+        prev_n: prev.n,
+        next_n: next.n,
+        ...(changed.length ? { sampled: changed.slice(0, 8) } : {}),
+      }
+    }
+    if (!changed.length) return { change: 'value', prev_n: prev.n, next_n: next.n }
     return { change: 'items', prev_n: prev.n, next_n: next.n, changed: changed.slice(0, 8) }
   }
   if (prev.t === 'o') {
+    if (!prev.fields || !next.fields) return { change: 'unknown', capped: true }
     const added = next.keys.filter((key) => !prev.keys.includes(key))
     const removed = prev.keys.filter((key) => !next.keys.includes(key))
     const keyOrder = !added.length && !removed.length && prev.keys.join('\0') !== next.keys.join('\0')
     const changed = []
-    if (prev.fields && next.fields) {
-      for (const key of prev.keys) {
-        if (!Object.prototype.hasOwnProperty.call(next.fields, key)) continue
-        const delta = stampDelta(prev.fields[key], next.fields[key])
-        if (delta) changed.push({ key, ...delta })
-      }
+    for (const key of prev.keys) {
+      if (!Object.prototype.hasOwnProperty.call(next.fields, key)) continue
+      const delta = stampDelta(prev.fields[key], next.fields[key])
+      if (delta) changed.push({ key, ...delta })
     }
-    if (!added.length && !removed.length && !keyOrder && !changed.length) return null
+    if (!added.length && !removed.length && !keyOrder && !changed.length) {
+      return { change: 'unknown', capped: false }
+    }
     const out = {}
     if (added.length) out.added = added
     if (removed.length) out.removed = removed

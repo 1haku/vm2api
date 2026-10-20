@@ -148,7 +148,7 @@ test('an official token counter inside a tool result is labeled without rewritin
   })
   trackCachePrefix('s', tool(100), 0)
   const broke = trackCachePrefix('s', tool(90), 1).break
-  assert.equal(broke.diff.fields.changed[0].change, 'counter_only')
+  assert.equal(broke.diff.fields.change, 'counter_only')
   assert.equal(JSON.stringify(broke).includes('tokens left'), false)
 })
 
@@ -189,8 +189,8 @@ test('a counter nested in tool_result.content[] is counter_only', () => {
   })
   trackCachePrefix('s', tool(100), 0)
   const broke = trackCachePrefix('s', tool(90), 1).break
-  assert.equal(broke.diff.fields.changed[0].key, 'content')
-  assert.equal(broke.diff.fields.changed[0].change, 'counter_only')
+  assert.equal(broke.diff.fields.change, 'counter_only')
+  assert.equal(broke.diff.fields.changed, undefined)
   assert.equal(JSON.stringify(broke).includes('tokens left'), false)
 })
 
@@ -212,4 +212,62 @@ test('a tools difference does not hide a message difference', () => {
   assert.equal(diff.sections[1].index, 0)
   assert.equal(diff.sections[1].diff.reason, 'part')
   assert.equal(JSON.stringify(diff).includes('u1 changed'), false)
+})
+
+test('a sampled counter plus an unsampled tool body change is not counter_only', () => {
+  clearCachePrefixSessions()
+  const tool = (n, tail) => ({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't1',
+            content: [
+              { type: 'text', text: `<total_tokens>${n} tokens left</total_tokens>` },
+              { type: 'text', text: 'b' },
+              { type: 'text', text: 'c' },
+              { type: 'text', text: 'd' },
+              { type: 'text', text: 'e' },
+              { type: 'text', text: 'f' },
+              { type: 'text', text: tail },
+            ],
+          },
+        ],
+      },
+    ],
+  })
+  trackCachePrefix('s', tool(100, 'alpha'), 0)
+  const broke = trackCachePrefix('s', tool(90, 'beta changed'), 1).break
+  const encoded = JSON.stringify(broke)
+  assert.notEqual(broke.diff.fields.change, 'counter_only')
+  assert.equal(encoded.includes('"change":"unknown"'), true)
+  assert.equal(encoded.includes('"capped":true'), true)
+  assert.equal(JSON.stringify(broke).includes('beta'), false)
+})
+
+test('a depth-capped object difference stays unknown instead of disappearing', () => {
+  clearCachePrefixSessions()
+  const tool = (note) => ({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't1',
+            content: [{ type: 'text', text: 'same', source: { meta: { note } } }],
+          },
+        ],
+      },
+    ],
+  })
+  trackCachePrefix('s', tool('alpha'), 0)
+  const broke = trackCachePrefix('s', tool('beta'), 1).break
+  assert.notEqual(broke.diff.fields.change, 'counter_only')
+  assert.equal(JSON.stringify(broke).includes('"change":"unknown"'), true)
+  assert.equal(JSON.stringify(broke).includes('"capped":true'), true)
+  assert.equal(JSON.stringify(broke).includes('alpha'), false)
+  assert.equal(JSON.stringify(broke).includes('beta'), false)
 })
