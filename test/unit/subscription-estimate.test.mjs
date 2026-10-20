@@ -38,13 +38,13 @@ test('only a known published context bounds reservation tokens; caller limits ca
     backgroundRefresh: false,
   })
   t.after(() => setPriceCatalogTestHooks(null))
-  const body = { model: 'openai/gpt-6-astra', input: 'long transcript '.repeat(200_000), context_window: 1 }
+  const body = { model: 'openai/gpt-6-astra', input: 'long transcript '.repeat(1_000_000), context_window: 1 }
   const input = estimateSubscriptionReservationInput(body)
   assert.ok(input.raw_tokens > input.tokens)
   assert.equal(input.tokens, 1_050_000)
   assert.equal(input.context_limit, 1_050_000)
   assert.equal(input.capped, true)
-  assert.equal(body.input.length, 3_200_000)
+  assert.equal(body.input.length, 16_000_000)
   const small = estimateSubscriptionReservationInput({ model: body.model, input: 'hi' })
   assert.equal(small.tokens, small.raw_tokens)
   assert.equal(small.capped, false)
@@ -70,7 +70,7 @@ test('large image/opaque encodings stay bounded and short reasoning does not pay
           { type: 'input_image', image_url: 'data:image/png;base64,' + 'A'.repeat(size) },
         ],
       },
-      { type: 'reasoning', encrypted_content: 'B'.repeat(size), summary: [] },
+      { type: 'reasoning', encrypted_content: 'gAAAAA' + 'B'.repeat(size), summary: [] },
     ],
   })
   const small = estimateSubscriptionInput(request(100))
@@ -104,14 +104,14 @@ test('OpenAI text is tokenized locally with headroom, including literal special 
 test('long replay uses envelope allowances, retains all visible text and leaves the request untouched', () => {
   const input = Array.from({ length: 120 }, () => ({
     type: 'reasoning',
-    encrypted_content: 'A'.repeat(684),
+    encrypted_content: 'gAAAAA' + 'A'.repeat(678),
     summary: [{ type: 'summary_text', text: 'reasoning summary' }],
   }))
   input.push({ role: 'user', content: 'Review the code. '.repeat(6000) })
   const body = { model: 'gpt-6-astra', input }
   const before = JSON.stringify(body)
   const result = estimateSubscriptionInput(body)
-  assert.equal(result.opaque_tokens, 120 * 513)
+  assert.equal(result.opaque_tokens, 120 * 256)
   assert.ok(result.text_tokens > 20000)
   assert.ok(result.tokens < 150000, 'short reasoning envelopes must not fabricate a million-token prompt')
   assert.equal(JSON.stringify(body), before)
@@ -123,13 +123,35 @@ test('long replay uses envelope allowances, retains all visible text and leaves 
 })
 
 test('huge/adversarial text has bounded tokenizer work and a conservative fallback, not free tokens', () => {
-  const body = { model: 'gpt-6-astra', input: 'x'.repeat(2_000_000) }
+  const body = { model: 'gpt-6-astra', input: 'x'.repeat(9_000_000) }
   const result = estimateSubscriptionInput(body)
   assert.equal(result.fallback_bytes, 1_000_000)
-  assert.ok(result.tokens > 500000)
+  assert.ok(result.tokens > 1_500_000)
   const unicode = estimateSubscriptionInput({ model: body.model, input: 'x'.repeat(2047) + '😀'.repeat(2048) })
   assert.equal(unicode.fallback_bytes, 0)
   assert.ok(unicode.text_tokens >= 2048)
+})
+
+test('multi-megabyte coding transcripts stay tokenized and encrypted volume is not treated as one token per byte', () => {
+  const input = Array.from({ length: 108 }, () => ({
+    type: 'reasoning',
+    encrypted_content: 'gAAAAA' + 'A'.repeat(5802),
+    summary: [],
+  }))
+  input.push({ role: 'user', content: 'const result = await fetch(url);\n'.repeat(62000) })
+  const body = { model: 'gpt-6-astra', reasoning: { context: 'all_turns' }, input }
+  assert.ok(JSON.stringify(body).length > 2_600_000)
+  const estimate = estimateSubscriptionInput(body)
+  assert.equal(estimate.fallback_bytes, 0)
+  assert.equal(estimate.reasoning_items, 108)
+  assert.equal(estimate.reasoning_encoded_chars, 108 * 5808)
+  assert.equal(estimate.opaque_tokens, 108 * 1815)
+  assert.ok(estimate.tokens < 900000)
+  const opaque = (encrypted_content) =>
+    estimateSubscriptionInput({ model: body.model, input: [{ type: 'reasoning', encrypted_content }] }).opaque_tokens
+  assert.equal(opaque('not-a-recognized-envelope'), 8192)
+  assert.equal(opaque('gAAAAA' + 'A'.repeat(1000000)), 8192)
+  assert.ok(opaque('gAAAAA' + 'A'.repeat(4000)) > opaque('gAAAAA' + 'A'.repeat(1000)))
 })
 
 test('real text, tool schemas and tool arguments contribute; metadata and signatures do not', () => {

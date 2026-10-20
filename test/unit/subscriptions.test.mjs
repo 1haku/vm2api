@@ -57,8 +57,8 @@ test('long history reservation is bounded by catalog context while pending, bala
   repo.settle('already-used', sub.id, 10.98080328)
   const request = { model: 'gpt-6-astra', input: 'x'.repeat(18_340_108) }
   const raw = estimateSubscriptionInput(request)
-  assert.ok(raw.tokens > 7_000_000 && raw.tokens < 7_649_904)
-  assert.ok(calculateCost({ input_tokens: raw.tokens, output_tokens: 16384 }, request.model).total_cost > 140)
+  assert.ok(raw.tokens > 1_050_000 && raw.tokens < 7_649_904)
+  assert.ok(calculateCost({ input_tokens: raw.tokens, output_tokens: 16384 }, request.model).total_cost > 100)
   const expected = calculateCost({ input_tokens: 1_050_000, output_tokens: 16384 }, request.model).total_cost
   assert.equal(expected, 22.2288)
   const admitted = repo.reserve(a, 'long-history', request)
@@ -77,7 +77,7 @@ test('long history reservation is bounded by catalog context while pending, bala
       assert.equal(e.code, 'subscription_quota')
       assert.equal(e.quota.input_estimate_capped, true)
       assert.equal(e.quota.estimated_input_tokens, 1_050_000)
-      assert.ok(e.quota.raw_estimated_input_tokens > 7_000_000)
+      assert.ok(e.quota.raw_estimated_input_tokens > 1_050_000)
       assert.ok(e.quota.pending > 130)
       return true
     },
@@ -99,7 +99,10 @@ test('eight long-replay requests fit the remaining quota without inflating short
   const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 8 })
   const sub = repo.entitlement(a)
   repo.settle('spent', sub.id, 76.7532)
-  const input = Array.from({ length: 120 }, () => ({ type: 'reasoning', encrypted_content: 'A'.repeat(684) }))
+  const input = Array.from({ length: 120 }, () => ({
+    type: 'reasoning',
+    encrypted_content: 'gAAAAA' + 'A'.repeat(678),
+  }))
   input.push({ role: 'user', content: 'const result = await fetch(url);\n'.repeat(16000) })
   const request = { model: 'gpt-6-astra', input }
   const original = JSON.stringify(request)
@@ -127,6 +130,42 @@ test('eight long-replay requests fit the remaining quota without inflating short
     },
   )
   assert.equal(JSON.stringify(request), original)
+})
+
+test('2.6MB long history can use a $21.9264 remaining balance while real costs and parallel reservations stay enforced', (t) => {
+  const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 8 })
+  const sub = repo.entitlement(a)
+  repo.settle('prior-spend', sub.id, 128.0736371)
+  const input = Array.from({ length: 108 }, () => ({
+    type: 'reasoning',
+    encrypted_content: 'gAAAAA' + 'A'.repeat(5802),
+    summary: [],
+  }))
+  input.push({ role: 'user', content: 'const result = await fetch(url);\n'.repeat(62000) })
+  const request = { model: 'gpt-6-astra', reasoning: { context: 'all_turns' }, input }
+  const admitted = repo.reserve(a, 'large-history', request)
+  assert.ok(admitted.reserved > 10 && admitted.reserved < 21.9263629)
+  assert.equal(repo.progress(sub).daily_used, 128.0736371)
+  assert.throws(
+    () => repo.reserve(a, 'parallel-too-expensive', request),
+    (e) => {
+      assert.equal(e.code, 'subscription_quota')
+      assert.equal(e.quota.estimated_text_fallback_bytes, 0)
+      assert.equal(e.quota.estimated_reasoning_items, 108)
+      return e.quota.pending === admitted.reserved
+    },
+  )
+  repo.settle('large-history', sub.id, 1.102846)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+  assert.equal(
+    db.prepare("SELECT amount FROM custom_subscription_ledger WHERE request_id='large-history'").get().amount,
+    1.102846,
+  )
+  repo.settle('consume-balance', sub.id, 150 - repo.progress(sub).daily_used)
+  assert.throws(
+    () => repo.reserve(a, 'exhausted', request),
+    (e) => e.code === 'subscription_quota',
+  )
 })
 
 test('large encoded requests no longer exhaust healthy balances; real output and pending costs remain gated', (t) => {

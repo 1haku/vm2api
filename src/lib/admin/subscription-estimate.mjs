@@ -37,6 +37,8 @@ export function estimateSubscriptionInput(body = {}) {
   let overhead = 0
   let media = 0
   let opaque = 0
+  let reasoningItems = 0
+  let reasoningChars = 0
   const text = (value) => {
     if (value == null) return
     const content = typeof value === 'string' ? value : JSON.stringify(value)
@@ -77,6 +79,8 @@ export function estimateSubscriptionInput(body = {}) {
       return
     }
     if (type === 'reasoning') {
+      reasoningItems++
+      if (typeof value.encrypted_content === 'string') reasoningChars += value.encrypted_content.length
       if (value.encrypted_content) opaque += openAI ? encryptedReasoningAllowance(value.encrypted_content) : 8192
       visit(value.summary, depth + 1)
       visit(value.content, depth + 1)
@@ -116,6 +120,8 @@ export function estimateSubscriptionInput(body = {}) {
     text_tokens: counted.text_tokens,
     fallback_bytes: counted.fallback_bytes,
     method: counted.method,
+    reasoning_items: reasoningItems,
+    reasoning_encoded_chars: reasoningChars,
   }
 }
 

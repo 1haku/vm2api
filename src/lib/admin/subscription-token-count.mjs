@@ -4,7 +4,11 @@ import o200k from 'tiktoken/encoders/o200k_base.json' with { type: 'json' }
 let encoder
 // Bound per-request CPU and per-piece BPE work, including adversarial unbroken
 // strings. Beyond this budget the existing conservative byte heuristic applies.
-const TOKENIZE_CHAR_BUDGET = 1_000_000
+// A ~500k-token coding transcript can exceed 2 MB. The former 1M-character
+// budget silently reverted most of such a transcript to UTF-8/3, even though
+// it comfortably fit the model context. Bound work above ordinary 1M-token
+// contexts instead; retain the fallback for oversized/adversarial bodies.
+const TOKENIZE_CHAR_BUDGET = 8_000_000
 const CHUNK_CHARS = 2048
 
 /** Local text estimate, not the provider's final token count. No network calls,
@@ -53,15 +57,16 @@ export function subscriptionTextCounter(useOpenAIEncoding) {
   }
 }
 
-/** Encrypted replay items are opaque, not 8192 text tokens each. A short
- * base64 envelope cannot justify that fixed charge. Use its decoded byte size
- * as a conservative allowance (not decrypted/tokenized content), keeping the
- * previous 8192 allowance for large or unrecognized encodings. It is still an
- * approximation: the provider can retain/discard reasoning internally.
+/** Recognized encrypted replay envelopes are opaque, not one token per
+ * ciphertext byte. Estimate their volume with the same conservative bytes/3
+ * +25% heuristic used for unknown text, after base64 expansion is removed.
+ * This is NOT an exact count or a guaranteed upper bound: the provider may
+ * compress, retain or discard reasoning. Never decrypt or tokenize ciphertext.
+ * Preserve the 8192 allowance for large or unrecognized encodings.
  */
 export function encryptedReasoningAllowance(value) {
   if (typeof value !== 'string') return 8192
   if (!value) return 0
-  if (value.length >= 10924 || !/^[A-Za-z0-9+/_=-]+$/.test(value)) return 8192
-  return Math.min(8192, Math.max(256, Math.ceil((value.length * 3) / 4)))
+  if (value.length >= 26215 || !/^gAAAAA[A-Za-z0-9_=-]+$/.test(value)) return 8192
+  return Math.min(8192, Math.max(256, Math.ceil((value.length / 4) * 1.25)))
 }
