@@ -212,14 +212,13 @@ function officialMessageMarker(messages) {
     })
     return changed ? { ...message, content } : message
   })
-  let tail = next.findIndex((message) => message?.role === 'user')
-  if (tail < 0) {
-    for (let i = next.length - 1; i >= 0; i--) {
-      const content = next[i]?.content
-      if (typeof content === 'string' ? content : Array.isArray(content) && content.length) {
-        tail = i
-        break
-      }
+  let tail = -1
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i]?.role !== 'user') continue
+    const content = next[i].content
+    if (typeof content === 'string' ? content : Array.isArray(content) && content.length) {
+      tail = i
+      break
     }
   }
   if (tail < 0) return next
@@ -351,7 +350,7 @@ export function prepareCliHopBody(
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
   if (preserveSystem) validateCacheBreakpoints(canonicalBody)
-  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: preserveSystem })
+  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
   const windowTokens = Number(autoCompactWindow)
   if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
     body.auto_compact_window = windowTokens

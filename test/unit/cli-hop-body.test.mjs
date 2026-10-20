@@ -79,9 +79,9 @@ test('cli-hop normalizes mixed caller markers to the official template', () => {
   assert.equal(body.system[0].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.equal(body.system[1].text, 'caller')
   assert.deepEqual(body.system[1].cache_control, { type: 'ephemeral' })
-  assert.deepEqual(body.messages[0].content[0].cache_control, { type: 'ephemeral' })
+  assert.equal(body.messages[0].content[0].cache_control, undefined)
   assert.equal(body.messages[1].content[0].cache_control, undefined)
-  assert.equal(body.messages[2].content[0].cache_control, undefined)
+  assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral' })
 })
 
 test('caller environment stays behind the official identity', () => {
@@ -383,7 +383,7 @@ test('cli-hop drops caller system/tools markers and restamps last plus penultima
   assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '5m' })
   assert.equal(body.system[0].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral' })
-  assert.deepEqual(messageMarkers(body), [{ index: 0, blockIndex: 0, type: 'text', ttl: undefined }])
+  assert.deepEqual(messageMarkers(body), [{ index: 2, blockIndex: 0, type: 'text', ttl: undefined }])
 })
 
 test('cli-hop short history only marks the last message', () => {
@@ -400,7 +400,7 @@ test('cli-hop short history only marks the last message', () => {
     body.messages.map((message) => message.role),
     ['user', 'assistant', 'user'],
   )
-  assert.deepEqual(messageMarkers(body), [{ index: 0, blockIndex: 0, type: 'text', ttl: undefined }])
+  assert.deepEqual(messageMarkers(body), [{ index: 2, blockIndex: 0, type: 'text', ttl: undefined }])
 })
 
 test('cli-hop does not mark thinking blocks', () => {
