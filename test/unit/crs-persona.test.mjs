@@ -727,9 +727,7 @@ test('pi and omp harness prompts replace the official full system instead of sta
       mode,
     )
     assert.ok(
-      mode === 'official_full'
-        ? texts.includes(CRS_OFFICIAL_CLI_SYSTEM)
-        : texts.includes(CRS_OFFICIAL_SYSTEM),
+      mode === 'official_full' ? texts.includes(CRS_OFFICIAL_CLI_SYSTEM) : texts.includes(CRS_OFFICIAL_SYSTEM),
       mode,
     )
     const harness = texts.find((text) => text.includes('Oh My Pi coding harness'))
