@@ -117,7 +117,10 @@ export const HARD_POLICY_RULES = Object.freeze([
   },
   {
     category: 'jailbreak',
-    source: String.raw`(?:解除|关闭|绕过|无视)(?:你的|所有|全部)?(?:安全|内容)?(?:限制|审查|过滤|策略)`,
+    // Bare business terms (e.g. "关闭过滤", "解除限制") are ambiguous.
+    // Require an explicit model/assistant target or a safety/content qualifier;
+    // ordinary query/UI filtering still goes through the semantic gate below.
+    source: String.raw`(?:解除|关闭|绕过|无视)\s*(?:(?:你的|(?:模型|助手|AI|ChatGPT|Claude)(?:的)?)\s*(?:所有|全部)?\s*(?:安全|内容)?|(?:所有|全部)?\s*(?:安全|内容))(?:限制|审查|过滤|策略)`,
   },
   { category: 'jailbreak', source: String.raw`(?:越狱|破限)(?:模式|提示词|提示|指令)` },
   { category: 'crack', source: String.raw`(?<![\w-])(?:keygen|warez)(?![\w-])` },
