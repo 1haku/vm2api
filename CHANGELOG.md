@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 实验性 macOS 原生节点（Apple Silicon，#585）：节点连上后按 `uname -s` 记录平台（迁移 040 `cluster_nodes.platform`）；macOS 节点不用 Docker，每个槽是 SSH 用户 `gui/<uid>` 域里的两个 launchd 服务（kernel、telemetry），plist、日志、套接字都在 `~/.vm2api/vms/<id>/`，kernel.json 写节点真实路径。产物取自 `payload/darwin-arm64/`（`KIN_DARWIN_PAYLOAD_DIR`），按内容哈希上传到 `~/.vm2api/native/<digest>/`；kin-kernel / cli-node / cc-node 需另行提供 darwin/arm64 构建。预检检查 arm64、图形登录、目录、套接字长度、产物与休眠；看门狗与 supervisor 经 `launchctl` 观察、重启、补加载。首版只支持 Claude 槽与节点本机出口，终端、槽内登录、直连通道、内存在线调整返回 `native_node_unsupported`。见 `docs/MACOS_NODE.md`。
+- 集群节点 SSH 断开（离线、休眠、重启）期间，调度器跳过该节点上的槽位（`node_offline`），重连后自动恢复。
+- 远端读文件在 BSD 工具链（macOS 节点）上改为先拒绝符号链接与非普通文件再读取；GNU 节点仍用 `dd iflag=nofollow`。
 - 面板 Claude 用量：`utilization_*` 超过 1（如 header 1.04）按 ratio×100 显示，不再误成约 1%；Codex `used_percent` 路径不变。（#625，#631）
 - 自动/手动备份流水线改到 worker 线程执行（VACUUM INTO + tar），避免主线程长时间阻塞网关导致 Cloudflare 524。（#638，#639）
 
