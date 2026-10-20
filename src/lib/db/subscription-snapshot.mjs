@@ -94,6 +94,8 @@ export function subscriptionSnapshot(db) {
     'api_endpoints',
     'api_endpoint_keys',
     'api_endpoint_models',
+    'cluster_nodes',
+    'cluster_node_direct_links',
   ]) {
     const rows = exists(db, table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
     const normalized =

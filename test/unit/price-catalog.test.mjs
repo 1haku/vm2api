@@ -74,21 +74,6 @@ test.afterEach(() => {
   setPriceCatalogTestHooks(null)
 })
 
-test('free approval price survives external catalog sync and is visible as a custom source', async () => {
-  await syncModelsDev({
-    fetchImpl: async () =>
-      jsonResponse({
-        openai: { models: { 'codex-auto-review': { cost: { input: 99, output: 99, cache_read: 99 } } } },
-      }),
-  })
-  const row = resolvePrice('codex-auto-review')
-  assert.equal(row.source, 'custom-free-auto-review')
-  assert.equal(row.price.input, 0)
-  assert.equal(row.price.modes.priority.output, 0)
-  assert.equal(listPriceCatalog().find((r) => r.id === 'codex-auto-review').source, 'custom-free-auto-review')
-  assert.equal(resolvePrice('codex-auto-review-unknown'), null)
-})
-
 test('layer precedence: override provider/model > provider/* > */model > models.dev > builtin', async () => {
   const id = 'claude-sonnet-5-5'
   const builtin = resolvePrice(id)

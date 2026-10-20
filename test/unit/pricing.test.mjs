@@ -1,3 +1,4 @@
+import { applyCodexInboundModelRewrite } from '../../src/lib/protocol/codex-model-mapping.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -9,30 +10,15 @@ import {
 } from '../../src/lib/admin/pricing.mjs'
 import { resolvePrice } from '../../src/lib/admin/price-catalog.mjs'
 
-test('auto-review has explicit zero pricing and retains token buckets across supported tiers', () => {
-  for (const model of ['codex-auto-review', 'openai/codex-auto-review']) {
-    for (const service_tier of [undefined, 'default', 'priority', 'flex']) {
-      const c = calculateCost(
-        {
-          input_tokens: 400_000,
-          output_tokens: 1000,
-          input_tokens_details: { cached_tokens: 200_000, cache_write_tokens: 10_000 },
-          service_tier,
-        },
-        model,
-      )
-      assert.equal(c.known, true)
-      assert.equal(c.price_source, 'custom-free-auto-review')
-      assert.equal(c.total_cost, 0)
-      assert.equal(c.input_tokens, 190_000)
-      assert.equal(c.output_tokens, 1000)
-      assert.equal(c.cache_read_tokens, 200_000)
-      assert.equal(c.cache_creation_5m_tokens, 10_000)
-      assert.equal(costColumnsFromUsage({ input_tokens: 1000 }, model).pricing_model, 'codex-auto-review')
-    }
-  }
-  assert.equal(calculateCost({ input_tokens: 1000 }, 'codex-auto-review-unknown').known, false)
-  assert.ok(calculateCost({ input_tokens: 1000 }, 'gpt-5.4').total_cost > 0)
+test('mapped review uses upstream target pricing without a custom zero-price exception', () => {
+  const { body } = applyCodexInboundModelRewrite({ model: 'codex-auto-review' }, {})
+  assert.equal(body.model, 'gpt-6-luna')
+  const usage = { input_tokens: 1000, output_tokens: 100 }
+  const cost = calculateCost(usage, body.model)
+  assert.equal(cost.known, true)
+  assert.ok(cost.total_cost > 0)
+  assert.notEqual(cost.price_source, 'custom-free-auto-review')
+  assert.equal(costColumnsFromUsage(usage, body.model).pricing_model, 'gpt-6-luna')
 })
 
 test('official family aliases resolve to current list prices', () => {

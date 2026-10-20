@@ -2,6 +2,15 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'claude-auth-login',
+  'cluster-direct-link',
+  'cluster-node-host',
+  'codex-model-mapping',
+  'panel-vm-seed-settings',
+  'remote-slot-migration',
+  'panel-wrap-sync',
+  'fast-mode',
+  'slot-seed',
   'cluster-edit-routes',
   'cluster-node-edit-input',
   'cluster-node-edit-repo',

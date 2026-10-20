@@ -22,7 +22,8 @@ RUN go mod download
 COPY worker/ ./
 RUN go test -race ./... \
  && CGO_ENABLED=0 go build -trimpath -o /out/kin-worker ./cmd/kin-worker \
- && CGO_ENABLED=0 go build -trimpath -o /out/kin-egress ./cmd/kin-egress
+ && CGO_ENABLED=0 go build -trimpath -o /out/kin-egress ./cmd/kin-egress \
+ && CGO_ENABLED=0 go build -trimpath -o /out/kin-slot-gate ./cmd/kin-slot-gate
 
 FROM golang:1.26-bookworm AS api-kernel-build
 WORKDIR /build/api-kernel

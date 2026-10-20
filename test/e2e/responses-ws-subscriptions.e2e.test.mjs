@@ -73,6 +73,15 @@ test('WebSocket rejected turns release reservations and recheck quota, revocatio
     assert.equal(quota.error?.code, 'subscription_quota', JSON.stringify(quota))
     assert.equal((await getSub()).daily_used, after.daily_used)
     assert.equal((await getSub()).pending_cost, 0)
+    const mappedQuota = await turn(ws, { model: 'codex-auto-review', input: 'hi', max_output_tokens: 1000000000 })
+    assert.equal(mappedQuota.error?.code, 'subscription_quota', JSON.stringify(mappedQuota))
+    const mappedHttp = await api(gw, 'POST', '/v1/responses', {
+      headers: { authorization: `Bearer ${key.key}` },
+      body: { model: 'codex-auto-review', input: 'hi', max_output_tokens: 1000000000 },
+    })
+    assert.equal(mappedHttp.status, 429, mappedHttp.text)
+    assert.equal(mappedHttp.json.error.code, 'subscription_quota')
+    assert.equal((await getSub()).pending_cost, 0)
     const revoked = await api(gw, 'PATCH', `/api/panel/subscriptions/${sub.id}`, { body: { status: 'revoked' } })
     assert.equal(revoked.status, 200, revoked.text)
     const denied = await turn(ws, body)

@@ -88,18 +88,18 @@ test('large encoded requests no longer exhaust healthy balances; real output and
   )
 })
 
-test('free approval model reserves zero but still enforces subscription concurrency and revocation', (t) => {
+test('mapped approval reserves target-model cost and enforces concurrency and revocation', (t) => {
   const { repo, db, a } = setup(t, { subscription_concurrency: 1 })
-  const request = { model: 'codex-auto-review', input: 'review', max_output_tokens: 100 }
+  const request = { model: 'gpt-6-luna', input: 'review', max_output_tokens: 100 }
   const sub = repo.reserve(a, 'free-review', request)
-  assert.equal(sub.reserved, 0)
+  assert.ok(sub.reserved > 0)
   assert.throws(() => repo.reserve(a, 'free-concurrent', request), /并发/)
-  repo.settle('free-review', sub.id, 0)
-  assert.equal(repo.progress(repo.entitlement(a)).daily_used, 0)
+  repo.settle('free-review', sub.id, 0.01)
+  assert.equal(repo.progress(repo.entitlement(a)).daily_used, 0.01)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_reservations').get().n, 0)
   assert.equal(
     db.prepare('SELECT amount FROM custom_subscription_ledger WHERE request_id=?').get('free-review').amount,
-    0,
+    0.01,
   )
   assert.throws(() => repo.reserve(a, 'unknown', { ...request, model: 'codex-auto-review-unknown' }), /尚未配置计价/)
   repo.update(sub.id, { status: 'revoked' }, 'admin')

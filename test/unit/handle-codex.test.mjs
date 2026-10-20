@@ -1415,12 +1415,12 @@ test('tool argument disagreement terminates the client stream instead of recordi
   }
 })
 
-test('auto-review preserves original model, instructions and input through the native Codex hop', async (t) => {
+test('mapped review preserves the target model, instructions and input through the native Codex hop', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-auto-review-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   writeGptVm(root, 'review-slot')
   const body = {
-    model: 'codex-auto-review',
+    model: 'gpt-6-luna',
     instructions: 'Review the supplied action.',
     input: [{ role: 'user', content: 'Synthetic action for test.' }],
     stream: false,

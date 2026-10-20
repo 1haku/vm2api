@@ -19,16 +19,6 @@ const CLAUDE_DATE_RE = /-\d{8}$/
 const CLAUDE_LATEST_RE = /-latest$/
 const FAMILY_IDS = new Set(['fable', 'mythos', 'opus', 'sonnet', 'haiku'])
 const EPS = 1e-9
-// Administrator-requested free approval model, not an official OpenAI quote.
-const FREE_REVIEW_RATE = { input: 0, output: 0, cache_read: 0, cache_5m: 0, cache_1h: 0 }
-const CUSTOM_RATES = {
-  openai: {
-    'codex-auto-review': {
-      ...FREE_REVIEW_RATE,
-      modes: { flex: { ...FREE_REVIEW_RATE }, priority: { ...FREE_REVIEW_RATE } },
-    },
-  },
-}
 
 const EMPTY_STATUS = { fetched_at: null, status: 'never', error: null, models: 0 }
 
@@ -464,10 +454,6 @@ function resolveLayers(platform, id, catalog) {
     base = ov.price
     source = 'override'
     version = ov.raw.updated_at || null
-  } else if (CUSTOM_RATES[platform]?.[id]) {
-    base = CUSTOM_RATES[platform][id]
-    source = 'custom-free-auto-review'
-    version = 'custom-free-auto-review-v1'
   } else if (md?.price) {
     base = md.price
     source = 'models.dev'
@@ -544,7 +530,6 @@ function loadCatalog() {
     entries.push(makeEntry(platform, id, { overrides, snap }))
   }
   for (const platform of ['anthropic', 'openai']) {
-    for (const id of Object.keys(CUSTOM_RATES[platform] || {})) add(platform, id)
     for (const id of Object.keys(BUILTIN_RATES[platform] || {})) add(platform, id)
     for (const id of Object.keys(snap[platform] || {})) add(platform, id)
   }
@@ -563,7 +548,6 @@ function loadCatalog() {
 
 function hasExactLayer(platform, id, catalog) {
   return !!(
-    CUSTOM_RATES[platform]?.[id] ||
     catalog.overrides[`${platform}/${id}`] ||
     catalog.overrides[`*/${id}`] ||
     catalog.snap?.[platform]?.[id] ||
