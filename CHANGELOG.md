@@ -2,8 +2,12 @@
 
 ## 未发布
 
+<<<<<<< HEAD
 - 面板 Claude 用量：`utilization_*` 超过 1（如 header 1.04）按 ratio×100 显示，不再误成约 1%；Codex `used_percent` 路径不变。（#625，#631）
 - 自动/手动备份流水线改到 worker 线程执行（VACUUM INTO + tar），避免主线程长时间阻塞网关导致 Cloudflare 524。（#638，#639）
+=======
+- 面板 Claude 用量：`utilization_*` 超过 1（如 header 1.04）按 ratio×100 显示，不再误成约 1%；Codex `used_percent` 路径不变。（#625，#631）顺手修 tip biome/prettier format 债。
+>>>>>>> 7f53ed8f (chore: fix tip biome/prettier format on schedule-eligibility and persona-template)
 
 ## 1.3.202 — 2026-10-20
 
