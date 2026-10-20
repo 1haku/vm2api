@@ -110,29 +110,38 @@ test('environment opt-out prevents HTTP slot selection from overwriting caller t
   assert.deepEqual(body.system, [{ type: 'text', text: caller }])
 })
 
-test('cli-hop normalizes invalid caller markers instead of rejecting them', () => {
+test('cli-hop strips caller message markers then restamps only a text tail', () => {
   const request = (content) => ({
     model: 'claude-opus-5-5',
     messages: [{ role: 'user', content }],
   })
   const marker = (ttl) => ({ type: 'text', text: 'anchor', cache_control: { type: 'ephemeral', ...ttl } })
+  const messageMarkers = (body) =>
+    body.messages
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .filter((block) => block.cache_control)
+
   for (const content of [
     Array.from({ length: 5 }, () => marker({ ttl: '5m' })),
     [marker({}), marker({ ttl: '1h' })],
     [marker({ ttl: 'bad' })],
-    [{ type: 'thinking', thinking: 'private', cache_control: { type: 'ephemeral' } }],
-    [{ type: 'redacted_thinking', data: 'private', cache_control: { type: 'ephemeral' } }],
   ]) {
     const input = request(content)
     const before = structuredClone(input)
     const body = prepareCliHopBody(input)
     assert.deepEqual(input, before)
-    const marked = body.messages
-      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
-      .filter((block) => block.cache_control)
+    const marked = messageMarkers(body)
     assert.equal(marked.length, 1)
     assert.equal(marked[0].type, 'text')
     assert.deepEqual(marked[0].cache_control, { type: 'ephemeral' })
+  }
+
+  for (const content of [
+    [{ type: 'thinking', thinking: 'private', cache_control: { type: 'ephemeral' } }],
+    [{ type: 'redacted_thinking', data: 'private', cache_control: { type: 'ephemeral' } }],
+  ]) {
+    const body = prepareCliHopBody(request(content))
+    assert.equal(messageMarkers(body).length, 0)
   }
 })
 
