@@ -264,16 +264,10 @@ function stripEagerInputStreaming(tools) {
 }
 
 /**
- * Caller fields plus Node-owned message breakpoints.
- * CLI owns persona layout and system/tools markers; kernel only forwards.
- *
- * role=system turns stay where the caller put them, including a trailing one:
- * Claude Code ends most turns with a reminder (SessionStart context, then
- * `<total_tokens>`). Moving it into system[] puts a different text in the
- * cached system block whenever the reminder changes, so the whole prefix
- * misses. In place, it is history on the next turn and the prefix only grows.
- * This must not depend on client classification: relays strip the billing
- * block and rewrite the UA, so relayed Claude Code looks third-party.
+ * Every non-classifier body leaves as the official two-block template.
+ * Node owns that shape: identity, caller body, omitted TTL, one marker on the
+ * latest user turn. A trailing role=system stays a string so the cached prefix
+ * does not move when the reminder changes.
  */
 export function prepareCliHopBody(
   canonicalBody,
@@ -282,7 +276,6 @@ export function prepareCliHopBody(
     repaired = false,
     cacheTtl = DEFAULT_CACHE_TTL,
     requestContext = null,
-    preserveSystem = false,
     preserveThinkingBlocks = false,
     preserveCallerEnvironment = false,
     autoCompactWindow = null,
@@ -290,26 +283,20 @@ export function prepareCliHopBody(
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
-  if (preserveSystem) validateCacheBreakpoints(canonicalBody)
   let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
   const windowTokens = Number(autoCompactWindow)
   if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-  // Official family keeps the inbound system and its markers. Rewriting them
-  // into the persona template (billing / reporting / 1h) is what diverges from
-  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
-  if (!preserveSystem) {
-    const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
-    if (leftover == null) delete body.system
-    else body.system = leftover
-    body = stabilizeSystemBudget(body)
-    body = stabilizeMessageBudgets(body)
-  }
+  const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
+  if (leftover == null) delete body.system
+  else body.system = leftover
+  body = stabilizeSystemBudget(body)
+  body = stabilizeMessageBudgets(body)
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
   if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
-  if (!preserveSystem) body = collapseSystemBudgetReminders(body)
+  body = collapseSystemBudgetReminders(body)
 
   if (!repaired) {
     normalizeThinkingForModel(body)

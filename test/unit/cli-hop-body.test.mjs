@@ -110,7 +110,7 @@ test('environment opt-out prevents HTTP slot selection from overwriting caller t
   assert.deepEqual(body.system, [{ type: 'text', text: caller }])
 })
 
-test('cli-hop passthrough rejects invalid caller markers instead of repairing them', () => {
+test('cli-hop normalizes invalid caller markers instead of rejecting them', () => {
   const request = (content) => ({
     model: 'claude-opus-5-5',
     messages: [{ role: 'user', content }],
@@ -125,15 +125,12 @@ test('cli-hop passthrough rejects invalid caller markers instead of repairing th
   ]) {
     const input = request(content)
     const before = structuredClone(input)
-    assert.throws(
-      () => prepareCliHopBody(input, { preserveSystem: true }),
-      (error) => {
-        assert.equal(error.status, 400)
-        assert.equal(error.body.error.code, 'invalid_cache_control')
-        return true
-      },
-    )
+    const body = prepareCliHopBody(input)
     assert.deepEqual(input, before)
+    const marked = body.messages.flatMap((message) => (Array.isArray(message.content) ? message.content : [])).filter((block) => block.cache_control)
+    assert.equal(marked.length, 1)
+    assert.equal(marked[0].type, 'text')
+    assert.deepEqual(marked[0].cache_control, { type: 'ephemeral' })
   }
 })
 
