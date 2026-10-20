@@ -5,7 +5,7 @@ import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
 import { calculateCost, shanghaiDayStartIso } from '../../admin/pricing.mjs'
-import { estimateSubscriptionInput } from '../../admin/subscription-estimate.mjs'
+import { estimateSubscriptionReservationInput } from '../../admin/subscription-estimate.mjs'
 
 const DAY = 86400000
 const iso = (n = Date.now()) => new Date(n).toISOString()
@@ -377,7 +377,7 @@ export class SubscriptionsRepo {
           503,
           'subscription_window_pending',
         )
-      const input = estimateSubscriptionInput(body)
+      const input = estimateSubscriptionReservationInput(body)
       const requestedOutput = Number(body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? 16384)
       if (!Number.isFinite(requestedOutput) || requestedOutput < 1) throw subscriptionError('输出 Token 上限无效')
       const estimate = calculateCost(
@@ -414,6 +414,9 @@ export class SubscriptionsRepo {
                 pending: pending.cost,
                 estimated: amount,
                 estimated_input_tokens: input.tokens,
+                raw_estimated_input_tokens: input.raw_tokens,
+                model_context_tokens: input.context_limit,
+                input_estimate_capped: input.capped,
                 max_output_tokens: requestedOutput,
               },
             },

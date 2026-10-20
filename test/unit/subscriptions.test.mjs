@@ -1,3 +1,4 @@
+import { estimateSubscriptionInput } from '../../src/lib/admin/subscription-estimate.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -13,6 +14,9 @@ import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { resolveOutboundSessionId } from '../../src/lib/identity/identity-rewrite.mjs'
 import { subscriptionOverview } from '../../src/lib/admin/subscription-overview.mjs'
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
+import { SettingsRepo } from '../../src/lib/db/repos/settings-repo.mjs'
+import { setPriceCatalogTestHooks } from '../../src/lib/admin/price-catalog.mjs'
+import { calculateCost } from '../../src/lib/admin/pricing.mjs'
 
 function setup(t, config = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subscription-test-'))
@@ -42,6 +46,54 @@ function setup(t, config = {}) {
   return { dir, db, repo, plan, a, b }
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
+
+test('long history reservation is bounded by catalog context while pending, balance and settlement stay enforced', (t) => {
+  const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 10 })
+  const settings = new SettingsRepo(db)
+  settings.set('price_catalog_modelsdev', { openai: { 'gpt-6-astra': { context: 1_050_000 } } })
+  setPriceCatalogTestHooks({ settings, backgroundRefresh: false })
+  t.after(() => setPriceCatalogTestHooks(null))
+  const sub = repo.entitlement(a)
+  repo.settle('already-used', sub.id, 10.98080328)
+  const request = { model: 'gpt-6-astra', input: 'x'.repeat(18_340_108) }
+  const raw = estimateSubscriptionInput(request)
+  assert.equal(raw.tokens, 7_649_904)
+  assert.equal(calculateCost({ input_tokens: raw.tokens, output_tokens: 16384 }, request.model).total_cost, 154.22688)
+  const expected = calculateCost({ input_tokens: 1_050_000, output_tokens: 16384 }, request.model).total_cost
+  assert.equal(expected, 22.2288)
+  const admitted = repo.reserve(a, 'long-history', request)
+  assert.equal(admitted.reserved, expected)
+  assert.equal(repo.progress(admitted).daily_used, 10.98080328, 'reserving never charges')
+  repo.settle('long-history', sub.id, 0.254314)
+  assert.equal(
+    db.prepare("SELECT amount FROM custom_subscription_ledger WHERE request_id='long-history'").get().amount,
+    0.254314,
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+  for (let i = 0; i < 6; i++) repo.reserve(a, `parallel-${i}`, request)
+  assert.throws(
+    () => repo.reserve(a, 'over-pending', request),
+    (e) => {
+      assert.equal(e.code, 'subscription_quota')
+      assert.equal(e.quota.input_estimate_capped, true)
+      assert.equal(e.quota.estimated_input_tokens, 1_050_000)
+      assert.ok(e.quota.raw_estimated_input_tokens > 7_000_000)
+      assert.ok(e.quota.pending > 130)
+      return true
+    },
+  )
+  for (let i = 0; i < 6; i++) repo.settle(`parallel-${i}`, sub.id, 0)
+  repo.settle('real-spend', sub.id, 130)
+  assert.throws(
+    () => repo.reserve(a, 'low-balance', request),
+    (e) => e.code === 'subscription_quota',
+  )
+  assert.throws(
+    () => repo.reserve(a, 'unpriced', { ...request, model: 'unknown-model' }),
+    (e) => e.code === 'subscription_unpriced_model',
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+})
 
 test('large encoded requests no longer exhaust healthy balances; real output and pending costs remain gated', (t) => {
   const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 3 })

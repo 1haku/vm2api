@@ -1,6 +1,62 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { estimateSubscriptionInput } from '../../src/lib/admin/subscription-estimate.mjs'
+import {
+  estimateSubscriptionInput,
+  estimateSubscriptionReservationInput,
+} from '../../src/lib/admin/subscription-estimate.mjs'
+import { setPriceCatalogTestHooks } from '../../src/lib/admin/price-catalog.mjs'
+
+test('Responses multimodal tool outputs count media separately, without interpreting arbitrary tool JSON', () => {
+  for (const type of ['custom_tool_call_output', 'function_call_output']) {
+    const body = (size) => ({
+      input: [
+        {
+          type,
+          output: [
+            { type: 'input_text', text: 'Screenshot from the test runner' },
+            { type: 'input_image', image_url: 'data:image/png;base64,' + 'A'.repeat(size) },
+            { type: 'input_file', file_data: 'data:application/pdf;base64,' + 'B'.repeat(size) },
+          ],
+        },
+      ],
+    })
+    const small = estimateSubscriptionInput(body(100))
+    const large = estimateSubscriptionInput(body(2_000_000))
+    assert.deepEqual(large, small)
+    assert.equal(large.media_tokens, 8192 + 32768)
+    const json = { type: 'input_image', encrypted_content: 'C'.repeat(100_000) }
+    assert.ok(estimateSubscriptionInput({ input: [{ type, output: json }] }).text_bytes > 100_000)
+    assert.ok(estimateSubscriptionInput({ input: [{ type, output: [json] }] }).text_bytes > 100_000)
+    assert.ok(estimateSubscriptionInput({ input: [{ type: 'function_call', arguments: json }] }).text_bytes > 100_000)
+  }
+})
+
+test('only a known published context bounds reservation tokens; caller limits cannot lower it', (t) => {
+  const snapshot = { openai: { 'gpt-6-astra': { context: 1_050_000 } } }
+  setPriceCatalogTestHooks({
+    settings: { get: (key, fallback) => (key === 'price_catalog_modelsdev' ? snapshot : fallback) },
+    backgroundRefresh: false,
+  })
+  t.after(() => setPriceCatalogTestHooks(null))
+  const body = { model: 'openai/gpt-6-astra', input: 'long transcript '.repeat(200_000), context_window: 1 }
+  const input = estimateSubscriptionReservationInput(body)
+  assert.ok(input.raw_tokens > input.tokens)
+  assert.equal(input.tokens, 1_050_000)
+  assert.equal(input.context_limit, 1_050_000)
+  assert.equal(input.capped, true)
+  assert.equal(body.input.length, 3_200_000)
+  const small = estimateSubscriptionReservationInput({ model: body.model, input: 'hi' })
+  assert.equal(small.tokens, small.raw_tokens)
+  assert.equal(small.capped, false)
+  for (const context of [undefined, null, 0, -1, 1.5, 'invalid']) {
+    snapshot.openai['gpt-6-astra'].context = context
+    const unbounded = estimateSubscriptionReservationInput(body)
+    assert.equal(unbounded.tokens, unbounded.raw_tokens)
+    assert.equal(unbounded.context_limit, null)
+  }
+  const unknown = estimateSubscriptionReservationInput({ ...body, model: 'unknown-model' })
+  assert.equal(unknown.tokens, unknown.raw_tokens)
+})
 
 test('image and opaque reasoning encodings do not inflate prompt tokens with their byte size', () => {
   const request = (size) => ({

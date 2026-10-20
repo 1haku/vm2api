@@ -4,6 +4,29 @@
  * Unknown media/context receive explicit allowances, not a claimed exact count.
  * No cache discount is assumed before the upstream reports a cache hit.
  */
+import { modelsDevMeta, resolvePrice } from './price-catalog.mjs'
+
+function isOutputContentBlock(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  switch (value.type) {
+    case 'input_text':
+    case 'text':
+      return typeof value.text === 'string'
+    case 'input_image':
+      return typeof value.image_url === 'string' || typeof value.file_id === 'string'
+    case 'image_url':
+      return typeof value.image_url?.url === 'string'
+    case 'image':
+      return ['base64', 'url'].includes(value.source?.type)
+    case 'input_file':
+      return (
+        typeof value.file_data === 'string' || typeof value.file_id === 'string' || typeof value.file_url === 'string'
+      )
+    default:
+      return false
+  }
+}
+
 export function estimateSubscriptionInput(body = {}) {
   let textBytes = 0
   let overhead = 0
@@ -55,6 +78,14 @@ export function estimateSubscriptionInput(body = {}) {
       opaque += 8192
       return
     }
+    if (type === 'function_call_output' || type === 'custom_tool_call_output') {
+      // Responses tool outputs may be multimodal content blocks. Serializing
+      // that array would count image/file encodings as millions of text tokens.
+      const output = value.output
+      if (Array.isArray(output) && output.every(isOutputContentBlock)) visit(output, depth + 1)
+      else text(output)
+      return
+    }
     for (const [key, item] of Object.entries(value)) {
       if (['id', 'call_id', 'tool_call_id', 'type', 'role', 'status', 'signature', 'cache_control'].includes(key))
         continue
@@ -69,4 +100,25 @@ export function estimateSubscriptionInput(body = {}) {
   if (body.previous_response_id) opaque += 32768
   const tokens = Math.ceil((textBytes / 3 + overhead) * 1.25) + media + opaque + 8192
   return { tokens, text_bytes: textBytes, media_tokens: media, opaque_tokens: opaque }
+}
+
+/** Bound only the admission estimate, never the request or settled usage.
+ * Use published catalog metadata, not the caller's claimed token/context limit.
+ * No known context metadata means no cap; unknown pricing still fails closed.
+ * Keep the whole context allowance (without subtracting output) to avoid
+ * assuming provider-specific input/output accounting. Output reserves separately.
+ */
+export function estimateSubscriptionReservationInput(body = {}) {
+  const raw = estimateSubscriptionInput(body)
+  const price = resolvePrice(body.model)
+  const context = price ? Number(modelsDevMeta(price.platform, price.id)?.context) : NaN
+  const contextLimit = Number.isSafeInteger(context) && context > 0 ? context : null
+  const tokens = contextLimit == null ? raw.tokens : Math.min(raw.tokens, contextLimit)
+  return {
+    ...raw,
+    tokens,
+    raw_tokens: raw.tokens,
+    context_limit: contextLimit,
+    capped: tokens < raw.tokens,
+  }
 }
