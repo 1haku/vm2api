@@ -6,14 +6,17 @@ Run on the host after release verification, under the deployment lock.
 """
 import argparse
 import contextlib
+from collections import deque
 import datetime
 import fcntl
 import io
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -40,6 +43,31 @@ def project_image_marker(workdir, content):
         return workdir == '/build' and json.loads(content).get('repo') == 'dofastted/vm2api'
     except (ValueError, IndexError, AttributeError):
         return False
+
+
+def owned_build_ancestors(graph, seeds, used):
+    """Walk upwards only when every child is already an owned disposable cache.
+
+    A tagged image, container or unrelated cache branch protects its ancestry.
+    The returned order removes children before parents.
+    """
+    rows = {row['id']: row for row in graph}
+    children = {}
+    for row in graph:
+        children.setdefault(row.get('parent'), set()).add(row['id'])
+    queue, removed, order = deque(seeds), set(), []
+    while queue:
+        image_id = queue.popleft()
+        row = rows.get(image_id)
+        if not row or image_id in removed or image_id in used or row.get('tags'):
+            continue
+        if children.get(image_id, set()) - removed:
+            continue
+        removed.add(image_id)
+        order.append(image_id)
+        if row.get('parent'):
+            queue.append(row['parent'])
+    return order
 
 
 def run(*args):
@@ -102,6 +130,45 @@ def release_lock(root, inherited=None):
 
 
 class Docker:
+    def image_graph(self, ids=None):
+        endpoint = os.environ.get('DOCKER_HOST') if not os.environ.get('DOCKER_CONTEXT') else None
+        endpoint = endpoint or json.loads(run('docker', 'context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}'))
+        if not endpoint.startswith('unix://'):
+            raise ValueError('Retention requires the local Docker Unix socket')
+        # One read-only Engine listing supplies ParentId for every intermediate
+        # layer; per-image inspect is prohibitively slow with old build history.
+        connection = http.client.HTTPConnection('localhost', timeout=30)
+        try:
+            connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connection.sock.settimeout(30)
+            connection.sock.connect(endpoint[len('unix://'):])
+            connection.request('GET', '/images/json?all=1')
+            response = connection.getresponse()
+            if response.status != 200:
+                raise ValueError('Could not read Docker image dependency graph')
+            images = json.loads(response.read())
+        finally:
+            connection.close()
+        wanted = set(ids) if ids is not None else None
+        return [{'id': row['Id'], 'parent': row.get('ParentId') or '', 'tags': row.get('RepoTags') or []}
+                for row in images if wanted is None or row['Id'] in wanted]
+
+    def remove_build_images(self, ids):
+        removed = []
+        for offset in range(0, len(ids), 256):
+            metadata = {row['id']: row for row in self.image_graph()}
+            used = {c['Image'] for c in self.containers()}
+            batch = [i for i in ids[offset:offset + 256]
+                     if i in metadata and i not in used and not metadata[i].get('tags')]
+            if not batch:
+                continue
+            result = subprocess.run(['docker', 'image', 'rm', '--no-prune', *batch], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode and set(batch) & {row['id'] for row in self.image_graph()}:
+                raise ValueError('Some cache layers still have dependencies; cleanup stopped safely')
+            # A concurrent removal may yield 404 even though the layer is gone.
+            removed.extend(batch)
+        return removed
+
     def managed_build_images(self):
         used = {c['Image'] for c in self.containers()}
         candidates = run('docker', 'image', 'ls', '--filter', 'dangling=true', '--no-trunc', '-q').split()
@@ -131,7 +198,7 @@ class Docker:
                 pass  # Unrecognized cache belongs outside this cleanup policy.
             finally:
                 run('docker', 'rm', container)
-        return found
+        return owned_build_ancestors(self.image_graph(), found, used)
 
     def containers(self):
         ids = run('docker', 'ps', '-aq').split()
@@ -294,13 +361,8 @@ def apply_plan(plan, docker, mounts=None):
             raise ValueError(f"Image became active during cleanup: {ref}")
         docker.remove_image(ref)
     # Removing version tags can expose more untagged build intermediates.
-    removed_builds = []
     builds = docker.managed_build_images() if plan['delete_images'] else plan['delete_build_images']
-    for ref in builds:
-        if ref not in {c['Image'] for c in docker.containers()} and not docker.image(ref).get('tags'):
-            docker.remove_image(ref)
-            removed_builds.append(ref)
-    plan['removed_build_images'] = removed_builds
+    plan['removed_build_images'] = docker.remove_build_images(builds)
 
 
 def main():
@@ -332,7 +394,10 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, http.client.HTTPException, subprocess.CalledProcessError) as error:
         # Do not dump captured Docker/credential output in failure logs.
-        print(f'Retention stopped: {type(error).__name__}: {error}', file=sys.stderr)
+        if isinstance(error, subprocess.CalledProcessError):
+            print(f'Retention stopped: {" ".join(error.cmd[:3])} failed (exit {error.returncode})', file=sys.stderr)
+        else:
+            print(f'Retention stopped: {type(error).__name__}: {error}', file=sys.stderr)
         sys.exit(1)

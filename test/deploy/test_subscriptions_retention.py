@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('retention', Path(__file__).resolve().parents[2] / 'deploy/subscriptions-retention.py')
 retention = importlib.util.module_from_spec(spec)
@@ -30,6 +32,10 @@ class FakeDocker:
         return [{'ref': ref, 'id': meta['id']} for ref, meta in self.images.items() if ref.startswith('vm2api-subscriptions:')]
 
     def managed_build_images(self):
+        return []
+
+    def remove_build_images(self, ids):
+        assert not ids
         return []
 
     def verify(self, revision):
@@ -156,6 +162,37 @@ class RetentionTests(unittest.TestCase):
                                   ('/build/worker', 'module other/project'), ('/other', '{"name":"vm2api"}'),
                                   ('/build/web', 'not json')]:
             self.assertFalse(retention.project_image_marker(workdir, content))
+
+    def test_owned_cache_ancestry_stops_at_tags_containers_and_unrelated_branches(self):
+        graph = [
+            {'id': 'base', 'parent': '', 'tags': ['node:22']},
+            {'id': 'old-setup', 'parent': 'base', 'tags': []},
+            {'id': 'old-build', 'parent': 'old-setup', 'tags': []},
+            {'id': 'shared', 'parent': 'base', 'tags': []},
+            {'id': 'ours', 'parent': 'shared', 'tags': []},
+            {'id': 'other', 'parent': 'shared', 'tags': []},
+            {'id': 'active', 'parent': 'base', 'tags': []},
+        ]
+        result = retention.owned_build_ancestors(graph, ['old-build', 'ours', 'active'], {'active'})
+        self.assertEqual(result, ['old-build', 'ours', 'old-setup'])
+        self.assertEqual(retention.owned_build_ancestors(graph, ['ours'], set()), ['ours'])
+
+    def test_cache_execution_rechecks_tags_and_containers_without_force(self):
+        docker = retention.Docker()
+        rows = [{'id': 'old', 'tags': []}, {'id': 'new-tag', 'tags': ['keep']}, {'id': 'running', 'tags': []}]
+        docker.image_graph = lambda: rows
+        docker.containers = lambda: [{'Image': 'running'}]
+        with patch.object(retention.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as command:
+            self.assertEqual(docker.remove_build_images(['old', 'new-tag', 'running']), ['old'])
+            self.assertEqual(command.call_args.args[0], ['docker', 'image', 'rm', '--no-prune', 'old'])
+
+    def test_cache_execution_stops_if_docker_preserves_a_dependency(self):
+        docker = retention.Docker()
+        docker.image_graph = lambda: [{'id': 'old', 'tags': []}]
+        docker.containers = lambda: []
+        with patch.object(retention.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
+            with self.assertRaisesRegex(ValueError, 'dependencies'):
+                docker.remove_build_images(['old'])
 
 
 if __name__ == '__main__':
