@@ -137,6 +137,32 @@ export async function adoptLiveShellLogin(
   return { imported: true, refresh }
 }
 
+/** One interactive import at a time. A tick and terminal close share it. */
+export function createLiveLoginAdoption({ adopt, onImported, onError }) {
+  let seen = ''
+  let pending = null
+  return (report = false) => {
+    if (pending) return pending
+    pending = (async () => {
+      try {
+        const adopted = await adopt(seen)
+        if (!adopted?.imported || !adopted.refresh || adopted.refresh === seen) {
+          return { imported: false, refresh: seen }
+        }
+        seen = adopted.refresh
+        onImported?.(adopted)
+        return adopted
+      } catch (err) {
+        onError?.(err, report)
+        return { imported: false, refresh: seen, error: err }
+      } finally {
+        pending = null
+      }
+    })()
+    return pending
+  }
+}
+
 /** Live guest MOTD. Optional probes must not fail startup or print secrets. */
 const SYSTEM_FACTS_RC = [
   'case $- in *i*)',
@@ -528,23 +554,24 @@ export function createSlotShell({
     }
     // ConsoleSize on exec start is API >= 1.42; resize covers older daemons.
     resize(size.cols, size.rows)
-    let adoptedRefresh = ''
-    const adoptLive = async () => {
-      if (!size.login || ended) return
-      try {
-        const adopted = await adoptLiveShellLogin(projectRoot, vm, {
+    const adoptLive = createLiveLoginAdoption({
+      adopt: (seen) => {
+        if (!size.login) return { imported: false, refresh: seen }
+        return adoptLiveShellLogin(projectRoot, vm, {
           importOauth,
           loginHost: slotHost(vm),
-          seen: adoptedRefresh,
+          seen,
         })
-        if (!adopted.imported) return
-        adoptedRefresh = adopted.refresh
+      },
+      onImported() {
         send(JSON.stringify({ t: 'login', ok: true }))
-      } catch (err) {
+      },
+      onError(err, report) {
         if (err?.code === 'auth_login_incomplete' || err?.code === 'auth_login_scope') return
         logger.warn?.(`[slot-shell] ${vm.id} login import failed: ${err.message}`)
-      }
-    }
+        if (report) send(JSON.stringify({ t: 'error', message: '官方登录凭证未能导入槽凭证' }))
+      },
+    })
     const adoptTimer = size.login ? setInterval(() => void adoptLive(), 1000) : null
     adoptTimer?.unref?.()
     let ended = false
@@ -552,17 +579,7 @@ export function createSlotShell({
       if (ended) return
       ended = true
       clearInterval(adoptTimer)
-      if (size.login) {
-        try {
-          await adoptShellLogin(projectRoot, vm, { importOauth })
-          send(JSON.stringify({ t: 'login', ok: true }))
-        } catch (err) {
-          if (err?.code !== 'auth_login_incomplete' && err?.code !== 'auth_login_scope') {
-            logger.warn?.(`[slot-shell] ${vm.id} login import failed: ${err.message}`)
-            send(JSON.stringify({ t: 'error', message: '官方登录凭证未能导入槽凭证' }))
-          }
-        }
-      }
+      if (size.login) await adoptLive(true)
       const info = await inspectExec(connect, session.execId).catch(() => null)
       send(JSON.stringify({ t: 'exit', code: info?.ExitCode ?? null }))
       ws.close(1000)

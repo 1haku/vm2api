@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import {
   adoptShellLogin,
   adoptLiveShellLogin,
+  createLiveLoginAdoption,
   createSlotShell,
   panelShellLaunch,
   syncShellLoginCredentials,
@@ -418,6 +419,29 @@ test('a cluster grant is pulled before an empty local file can hide it', async (
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('a slow interactive import is shared by the next tick and close', async () => {
+  let calls = 0
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const run = createLiveLoginAdoption({
+    adopt: async (seen) => {
+      calls += 1
+      await gate
+      return seen ? { imported: false, refresh: seen } : { imported: true, refresh: 'rt-1', seen }
+    },
+  })
+  const first = run()
+  const second = run(true)
+  assert.equal(second, first)
+  assert.equal(calls, 1)
+  release()
+  assert.deepEqual(await first, { imported: true, refresh: 'rt-1', seen: '' })
+  assert.deepEqual(await run(), { imported: false, refresh: 'rt-1' })
+  assert.equal(calls, 2)
 })
 
 test('official login tickets check a cluster slot for its container cli-node', async () => {
