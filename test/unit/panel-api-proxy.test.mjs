@@ -11,6 +11,7 @@ import {
   summarizeProxyPool,
 } from '../../src/lib/admin/panel-api.mjs'
 import { ProxyPool } from '../../src/lib/vm/proxy-pool.mjs'
+import { writeCodexAccounts } from '../../src/lib/vm/codex-slot.mjs'
 
 function tmpDir(prefix = 'kin-panel-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -28,6 +29,46 @@ function writeVm(project, rec) {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, `${rec.id}.json`), JSON.stringify(rec, null, 2))
 }
+
+test('ChatGPT subscription expiry reaches panel list and detail without exposing credential tokens', async (t) => {
+  const project = tmpDir()
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(project, 'data'), { recursive: true })
+  writeVm(project, { id: 'gpt-expiry', platform: 'openai', family: 'codex', status: 'stopped', policy: {} })
+  fs.mkdirSync(path.join(project, 'vms', 'gpt-expiry'), { recursive: true })
+  writeVm(project, { id: 'claude-no-expiry', platform: 'anthropic', status: 'stopped', policy: {} })
+  const expiry = '2026-11-20T06:00:00Z'
+  const idToken = `e30.${Buffer.from(
+    JSON.stringify({
+      'https://api.openai.com/auth': {
+        chatgpt_subscription_active_until: expiry,
+        chatgpt_plan_type: 'pro',
+      },
+    }),
+  ).toString('base64url')}.test-signature`
+  writeCodexAccounts(project, 'gpt-expiry', [
+    {
+      access_token: 'test-access-secret',
+      refresh_token: 'test-refresh-secret',
+      id_token: idToken,
+    },
+  ])
+  const opts = { cfg: { paths: { project }, rewrite: {}, base_url: '' }, accountQuota: fakeQuota() }
+  const listed = await buildVmList(opts)
+  const detail = await buildVmDetail({ ...opts, id: 'gpt-expiry' })
+  for (const vm of [listed.data.items.find((v) => v.id === 'gpt-expiry'), detail.data.vm]) {
+    assert.equal(vm.chatgpt_subscription_active_until, expiry)
+    assert.equal(vm.chatgpt_plan_type, 'pro')
+  }
+  const claude = listed.data.items.find((v) => v.id === 'claude-no-expiry')
+  assert.equal(claude.chatgpt_subscription_active_until, null)
+  assert.equal(claude.chatgpt_plan_type, null)
+  for (const result of [listed, detail]) {
+    const json = JSON.stringify(result)
+    assert.doesNotMatch(json, /test-access-secret|test-refresh-secret/)
+    assert.equal(json.includes(idToken), false)
+  }
+})
 
 test('summarizeProxyPool includes disconnect_on_error', () => {
   assert.deepEqual(summarizeProxyPool(null), {
