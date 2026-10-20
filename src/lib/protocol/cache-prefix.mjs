@@ -64,32 +64,196 @@ function partKind(block) {
   return { kind: 'structure', digest: digest(withoutCacheControl(block)) }
 }
 
-function contentParts(content) {
-  if (typeof content === 'string') return [{ kind: 'text', digest: digest(content) }]
-  if (!Array.isArray(content)) return [{ kind: 'structure', digest: digest(content) }]
-  return content.map(partKind)
+// Same official reminder as outbound-attempt.mjs. Detector only: a tool result
+// may legally contain this string, so nothing here rewrites it.
+const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
+const CONTEXT_BUDGET_PLACEHOLDER = '<total_tokens>0 tokens left</total_tokens>'
+
+function stringStamp(text) {
+  const stamp = { t: 's', n: text.length, d: digest(text) }
+  if (!text.includes('<total_tokens>')) return stamp
+  stamp.total_tokens = true
+  stamp.norm = digest(text.replace(VOLATILE_CONTEXT_BUDGET, CONTEXT_BUDGET_PLACEHOLDER))
+  return stamp
 }
-function messageRecord(message) {
+
+function valueStamp(value, depth = 0) {
+  if (typeof value === 'string') return stringStamp(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return { t: typeof value, v: value, d: digest(value) }
+  if (value == null) return { t: 'null', d: digest(null) }
+  if (Array.isArray(value)) {
+    const stamp = { t: 'a', n: value.length, d: digest(value) }
+    if (depth < 3) stamp.items = value.slice(0, 6).map((item) => valueStamp(item, depth + 1))
+    return stamp
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).filter((key) => key !== 'cache_control')
+    const stamp = { t: 'o', keys, d: digest(value) }
+    if (depth < 3) {
+      stamp.fields = {}
+      for (const key of keys) stamp.fields[key] = valueStamp(value[key], depth + 1)
+    }
+    return stamp
+  }
+  return { t: typeof value }
+}
+
+function stampDelta(prev, next) {
+  if (!prev || !next) return { change: 'missing' }
+  if (prev.d && prev.d === next.d) return null
+  if (prev.t !== next.t) return { change: 'type', prev_t: prev.t, next_t: next.t }
+  if (prev.t === 's') {
+    if (prev.norm && next.norm && prev.norm === next.norm) {
+      return { change: 'counter_only', prev_n: prev.n, next_n: next.n }
+    }
+    return {
+      change: prev.n === next.n ? 'value' : 'length',
+      prev_n: prev.n,
+      next_n: next.n,
+      ...(prev.total_tokens || next.total_tokens ? { total_tokens: true } : {}),
+    }
+  }
+  if (prev.t === 'number' || prev.t === 'boolean' || prev.t === 'null') {
+    return prev.v === next.v ? null : { change: 'value' }
+  }
+  if (prev.t === 'a') {
+    if (prev.n !== next.n) return { change: 'length', prev_n: prev.n, next_n: next.n }
+    return { change: 'value', prev_n: prev.n, next_n: next.n }
+  }
+  if (prev.t === 'o') {
+    const added = next.keys.filter((key) => !prev.keys.includes(key))
+    const removed = prev.keys.filter((key) => !next.keys.includes(key))
+    const keyOrder = !added.length && !removed.length && prev.keys.join('\0') !== next.keys.join('\0')
+    const changed = []
+    if (prev.fields && next.fields) {
+      for (const key of prev.keys) {
+        if (!Object.prototype.hasOwnProperty.call(next.fields, key)) continue
+        const delta = stampDelta(prev.fields[key], next.fields[key])
+        if (delta) changed.push({ key, ...delta })
+      }
+    }
+    if (!added.length && !removed.length && !keyOrder && !changed.length) return null
+    const out = {}
+    if (added.length) out.added = added
+    if (removed.length) out.removed = removed
+    if (keyOrder) out.key_order = true
+    if (changed.length) out.changed = changed.slice(0, 8)
+    return out
+  }
+  return { change: 'value' }
+}
+
+function partRecord(block) {
+  const classified = partKind(block)
+  const clean = typeof block === 'string' ? block : withoutCacheControl(block)
   return {
-    hash: digest(withoutCacheControl(message)),
+    kind: classified.kind,
+    digest: classified.digest,
+    type: typeof block === 'string' ? 'string' : block?.type || null,
+    stamp: valueStamp(clean),
+  }
+}
+
+function contentParts(content) {
+  if (typeof content === 'string') return [partRecord(content)]
+  if (!Array.isArray(content)) return [partRecord(content)]
+  return content.map(partRecord)
+}
+
+function messageRecord(message) {
+  const clean = withoutCacheControl(message)
+  return {
+    hash: digest(clean),
     role: message?.role || null,
+    keys: clean && typeof clean === 'object' && !Array.isArray(clean) ? Object.keys(clean) : [],
     parts: contentParts(message?.content),
   }
 }
 
+function keyDelta(previous, next) {
+  const prevKeys = previous || []
+  const nextKeys = next || []
+  const added = nextKeys.filter((key) => !prevKeys.includes(key))
+  const removed = prevKeys.filter((key) => !nextKeys.includes(key))
+  const keyOrder = !added.length && !removed.length && prevKeys.join('\0') !== nextKeys.join('\0')
+  if (!added.length && !removed.length && !keyOrder) return null
+  return {
+    reason: keyOrder ? 'key_order' : 'message_fields',
+    ...(added.length ? { added } : {}),
+    ...(removed.length ? { removed } : {}),
+    ...(keyOrder ? { key_order: true } : {}),
+  }
+}
+
+function messageDiff(previous, current) {
+  if (!previous || !current) {
+    return {
+      reason: 'missing',
+      prev_n: previous?.parts.length ?? 0,
+      next_n: current?.parts.length ?? 0,
+      prev_types: (previous?.parts || []).map((part) => part.type || part.kind),
+      next_types: (current?.parts || []).map((part) => part.type || part.kind),
+    }
+  }
+  if (previous.role !== current.role) return { reason: 'role', prev: previous.role, next: current.role }
+  if (previous.parts.length !== current.parts.length) {
+    return {
+      reason: 'part_count',
+      prev_n: previous.parts.length,
+      next_n: current.parts.length,
+      prev_types: previous.parts.map((part) => part.type || part.kind),
+      next_types: current.parts.map((part) => part.type || part.kind),
+    }
+  }
+  for (let i = 0; i < previous.parts.length; i++) {
+    const left = previous.parts[i]
+    const right = current.parts[i]
+    if (left.kind !== right.kind) {
+      return { reason: 'part_kind', part: i, prev: left.type || left.kind, next: right.type || right.kind }
+    }
+    if (left.digest !== right.digest) {
+      return {
+        reason: 'part',
+        part: i,
+        type: left.type || left.kind,
+        fields: stampDelta(left.stamp, right.stamp) || { change: 'digest' },
+      }
+    }
+  }
+  return keyDelta(previous.keys, current.keys) || { reason: 'digest' }
+}
+
 function snapshotBody(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
+  const tools = Array.isArray(body?.tools) ? body.tools : []
   return {
     tools: digest(withoutCacheControl(body?.tools)),
+    tool_names: tools.map((tool) => tool?.name || null),
     system: digest(withoutCacheControl(body?.system)),
     messages: messages.map(messageRecord),
+  }
+}
+
+function toolsDiff(previous, current) {
+  const prevNames = previous?.tool_names || []
+  const nextNames = current?.tool_names || []
+  const added = nextNames.filter((name) => !prevNames.includes(name))
+  const removed = prevNames.filter((name) => !nextNames.includes(name))
+  return {
+    reason: added.length || removed.length ? 'tool_names' : 'tool_fields',
+    prev_n: prevNames.length,
+    next_n: nextNames.length,
+    ...(added.length ? { added } : {}),
+    ...(removed.length ? { removed } : {}),
   }
 }
 
 function comparePrefix(previous, current) {
   if (!previous) return { turn: 1, break: null }
   const turn = (previous.turn || 0) + 1
-  if (previous.tools !== current.tools) return { turn, break: { section: 'tools', kind: 'structure' } }
+  if (previous.tools !== current.tools) {
+    return { turn, break: { section: 'tools', kind: 'structure', diff: toolsDiff(previous, current) } }
+  }
   if (previous.system !== current.system) return { turn, break: { section: 'system', kind: 'text' } }
   const prevHashes = previous.messages.map((message) => message.hash)
   const currHashes = current.messages.map((message) => message.hash)
@@ -101,6 +265,7 @@ function comparePrefix(previous, current) {
         section: 'messages',
         index,
         kind: classifyParts(previous.messages[index], current.messages[index]),
+        diff: messageDiff(previous.messages[index], current.messages[index]),
       },
     }
   }
@@ -121,6 +286,8 @@ function classifyParts(previous, current) {
 
 /**
  * Same-request inbound vs Node outbound first difference. No prompt/image bytes.
+ * `kind=structure` is not a wire field and does not prove the block list changed:
+ * a tool_result body edit, an extra key, or key order also land here.
  */
 export function firstHistoryDiff(inbound, outbound) {
   if (!inbound || !outbound || typeof inbound !== 'object' || typeof outbound !== 'object') {
@@ -128,7 +295,9 @@ export function firstHistoryDiff(inbound, outbound) {
   }
   const previous = snapshotBody(inbound)
   const current = snapshotBody(outbound)
-  if (previous.tools !== current.tools) return { section: 'tools', index: null, kind: 'structure' }
+  if (previous.tools !== current.tools) {
+    return { section: 'tools', index: null, kind: 'structure', diff: toolsDiff(previous, current) }
+  }
   if (previous.system !== current.system) return { section: 'system', index: null, kind: 'text' }
   const prevHashes = previous.messages.map((message) => message.hash)
   const currHashes = current.messages.map((message) => message.hash)
@@ -138,7 +307,24 @@ export function firstHistoryDiff(inbound, outbound) {
     section: 'messages',
     index,
     kind: classifyParts(previous.messages[index], current.messages[index]),
+    diff: messageDiff(previous.messages[index], current.messages[index]),
   }
+}
+
+export function formatCacheBreak(entry) {
+  const br = entry?.break
+  if (!br) return ''
+  const where = br.section === 'messages' ? `messages[${br.index}]` : br.section
+  const diff = br.diff
+  let detail = ''
+  if (diff?.reason === 'part' && Array.isArray(diff.fields?.changed)) {
+    detail = ` ${diff.fields.changed.map((item) => `${item.key}:${item.change}`).join(',')}`
+  } else if (diff?.reason === 'part' && diff.fields?.change) {
+    detail = ` ${diff.type || 'part'}:${diff.fields.change}`
+  } else if (diff?.reason) {
+    detail = ` ${diff.reason}`
+  }
+  return `${where} ${br.kind}${detail}`
 }
 
 export function describeCacheContinuity({
@@ -152,12 +338,17 @@ export function describeCacheContinuity({
   requestId = null,
 } = {}) {
   const observed = layer === 'cli_final_wire'
+  const inboundToNode = firstHistoryDiff(inbound, outbound)
   return {
     layer,
     wire_observed: observed,
     ttl: ttl ? normalizeCacheTtl(ttl) : null,
     markers: listCacheMarkers(outbound),
-    inbound_to_outbound: firstHistoryDiff(inbound, outbound),
+    inbound_to_outbound: inboundToNode,
+    stages: {
+      inbound_to_node: inboundToNode,
+      node_to_cli: { observed: false },
+    },
     session_id: sessionId || null,
     vm_id: vmId || null,
     account_id: accountId || null,
