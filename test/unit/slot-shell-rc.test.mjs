@@ -10,6 +10,7 @@ import {
   ensureOfficialCredentialLink,
   readWorkerCredentialFile,
   writeWorkerCredentialFile,
+  authLoginBlocksRefresh,
 } from '../../src/lib/oauth/oauth-credentials.mjs'
 test('claude in the panel shell runs cli-node and points config at .claude', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-rc-'))
@@ -90,6 +91,101 @@ test('a fresh slot login links the official credential file onto the worker file
     )
     assert.equal(readWorkerCredentialFile(home).refresh_token, 'rt-fresh')
     assert.equal(ensureOfficialCredentialLink(home).linked, true)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a newer official credential file is adopted before the old refresh token can be reused', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-adopt-newer-'))
+  const home = path.join(root, 'cli-home')
+  const claude = path.join(home, '.claude')
+  const worker = path.join(claude, 'credentials.json')
+  const official = path.join(claude, '.credentials.json')
+  try {
+    fs.mkdirSync(claude, { recursive: true })
+    fs.writeFileSync(
+      worker,
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'at-old', refreshToken: 'rt-old', expiresAt: 1_000 },
+      }),
+    )
+    fs.writeFileSync(
+      official,
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'at-new', refreshToken: 'rt-new', expiresAt: 2_000 },
+      }),
+    )
+    const linked = ensureOfficialCredentialLink(home)
+    assert.equal(linked.adopted, true)
+    assert.equal(linked.linked, true)
+    assert.equal(fs.readlinkSync(official), 'credentials.json')
+    assert.equal(readWorkerCredentialFile(home).refresh_token, 'rt-new')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an older official credential file does not replace the worker grant', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-keep-worker-'))
+  const home = path.join(root, 'cli-home')
+  const claude = path.join(home, '.claude')
+  const official = path.join(claude, '.credentials.json')
+  try {
+    fs.mkdirSync(claude, { recursive: true })
+    fs.writeFileSync(
+      path.join(claude, 'credentials.json'),
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'at-live', refreshToken: 'rt-live', expiresAt: 5_000 },
+      }),
+    )
+    fs.writeFileSync(
+      official,
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'at-stale', refreshToken: 'rt-stale', expiresAt: 1_000 },
+      }),
+    )
+    const linked = ensureOfficialCredentialLink(home)
+    assert.equal(linked.adopted, false)
+    assert.equal(fs.readlinkSync(official), 'credentials.json')
+    assert.equal(readWorkerCredentialFile(home).refresh_token, 'rt-live')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a grant that exists only in .credentials.json becomes the worker file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-dot-only-'))
+  const home = path.join(root, 'cli-home')
+  const official = path.join(home, '.claude', '.credentials.json')
+  try {
+    fs.mkdirSync(path.dirname(official), { recursive: true })
+    fs.writeFileSync(
+      official,
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'at-only', refreshToken: 'rt-only', expiresAt: 9_000 },
+      }),
+    )
+    const linked = ensureOfficialCredentialLink(home)
+    assert.equal(linked.adopted, true)
+    assert.equal(readWorkerCredentialFile(home).refresh_token, 'rt-only')
+    assert.equal(fs.readlinkSync(official), 'credentials.json')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an in-progress claude auth login blocks the host refresh', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-login-hold-'))
+  const home = path.join(root, 'cli-home')
+  const status = path.join(root, 'run', 'auth-login', 'status.json')
+  try {
+    fs.mkdirSync(path.dirname(status), { recursive: true })
+    assert.equal(authLoginBlocksRefresh(home), false)
+    fs.writeFileSync(status, JSON.stringify({ status: 'url_ready', expires_at: Date.now() + 60_000 }))
+    assert.equal(authLoginBlocksRefresh(home), true)
+    fs.writeFileSync(status, JSON.stringify({ status: 'login_ready', expires_at: Date.now() + 60_000 }))
+    assert.equal(authLoginBlocksRefresh(home), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
