@@ -121,11 +121,7 @@ export async function adoptShellLogin(projectRoot, vm, { importOauth = null, log
 }
 
 /** Import one new interactive grant. The same refresh is not imported twice. */
-export async function adoptLiveShellLogin(
-  projectRoot,
-  vm,
-  { importOauth = null, loginHost = null, seen = '' } = {},
-) {
+export async function adoptLiveShellLogin(projectRoot, vm, { importOauth = null, loginHost = null, seen = '' } = {}) {
   const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
   await syncShellLoginCredentials(projectRoot, vm, { phase: 'adopt', host: loginHost || slotHost(vm) })
   ensureOfficialCredentialLink(home, officialCcUidGid(vm.id))
