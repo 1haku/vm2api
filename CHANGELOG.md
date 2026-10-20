@@ -7,6 +7,7 @@
 - 远端读文件在 BSD 工具链（macOS 节点）上改为先拒绝符号链接与非普通文件再读取；GNU 节点仍用 `dd iflag=nofollow`。
 - 面板 Claude 用量：`utilization_*` 超过 1（如 header 1.04）按 ratio×100 显示，不再误成约 1%；Codex `used_percent` 路径不变。（#625，#631）
 - 自动/手动备份流水线改到 worker 线程执行（VACUUM INTO + tar），避免主线程长时间阻塞网关导致 Cloudflare 524。（#638，#639）
+- cli-hop 出站收成官方两段 system（identity + 调用方正文，ephemeral 无 TTL）、缓存标记打最新 user、去掉 eager_input_streaming/工具 cache_control/temperature/context_management，thinking display 默认 summarized 等。（#641）
 
 ## 1.3.202 — 2026-10-20
 

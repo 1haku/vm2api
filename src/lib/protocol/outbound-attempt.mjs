@@ -13,7 +13,7 @@ import {
   alignSamplingWithThinking,
   modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
-import { liftMidConversationSystemMessages, promoteContentToBlocks } from './sanitize.mjs'
+import { liftMidConversationSystemMessages } from './sanitize.mjs'
 import {
   applyThinkingDisplay,
   ensureUnofficialAdaptiveThinking,
