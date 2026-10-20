@@ -283,17 +283,23 @@ export function prepareCliHopBody(
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
-  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
+  if (preserveSystem) validateCacheBreakpoints(canonicalBody)
+  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: preserveSystem })
   const windowTokens = Number(autoCompactWindow)
   if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-  const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
-  if (leftover == null) delete body.system
-  else body.system = leftover
-  body = stabilizeSystemBudget(body)
-  body = stabilizeMessageBudgets(body)
+  // Official family keeps the inbound system and its markers. Rewriting them
+  // into the persona template (billing / reporting / 1h) is what diverges from
+  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
+  if (!preserveSystem) {
+    const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
+    if (leftover == null) delete body.system
+    else body.system = leftover
+    body = stabilizeSystemBudget(body)
+    body = stabilizeMessageBudgets(body)
+  }
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
   if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
   body = collapseSystemBudgetReminders(body)
@@ -311,11 +317,10 @@ export function prepareCliHopBody(
   if (Object.prototype.hasOwnProperty.call(body, 'top_p')) delete body.top_p
   if (Object.prototype.hasOwnProperty.call(body, 'top_k')) delete body.top_k
   if (Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
-  if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
-  if (!requestContext) {
-    body = { ...body, system: officialSystemTemplate(body.system) }
-    body.messages = officialMessageMarker(body.messages)
-    if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
+  if (!preserveSystem) {
+    body = stripIllegalCacheControlFields(body)
+    body = removeCacheControlFields(body)
+    body = applyMessageBreakpoints(body, normalizeCacheTtl(cacheTtl), 'rewrite')
   }
   return body
 }

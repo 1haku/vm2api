@@ -421,7 +421,7 @@ test('cli-hop does not mark thinking blocks', () => {
     },
     { cacheTtl: '1h' },
   )
-  assert.equal(body.messages.at(-1).content[0].cache_control, undefined)
+  assert.deepEqual(body.messages.at(-1).content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(body.messages.at(-1).content[1].type, 'thinking')
   assert.equal(body.messages.at(-1).content[1].cache_control, undefined)
 })

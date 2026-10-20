@@ -171,6 +171,7 @@ export function promoteSystemToBlocks(system) {
  */
 export function canonicalizeClaudeMessagesShape(body, { preserveContentShape = false } = {}) {
   if (!body || typeof body !== 'object') return body
+  if (preserveContentShape) return { ...body }
   const out = { ...body }
   if (preserveContentShape) {
     if (Array.isArray(out.messages)) {
