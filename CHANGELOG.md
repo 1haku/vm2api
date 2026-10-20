@@ -8,6 +8,10 @@
 - 面板 Claude 用量：`utilization_*` 超过 1（如 header 1.04）按 ratio×100 显示，不再误成约 1%；Codex `used_percent` 路径不变。（#625，#631）
 - 自动/手动备份流水线改到 worker 线程执行（VACUUM INTO + tar），避免主线程长时间阻塞网关导致 Cloudflare 524。（#638，#639）
 - cli-hop 出站收成官方两段 system（identity + 调用方正文，ephemeral 无 TTL）、缓存标记打最新 user、去掉 eager_input_streaming/工具 cache_control/temperature/context_management，thinking display 默认 summarized 等。（#641）
+- 设置 → 遥测新增日志总开关和保存时间（默认 24 小时，1–168）。这是各槽上传日志的唯一启动源：关闭不写、不显示；打开后槽位运维页直接显示该槽保留窗口内已有记录。sidecar 按同一窗口裁 `telemetry-upload.log`。
+- 槽内 cli-node 进入 native loop 前丢掉 `settings.json` 里安全名单以外的 env（如 `LD_PRELOAD`）。
+- 授权页默认 OAuth。顺序为 Claude Code、Cookie、授权链接；Setup Token 为授权链接、Cookie。去掉 Console 导入。
+- 入站 device 迁移改为 `041_usage_logs_inbound_device`，避开 macOS 节点占用的 040。
 
 ## 1.3.202 — 2026-10-20
 
