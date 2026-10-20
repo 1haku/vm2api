@@ -21,6 +21,8 @@ import {
   CRS_AGENT_PROMPT_REQUIRED,
   CRS_OFFICIAL_CLI_SYSTEM,
   CRS_OFFICIAL_SYSTEM,
+  CRS_OFFICIAL_CLI_SYSTEM,
+  CRS_REPORTING_OUTCOMES,
   CRS_PROMPT_LEAK_APPEND,
   DEFAULT_CACHE_CONTROL_TTL,
   DEFAULT_CLI_VERSION,
@@ -113,6 +115,7 @@ test('forceConfigured rewrites official and proxied-official system onto the pre
   const out = applyCrsUnofficialPersona(body, { headers, mode: 'official_full', forceConfigured: true })
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
+  assert.equal(out.system[2].text, CRS_REPORTING_OUTCOMES)
   assert.equal(out.system[3].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.match(out.system.at(-1).text, /RFC 2119/)
   assert.match(out.system.at(-1).text, /<workstation>/)
@@ -144,7 +147,7 @@ test('empty unofficial system still writes the official full prompt', () => {
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
-  assert.match(out.system[2].text, /^# Reporting outcomes/)
+  assert.equal(out.system[2].text, CRS_REPORTING_OUTCOMES)
   assert.equal(out.system[3].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.match(out.system[4].text, /# Text output/)
@@ -726,10 +729,14 @@ test('pi and omp harness prompts replace the official full system instead of sta
       texts.some((text) => text.startsWith('x-anthropic-billing-header:')),
       mode,
     )
-    assert.ok(
-      mode === 'official_full' ? texts.includes(CRS_OFFICIAL_CLI_SYSTEM) : texts.includes(CRS_OFFICIAL_SYSTEM),
-      mode,
-    )
+    if (mode === 'official_full') {
+      assert.ok(texts.includes(CRS_OFFICIAL_CLI_SYSTEM), mode)
+      assert.ok(texts.includes(CRS_REPORTING_OUTCOMES), mode)
+    } else {
+      assert.ok(texts.includes(CRS_OFFICIAL_SYSTEM), mode)
+      assert.equal(texts.includes(CRS_OFFICIAL_CLI_SYSTEM), false, mode)
+      assert.equal(texts.includes(CRS_REPORTING_OUTCOMES), false, mode)
+    }
     const harness = texts.find((text) => text.includes('Oh My Pi coding harness'))
     assert.match(harness, /<workstation>/)
     assert.match(harness, /\/tmp\/demo/)
