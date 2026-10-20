@@ -120,6 +120,23 @@ export async function adoptShellLogin(projectRoot, vm, { importOauth = null, log
   return { imported: true, linked: true }
 }
 
+/** Import one new interactive grant. The same refresh is not imported twice. */
+export async function adoptLiveShellLogin(
+  projectRoot,
+  vm,
+  { importOauth = null, loginHost = null, seen = '' } = {},
+) {
+  const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
+  await syncShellLoginCredentials(projectRoot, vm, { phase: 'adopt', host: loginHost || slotHost(vm) })
+  ensureOfficialCredentialLink(home, officialCcUidGid(vm.id))
+  const doc = readJsonFile(path.join(home, '.claude', '.credentials.json'))
+  const grant = doc?.claudeAiOauth
+  const refresh = String(grant?.refreshToken || grant?.refresh_token || '')
+  if (!refresh || refresh === seen) return { imported: false, refresh: seen }
+  await adoptShellLogin(projectRoot, vm, { importOauth, loginHost })
+  return { imported: true, refresh }
+}
+
 /** Live guest MOTD. Optional probes must not fail startup or print secrets. */
 const SYSTEM_FACTS_RC = [
   'case $- in *i*)',
@@ -305,7 +322,7 @@ export function panelShellLaunch(cliBin) {
     'if [ ! -e "$HOME/.claude.json" ] && [ -f "$CLAUDE_CONFIG_DIR/.claude.json" ]; then ln -s .claude/.claude.json "$HOME/.claude.json" 2>/dev/null || true; fi',
     `claude() { export HOME="\${HOME:-/home/kincli}"; export CLAUDE_CONFIG_DIR="\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}"; if [ -x ${q} ]; then ${q} "$@"; else echo "cli-node 不在 ${q}" >&2; return 127; fi; }`,
     SYSTEM_FACTS_RC,
-    'if [ -n "${KIN_PANEL_LOGIN:-}" ]; then printf "\\n"; claude auth login; fi',
+    'if [ -n "${KIN_PANEL_LOGIN:-}" ]; then printf "\\n"; claude; fi',
     'rm -f "$KIN_PANEL_RCFILE"',
   ].join('\n')
   return {
@@ -511,16 +528,39 @@ export function createSlotShell({
     }
     // ConsoleSize on exec start is API >= 1.42; resize covers older daemons.
     resize(size.cols, size.rows)
+    let adoptedRefresh = ''
+    const adoptLive = async () => {
+      if (!size.login || ended) return
+      try {
+        const adopted = await adoptLiveShellLogin(projectRoot, vm, {
+          importOauth,
+          loginHost: slotHost(vm),
+          seen: adoptedRefresh,
+        })
+        if (!adopted.imported) return
+        adoptedRefresh = adopted.refresh
+        send(JSON.stringify({ t: 'login', ok: true }))
+      } catch (err) {
+        if (err?.code === 'auth_login_incomplete' || err?.code === 'auth_login_scope') return
+        logger.warn?.(`[slot-shell] ${vm.id} login import failed: ${err.message}`)
+      }
+    }
+    const adoptTimer = size.login ? setInterval(() => void adoptLive(), 1000) : null
+    adoptTimer?.unref?.()
     let ended = false
     const onEnd = async () => {
       if (ended) return
       ended = true
+      clearInterval(adoptTimer)
       if (size.login) {
         try {
           await adoptShellLogin(projectRoot, vm, { importOauth })
+          send(JSON.stringify({ t: 'login', ok: true }))
         } catch (err) {
-          logger.warn?.(`[slot-shell] ${vm.id} login import failed: ${err.message}`)
-          send(JSON.stringify({ t: 'error', message: '官方登录凭证未能导入槽凭证' }))
+          if (err?.code !== 'auth_login_incomplete' && err?.code !== 'auth_login_scope') {
+            logger.warn?.(`[slot-shell] ${vm.id} login import failed: ${err.message}`)
+            send(JSON.stringify({ t: 'error', message: '官方登录凭证未能导入槽凭证' }))
+          }
         }
       }
       const info = await inspectExec(connect, session.execId).catch(() => null)
