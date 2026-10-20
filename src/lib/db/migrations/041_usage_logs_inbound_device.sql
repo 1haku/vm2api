@@ -1,4 +1,4 @@
--- 040_usage_logs_inbound_device — client device id captured before outbound rewrite.
+-- 041_usage_logs_inbound_device — client device id captured before outbound rewrite.
 -- Source: metadata.user_id.device_id, body device_id, or x-kin-device-id.
 -- Absent on the inbound request stays NULL. Historical rows stay NULL.
 
