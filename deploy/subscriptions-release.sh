@@ -13,7 +13,10 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 IMAGE="vm2api-subscriptions:$STAMP"
 BACKUP="$ROOT/backups/$STAMP"
 # Build and test Go before interrupting the running service.
-docker build --build-arg "CUSTOM_REVISION=$REVISION" -f deploy/Dockerfile.subscriptions -t "$IMAGE" .
+# An optional local Node image may contain /payload recovered from a previous
+# release. fetch-payload still checks every pinned size/hash; mismatches cannot
+# enter the final image. Default builds continue to download from upstream.
+docker build --build-arg "CUSTOM_REVISION=$REVISION" --build-arg "PAYLOAD_BASE_IMAGE=${VM2API_PAYLOAD_BASE_IMAGE:-node:22-bookworm-slim}" -f deploy/Dockerfile.subscriptions -t "$IMAGE" .
 docker run --rm --network none --entrypoint node "$IMAGE" scripts/verify-computer-payload.mjs --install-image
 docker run --rm --network none --entrypoint python3 -v "$RELEASE/deploy:/opt/vm2api/deploy:ro" -v "$RELEASE/test/deploy:/opt/vm2api/test/deploy:ro" "$IMAGE" -m unittest discover -s test/deploy -v
 docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" -v "$RELEASE/web/src:/opt/vm2api/web/src:ro" -v "$RELEASE/web/vite.config.ts:/opt/vm2api/web/vite.config.ts:ro" -v "$RELEASE/docker-compose.yml:/opt/vm2api/docker-compose.yml:ro" -v "$RELEASE/Dockerfile:/opt/vm2api/Dockerfile:ro" -v "$RELEASE/deploy/Dockerfile.arm64-control:/opt/vm2api/deploy/Dockerfile.arm64-control:ro" -v "$RELEASE/deploy/Dockerfile.subscriptions:/opt/vm2api/deploy/Dockerfile.subscriptions:ro" "$IMAGE" scripts/test-subscriptions-release.mjs
