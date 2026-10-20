@@ -180,18 +180,19 @@ function textOf(block) {
  * already has that identity keeps its second block; anything else is joined
  * behind a fresh identity.
  */
-export function officialSystemTemplate(system) {
+export function officialSystemTemplate(system, ttl = DEFAULT_CACHE_TTL) {
   const blocks = Array.isArray(system) ? system : system == null || system === '' ? [] : [system]
   const texts = blocks.map(textOf).filter((text) => text.trim())
   const identityAt = texts.findIndex((text) => text.trim() === CRS_OFFICIAL_CLI_SYSTEM)
   const body = identityAt >= 0 ? texts.slice(identityAt + 1).join('\n\n') : texts.join('\n\n')
-  const out = [{ type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM, cache_control: { ...OFFICIAL_CACHE } }]
-  if (body.trim()) out.push({ type: 'text', text: body, cache_control: { ...OFFICIAL_CACHE } })
+  const marker = { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) }
+  const out = [{ type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM, cache_control: { ...marker } }]
+  if (body.trim()) out.push({ type: 'text', text: body, cache_control: { ...marker } })
   return out
 }
 
 /** One marker, on the last text of the current tail, ttl omitted. */
-function officialMessageMarker(messages) {
+function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL) {
   if (!Array.isArray(messages) || messages.length === 0) return messages
   const next = messages.map((message) => {
     if (!message || typeof message !== 'object') return message
@@ -226,14 +227,16 @@ function officialMessageMarker(messages) {
   if (typeof message.content === 'string') {
     next[tail] = {
       ...message,
-      content: [{ type: 'text', text: message.content, cache_control: { ...OFFICIAL_CACHE } }],
+      content: [
+        { type: 'text', text: message.content, cache_control: { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) } },
+      ],
     }
     return next
   }
   const content = message.content.slice()
   for (let i = content.length - 1; i >= 0; i--) {
     if (content[i]?.type === 'thinking' || content[i]?.type === 'redacted_thinking') continue
-    content[i] = { ...content[i], cache_control: { ...OFFICIAL_CACHE } }
+    content[i] = { ...content[i], cache_control: { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) } }
     next[tail] = { ...message, content }
     return next
   }
@@ -326,8 +329,8 @@ export function prepareCliHopBody(
   if (Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
-    body = { ...body, system: officialSystemTemplate(body.system) }
-    body.messages = officialMessageMarker(body.messages)
+    body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
+    body.messages = officialMessageMarker(body.messages, cacheTtl)
     if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
   return body

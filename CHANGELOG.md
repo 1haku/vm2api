@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.205 — 2026-10-21
+
+- cli-hop 出站的缓存标记写上请求解析出的 TTL。原来只有 `{type: ephemeral}`，上游按 5 分钟过期，间隔超过 5 分钟的下一轮整段重写。默认 `1h`，显式 `5m` 保持 `5m`。
+
 ## 1.3.204 — 2026-10-21
 
 - 官方 OAuth 的 Claude Code 终端启动真实 `claude`，不再执行 `claude auth login`。初次进入按两次回车拿到授权链接；按 c 经 OSC 52 复制到浏览器剪贴板，授权码粘回终端。授权写入既有 `credentials.json`，`.credentials.json` 仍是它的链接，不另存一份。
