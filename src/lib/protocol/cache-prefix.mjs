@@ -440,10 +440,3 @@ export function confirmCachePrefix(sessionKey, now = Date.now()) {
 export function clearCachePrefixSessions() {
   sessions.clear()
 }
-
-/** Human-readable location of a cache-prefix break for logs. */
-export function formatCacheBreak(prefix) {
-  const br = prefix?.break
-  if (!br?.section) return ''
-  return br.section === 'messages' ? `messages[${br.index}]` : br.section
-}
