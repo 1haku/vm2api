@@ -2,6 +2,9 @@
 # Check the backup time before use: this archives post-backup writes, then restores.
 set -eu
 ROOT=/home/yibocho/vm2api
+mkdir -p "$ROOT/deploy"
+exec 9>"$ROOT/deploy/.release.lock"
+flock -n 9 || { echo 'Another release or retention operation is running' >&2; exit 1; }
 BACKUP=$(realpath "${1:?Supply the backup directory}")
 case "$BACKUP" in "$ROOT"/backups/*) ;; *) echo 'Unexpected backup directory' >&2; exit 1;; esac
 test -f "$BACKUP/stopped-data/kin.db"

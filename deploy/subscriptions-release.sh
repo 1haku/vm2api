@@ -2,6 +2,9 @@
 # Run from a committed release archive; touches only the vm2api control plane.
 set -eu
 ROOT=/home/yibocho/vm2api
+mkdir -p "$ROOT/deploy"
+exec 9>"$ROOT/deploy/.release.lock"
+flock -n 9 || { echo 'Another release or retention operation is running' >&2; exit 1; }
 RELEASE=$(pwd -P)
 case "$RELEASE" in "$ROOT"/releases/subscriptions-*) ;; *) echo 'Unexpected release directory' >&2; exit 1;; esac
 REVISION=$(cat CUSTOM_REVISION)
@@ -12,6 +15,7 @@ BACKUP="$ROOT/backups/$STAMP"
 # Build and test Go before interrupting the running service.
 docker build --build-arg "CUSTOM_REVISION=$REVISION" -f deploy/Dockerfile.subscriptions -t "$IMAGE" .
 docker run --rm --network none --entrypoint node "$IMAGE" scripts/verify-computer-payload.mjs --install-image
+docker run --rm --network none --entrypoint python3 -v "$RELEASE/deploy:/opt/vm2api/deploy:ro" -v "$RELEASE/test/deploy:/opt/vm2api/test/deploy:ro" "$IMAGE" -m unittest discover -s test/deploy -v
 docker run --rm --entrypoint node -v "$RELEASE/test:/opt/vm2api/test:ro" -v "$RELEASE/web/src:/opt/vm2api/web/src:ro" -v "$RELEASE/web/vite.config.ts:/opt/vm2api/web/vite.config.ts:ro" -v "$RELEASE/docker-compose.yml:/opt/vm2api/docker-compose.yml:ro" -v "$RELEASE/Dockerfile:/opt/vm2api/Dockerfile:ro" -v "$RELEASE/deploy/Dockerfile.arm64-control:/opt/vm2api/deploy/Dockerfile.arm64-control:ro" -v "$RELEASE/deploy/Dockerfile.subscriptions:/opt/vm2api/deploy/Dockerfile.subscriptions:ro" "$IMAGE" scripts/test-subscriptions-release.mjs
 mkdir -p "$BACKUP/migration-check"
 chmod 700 "$BACKUP"
@@ -54,4 +58,5 @@ for attempt in $(seq 1 120); do
 done
 if [ "$ready" != 1 ]; then echo "Health check failed; rollback backup: $BACKUP" >&2; exit 1; fi
 docker exec vm2api node scripts/verify-subscriptions-release.mjs "$REVISION"
+python3 "$RELEASE/deploy/subscriptions-retention.py" --root "$ROOT" --active-release "$RELEASE" --expected-image "$IMAGE" --apply --lock-fd 9
 printf 'IMAGE=%s\nBACKUP=%s\nRELEASE=%s\n' "$IMAGE" "$BACKUP" "$RELEASE"

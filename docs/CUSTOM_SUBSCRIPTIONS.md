@@ -171,6 +171,14 @@ v4 新增 `002_subscription_namespace.sql`，原已发布的 001 完全不变。
 
 ## 当前部署与回滚
 
+### 自动保留最近三份
+
+同时清理本项目未被容器引用、没有标签的构建中间镜像，通过镜像内 package.json、Go 模块名或 payload 仓库字段识别项目；检查时只创建未启动的临时容器并读取标识文件，不执行镜像代码，不做全局 image/volume prune。
+
+按管理员要求，服务器只保留最近 **3 份完整可回滚备份**。`deploy/subscriptions-retention.py` 默认只预览，传入 `--apply` 才删除；保留运行镜像、三份备份的 `previous-image.txt` 所需镜像及相应源码目录，所以正常为 3 份备份和 4 个发布/镜像版本（当前版本加三份回滚依赖）。任意现存容器引用的镜像也受保护。旧备份、旧发布目录、根目录重复源码包/Git bundle 和过期 vm2api 镜像会清理，运行数据、槽位、配置、登录资料及其他服务不在清理范围。
+
+发布与回滚使用 `deploy/.release.lock` 互斥；新版本构建、测试、数据库副本校验、启动健康和文件清单验证全部成功后，发布脚本才自动执行保留策略。回滚不触发清理。若近期备份不完整、回滚镜像/源码缺失、路径含符号链接或挂载点，清理中止并报错，不自动回滚正在运行的服务。默认预览报告位于 `deploy/retention-plan.json`，执行结果位于 `deploy/retention-last.json`。手动执行：`python3 /home/yibocho/vm2api/deploy/subscriptions-retention.py --apply`。
+
 容器启动仅在没有槽位记录、活跃指针和已有数据库的首次安装中创建 `vm-01`。已有有效活跃槽位时保留文件原样；指针缺失或指向已删除槽位时，从现存有效槽位恢复指针，不补建默认槽位。已有安装的槽位文件全部丢失或活跃指针 JSON 损坏时中止启动，要求恢复配置，避免把数据损坏误判成首次安装。这项修复不修改数据库迁移。
 
 服务器目录 `/home/yibocho/vm2api`，服务端口 8787。先提交通过验证的改动，执行 `node scripts/package-subscriptions-release.mjs`，从干净提交打包源码、测试、依赖锁、前端产物、Go 源码及上游二进制资产。把包解压至新的 `releases/subscriptions-*` 目录，将随包 `.revision` 文件的内容保存为 `CUSTOM_REVISION`，再从该目录运行 `sh deploy/subscriptions-release.sh`。不打包 `.env`、账号凭据或运行数据。
