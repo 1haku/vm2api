@@ -380,7 +380,7 @@ test('cli-hop drops caller system/tools markers and restamps last plus penultima
     { cacheTtl: '5m' },
   )
   assert.equal(body.cache_control, undefined)
-  assert.deepEqual(body.tools[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(body.tools[0].cache_control, undefined)
   assert.equal(body.system[0].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral' })
   assert.deepEqual(messageMarkers(body), [{ index: 2, blockIndex: 0, type: 'text', ttl: undefined }])

@@ -239,19 +239,21 @@ function officialMessageMarker(messages) {
   }
   return next
 }
-/** Official Claude Code omits this field. A panel switch or a caller value must not put it back. */
+/** Official Claude Code omits eager streaming and tool cache markers. A caller TTL here makes CLI fill the omitted system and message markers. */
 function stripEagerInputStreaming(tools) {
   if (!Array.isArray(tools)) return tools
   let changed = false
   const next = tools.map((tool) => {
     if (!tool || typeof tool !== 'object') return tool
     const hasOwn = Object.prototype.hasOwnProperty.call(tool, 'eager_input_streaming')
+    const hasCache = Object.prototype.hasOwnProperty.call(tool, 'cache_control')
     const fn = tool.function
     const fnHas = fn && typeof fn === 'object' && Object.prototype.hasOwnProperty.call(fn, 'eager_input_streaming')
-    if (!hasOwn && !fnHas) return tool
+    if (!hasOwn && !hasCache && !fnHas) return tool
     changed = true
     const copy = { ...tool }
     delete copy.eager_input_streaming
+    delete copy.cache_control
     if (fnHas) {
       copy.function = { ...fn }
       delete copy.function.eager_input_streaming
