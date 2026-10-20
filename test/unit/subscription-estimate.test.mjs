@@ -58,7 +58,7 @@ test('only a known published context bounds reservation tokens; caller limits ca
   assert.equal(unknown.tokens, unknown.raw_tokens)
 })
 
-test('image and opaque reasoning encodings do not inflate prompt tokens with their byte size', () => {
+test('large image/opaque encodings stay bounded and short reasoning does not pay an 8192-token flat charge', () => {
   const request = (size) => ({
     model: 'gpt-6-astra',
     input: [
@@ -75,10 +75,61 @@ test('image and opaque reasoning encodings do not inflate prompt tokens with the
   })
   const small = estimateSubscriptionInput(request(100))
   const large = estimateSubscriptionInput(request(3_200_000))
-  assert.deepEqual(large, small)
-  assert.ok(large.media_tokens > 0)
-  assert.ok(large.opaque_tokens > 0)
+  assert.equal(large.media_tokens, small.media_tokens)
+  assert.equal(large.text_tokens, small.text_tokens)
+  assert.equal(small.opaque_tokens, 256)
+  assert.equal(large.opaque_tokens, 8192)
+  assert.equal(estimateSubscriptionInput(request(6_400_000)).tokens, large.tokens)
   assert.ok(large.tokens < 50000)
+})
+
+test('OpenAI text is tokenized locally with headroom, including literal special tokens and tool data', () => {
+  const plain = estimateSubscriptionInput({ model: 'gpt-6-astra', input: 'hello world' })
+  assert.equal(plain.method, 'o200k_estimate')
+  assert.equal(plain.text_tokens, 2)
+  assert.equal(plain.fallback_bytes, 0)
+  assert.ok(estimateSubscriptionInput({ model: 'gpt-6-astra', input: '<|endoftext|> 中文 😀' }).text_tokens > 2)
+  const code = 'const result = await fetch(url);\n'.repeat(10000)
+  const estimate = estimateSubscriptionInput({ model: 'gpt-6-astra', input: code })
+  const old = estimateSubscriptionInput({ input: code })
+  assert.ok(estimate.tokens < old.tokens * 0.85)
+  const argumentsEstimate = estimateSubscriptionInput({
+    model: 'gpt-6-astra',
+    input: [{ type: 'function_call', arguments: { type: 'input_image', data: code } }],
+  })
+  assert.ok(argumentsEstimate.text_tokens >= estimate.text_tokens)
+  assert.equal(argumentsEstimate.media_tokens, 0)
+})
+
+test('long replay uses envelope allowances, retains all visible text and leaves the request untouched', () => {
+  const input = Array.from({ length: 120 }, () => ({
+    type: 'reasoning',
+    encrypted_content: 'A'.repeat(684),
+    summary: [{ type: 'summary_text', text: 'reasoning summary' }],
+  }))
+  input.push({ role: 'user', content: 'Review the code. '.repeat(6000) })
+  const body = { model: 'gpt-6-astra', input }
+  const before = JSON.stringify(body)
+  const result = estimateSubscriptionInput(body)
+  assert.equal(result.opaque_tokens, 120 * 513)
+  assert.ok(result.text_tokens > 20000)
+  assert.ok(result.tokens < 150000, 'short reasoning envelopes must not fabricate a million-token prompt')
+  assert.equal(JSON.stringify(body), before)
+  assert.equal(
+    estimateSubscriptionInput({ model: body.model, input: [{ type: 'reasoning', encrypted_content: 'invalid!' }] })
+      .opaque_tokens,
+    8192,
+  )
+})
+
+test('huge/adversarial text has bounded tokenizer work and a conservative fallback, not free tokens', () => {
+  const body = { model: 'gpt-6-astra', input: 'x'.repeat(2_000_000) }
+  const result = estimateSubscriptionInput(body)
+  assert.equal(result.fallback_bytes, 1_000_000)
+  assert.ok(result.tokens > 500000)
+  const unicode = estimateSubscriptionInput({ model: body.model, input: 'x'.repeat(2047) + '😀'.repeat(2048) })
+  assert.equal(unicode.fallback_bytes, 0)
+  assert.ok(unicode.text_tokens >= 2048)
 })
 
 test('real text, tool schemas and tool arguments contribute; metadata and signatures do not', () => {

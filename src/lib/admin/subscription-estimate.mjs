@@ -1,10 +1,12 @@
 /** Admission estimate only. Never use this approximation to settle actual usage.
- * Text uses a conservative UTF-8 / 3 heuristic with 25% headroom; transport
+ * OpenAI text uses local BPE with headroom; other text retains UTF-8 / 3.
+ * Transport
  * metadata, image encodings and opaque reasoning are not text tokens.
  * Unknown media/context receive explicit allowances, not a claimed exact count.
  * No cache discount is assumed before the upstream reports a cache hit.
  */
 import { modelsDevMeta, resolvePrice } from './price-catalog.mjs'
+import { encryptedReasoningAllowance, subscriptionTextCounter } from './subscription-token-count.mjs'
 
 function isOutputContentBlock(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -28,12 +30,18 @@ function isOutputContentBlock(value) {
 }
 
 export function estimateSubscriptionInput(body = {}) {
+  const price = resolvePrice(body.model)
+  const openAI = price?.platform === 'openai'
+  const counter = subscriptionTextCounter(openAI)
   let textBytes = 0
   let overhead = 0
   let media = 0
   let opaque = 0
   const text = (value) => {
-    if (value != null) textBytes += Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value))
+    if (value == null) return
+    const content = typeof value === 'string' ? value : JSON.stringify(value)
+    textBytes += Buffer.byteLength(content)
+    counter.add(content)
   }
   const visit = (value, depth = 0) => {
     if (value == null) return
@@ -69,7 +77,7 @@ export function estimateSubscriptionInput(body = {}) {
       return
     }
     if (type === 'reasoning') {
-      if (value.encrypted_content) opaque += 8192
+      if (value.encrypted_content) opaque += openAI ? encryptedReasoningAllowance(value.encrypted_content) : 8192
       visit(value.summary, depth + 1)
       visit(value.content, depth + 1)
       return
@@ -98,8 +106,17 @@ export function estimateSubscriptionInput(body = {}) {
   for (const key of ['tools', 'functions', 'response_format']) text(body[key])
   text(body.text?.format)
   if (body.previous_response_id) opaque += 32768
-  const tokens = Math.ceil((textBytes / 3 + overhead) * 1.25) + media + opaque + 8192
-  return { tokens, text_bytes: textBytes, media_tokens: media, opaque_tokens: opaque }
+  const counted = counter.result()
+  const tokens = Math.ceil(counted.tokens + overhead * 1.25) + media + opaque + 8192
+  return {
+    tokens,
+    text_bytes: textBytes,
+    media_tokens: media,
+    opaque_tokens: opaque,
+    text_tokens: counted.text_tokens,
+    fallback_bytes: counted.fallback_bytes,
+    method: counted.method,
+  }
 }
 
 /** Bound only the admission estimate, never the request or settled usage.

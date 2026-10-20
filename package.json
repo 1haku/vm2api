@@ -27,6 +27,7 @@
     "node-fetch": "^2.7.0",
     "socks-proxy-agent": "^10.1.0",
     "ssh2": "^1.17.0",
+    "tiktoken": "1.0.22",
     "ws": "^8.22.0"
   },
   "devDependencies": {
