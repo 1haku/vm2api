@@ -898,6 +898,7 @@ export function createHandleProtocol(deps) {
     // read before outbound cleaning. API key never scopes it.
     const inboundIdentity = resolveInboundIdentity({ inbound, body: ctx.body, headers: req.headers })
     const stickyDeviceId = inboundIdentity.deviceId
+    logBag.inbound_device_id = sessionIdForLog(stickyDeviceId)
     if (childDeclaredWithoutParent(inbound, req.headers)) {
       stats.errors++
       logBag.error_code = 'family_relation_required'
@@ -1279,7 +1280,7 @@ export function createHandleProtocol(deps) {
             vmId: selected.vmId,
             epoch: extra.freshSlot
               ? `slot:${selected.slotIndex ?? 'x'}:${attemptStartedAt}`
-              : `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
+              : 'pending',
           })
           if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
@@ -1310,7 +1311,6 @@ export function createHandleProtocol(deps) {
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
-              preserveSystem: false,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
