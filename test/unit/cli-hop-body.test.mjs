@@ -127,7 +127,9 @@ test('cli-hop normalizes invalid caller markers instead of rejecting them', () =
     const before = structuredClone(input)
     const body = prepareCliHopBody(input)
     assert.deepEqual(input, before)
-    const marked = body.messages.flatMap((message) => (Array.isArray(message.content) ? message.content : [])).filter((block) => block.cache_control)
+    const marked = body.messages
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .filter((block) => block.cache_control)
     assert.equal(marked.length, 1)
     assert.equal(marked[0].type, 'text')
     assert.deepEqual(marked[0].cache_control, { type: 'ephemeral' })

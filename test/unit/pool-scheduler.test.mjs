@@ -2496,7 +2496,11 @@ test('consecutive turns without an inbound session keep one outbound session', a
     fs.rmSync(root, { recursive: true, force: true })
   })
   const pool = scheduler(root, { stickyRouter: sticky, accountQuota: { canAccept: () => ({ ok: true }) } })
-  const runner = new FailoverRunner({ scheduler: pool, stickyRouter: sticky, config: { same_account_retry_delay_ms: 0 } })
+  const runner = new FailoverRunner({
+    scheduler: pool,
+    stickyRouter: sticky,
+    config: { same_account_retry_delay_ms: 0 },
+  })
   const stickyKey = sticky.isolateKey('ch:same-opener', { apiKeyRecord: { id: 'key-1' } })
   const seen = []
   for (const requestId of ['turn-1', 'turn-2', 'turn-3']) {
