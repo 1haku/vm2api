@@ -13,7 +13,7 @@ import {
   alignSamplingWithThinking,
   modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
-import { liftMidConversationSystemMessages } from './sanitize.mjs'
+import { liftMidConversationSystemMessages, promoteContentToBlocks } from './sanitize.mjs'
 import {
   applyThinkingDisplay,
   ensureUnofficialAdaptiveThinking,
@@ -212,6 +212,73 @@ function officialMessageMarker(messages) {
     })
     return changed ? { ...message, content } : message
   })
+  let tail = next.findIndex((message) => message?.role === 'user')
+  if (tail < 0) {
+    for (let i = next.length - 1; i >= 0; i--) {
+      const content = next[i]?.content
+      if (typeof content === 'string' ? content : Array.isArray(content) && content.length) {
+        tail = i
+        break
+      }
+    }
+  }
+  if (tail < 0) return next
+  const message = next[tail]
+  if (typeof message.content === 'string') {
+    next[tail] = {
+      ...message,
+      content: [{ type: 'text', text: message.content, cache_control: { ...OFFICIAL_CACHE } }],
+    }
+    return next
+  }
+  const content = message.content.slice()
+  for (let i = content.length - 1; i >= 0; i--) {
+    if (content[i]?.type === 'thinking' || content[i]?.type === 'redacted_thinking') continue
+    content[i] = { ...content[i], cache_control: { ...OFFICIAL_CACHE } }
+    next[tail] = { ...message, content }
+    return next
+  }
+  return next
+}
+
+/**
+ * Every cli-hop request leaves as the captured Claude Code shape: the identity
+ * sentence, then the caller's own prompt. Both markers omit ttl. A request that
+ * already has that identity keeps its second block; anything else is joined
+ * behind a fresh identity.
+ */
+export function officialSystemTemplate(system) {
+  const blocks = Array.isArray(system) ? system : system == null || system === '' ? [] : [system]
+  const texts = blocks.map(textOf).filter((text) => text.trim())
+  const identityAt = texts.findIndex((text) => text.trim() === CRS_OFFICIAL_CLI_SYSTEM)
+  const body = identityAt >= 0 ? texts.slice(identityAt + 1).join('\n\n') : texts.join('\n\n')
+  const out = [{ type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM, cache_control: { ...OFFICIAL_CACHE } }]
+  if (body.trim()) out.push({ type: 'text', text: body, cache_control: { ...OFFICIAL_CACHE } })
+  return out
+}
+
+/** One marker, on the last text of the current tail, ttl omitted. */
+function officialMessageMarker(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return messages
+  const next = messages.map((message) => {
+    if (!message || typeof message !== 'object') return message
+    if (typeof message.content === 'string') {
+      if (!message.cache_control) return message
+      const copy = { ...message }
+      delete copy.cache_control
+      return copy
+    }
+    if (!Array.isArray(message.content)) return message
+    let changed = false
+    const content = message.content.map((block) => {
+      if (!block?.cache_control) return block
+      changed = true
+      const copy = { ...block }
+      delete copy.cache_control
+      return copy
+    })
+    return changed ? { ...message, content } : message
+  })
   let tail = -1
   for (let i = next.length - 1; i >= 0; i--) {
     if (next[i]?.role !== 'user') continue
@@ -317,10 +384,10 @@ export function prepareCliHopBody(
   if (Object.prototype.hasOwnProperty.call(body, 'top_p')) delete body.top_p
   if (Object.prototype.hasOwnProperty.call(body, 'top_k')) delete body.top_k
   if (Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
-  if (!preserveSystem) {
-    body = stripIllegalCacheControlFields(body)
-    body = removeCacheControlFields(body)
-    body = applyMessageBreakpoints(body, normalizeCacheTtl(cacheTtl), 'rewrite')
+  if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
+  if (!requestContext) {
+    body = { ...body, system: officialSystemTemplate(body.system) }
+    body.messages = officialMessageMarker(body.messages)
   }
   return body
 }

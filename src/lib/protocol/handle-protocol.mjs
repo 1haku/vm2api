@@ -1302,17 +1302,14 @@ export function createHandleProtocol(deps) {
           )
           let hopBody = body
           if (cliHop) {
-            // Official family keeps its inbound system. The panel persona is
-            // for third-party callers; applying it here replaces the two
-            // official blocks with billing / reporting / 1h markers.
-            const keepOfficialSystem = Boolean(requestContext) || officialTraffic
-            const panelRewrite = !keepOfficialSystem
+            // The front rewrite already produces the official two-block shape.
+            const panelRewrite = false
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
-              preserveSystem: keepOfficialSystem,
+              preserveSystem: false,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
