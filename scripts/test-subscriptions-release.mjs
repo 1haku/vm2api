@@ -2,6 +2,13 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'panel-tenant-guards',
+  'cluster-native-node',
+  'remote-slot-files-permissions',
+  'thinking-owner',
+  'backup-service',
+  'cache-prefix',
+  'convert-cache-shape',
   'claude-auth-login',
   'cluster-direct-link',
   'cluster-node-host',

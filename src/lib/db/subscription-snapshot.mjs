@@ -47,6 +47,8 @@ export function subscriptionSnapshot(db) {
             session_id: row.session_id ?? null,
             reasoning_effort: row.reasoning_effort ?? null,
             outbound_session_id: row.outbound_session_id ?? null,
+            // Upstream 041 adds only a nullable inbound device identifier.
+            inbound_device_id: row.inbound_device_id ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
             web_search_requests: row.web_search_requests ?? 0,
@@ -103,7 +105,9 @@ export function subscriptionSnapshot(db) {
         ? rows.map((row) => ({ ...row, signature: row.signature ?? null }))
         : table === 'api_endpoint_keys'
           ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
-          : rows
+          : table === 'cluster_nodes'
+            ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
+            : rows
     state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [

@@ -14,6 +14,37 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 
+test('040/041 preserve node credentials and historical usage while adding only Linux/NULL defaults', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-device-migration-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  db.exec(
+    "INSERT INTO cluster_nodes(id,label,host,username,auth_type,private_key,host_key_alg,host_key_sha256,created_at,updated_at) VALUES('node','fixture','192.0.2.5','operator','key','fixture-key','ssh-ed25519','fixture-pin','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z')",
+  )
+  db.exec(
+    "INSERT INTO usage_logs(id,request_id,created_at,user_id,actual_cost,total_cost,input_tokens) VALUES('old','old','2026-10-20T00:00:00Z','owner',1.25,1.25,100)",
+  )
+  db.exec('DROP INDEX idx_usage_logs_inbound_device')
+  db.exec('ALTER TABLE usage_logs DROP COLUMN inbound_device_id')
+  db.exec('ALTER TABLE cluster_nodes DROP COLUMN platform')
+  db.exec("DELETE FROM schema_migrations WHERE version IN ('040','041')")
+  const before = subscriptionSnapshot(db)
+  applyMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT platform FROM cluster_nodes WHERE id='node'").get().platform, 'linux')
+  assert.equal(db.prepare("SELECT inbound_device_id FROM usage_logs WHERE id='old'").get().inbound_device_id, null)
+  db.exec("UPDATE usage_logs SET inbound_device_id='changed' WHERE id='old'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+  db.exec("UPDATE usage_logs SET inbound_device_id=NULL WHERE id='old'")
+  db.exec("UPDATE cluster_nodes SET platform='darwin' WHERE id='node'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /cluster_nodes/)
+  db.exec("UPDATE cluster_nodes SET platform='linux',private_key='changed' WHERE id='node'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /cluster_nodes/)
+})
+
 test('038 preserves API endpoint credentials and proxy routing while adding an empty proxy id', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'api-proxy-migration-'))
   const db = createDatabase({ dataDir: dir })

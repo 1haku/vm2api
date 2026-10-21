@@ -28,6 +28,7 @@ try {
         'pending requests',
         'usage and keys',
         '037 historical input normalization only; costs and ownership unchanged',
+        '040/041 Linux node default and nullable inbound device only; existing data unchanged',
       ],
       tables: before,
     }),

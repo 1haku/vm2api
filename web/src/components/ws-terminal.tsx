@@ -52,14 +52,17 @@ export function WsTerminal({
   commands,
   startupCommand,
   officialLogin,
+  onLogin,
 }: {
   ticketPath: string
   socketPath: string
   commands?: SlashCommand[]
   /** Sent once after the socket opens. The shell executes it; paste stays in the terminal. */
   startupCommand?: string
-  /** Official login: the slot shell runs `claude auth login` after its prompt exists. */
+  /** Official login: the slot shell runs `claude` after its prompt exists. */
   officialLogin?: boolean
+  /** The slot wrote a full OAuth grant into the existing worker credential. */
+  onLogin?: () => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -119,6 +122,8 @@ export function WsTerminal({
     if (shellLineEmpty) sendRef.current('\r')
   }, [])
 
+  const onLoginRef = useRef(onLogin)
+  onLoginRef.current = onLogin
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -129,6 +134,38 @@ export function WsTerminal({
         'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
       scrollback: 5000,
       theme: { background: '#0b0d10' },
+      windowOptions: { getWinSizeChars: true, getCellSizePixels: true },
+    })
+    term.parser.registerOscHandler(52, (data) => {
+      const payload = data.split(';').pop() || ''
+      if (!payload || payload === '?') return true
+      try {
+        const text = atob(payload)
+        void navigator.clipboard?.writeText(text).catch(() => {})
+      } catch {
+        /* CLI copy is best-effort; the URL stays selectable. */
+      }
+      return true
+    })
+    term.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type !== 'keydown' ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== 'v'
+      ) {
+        return true
+      }
+      const selected = term.getSelection()
+      if (!selected) return false
+      event.preventDefault()
+      void navigator.clipboard
+        ?.readText()
+        .then((text) => {
+          if (text && termRef.current === term) term.paste(text)
+        })
+        .catch(() => {})
+      return false
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -199,6 +236,7 @@ export function WsTerminal({
             message?: string
           }
           if (msg.t === 'exit') setNote(`会话退出（code ${msg.code ?? '—'}）`)
+          if (msg.t === 'login') onLoginRef.current?.()
           if (msg.t === 'error') setNote(msg.message || '终端错误')
         }
         ws.onclose = () => {

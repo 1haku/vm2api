@@ -414,9 +414,8 @@ function ClaudeCredentialPanel({
       ) : activeMethod === 'cc' ? (
         <div className='space-y-2'>
           <Hint>
-            打开槽终端并自动执行 claude auth
-            login。链接在终端里复制，授权码直接粘进终端，不经过面板。需要容器已运行且
-            cli-node 已安装。
+            打开槽终端并启动 claude。初次进入按两次回车拿到授权链接，按 c
+            复制，授权码粘回这个终端。需要容器已运行且 cli-node 已安装。
           </Hint>
           <Button size='sm' onClick={() => setLoginOpen(true)}>
             打开官方登录终端
@@ -426,8 +425,8 @@ function ClaudeCredentialPanel({
               <DialogHeader>
                 <DialogTitle>官方登录</DialogTitle>
                 <DialogDescription>
-                  终端会执行 claude auth
-                  login。复制里面的链接，授权码粘回这个终端。
+                  终端启动 claude。初次进入按两次回车拿到授权链接，按 c
+                  复制，授权码粘回这个终端。
                 </DialogDescription>
               </DialogHeader>
               <div className='min-h-0 flex-1'>
@@ -436,6 +435,10 @@ function ClaudeCredentialPanel({
                     ticketPath={`/api/panel/vms/${encodeURIComponent(vmId)}/shell-ticket`}
                     socketPath={`/api/panel/vms/${encodeURIComponent(vmId)}/shell`}
                     officialLogin
+                    onLogin={() => {
+                      void invalidate()
+                      toast.success('官方登录已写入槽凭证')
+                    }}
                   />
                 ) : null}
               </div>

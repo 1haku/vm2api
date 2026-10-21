@@ -126,7 +126,7 @@ export function KeysPage() {
 
   const create = useMutation({
     mutationFn: (draft: KeyLimitsDraft) => {
-      const body = keyLimitsPayload(draft, 'create')
+      const body = keyLimitsPayload(draft, 'create', { isAdmin })
       return api<unknown>('/api/panel/api-keys', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -149,7 +149,7 @@ export function KeysPage() {
     mutationFn: ({ id, draft }: { id: string; draft: KeyLimitsDraft }) =>
       api(`/api/panel/api-keys/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        body: JSON.stringify(keyLimitsPayload(draft, 'edit')),
+        body: JSON.stringify(keyLimitsPayload(draft, 'edit', { isAdmin })),
       }),
     onSuccess: async () => {
       toast.success('密钥设置已更新')
