@@ -268,7 +268,15 @@ async function harness(t, layout = 'zero', cliPath = cli) {
     kernel.kill('SIGKILL')
     await closed
   })
-  for (let i = 0; i < 100 && !fs.existsSync(socketPath) && kernel.exitCode == null; i++)
+  // The real packed CLI can cold-start just beyond 5s on a shared build host.
+  // Keep a bounded readiness gate and still fail immediately on process exit.
+  const startupDeadline = performance.now() + 15_000
+  while (
+    !fs.existsSync(socketPath) &&
+    kernel.exitCode == null &&
+    kernel.signalCode == null &&
+    performance.now() < startupDeadline
+  )
     await new Promise((resolve) => setTimeout(resolve, 50))
   assert.ok(fs.existsSync(socketPath), log.slice(-1200))
   const health = JSON.parse((await unixRequest(socketPath, token, '/internal/health')).text)

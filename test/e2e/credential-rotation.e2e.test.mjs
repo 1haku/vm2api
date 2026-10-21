@@ -164,7 +164,10 @@ async function fixture(t) {
     },
   }
   let health
-  for (let i = 0; i < 100 && kernel.exitCode == null; i++) {
+  // Match the native classifier fixture's cold-start budget; readiness, not
+  // elapsed time, is still required before testing credential/stream behavior.
+  const startupDeadline = performance.now() + 15_000
+  while (kernel.exitCode == null && kernel.signalCode == null && performance.now() < startupDeadline) {
     health = await rustKernelHealth(exec, { timeoutMs: 200 })
     if (health?.ready_slots > 0) break
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -202,7 +205,7 @@ async function fixture(t) {
 
 for (const throughRouter of [false, true]) {
   test(`OAuth rotation preserves a live stream through ${throughRouter ? 'the router' : 'the existing kernel/CLI binaries'}`, {
-    timeout: 20000,
+    timeout: 30000,
   }, async (t) => {
     const fx = await fixture(t)
     const call = throughRouter ? dispatchCallInference : callRustKernel
