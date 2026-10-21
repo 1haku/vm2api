@@ -606,7 +606,11 @@ test('classifier terminal/error/cancel/concurrency boundaries through actual ELF
   const wire = h.captured.at(-1)
   assert.equal(wire.max_tokens, 128)
   assert.deepEqual(wire.thinking, { type: 'adaptive', display: 'summarized' })
-  assert.ok(wire.system.some((block) => block.text.includes('# Environment')))
+  // v1.3.203+ uses the official identity + caller prompt shape. Environment
+  // is no longer injected here. Still prove concurrent classifier traffic
+  // cannot replace or leak into the ordinary caller's system instructions.
+  assert.ok(wire.system.some((block) => block.text.includes('Ordinary caller prompt')))
+  assert.ok(wire.system.every((block) => !block.text.includes('Synthetic policy details.')))
   assert.equal(wire.request_context, undefined)
   h.setHealth({ ...h.health, classifier_request_context: false })
   const count = h.captured.length
