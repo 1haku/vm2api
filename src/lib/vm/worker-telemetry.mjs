@@ -22,6 +22,7 @@ import {
 } from '../identity/telemetry-env.mjs'
 import { readOfficialCcIdentity } from '../identity/official-fingerprint.mjs'
 import { slotHost } from './slot-host.mjs'
+import { isCodexVm } from './vm-kind.mjs'
 
 const DROP_HEADER = /^(authorization|cookie|x-api-key|proxy-authorization)$/i
 
@@ -83,7 +84,7 @@ function telemetryHeaders(identity) {
 
 export function buildWorkerTelemetry(vm, projectRoot) {
   const seed = defaultSeedPolicy(vm?.seed_policy || {})
-  if (!isTelemetryEnabled(seed)) {
+  if (!isTelemetryEnabled(seed) || isCodexVm(vm)) {
     return { enabled: false }
   }
   const homeDir = projectRoot && vm?.id ? path.join(projectRoot, 'vms', vm.id, 'cli-home') : ''
@@ -99,7 +100,7 @@ export function buildWorkerTelemetry(vm, projectRoot) {
   })
   const fp = identity.fingerprint || {}
   const guest = vm?.fingerprint || {}
-  const userId = officialDeviceID(official.user_id, fp.official_user_id)
+  const userId = officialDeviceID(official.user_id, guest.official_user_id)
   if (!userId) {
     return { enabled: false, reason: 'waiting_official_identity' }
   }

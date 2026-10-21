@@ -79,6 +79,48 @@ test('machine id alone is not the 64-hex device id', () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('current CLI writes only userID into CLAUDE_CONFIG_DIR and the sidecar still enables', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tel-'))
+  const home = path.join(root, 'vms', 'vm-04', 'cli-home')
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
+  fs.writeFileSync(
+    path.join(home, '.claude', '.claude.json'),
+    JSON.stringify({ userID: USER, oauthAccount: { accountUuid: 'acc-new', organizationUuid: 'org-new' } }),
+  )
+  const out = buildWorkerTelemetry({ id: 'vm-04', seed_policy: { telemetry_disabled: false } }, root)
+  assert.equal(out.enabled, true)
+  assert.equal(out.identity.user_id, USER)
+  assert.equal(out.identity.account_uuid, 'acc-new')
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('slot record official_user_id is the fallback when the CLI config is gone', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tel-'))
+  fs.mkdirSync(path.join(root, 'vms', 'vm-05', 'cli-home', '.claude'), { recursive: true })
+  const out = buildWorkerTelemetry(
+    {
+      id: 'vm-05',
+      seed_policy: { telemetry_disabled: false },
+      fingerprint: { official_user_id: USER, identity_source: 'official-cc-init' },
+    },
+    root,
+  )
+  assert.equal(out.enabled, true)
+  assert.equal(out.identity.user_id, USER)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('GPT slots never run the Claude sidecar even with a CLI userID on disk', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tel-'))
+  writeOfficialHome(root, 'vm-codex-02')
+  const out = buildWorkerTelemetry(
+    { id: 'vm-codex-02', platform: 'openai', seed_policy: { telemetry_disabled: false } },
+    root,
+  )
+  assert.equal(out.enabled, false)
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 test('syncWorkerTelemetry writes enabled:true when official IDs exist', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tel-'))
   writeOfficialHome(root, 'vm-02')
