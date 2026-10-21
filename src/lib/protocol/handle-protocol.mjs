@@ -1051,6 +1051,7 @@ export function createHandleProtocol(deps) {
       let result
       try {
         result = await runApiInference({
+          routing: getRouting(),
           req,
           res,
           cfg,
@@ -1304,8 +1305,11 @@ export function createHandleProtocol(deps) {
           )
           let hopBody = body
           if (cliHop) {
-            // The front rewrite already produces the official two-block shape.
-            const panelRewrite = false
+            // The preset writes the official system: billing, identity,
+            // reporting, static agent, dynamic boundary (dropped before send),
+            // environment, then caller text. Breakpoints stay on the agent,
+            // the environment, and the last user message.
+            const panelRewrite = !requestContext && !officialPassthrough
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
@@ -1319,7 +1323,14 @@ export function createHandleProtocol(deps) {
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
-              hopBody = applyCrsUnofficialPersona(hopBody, {
+              // prepareCliHopBody already stripped billing, identity and
+              // Environment. The preset extracts caller text from its input,
+              // so it has to see the inbound system, not that stripped copy.
+              const presetInput = {
+                ...hopBody,
+                system: repaired ? body?.system : personaIn?.system,
+              }
+              const rewritten = applyCrsUnofficialPersona(presetInput, {
                 officialClient: false,
                 forceConfigured: true,
                 routingFile: routingConfigPath,
@@ -1329,6 +1340,7 @@ export function createHandleProtocol(deps) {
                 cliVersion: OFFICIAL_CLI_VERSION,
                 identity,
               })
+              hopBody = { ...hopBody, system: rewritten.system, messages: rewritten.messages }
               hopBody = fillMissingCacheTtl(hopBody, requestedCacheTtl)
               enforceCacheLimit(hopBody)
               validateCacheBreakpoints(hopBody)

@@ -39,6 +39,7 @@ import {
   CRS_OFFICIAL_SYSTEM,
   CRS_OFFICIAL_CLI_SYSTEM,
   CRS_COMPACT_IDENTITY,
+  ensureBillingAttribution,
 } from '../identity/crs-persona.mjs'
 import { sealClaudeCodeCch } from '../identity/cch.mjs'
 import {
@@ -167,29 +168,6 @@ function stabilizeMessageBudgets(body) {
   })
   return changed ? { ...body, messages } : body
 }
-const OFFICIAL_CACHE = Object.freeze({ type: 'ephemeral' })
-
-function textOf(block) {
-  if (typeof block === 'string') return block
-  return typeof block?.text === 'string' ? block.text : ''
-}
-
-/**
- * Every cli-hop request leaves as the captured Claude Code shape: the identity
- * sentence, then the caller's own prompt. Both markers omit ttl. A request that
- * already has that identity keeps its second block; anything else is joined
- * behind a fresh identity.
- */
-export function officialSystemTemplate(system, ttl = DEFAULT_CACHE_TTL) {
-  const blocks = Array.isArray(system) ? system : system == null || system === '' ? [] : [system]
-  const texts = blocks.map(textOf).filter((text) => text.trim())
-  const identityAt = texts.findIndex((text) => text.trim() === CRS_OFFICIAL_CLI_SYSTEM)
-  const body = identityAt >= 0 ? texts.slice(identityAt + 1).join('\n\n') : texts.join('\n\n')
-  const marker = { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) }
-  const out = [{ type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM, cache_control: { ...marker } }]
-  if (body.trim()) out.push({ type: 'text', text: body, cache_control: { ...marker } })
-  return out
-}
 
 /** One marker, on the last text of the current tail, ttl omitted. */
 function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL) {
@@ -300,9 +278,9 @@ export function prepareCliHopBody(
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-  // Official family keeps the inbound system and its markers. Rewriting them
-  // into the persona template (billing / reporting / 1h) is what diverges from
-  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
+  // The panel preset owns the official system. Here, strip CLI-owned blocks
+  // and stamp the last user message. preserveSystem forwards the inbound
+  // system after its markers have been validated.
   if (!preserveSystem) {
     const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
     if (leftover == null) delete body.system
@@ -329,7 +307,6 @@ export function prepareCliHopBody(
   if (Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
-    body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
     body.messages = officialMessageMarker(body.messages, cacheTtl)
     if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
@@ -545,7 +522,11 @@ export function prepareOutboundEnvelope({
     String(headers['anthropic-beta'] || '').split(','),
     displayed,
   ).join(',')
-  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(displayed, headers?.['anthropic-beta'] || ''), {
+  const attributed = ensureBillingAttribution(
+    sanitizeAnthropicBodyForBetaTokens(displayed, headers?.['anthropic-beta'] || ''),
+    { sessionId: sessionIdFromOutboundBody(displayed) || identity?.callerSessionId || '' },
+  )
+  const body = sealClaudeCodeCch(attributed, {
     enabled: routing?.compatibility?.cch_enabled !== false,
   })
   return { body, headers, toolNames: prepared.toolNames }
