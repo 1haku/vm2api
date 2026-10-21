@@ -2,10 +2,11 @@
 
 ## 1.3.208 — 2026-10-21
 
-- cli-hop 不再把 system 收成两段。官方完整档由面板模板渲染：billing、身份句、reporting、官方 agent、Environment、调用方正文。动态边界标记只给 cli-node 切段，不出站。断点只在 agent、Environment 和最后一条 user。billing 在 system[0]，不挂 cache_control。
-- HTTP 出站和 worker 封装在 persona 剥掉 billing 后补回计费头。cch 仍由原有封印计算，不改计费头的位置。
+- 入站清除调用方缓存标记与旧 billing，按面板选中的 official / official_full / zero / custom 档组装提示词，不再强制完整档。固定 system 顺序为 billing、身份句、固定正文；保留 user 的 system-reminder，支持的模型把 Environment 放在消息尾部的 role=system，不支持的模型回落到顶层 system。
+- 缓存 TTL 以配置面板为准，断点显式写入 1h / 5m，不再被入站 TTL 或旧会话 pin 覆盖。billing 不缓存，工具不打断点；cli-node 做最终布局与紧凑序列化，在最终请求体上计算 cch，不改写用户正文中相似的字面量。
+- 保留 OMP 的 x-kin-tool-result-images: tail 兼容：工具图片移到消息尾部，调用关联、文本与错误标记保持，缓存断点留在图片之前。带签名 thinking 的请求须显式同意 adaptive block_binding 的 drop_block，否则本地返回 400，不请求上游。
 
-已部署机升级：更新 Node 控制面，重启一次 Node。cli-node 请求体改为 system 在 messages 前，需要 wrap-cli/sync。无迁移、无新依赖。不要覆盖 routing.json、vms/、data/、.env。
+已部署机升级：更新 Node 控制面与 cli-node，重启一次 Node，并同步 Claude 槽位的 CLI。cli-node 请求体中 system 在 messages 前。custom 固定块会合并并重新打缓存标记，不保证 JSONL 分块原样透传。无迁移、无新依赖。不要覆盖 routing.json、vms/、data/、.env。
 
 ## 1.3.207 — 2026-10-21
 
