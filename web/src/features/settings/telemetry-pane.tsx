@@ -18,6 +18,19 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { routingQueryOptions } from '@/features/settings/queries'
 import {
+  ChipGroup,
+  StepperSetting,
+} from '@/features/settings/scheduler-controls'
+import {
+  amountIn,
+  intervalLabel,
+  secondsFrom,
+  unitBounds,
+  unitOf,
+  UPLOAD_INTERVAL_PRESETS,
+  type IntervalUnit,
+} from '@/features/settings/telemetry-interval'
+import {
   LIVE_ORDER,
   slotState,
   type LiveKey,
@@ -142,26 +155,92 @@ const CONTRACT: { file: string; key: string; on: string; off: string }[] = [
   },
 ]
 
-const PIPELINE: { title: string; body: string }[] = [
-  {
-    title: '播种',
-    body: '开关写进上表各文件。运行中的槽切换后会重启遥测旁路；本机槽同时重启 kin-egress。',
-  },
-  {
-    title: '身份',
-    body: '旁路只用官方初装留下的身份。还没有身份时 worker.json 保持关闭，进程不跑。',
-  },
-  {
-    title: '上传',
-    body: '有会话活动时每 10 秒发一批 event_logging/v2/batch；GrowthBook eval 启动即发，之后每 6 小时。',
-  },
-  {
-    title: '静默',
-    body: '最后一次活动后 10 分钟停发。CLI 自己发出的遥测请求由网关本地应答，不出网。',
-  },
-]
+function pipeline(interval: number): { title: string; body: string }[] {
+  return [
+    {
+      title: '播种',
+      body: '开关写进上表各文件。运行中的槽切换后会重启遥测旁路；本机槽同时重启 kin-egress。',
+    },
+    {
+      title: '身份',
+      body: '旁路只用官方初装留下的身份。还没有身份时 worker.json 保持关闭，旁路空转、不上传。',
+    },
+    {
+      title: '上传',
+      body: `有会话活动时每 ${intervalLabel(interval)} 发一批 event_logging/v2/batch；GrowthBook eval 启动即发，之后每 6 小时。`,
+    },
+    {
+      title: '静默',
+      body: '最后一次活动后 10 分钟停发。CLI 自己发出的遥测请求由网关本地应答，不出网。',
+    },
+  ]
+}
 
-export function TelemetryPane() {
+function IntervalSetting({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (seconds: number) => void
+}) {
+  const [unit, setUnit] = useState<IntervalUnit>(() => unitOf(value))
+  const [min, max] = unitBounds(unit)
+  const switchUnit = (next: IntervalUnit) => {
+    setUnit(next)
+    const seconds = secondsFrom(amountIn(value, next), next)
+    if (seconds !== value) onChange(seconds)
+  }
+  return (
+    <div className='space-y-3 border-t border-[var(--hairline)] pt-4'>
+      <StepperSetting
+        id='telemetry-upload-interval'
+        label='上传间隔'
+        desc={
+          <>
+            有会话活动时，每隔这么久发一批事件。全局生效，保存后热更新各槽的
+            worker.json，不重启旁路。
+            {value > 600
+              ? '超过 10 分钟时，只有间隔到点且 10 分钟内有活动才会发。'
+              : ''}
+          </>
+        }
+        value={amountIn(value, unit)}
+        min={min}
+        max={max}
+        unit={unit === 'hour' ? '小时' : '分钟'}
+        onChange={(amount) => onChange(secondsFrom(amount, unit))}
+      />
+      <div className='flex flex-wrap items-center justify-between gap-x-4 gap-y-2'>
+        <ChipGroup
+          label='常用间隔'
+          value={value}
+          options={UPLOAD_INTERVAL_PRESETS}
+          onChange={(seconds) => {
+            setUnit(unitOf(seconds))
+            onChange(seconds)
+          }}
+        />
+        <ChipGroup<IntervalUnit>
+          label='单位'
+          value={unit}
+          options={[
+            ['min', '分钟'],
+            ['hour', '小时'],
+          ]}
+          onChange={switchUnit}
+        />
+      </div>
+    </div>
+  )
+}
+
+export function TelemetryPane({
+  interval,
+  onIntervalChange,
+}: {
+  interval: number
+  onIntervalChange: (seconds: number) => void
+}) {
   const qc = useQueryClient()
   const dash = useQuery(dashboardQueryOptions())
   const routing = useQuery(routingQueryOptions())
@@ -266,6 +345,7 @@ export function TelemetryPane() {
   ).length
   const pendingRemote = pendingTargets.filter((vm) => vm.node_id).length
   const fetching = dash.isFetching || details.some((d) => d.isFetching)
+  const steps = pipeline(interval)
   const official = routing.data?.official_cc as
     { sync_telemetry?: boolean } | undefined
   const codex = routing.data?.codex as
@@ -374,6 +454,7 @@ export function TelemetryPane() {
               </span>
             </div>
           ) : null}
+          <IntervalSetting value={interval} onChange={onIntervalChange} />
         </CardContent>
       </Card>
 
@@ -449,11 +530,11 @@ export function TelemetryPane() {
             </tbody>
           </table>
           <ol className='mt-6 grid gap-px overflow-hidden rounded-lg bg-[var(--hairline)] sm:grid-cols-2 xl:grid-cols-4'>
-            {PIPELINE.map((step, i) => (
+            {steps.map((step, i) => (
               <li key={step.title} className='relative bg-card p-4'>
                 <div className='flex items-center gap-2 text-sm font-medium'>
                   {step.title}
-                  {i < PIPELINE.length - 1 ? (
+                  {i < steps.length - 1 ? (
                     <ArrowRight
                       aria-hidden
                       className='size-3.5 text-(--text-tertiary)'
@@ -720,7 +801,7 @@ function UploadPanel({
           {remote
             ? '集群槽的上传记录写在节点上，面板目前读不到。'
             : on
-              ? '还没有上传记录。有会话活动后，旁路每 10 秒发一批，这里会出现。'
+              ? '还没有上传记录。有会话活动后旁路开始上传，这里会出现。'
               : '遥测关着，没有上传记录。'}
         </p>
       ) : (

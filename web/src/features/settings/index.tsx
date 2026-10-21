@@ -50,6 +50,7 @@ import { SettingsNav } from '@/features/settings/settings-nav'
 import { SettingsSkeleton } from '@/features/settings/settings-skeleton'
 import { Socks5Pane } from '@/features/settings/socks5-pane'
 import { StickyPane } from '@/features/settings/sticky-pane'
+import { uploadIntervalOf } from '@/features/settings/telemetry-interval'
 import { TelemetryPane } from '@/features/settings/telemetry-pane'
 import { ProtocolPane } from './protocol-pane'
 
@@ -158,7 +159,14 @@ export function SettingsPage() {
           )
         }
       }
-      toast.success(settingsSaveToast(tab, inherited, saved?.kernel_persona))
+      toast.success(
+        settingsSaveToast(
+          tab,
+          inherited,
+          saved?.kernel_persona,
+          saved?.telemetry_sync
+        )
+      )
       acceptNextServer.current = true
       await Promise.all([
         qc.invalidateQueries({ queryKey: routingQueryOptions().queryKey }),
@@ -182,11 +190,7 @@ export function SettingsPage() {
     serverJson !== null &&
     Object.keys(draft).length > 0 &&
     JSON.stringify(draft) !== serverJson
-  const hideSave =
-    tab === 'socks5' ||
-    tab === 'telemetry' ||
-    tab === 'backup' ||
-    tab === 'about'
+  const hideSave = tab === 'socks5' || tab === 'backup' || tab === 'about'
   const showSaveBar = dirty && !hideSave
 
   const discard = () => {
@@ -427,7 +431,24 @@ export function SettingsPage() {
                   onChange={(next) => setDraft({ ...draft, notify: next })}
                 />
               ) : null}
-              {tab === 'telemetry' ? <TelemetryPane /> : null}
+              {tab === 'telemetry' ? (
+                <TelemetryPane
+                  interval={uploadIntervalOf(
+                    (draft.telemetry as Record<string, unknown> | undefined)
+                      ?.upload_interval_seconds
+                  )}
+                  onIntervalChange={(seconds) =>
+                    setDraft((current) => ({
+                      ...current,
+                      telemetry: {
+                        ...((current.telemetry as Record<string, unknown>) ||
+                          {}),
+                        upload_interval_seconds: seconds,
+                      },
+                    }))
+                  }
+                />
+              ) : null}
               {tab === 'socks5' ? <Socks5Pane /> : null}
               {tab === 'backup' ? <BackupPane /> : null}
               {tab === 'about' ? <AboutPane /> : null}
@@ -449,7 +470,8 @@ export function SettingsPage() {
 function settingsSaveToast(
   tab: SettingsTabId,
   inherited: number,
-  kernel?: { updated?: number } | null
+  kernel?: { updated?: number } | null,
+  telemetry?: RoutingSaveResult['telemetry_sync']
 ) {
   if (tab === 'protocol') {
     const hot =
@@ -462,6 +484,12 @@ function settingsSaveToast(
     return `已保存 · ${inherited} 个槽位改为跟随全局 · ${hot}`
   }
   if (tab === 'openai') return '已保存 · GPT 配置'
+  if (tab === 'telemetry' && telemetry) {
+    const failed = telemetry.failed?.length
+      ? ` · ${telemetry.failed.length} 个写入失败：${telemetry.failed.slice(0, 3).join('、')}`
+      : ''
+    return `已保存 · ${telemetry.updated ?? 0} 个槽的上传间隔已热更新${failed}`
+  }
   return '已保存'
 }
 
@@ -474,4 +502,9 @@ function protocolFollowError(message: string) {
 
 type RoutingSaveResult = {
   kernel_persona?: { updated?: number; skipped?: number } | null
+  telemetry_sync?: {
+    updated?: number
+    skipped?: number
+    failed?: string[]
+  } | null
 }
