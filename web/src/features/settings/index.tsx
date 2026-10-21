@@ -12,7 +12,6 @@ import {
   cacheTtlFromCompat,
   detectProxiedOfficialCcFromCompat,
 } from '@/lib/cache-breakpoints'
-import { cleanPersonaRules, personaRulesFromCompat } from '@/lib/persona-rules'
 import {
   personaInjectFromPreset,
   personaPresetFromCompat,
@@ -34,7 +33,6 @@ import {
 import { NotifyPane } from '@/features/settings/notify-pane'
 import { OfficialCcSettingsPane } from '@/features/settings/official-cc-pane'
 import { OpenaiPane } from '@/features/settings/openai-pane'
-import { PersonaRulesPane } from '@/features/settings/persona-rules-pane'
 import { PoolPane } from '@/features/settings/pool-pane'
 import {
   cchEnabledFromCompat,
@@ -87,16 +85,14 @@ export function SettingsPage() {
     mutationFn: () => {
       const body = { ...draft }
       const compat = (body.compatibility as Record<string, unknown>) || {}
-      if (tab === 'protocol' || tab === 'whitelist') {
+      if (tab === 'protocol') {
         const preset = personaPresetFromCompat(compat)
-        const rules = cleanPersonaRules(personaRulesFromCompat(compat))
         const breakpoints = cacheBreakpointsFromCompat(compat)
         body.compatibility = {
           ...compat,
           persona_preset: preset,
           overlay_preset: 'off',
           persona_standing: String(compat.persona_standing ?? ''),
-          persona_leak_append: '',
           persona_inject: personaInjectFromPreset(
             preset,
             compat.persona_inject
@@ -114,7 +110,6 @@ export function SettingsPage() {
           official_cc_passthrough: compat.official_cc_passthrough === true,
           cch_enabled: cchEnabledFromCompat(compat),
           thinking_display: thinkingDisplayFromCompat(compat),
-          persona_rules: rules,
         }
       }
       if (tab === 'init') {
@@ -136,9 +131,6 @@ export function SettingsPage() {
       })
     },
     onSuccess: async (saved) => {
-      const compat =
-        saved?.compatibility ||
-        (draft.compatibility as Record<string, unknown> | undefined)
       let inherited = 0
       if (tab === 'protocol') {
         try {
@@ -166,9 +158,7 @@ export function SettingsPage() {
           )
         }
       }
-      toast.success(
-        settingsSaveToast(tab, compat, inherited, saved?.kernel_persona)
-      )
+      toast.success(settingsSaveToast(tab, inherited, saved?.kernel_persona))
       acceptNextServer.current = true
       await Promise.all([
         qc.invalidateQueries({ queryKey: routingQueryOptions().queryKey }),
@@ -409,17 +399,6 @@ export function SettingsPage() {
                   }
                 />
               ) : null}
-              {tab === 'whitelist' ? (
-                <PersonaRulesPane
-                  compat={
-                    (draft.compatibility as
-                      Record<string, unknown> | undefined) || {}
-                  }
-                  onChange={(next) =>
-                    setDraft({ ...draft, compatibility: next })
-                  }
-                />
-              ) : null}
               {tab === 'health' ? (
                 <HealthPane
                   title={SETTINGS_TAB_LABELS[tab]}
@@ -469,7 +448,6 @@ export function SettingsPage() {
 
 function settingsSaveToast(
   tab: SettingsTabId,
-  compat: Record<string, unknown> | undefined,
   inherited: number,
   kernel?: { updated?: number } | null
 ) {
@@ -483,10 +461,6 @@ function settingsSaveToast(
     if (!inherited) return `已保存 · ${hot}`
     return `已保存 · ${inherited} 个槽位改为跟随全局 · ${hot}`
   }
-  if (tab === 'whitelist') {
-    const count = cleanPersonaRules(personaRulesFromCompat(compat)).length
-    return `已保存 · ${count} 条规则`
-  }
   if (tab === 'openai') return '已保存 · GPT 配置'
   return '已保存'
 }
@@ -499,6 +473,5 @@ function protocolFollowError(message: string) {
 }
 
 type RoutingSaveResult = {
-  compatibility?: Record<string, unknown>
   kernel_persona?: { updated?: number; skipped?: number } | null
 }

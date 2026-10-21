@@ -4,6 +4,7 @@
 
 - 官方登录终端把授权链接显式提取出来，跨终端帧也不会漏。复制链接、打开授权页和回填授权码与普通 OAuth 相同。
 - VM 页 OAuth 方式顺序为 Claude Code、授权链接、Cookie。设置里的「同步遥测」按默认关闭显示。
+- 设置导航里 OpenAI 只留一个入口（调度组）。去掉「白名单」页和 `persona_rules` 整套：网关不再按末轮 user 正则追加防泄漏 / 身份 / 无工具提示，park 与 overlay 只带 `persona_standing`，overlay 模板去掉 `{{rules}}`。保存协议时 `routing.json` 里的 `persona_rules`、`persona_leak_append` 一并删除。
 
 ## 1.3.205 — 2026-10-21
 
