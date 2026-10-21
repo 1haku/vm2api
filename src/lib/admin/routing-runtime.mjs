@@ -408,9 +408,10 @@ export function createRoutingRuntime(ctx) {
   }
 
   // The sidecar re-reads worker.json on mtime change, so a rewrite applies without a restart.
+  // Node slots read a pushed copy; that push is queued and only logged on failure.
   function syncTelemetryUploadInterval(routingConfig) {
     const project = ctx.cfg.paths.project
-    const applied = { updated: 0, skipped: 0, failed: [] }
+    const applied = { updated: 0, queued: 0, skipped: 0, failed: [] }
     for (const { id } of listVms(project)) {
       const vm = getVm(project, id)
       if (!vm || isCodexVm(vm)) continue
@@ -419,8 +420,8 @@ export function createRoutingRuntime(ctx) {
           applied.skipped += 1
           continue
         }
-        slotHost(vm).queueSyncRun(vm, path.join(project, 'vms', vm.id))
-        applied.updated += 1
+        if (slotHost(vm).queueSyncRun(vm, path.join(project, 'vms', vm.id))) applied.queued += 1
+        else applied.updated += 1
       } catch {
         applied.failed.push(vm.id)
       }
