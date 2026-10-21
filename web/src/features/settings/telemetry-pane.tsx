@@ -264,6 +264,7 @@ export function TelemetryPane() {
   const pendingRunning = pendingTargets.filter(
     (vm) => vm.status === 'running'
   ).length
+  const pendingRemote = pendingTargets.filter((vm) => vm.node_id).length
   const fetching = dash.isFetching || details.some((d) => d.isFetching)
   const official = routing.data?.official_cc as
     { sync_telemetry?: boolean } | undefined
@@ -503,7 +504,12 @@ export function TelemetryPane() {
               。
             </p>
             {confirm ? (
-              <p>没有官方初装身份的槽会写成开，但旁路要等身份写入后才会跑。</p>
+              <p>
+                没有官方初装身份的槽会写成开，但要等身份写入后才会上传。
+                {pendingRemote
+                  ? `其中 ${pendingRemote} 个是集群槽：集群节点不支持官方初装，开了也不会上传。`
+                  : ''}
+              </p>
             ) : null}
           </div>
         }
