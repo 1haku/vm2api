@@ -434,6 +434,8 @@ export function createRoutingRuntime(ctx) {
     const nextSessionSlots = normalizeSessionSlots(routingConfig.inference?.session_slots)
     if (body.compatibility) {
       routingConfig.compatibility = { ...(routingConfig.compatibility || {}), ...body.compatibility }
+      delete routingConfig.compatibility.persona_rules
+      delete routingConfig.compatibility.persona_leak_append
       if (
         Object.prototype.hasOwnProperty.call(body.compatibility, 'cch_enabled') ||
         routingConfig.compatibility.cch_enabled == null
