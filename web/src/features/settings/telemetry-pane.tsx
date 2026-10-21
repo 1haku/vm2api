@@ -6,7 +6,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { Vm, VmDetailPayload } from '@/types/panel-vm'
+import type { Vm } from '@/types/panel-vm'
 import { ArrowRight, ChevronRight, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -17,6 +17,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { routingQueryOptions } from '@/features/settings/queries'
+import {
+  LIVE_ORDER,
+  slotState,
+  type LiveKey,
+  type SlotState,
+} from '@/features/settings/telemetry-slot-state'
 import {
   relativeAgo,
   summarizeUploads,
@@ -31,8 +37,6 @@ import {
   telemetrySeedFlags,
 } from '@/features/vm/telemetry-policy'
 
-type LiveKey = 'live' | 'idle' | 'parked' | 'unknown' | 'off'
-
 const LIVE: Record<LiveKey, { legend: string; swatch: string; text: string }> =
   {
     live: {
@@ -44,6 +48,11 @@ const LIVE: Record<LiveKey, { legend: string; swatch: string; text: string }> =
       legend: '开 · 进程未跑',
       swatch: 'bg-[var(--status-caution-solid)]',
       text: 'text-[var(--status-caution)]',
+    },
+    blocked: {
+      legend: '开 · 无官方身份',
+      swatch: 'bg-[var(--status-warn-solid)]',
+      text: 'text-[var(--status-warn)]',
     },
     parked: {
       legend: '开 · 槽已停',
@@ -61,44 +70,6 @@ const LIVE: Record<LiveKey, { legend: string; swatch: string; text: string }> =
       text: 'text-muted-foreground',
     },
   }
-
-const LIVE_ORDER: LiveKey[] = ['live', 'idle', 'parked', 'unknown', 'off']
-
-type SlotState = {
-  vm: Vm
-  on: boolean
-  live: LiveKey
-  label: string
-  probing: boolean
-}
-
-function slotState(
-  vm: Vm,
-  detail: { data?: VmDetailPayload; isPending: boolean } | undefined
-): SlotState {
-  const on = telemetryEnabled(vm.seed_policy)
-  const running = detail?.data?.kernel?.telemetry?.running
-  if (!on) {
-    return {
-      vm,
-      on,
-      live: 'off',
-      label: running === true ? '关 · 旁路仍在退出' : '关',
-      probing: false,
-    }
-  }
-  if (vm.status !== 'running') {
-    return { vm, on, live: 'parked', label: '槽已停', probing: false }
-  }
-  if (!detail || detail.isPending) {
-    return { vm, on, live: 'unknown', label: '探测中', probing: true }
-  }
-  if (running === true)
-    return { vm, on, live: 'live', label: '上传中', probing: false }
-  if (running === false)
-    return { vm, on, live: 'idle', label: '进程未运行', probing: false }
-  return { vm, on, live: 'unknown', label: '状态未知', probing: false }
-}
 
 type SeedPutResult = {
   service?: {
@@ -653,9 +624,13 @@ function SlotRow({
         <div
           className='hidden items-center gap-2 text-xs sm:flex'
           title={
-            live === 'idle'
-              ? '开着却没跑：通常是还没有官方初装身份，worker.json 保持关闭；或旁路正在重启。'
-              : undefined
+            live === 'blocked'
+              ? vm.node_id
+                ? '种子是开的，但这个集群槽没有官方初装身份，worker.json 保持关闭，旁路空转、不上传。集群节点槽目前不支持官方初装。'
+                : '种子是开的，但 worker.json 没有官方初装身份，旁路空转、不上传。完成官方初装后会自动开始。'
+              : live === 'idle'
+                ? '开着但旁路进程没在跑，通常是旁路正在重启。'
+                : undefined
           }
         >
           <Lamp live={live} probing={probing} />
@@ -694,7 +669,14 @@ function SlotRow({
           })}
         </div>
       </div>
-      {open ? <UploadPanel id={vm.id} panelId={panelId} on={on} /> : null}
+      {open ? (
+        <UploadPanel
+          id={vm.id}
+          panelId={panelId}
+          on={on}
+          remote={!!vm.node_id}
+        />
+      ) : null}
     </li>
   )
 }
@@ -703,10 +685,12 @@ function UploadPanel({
   id,
   panelId,
   on,
+  remote,
 }: {
   id: string
   panelId: string
   on: boolean
+  remote: boolean
 }) {
   const log = useQuery({
     ...vmSeedUploadLogQueryOptions(id),
@@ -727,9 +711,11 @@ function UploadPanel({
         </p>
       ) : summary.entries.length === 0 ? (
         <p className='text-xs text-muted-foreground'>
-          {on
-            ? '还没有上传记录。有会话活动后，旁路每 10 秒发一批，这里会出现。'
-            : '遥测关着，没有上传记录。'}
+          {remote
+            ? '集群槽的上传记录写在节点上，面板目前读不到。'
+            : on
+              ? '还没有上传记录。有会话活动后，旁路每 10 秒发一批，这里会出现。'
+              : '遥测关着，没有上传记录。'}
         </p>
       ) : (
         <>
