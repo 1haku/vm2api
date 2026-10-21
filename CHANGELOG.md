@@ -5,7 +5,7 @@
 - cli-hop 不再把 system 收成两段。官方完整档由面板模板渲染：billing、身份句、reporting、官方 agent、Environment、调用方正文。动态边界标记只给 cli-node 切段，不出站。断点只在 agent、Environment 和最后一条 user。billing 在 system[0]，不挂 cache_control。
 - HTTP 出站和 worker 封装在 persona 剥掉 billing 后补回计费头。cch 仍由原有封印计算，不改计费头的位置。
 
-已部署机升级：更新 Node 控制面，重启一次 Node。无迁移、无新依赖。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+已部署机升级：更新 Node 控制面，重启一次 Node。cli-node 请求体改为 system 在 messages 前，需要 wrap-cli/sync。无迁移、无新依赖。不要覆盖 routing.json、vms/、data/、.env。
 
 ## 1.3.207 — 2026-10-21
 

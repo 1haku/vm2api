@@ -1,6 +1,6 @@
 {
   "repo": "dofastted/vm2api",
-  "release": "payload-2026.10.19-kernel-cli",
+  "release": "payload-2026.10.21-cli-node",
   "files": [
     {
       "path": "bin/kin-kernel",
@@ -29,8 +29,8 @@
     {
       "path": "share/wrap-cli/cli-node",
       "asset": "cli-node",
-      "size": 27174928,
-      "sha256": "b5054cb8494670354e61f3e0a0f7b2c3b768832c841140a4e22407fec24ab009"
+      "size": 27174960,
+      "sha256": "2c9e8d0bae1fa3bac081e0a3399fb7a58d42cbeb556395467eb65f71b287ac12"
     },
     {
       "path": "share/wrap-cli/cc-node",
