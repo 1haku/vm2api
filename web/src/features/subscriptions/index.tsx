@@ -492,7 +492,8 @@ export function SubscriptionsPage() {
                             )}
                             {[
                               ['renew', '续期'],
-                              ['reset', '重置额度'],
+                              ['reset_daily', '重置日额度'],
+                              ['reset', '重置日/周额度'],
                               [
                                 s.status === 'suspended'
                                   ? 'active'
@@ -502,7 +503,10 @@ export function SubscriptionsPage() {
                               ['revoked', '撤销'],
                             ]
                               .filter(
-                                ([a]) => s.status !== 'revoked' || a === 'reset'
+                                ([a]) =>
+                                  s.status !== 'revoked' ||
+                                  a === 'reset' ||
+                                  a === 'reset_daily'
                               )
                               .map(([a, l]) => (
                                 <Button
@@ -627,7 +631,8 @@ export function SubscriptionsPage() {
                     renewed: '续期',
                     reassigned: '重新分配',
                     renew: '续期',
-                    reset: '重置额度',
+                    reset_daily: '重置日额度',
+                    reset: '重置日/周额度',
                     active: '恢复',
                     suspended: '暂停',
                     revoked: '撤销',
@@ -843,13 +848,15 @@ export function SubscriptionsPage() {
           </DialogHeader>
           <p className='text-sm'>
             {action?.sub.plan_name} ·{' '}
-            {action?.action === 'reset'
-              ? action.sub.weekly_reset_mode === 'slot'
-                ? '清零个人日/周额度消耗，仍跟随官方周窗口，不改变周重置时间；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
-                : '清零个人日/周额度消耗，每周重置时间改为现在起 7 天后；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
-              : action?.action === 'renew'
-                ? '从当前到期时间或今天起延长有效期。'
-                : `将订阅设为${statusName[action?.action || ''] || ''}。`}
+            {action?.action === 'reset_daily'
+              ? '仅清零此用户在该套餐的日额度消耗，周用量、日/周重置时间和订阅到期时间保持不变。历史明细保留，进行中的请求完成后仍正常计入用量。'
+              : action?.action === 'reset'
+                ? action.sub.weekly_reset_mode === 'slot'
+                  ? '清零个人日/周额度消耗，仍跟随官方周窗口，不改变周重置时间；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
+                  : '清零个人日/周额度消耗，每周重置时间改为现在起 7 天后；每日仍于北京时间 00:00 重置。订阅到期时间和历史明细保留。'
+                : action?.action === 'renew'
+                  ? '从当前到期时间或今天起延长有效期。'
+                  : `将订阅设为${statusName[action?.action || ''] || ''}。`}
           </p>
           {action?.action === 'renew' && (
             <label className='grid gap-2 text-sm'>
@@ -869,7 +876,9 @@ export function SubscriptionsPage() {
                 mutate.mutate({
                   path: `/api/panel/subscriptions/${action.sub.id}`,
                   method: 'PATCH',
-                  body: ['reset', 'renew'].includes(action.action)
+                  body: ['reset_daily', 'reset', 'renew'].includes(
+                    action.action
+                  )
                     ? { action: action.action, days: renewDays }
                     : { status: action.action },
                 })

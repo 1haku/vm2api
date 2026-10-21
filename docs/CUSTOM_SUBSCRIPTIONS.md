@@ -181,6 +181,12 @@ v7 增加用户总并发、用户总 RPM、订阅分组总 RPM 和分组内每�
 
 ## 数据库迁移
 
+### 独立手动日重置
+
+管理员在订阅列表可选择「重置日额度」或「重置日/周额度」。日重置使用 `PATCH /api/panel/subscriptions/:id`，请求体为 `{ "action": "reset_daily" }`，普通用户无权执行。它仅清零该用户该套餐的日用量，保留周用量、日/周重置时间、有效期和消费历史；正在进行的请求正常结算，不清除预留。操作日志记录 `reset_daily` 和操作者。
+
+定制迁移 `006_daily_quota_reset.sql` 增加 `daily_quota_reset_at` 和 `daily_reset_ledger_rowid`，原记录默认 NULL/0，不改写旧账本。日用量同时遵守自然日、周窗口、整体手动重置和独立日重置边界，并用账本顺序处理同毫秒的重置/结算。原 `reset` 动作仍清零日/周用量：独立周模式重新起算 7 天，跟随官方模式保留官方周截止时间。
+
 上游继续使用 `src/lib/db/migrations` 和 `schema_migrations`；定制功能使用 `src/lib/db/custom-migrations` 和 `custom_schema_migrations`，版本号独立。后续定制 SQL 新增编号文件，不修改已经应用的文件。
 
 v1 的 `027_subscriptions.sql` 在 v2 改为定制 `001_subscriptions.sql`。升级时先验证旧迁移文件名与内容校验和，再把记录移到定制表，不重复执行 SQL、不删除业务数据。后续上游的 027 可以正常使用。命名空间隔离不会自动解决同名表、列或行为上的冲突，仍须审查上游变更。
