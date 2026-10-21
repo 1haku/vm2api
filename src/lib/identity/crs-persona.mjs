@@ -442,13 +442,18 @@ export function isKnownOfficialSystemText(text) {
   if (!t.trim()) return true
   if (isBillingLine(t) || /x-anthropic-billing-header:/i.test(t)) return true
   if (isStandaloneOfficialLine(t)) return true
+  if (/^\s*You are an agent working with the user toward their goals\b/.test(t)) return true
   if (t === CRS_OFFICIAL_AGENT_PROMPT || t === CRS_AGENT_EXPANSION || t === CRS_OFFICIAL_CONTINUATION) return true
   if (t.includes('# Doing tasks') && t.includes('# Tone and style')) return true
   if (t.includes('# Environment') && t.includes('# Text output (does not apply to tool calls)')) return true
   return false
 }
 export function hasEnvironmentSection(text) {
-  return /^[ \t]*# Environment\b/m.test(String(text ?? ''))
+  const value = String(text ?? '')
+  return (
+    /^\s*# Environment\b/.test(value) ||
+    (value.startsWith('# Text output (does not apply to tool calls)') && value.includes('\n# Environment'))
+  )
 }
 
 function dropRewriteSourceText(text, { preserveEnvironment = false } = {}) {
@@ -880,6 +885,7 @@ export function officialSystemEnvFromIdentity(identity = {}, modelId = '', facts
 export function looksLikeAgentPrompt(text) {
   const t = String(text || '').trim()
   if (!t) return false
+  if (/^You are an agent working with the user toward their goals\b/.test(t)) return true
   if (t === CRS_OFFICIAL_AGENT_PROMPT || t === CRS_AGENT_EXPANSION) return true
   if (t.includes('# Doing tasks') && t.includes('# Tone and style')) return true
   if (/You are an interactive agent that helps users with software engineering tasks/i.test(t)) return true

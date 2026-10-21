@@ -169,7 +169,7 @@ function stabilizeMessageBudgets(body) {
   return changed ? { ...body, messages } : body
 }
 
-/** One marker, on the last text of the current tail, ttl omitted. */
+/** One marker on the current user tail, using the configured TTL. */
 function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL) {
   if (!Array.isArray(messages) || messages.length === 0) return messages
   const next = messages.map((message) => {
@@ -271,22 +271,24 @@ export function prepareCliHopBody(
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
-  if (preserveSystem) validateCacheBreakpoints(canonicalBody)
-  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
+  let body = removeCacheControlFields(officialMessagesBody(canonicalBody, { stream, preserveContentShape: true }))
   const windowTokens = Number(autoCompactWindow)
   if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-  // The panel preset owns the official system. Here, strip CLI-owned blocks
-  // and stamp the last user message. preserveSystem forwards the inbound
-  // system after its markers have been validated.
+  // Preserve selected prompt text, never caller-owned attribution or markers.
   if (!preserveSystem) {
     const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
     if (leftover == null) delete body.system
     else body.system = leftover
     body = stabilizeSystemBudget(body)
     body = stabilizeMessageBudgets(body)
+  }
+  if (preserveSystem && Array.isArray(body.system)) {
+    body.system = body.system.filter((block) => !/^\s*x-anthropic-billing-header:/i.test(systemBlockText(block)))
+  } else if (preserveSystem && typeof body.system === 'string') {
+    body.system = body.system.replace(/^\s*x-anthropic-billing-header:[^\r\n]*(?:\r?\n)?/gim, '')
   }
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
   if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)

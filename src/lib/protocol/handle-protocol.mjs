@@ -81,7 +81,7 @@ import {
   ErrorCode,
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
-import { officialMessagesBody } from './anthropic-messages.mjs'
+import { assembleOfficialPromptBody, officialMessagesBody } from './anthropic-messages.mjs'
 import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
@@ -136,9 +136,7 @@ import {
 import {
   applyCacheTtlToUsage,
   cacheBreakpointsFromRoutingFile,
-  pinConversationCacheTtl,
-  resolveCacheTtl,
-  fillMissingCacheTtl,
+  cacheTtlFromRoutingFile,
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import { confirmCachePrefix, describeCacheContinuity, formatCacheBreak, trackCachePrefix } from './cache-prefix.mjs'
@@ -157,7 +155,6 @@ import { getVm } from '../vm/vm-registry.mjs'
 import { credentialModeFromOauth, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import {
   prepareAnthropicRequest,
-  enforceCacheLimit,
   rewriteToolNames,
   restoreToolNames,
   restoreToolNamesInSSELine,
@@ -956,10 +953,7 @@ export function createHandleProtocol(deps) {
       vmId: stickyBound?.vmId || '',
       epoch: 'pending',
     })
-    const requestedCacheTtl = pinConversationCacheTtl(
-      stickyKey || callerSession || outboundSessionId,
-      resolveCacheTtl({ headers: req.headers, body: inbound, routingFile: routingConfigPath }),
-    )
+    const requestedCacheTtl = cacheTtlFromRoutingFile(routingConfigPath)
     let cacheTtl = requestedCacheTtl
     let preserveCacheBreakpoints = false
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
@@ -1305,17 +1299,14 @@ export function createHandleProtocol(deps) {
           )
           let hopBody = body
           if (cliHop) {
-            // The preset writes the official system: billing, identity,
-            // reporting, static agent, dynamic boundary (dropped before send),
-            // environment, then caller text. Breakpoints stay on the agent,
-            // the environment, and the last user message.
+            // The selected preset supplies text; the shared schema owns placement and TTL.
             const panelRewrite = !requestContext && !officialPassthrough
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
-              preserveSystem: false,
+              preserveSystem: officialPassthrough,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
@@ -1341,15 +1332,16 @@ export function createHandleProtocol(deps) {
                 identity,
               })
               hopBody = { ...hopBody, system: rewritten.system, messages: rewritten.messages }
-              hopBody = fillMissingCacheTtl(hopBody, requestedCacheTtl)
-              enforceCacheLimit(hopBody)
-              validateCacheBreakpoints(hopBody)
               personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
                 officialClient: false,
                 mode: resolvedPersona,
                 hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
                 standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
               })
+            }
+            if (!requestContext) {
+              hopBody = assembleOfficialPromptBody(hopBody, { ttl: requestedCacheTtl })
+              validateCacheBreakpoints(hopBody)
             }
             if (identity) {
               hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
