@@ -485,10 +485,13 @@ function settingsSaveToast(
   }
   if (tab === 'openai') return '已保存 · GPT 配置'
   if (tab === 'telemetry' && telemetry) {
+    const queued = telemetry.queued
+      ? ` · ${telemetry.queued} 个集群槽已排队推送到节点`
+      : ''
     const failed = telemetry.failed?.length
       ? ` · ${telemetry.failed.length} 个写入失败：${telemetry.failed.slice(0, 3).join('、')}`
       : ''
-    return `已保存 · ${telemetry.updated ?? 0} 个槽的上传间隔已热更新${failed}`
+    return `已保存 · ${telemetry.updated ?? 0} 个本机槽已热更新${queued}${failed}`
   }
   return '已保存'
 }
@@ -504,6 +507,7 @@ type RoutingSaveResult = {
   kernel_persona?: { updated?: number; skipped?: number } | null
   telemetry_sync?: {
     updated?: number
+    queued?: number
     skipped?: number
     failed?: string[]
   } | null
