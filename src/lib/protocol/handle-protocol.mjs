@@ -83,6 +83,7 @@ import {
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { assembleOfficialPromptBody, officialMessagesBody } from './anthropic-messages.mjs'
 import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { toolResultImageTailRequested } from './tool-result-image-tail.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
@@ -1192,10 +1193,10 @@ export function createHandleProtocol(deps) {
     // Cache bypass is a client hint; only authenticated master-key probes may skip accounting.
     const healthReal = req.apiKeyKind === 'master' && isHealthRealBypass(req.headers)
     // Cache lives per account; a failover to another account starts cold by design.
-    const noteCachePrefix = (selected, sessionId, body) => {
+    const noteCachePrefix = (selected, sessionId, body, cacheOnly = false) => {
       if (!sessionId) return
       const key = `${selected.accountId}:${sessionId}`
-      const prefix = trackCachePrefix(key, body)
+      const prefix = trackCachePrefix(key, body, Date.now(), { cacheOnly })
       logBag.cache_prefix = prefix
       logBag.cache_prefix_key = key
       if (!prefix?.break) return
@@ -1310,6 +1311,7 @@ export function createHandleProtocol(deps) {
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
+              toolResultImageTail: toolResultImageTailRequested(req.headers),
               routing: routingNow,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
@@ -1340,7 +1342,7 @@ export function createHandleProtocol(deps) {
               })
             }
             if (!requestContext) {
-              hopBody = assembleOfficialPromptBody(hopBody, { ttl: requestedCacheTtl })
+              hopBody = assembleOfficialPromptBody(hopBody, { ttl: requestedCacheTtl, preserveMessageMarker: true })
               validateCacheBreakpoints(hopBody)
             }
             if (identity) {
@@ -1377,7 +1379,12 @@ export function createHandleProtocol(deps) {
               accountId: selected.accountId,
               requestId: logCtx.request_id,
             })
-            noteCachePrefix(selected, attemptSessionId, hopBody)
+            noteCachePrefix(
+              selected,
+              attemptSessionId,
+              hopBody,
+              !requestContext && toolResultImageTailRequested(req.headers),
+            )
             logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(hopBody) || attemptSessionId)
             return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext } }
           }

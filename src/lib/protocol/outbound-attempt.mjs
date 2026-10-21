@@ -3,6 +3,7 @@
  * Tests compare envelopes from this module so admin paths cannot drift.
  */
 import { officialMessagesBody } from './anthropic-messages.mjs'
+import { moveToolResultImagesToTail } from './tool-result-image-tail.mjs'
 import {
   prepareAnthropicRequest,
   rewriteToolNames,
@@ -267,6 +268,7 @@ export function prepareCliHopBody(
     preserveThinkingBlocks = false,
     preserveCallerEnvironment = false,
     autoCompactWindow = null,
+    toolResultImageTail = false,
     routing = null,
   } = {},
 ) {
@@ -310,6 +312,7 @@ export function prepareCliHopBody(
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
     body.messages = officialMessageMarker(body.messages, cacheTtl)
+    if (toolResultImageTail) body = moveToolResultImagesToTail(body)
     if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
   return body

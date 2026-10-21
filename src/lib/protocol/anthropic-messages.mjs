@@ -14,7 +14,7 @@ import { normalizeCacheTtl, removeCacheControlFields } from './cache-ttl.mjs'
 import { modelSupportsMidConversationSystem } from './anthropic-policy.mjs'
 
 /** Gateway schema fill and CLI final merge share one prompt layout and marker policy. */
-export function assembleOfficialPromptBody(body, { ttl } = {}) {
+export function assembleOfficialPromptBody(body, { ttl, preserveMessageMarker = false } = {}) {
   const marker = { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) }
   const out = removeCacheControlFields(body)
   const blocks = Array.isArray(out.system) ? out.system : out.system ? [{ type: 'text', text: out.system }] : []
@@ -48,7 +48,17 @@ export function assembleOfficialPromptBody(body, { ttl } = {}) {
     ...(fixed.length ? [{ type: 'text', text: fixed.join('\n\n'), cache_control: { ...marker } }] : []),
   ]
   const messages = out.messages || []
-  for (let i = messages.length - 1; i >= 0; i--) {
+  let anchor = null
+  // Only gateway-owned markers are trusted here: a tool image tail may follow them.
+  if (preserveMessageMarker) {
+    for (const [i, message] of (body.messages || []).entries()) {
+      if (message?.role !== 'user' || !Array.isArray(message.content)) continue
+      for (const [j, block] of message.content.entries()) {
+        if (block?.cache_control && !['thinking', 'redacted_thinking'].includes(block.type)) anchor = [i, j]
+      }
+    }
+  }
+  for (let i = messages.length - 1; !anchor && i >= 0; i--) {
     const message = messages[i]
     if (message?.role !== 'user') continue
     const content =
@@ -60,9 +70,12 @@ export function assembleOfficialPromptBody(body, { ttl } = {}) {
     if (!Array.isArray(content)) continue
     const j = content.findLastIndex((block) => block && !['thinking', 'redacted_thinking'].includes(block.type))
     if (j < 0) continue
-    content[j] = { ...content[j], cache_control: { ...marker } }
     messages[i] = { ...message, content }
-    break
+    anchor = [i, j]
+  }
+  if (anchor) {
+    const [i, j] = anchor
+    messages[i].content[j] = { ...messages[i].content[j], cache_control: { ...marker } }
   }
   const inboundEnvironment = []
   out.messages = messages.filter((message) => {
