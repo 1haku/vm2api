@@ -3,7 +3,12 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { buildWorkerTelemetry, touchTelemetrySession } from '../../src/lib/vm/worker-telemetry.mjs'
+import {
+  buildWorkerTelemetry,
+  telemetryUploadInterval,
+  touchTelemetrySession,
+  validateTelemetryRoutingPatch,
+} from '../../src/lib/vm/worker-telemetry.mjs'
 import { syncWorkerTelemetry } from '../../src/lib/vm/vm-runtime.mjs'
 import { slotRuntimeOwner } from '../../src/lib/oauth/oauth-credentials.mjs'
 
@@ -143,6 +148,43 @@ test('syncWorkerTelemetry writes enabled:true when official IDs exist', () => {
   assert.equal(touch.wrote, true)
   assert.equal(fs.existsSync(path.join(runDir, 'telemetry.touch')), true)
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('upload interval comes from routing.json and falls back to 10 minutes', (t) => {
+  const saved = process.env.KIN_ROUTING_FILE
+  delete process.env.KIN_ROUTING_FILE
+  t.after(() => {
+    if (saved === undefined) delete process.env.KIN_ROUTING_FILE
+    else process.env.KIN_ROUTING_FILE = saved
+  })
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tel-'))
+  writeOfficialHome(root, 'vm-02')
+  const vm = { id: 'vm-02', seed_policy: { telemetry_disabled: false } }
+  assert.equal(buildWorkerTelemetry(vm, root).upload_interval_seconds, 600)
+  fs.mkdirSync(path.join(root, 'src', 'config'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'src', 'config', 'routing.json'),
+    JSON.stringify({ telemetry: { upload_interval_seconds: 7200 } }),
+  )
+  assert.equal(buildWorkerTelemetry(vm, root).upload_interval_seconds, 7200)
+  assert.equal(
+    buildWorkerTelemetry(vm, root, { telemetry: { upload_interval_seconds: 180 } }).upload_interval_seconds,
+    180,
+  )
+  for (const bad of [0, 30, 90, 86_460, '600', null]) {
+    assert.equal(telemetryUploadInterval({ telemetry: { upload_interval_seconds: bad } }), 600)
+  }
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('routing patch accepts whole minutes from 1 minute to 24 hours', () => {
+  assert.deepEqual(validateTelemetryRoutingPatch({ telemetry: { upload_interval_seconds: 60 } }), [])
+  assert.deepEqual(validateTelemetryRoutingPatch({ telemetry: { upload_interval_seconds: 86_400 } }), [])
+  assert.deepEqual(validateTelemetryRoutingPatch({ sticky: {} }), [])
+  for (const bad of [0, 59, 90, 86_460, '600', 600.5]) {
+    assert.equal(validateTelemetryRoutingPatch({ telemetry: { upload_interval_seconds: bad } }).length, 1)
+  }
+  assert.equal(validateTelemetryRoutingPatch({ telemetry: [] }).length, 1)
 })
 
 test('syncWorkerTelemetry chowns the replaced worker.json to the slot uid', () => {
