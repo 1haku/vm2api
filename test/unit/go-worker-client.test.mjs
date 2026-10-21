@@ -163,8 +163,7 @@ test('cli-hop envelope keeps role=system turns that the VM betas do not declare'
     out.body.messages.map((message) => message.role),
     ['user', 'system', 'assistant', 'user'],
   )
-  assert.match(out.body.system[0].text, /^x-anthropic-billing-header:/)
-  assert.deepEqual(out.body.system.slice(1), body.system)
+  assert.deepEqual(out.body.system, body.system)
 })
 
 test('cli-hop keeps the caller compact window outside settings', () => {
