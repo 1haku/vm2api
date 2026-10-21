@@ -81,8 +81,9 @@ import {
   ErrorCode,
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
-import { officialMessagesBody } from './anthropic-messages.mjs'
+import { assembleOfficialPromptBody, officialMessagesBody } from './anthropic-messages.mjs'
 import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { toolResultImageTailRequested } from './tool-result-image-tail.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
@@ -136,9 +137,7 @@ import {
 import {
   applyCacheTtlToUsage,
   cacheBreakpointsFromRoutingFile,
-  pinConversationCacheTtl,
-  resolveCacheTtl,
-  fillMissingCacheTtl,
+  cacheTtlFromRoutingFile,
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import { confirmCachePrefix, describeCacheContinuity, formatCacheBreak, trackCachePrefix } from './cache-prefix.mjs'
@@ -157,7 +156,6 @@ import { getVm } from '../vm/vm-registry.mjs'
 import { credentialModeFromOauth, isApiKeyMode } from '../oauth/credential-mode.mjs'
 import {
   prepareAnthropicRequest,
-  enforceCacheLimit,
   rewriteToolNames,
   restoreToolNames,
   restoreToolNamesInSSELine,
@@ -956,10 +954,7 @@ export function createHandleProtocol(deps) {
       vmId: stickyBound?.vmId || '',
       epoch: 'pending',
     })
-    const requestedCacheTtl = pinConversationCacheTtl(
-      stickyKey || callerSession || outboundSessionId,
-      resolveCacheTtl({ headers: req.headers, body: inbound, routingFile: routingConfigPath }),
-    )
+    const requestedCacheTtl = cacheTtlFromRoutingFile(routingConfigPath)
     let cacheTtl = requestedCacheTtl
     let preserveCacheBreakpoints = false
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
@@ -1051,6 +1046,7 @@ export function createHandleProtocol(deps) {
       let result
       try {
         result = await runApiInference({
+          routing: getRouting(),
           req,
           res,
           cfg,
@@ -1197,10 +1193,10 @@ export function createHandleProtocol(deps) {
     // Cache bypass is a client hint; only authenticated master-key probes may skip accounting.
     const healthReal = req.apiKeyKind === 'master' && isHealthRealBypass(req.headers)
     // Cache lives per account; a failover to another account starts cold by design.
-    const noteCachePrefix = (selected, sessionId, body) => {
+    const noteCachePrefix = (selected, sessionId, body, cacheOnly = false) => {
       if (!sessionId) return
       const key = `${selected.accountId}:${sessionId}`
-      const prefix = trackCachePrefix(key, body)
+      const prefix = trackCachePrefix(key, body, Date.now(), { cacheOnly })
       logBag.cache_prefix = prefix
       logBag.cache_prefix_key = key
       if (!prefix?.break) return
@@ -1304,22 +1300,30 @@ export function createHandleProtocol(deps) {
           )
           let hopBody = body
           if (cliHop) {
-            // The front rewrite already produces the official two-block shape.
-            const panelRewrite = false
+            // The selected preset supplies text; the shared schema owns placement and TTL.
+            const panelRewrite = !requestContext && !officialPassthrough
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
               requestContext,
-              preserveSystem: false,
+              preserveSystem: officialPassthrough,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
+              toolResultImageTail: toolResultImageTailRequested(req.headers),
               routing: routingNow,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
-              hopBody = applyCrsUnofficialPersona(hopBody, {
+              // prepareCliHopBody already stripped billing, identity and
+              // Environment. The preset extracts caller text from its input,
+              // so it has to see the inbound system, not that stripped copy.
+              const presetInput = {
+                ...hopBody,
+                system: repaired ? body?.system : personaIn?.system,
+              }
+              const rewritten = applyCrsUnofficialPersona(presetInput, {
                 officialClient: false,
                 forceConfigured: true,
                 routingFile: routingConfigPath,
@@ -1329,15 +1333,17 @@ export function createHandleProtocol(deps) {
                 cliVersion: OFFICIAL_CLI_VERSION,
                 identity,
               })
-              hopBody = fillMissingCacheTtl(hopBody, requestedCacheTtl)
-              enforceCacheLimit(hopBody)
-              validateCacheBreakpoints(hopBody)
+              hopBody = { ...hopBody, system: rewritten.system, messages: rewritten.messages }
               personaHideTokens = personaHideForUnofficial(personaIn, hopBody, {
                 officialClient: false,
                 mode: resolvedPersona,
                 hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
                 standing: standingUsageFromRoutingFile(routingConfigPath, resolvedPersona),
               })
+            }
+            if (!requestContext) {
+              hopBody = assembleOfficialPromptBody(hopBody, { ttl: requestedCacheTtl, preserveMessageMarker: true })
+              validateCacheBreakpoints(hopBody)
             }
             if (identity) {
               hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
@@ -1373,7 +1379,12 @@ export function createHandleProtocol(deps) {
               accountId: selected.accountId,
               requestId: logCtx.request_id,
             })
-            noteCachePrefix(selected, attemptSessionId, hopBody)
+            noteCachePrefix(
+              selected,
+              attemptSessionId,
+              hopBody,
+              !requestContext && toolResultImageTailRequested(req.headers),
+            )
             logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(hopBody) || attemptSessionId)
             return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext } }
           }
