@@ -256,6 +256,11 @@ test('guided provisioning creates plan and assignments atomically', async () => 
       body: { username: 'wizard-user', password: 'test-password-123' },
     })
     const headers = { authorization: `Bearer ${login.json.token}` }
+    const dailyResetPath = '/api/panel/subscriptions/' + created.json.data.ids[0]
+    assert.equal((await api(gw, 'PATCH', dailyResetPath, { headers, body: { action: 'reset_daily' } })).status, 403)
+    const dailyReset = await api(gw, 'PATCH', dailyResetPath, { body: { action: 'reset_daily' } })
+    assert.equal(dailyReset.status, 200, dailyReset.text)
+    assert.equal(dailyReset.json.data.daily_used, 0)
     const adminTicket = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/shell-ticket', { body: {} })
     assert.equal(adminTicket.status, 200, adminTicket.text)
     const unauthorizedUpgrade = await new Promise((resolve, reject) => {

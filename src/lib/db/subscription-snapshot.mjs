@@ -122,7 +122,16 @@ export function subscriptionSnapshot(db) {
     const rows = db
       .prepare(`SELECT ${name === 'subscription_ledger' ? 'rowid AS sequence,' : ''}* FROM ${table}`)
       .all()
-      .map((row) => (name === 'user_subscriptions' ? { ...row, reset_ledger_rowid: row.reset_ledger_rowid ?? 0 } : row))
+      .map((row) =>
+        name === 'user_subscriptions'
+          ? {
+              ...row,
+              reset_ledger_rowid: row.reset_ledger_rowid ?? 0,
+              daily_quota_reset_at: row.daily_quota_reset_at ?? null,
+              daily_reset_ledger_rowid: row.daily_reset_ledger_rowid ?? 0,
+            }
+          : row,
+      )
     state[name] = { count: rows.length, hash: digest(rows) }
   }
   const plans = exists(db, 'custom_subscription_plans')
@@ -193,4 +202,6 @@ export function verifySubscriptionSchema(db) {
     throw new Error('Custom migration 004 missing')
   if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='005'").get())
     throw new Error('Custom migration 005 missing')
+  if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='006'").get())
+    throw new Error('Custom migration 006 missing')
 }

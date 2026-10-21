@@ -14,6 +14,30 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 
+test('006 adds daily reset defaults without changing subscriptions and detects changed reset markers', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-reset-migration-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  db.exec("INSERT INTO users(id,email,username,password_hash) VALUES('daily-user','daily@test','daily','unused')")
+  db.exec(
+    "INSERT INTO custom_user_subscriptions(id,user_id,group_id,starts_at,expires_at,reset_at,created_at,updated_at) VALUES('daily-sub','daily-user',1,'2026-10-01','2026-11-01','2026-10-02','2026-10-01','2026-10-02')",
+  )
+  db.exec('ALTER TABLE custom_user_subscriptions DROP COLUMN daily_quota_reset_at')
+  db.exec('ALTER TABLE custom_user_subscriptions DROP COLUMN daily_reset_ledger_rowid')
+  db.exec("DELETE FROM custom_schema_migrations WHERE version='006'")
+  const before = subscriptionSnapshot(db)
+  applyCustomMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  const sub = db.prepare("SELECT * FROM custom_user_subscriptions WHERE id='daily-sub'").get()
+  assert.equal(sub.daily_quota_reset_at, null)
+  assert.equal(sub.daily_reset_ledger_rowid, 0)
+  db.exec("UPDATE custom_user_subscriptions SET daily_reset_ledger_rowid=1 WHERE id='daily-sub'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)))
+})
+
 test('040/041 preserve node credentials and historical usage while adding only Linux/NULL defaults', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-device-migration-'))
   const db = createDatabase({ dataDir: dir })
@@ -318,7 +342,7 @@ test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions
     db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
     '027_usage_logs_session_effort.sql',
   )
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 5)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 6)
   assert.equal(db.prepare('SELECT action FROM custom_subscription_events').get().action, 'sentinel')
 })
 

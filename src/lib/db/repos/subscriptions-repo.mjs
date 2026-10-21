@@ -270,6 +270,13 @@ export class SubscriptionsRepo {
             'UPDATE custom_user_subscriptions SET reset_at=?,reset_ledger_rowid=(SELECT COALESCE(MAX(rowid),0) FROM custom_subscription_ledger),updated_at=? WHERE id=?',
           )
           .run(resetAt, resetAt, id)
+      } else if (input.action === 'reset_daily') {
+        const resetAt = iso()
+        this.db
+          .prepare(
+            'UPDATE custom_user_subscriptions SET daily_quota_reset_at=?,daily_reset_ledger_rowid=(SELECT COALESCE(MAX(rowid),0) FROM custom_subscription_ledger),updated_at=? WHERE id=?',
+          )
+          .run(resetAt, resetAt, id)
       } else if (input.action === 'renew') {
         const days = number(input.days, 30, 1, 3650)
         if (!Number.isInteger(days)) throw subscriptionError('续期天数须为整数')
@@ -301,19 +308,19 @@ export class SubscriptionsRepo {
     // fresh daily quota too. Deadline-only changes keep the existing start.
     // This is a reporting/admission boundary, never a rewrite of the ledger.
     const dailyWindowStart = iso(Math.max(Date.parse(day), Number.isFinite(week) ? week : 0))
-    const dayStart = sub.reset_at > dailyWindowStart ? sub.reset_at : dailyWindowStart
+    const dayStart = [dailyWindowStart, sub.reset_at, sub.daily_quota_reset_at].filter(Boolean).sort().at(-1)
     const weekStart = sub.reset_at > iso(week) ? sub.reset_at : iso(week)
     const weekEnd = official ? official.end : week + 7 * DAY
     const midnight = Date.parse(day) + DAY
     const dailyReset = Number.isFinite(weekEnd) && weekEnd > now ? Math.min(midnight, weekEnd) : midnight
-    const spent = (since) =>
+    const spent = (since, rowid = sub.reset_ledger_rowid || 0) =>
       this.db
         .prepare(
           'SELECT COALESCE(SUM(amount),0) AS n FROM custom_subscription_ledger WHERE subscription_id=? AND created_at>=? AND rowid>?',
         )
-        .get(sub.id, since, sub.reset_ledger_rowid || 0).n
+        .get(sub.id, since, rowid).n
     return {
-      daily_used: spent(dayStart),
+      daily_used: spent(dayStart, Math.max(sub.reset_ledger_rowid || 0, sub.daily_reset_ledger_rowid || 0)),
       weekly_used: spent(weekStart),
       daily_reset_at: iso(dailyReset),
       weekly_reset_at: Number.isFinite(weekEnd) ? iso(weekEnd) : null,

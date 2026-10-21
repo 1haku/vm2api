@@ -425,6 +425,63 @@ test('multiple keys share quota and concurrency; settlement is idempotent; reset
   assert.equal(repo.list('a')[0].daily_used, 1.25)
 })
 
+test('daily-only reset preserves weekly spending, deadlines, other users, pending requests and history', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-01T04:00:00Z') })
+  const { repo, db, a, b } = setup(t)
+  const sub = repo.entitlement(a)
+  repo.settle('daily-before', sub.id, 25)
+  repo.settle('other-user', repo.entitlement(b).id, 3)
+  repo.reserve(a, 'in-flight', body)
+  const before = repo.list('a')[0]
+  const ledger = db.prepare('SELECT rowid,* FROM custom_subscription_ledger').all()
+  const pending = db.prepare('SELECT * FROM custom_subscription_reservations').all()
+  const other = repo.list('b')[0]
+  const after = repo.update(sub.id, { action: 'reset_daily' }, 'admin')
+  assert.equal(after.daily_used, 0)
+  for (const field of [
+    'weekly_used',
+    'weekly_reset_at',
+    'daily_reset_at',
+    'reset_at',
+    'reset_ledger_rowid',
+    'starts_at',
+    'expires_at',
+  ])
+    assert.equal(after[field], before[field], field)
+  assert.deepEqual(db.prepare('SELECT rowid,* FROM custom_subscription_ledger').all(), ledger)
+  assert.deepEqual(db.prepare('SELECT * FROM custom_subscription_reservations').all(), pending)
+  assert.deepEqual(repo.list('b')[0], other)
+  assert.equal(
+    db.prepare("SELECT actor_id FROM custom_subscription_events WHERE action='reset_daily'").get().actor_id,
+    'admin',
+  )
+  // A request started before the reset but settled afterward still counts, even in the same millisecond.
+  repo.settle('in-flight', sub.id, 5)
+  assert.equal(repo.list('a')[0].daily_used, 5)
+  assert.equal(repo.list('a')[0].weekly_used, 30)
+  repo.update(sub.id, { action: 'reset_daily' }, 'admin')
+  assert.equal(repo.list('a')[0].daily_used, 0)
+  assert.equal(repo.list('a')[0].weekly_used, 30)
+  t.mock.timers.setTime(Date.parse('2026-10-01T16:00:00Z'))
+  repo.settle('next-day', sub.id, 2)
+  assert.equal(repo.list('a')[0].daily_used, 2)
+  assert.equal(repo.list('a')[0].weekly_used, 32)
+  repo.update(sub.id, { action: 'reset' }, 'admin')
+  repo.settle('after-both-reset', sub.id, 1)
+  assert.equal(repo.list('a')[0].daily_used, 1)
+  assert.equal(repo.list('a')[0].weekly_used, 1)
+})
+
+test('daily-only reset cannot bypass the weekly limit', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const { repo, a } = setup(t, { weekly_limit_usd: 10 })
+  const sub = repo.entitlement(a)
+  repo.settle('weekly-exhausted', sub.id, 10)
+  repo.update(sub.id, { action: 'reset_daily' }, 'admin')
+  assert.equal(repo.list('a')[0].daily_used, 0)
+  assert.throws(() => repo.reserve(a, 'still-blocked', body), /额度/)
+})
+
 test('manual quota reset restarts the weekly window, enforces it past the old boundary and keeps history', (t) => {
   const start = Date.parse('2026-10-01T04:00:00.000Z'),
     day = 86400000
