@@ -37,6 +37,47 @@ function joinHeaderMap(headers = {}) {
   return out
 }
 
+/**
+ * Native Anthropic Messages is a compatibility boundary.  Keep protocol
+ * headers supplied by the caller, including beta names this gateway does not
+ * know yet.  Endpoint headers still provide defaults and credentials; these
+ * caller values are applied after them so an upstream beta opt-in is not
+ * silently replaced by the endpoint configuration.
+ */
+function forwardAnthropicProtocolHeaders(headers = {}, protocol = '', protocolKind = '') {
+  if (protocol !== 'anthropic.messages' || protocolKind !== 'anthropic') return {}
+  const out = {}
+  for (const [rawName, rawValue] of Object.entries(headers || {})) {
+    const name = String(rawName || '').toLowerCase()
+    if (
+      !name.startsWith('anthropic-') &&
+      !name.startsWith('x-claude-code-') &&
+      !name.startsWith('x-stainless-') &&
+      name !== 'x-app' &&
+      name !== 'x-client-request-id' &&
+      name !== 'user-agent' &&
+      name !== 'accept-language' &&
+      name !== 'sec-fetch-mode'
+    )
+      continue
+    if (rawValue == null || rawValue === '') continue
+    out[name] = Array.isArray(rawValue) ? rawValue.join(',') : String(rawValue)
+  }
+  return out
+}
+
+function mergeHeadersCaseInsensitive(base = {}, override = {}) {
+  const out = { ...base }
+  for (const [name, value] of Object.entries(override)) {
+    const lower = String(name).toLowerCase()
+    for (const existing of Object.keys(out)) {
+      if (existing.toLowerCase() === lower) delete out[existing]
+    }
+    out[name] = value
+  }
+  return out
+}
+
 async function readLines(stream, onLine) {
   let buf = ''
   for await (const chunk of stream) {
@@ -105,14 +146,19 @@ export async function runApiInference({
     ? { ...claudeToOpenAIResponsesRequest({ ...canonical, model: picked.upstream_model }), stream: true }
     : { ...canonical, model: picked.upstream_model, stream: true }
   if (requestContext) Object.assign(body, prepareClassifierBody(body))
-  const headers = {
-    'content-type': 'application/json',
-    accept: 'text/event-stream',
-    ...upstreamAuthHeaders(protocolKind, picked.key.api_key, {
-      ...extraHeaders,
-      auth_scheme: picked.endpoint.auth_scheme || extraHeaders.auth_scheme || extraHeaders.anthropic_apikey_auth_scheme,
-    }),
-  }
+  const callerProtocolHeaders = forwardAnthropicProtocolHeaders(req?.headers, protocol, protocolKind)
+  const headers = mergeHeadersCaseInsensitive(
+    {
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+      ...upstreamAuthHeaders(protocolKind, picked.key.api_key, {
+        ...extraHeaders,
+        auth_scheme:
+          picked.endpoint.auth_scheme || extraHeaders.auth_scheme || extraHeaders.anthropic_apikey_auth_scheme,
+      }),
+    },
+    callerProtocolHeaders,
+  )
 
   let upstream
   try {
