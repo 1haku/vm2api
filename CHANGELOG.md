@@ -1,9 +1,11 @@
 # Changelog
 
-## 未发布
+## 1.3.212 — 2026-10-22
 
 - 新增官方 Codex 透传：开启 `codex.official_passthrough` 后，官方 Codex 家族 `/v1/responses` 保留 `instructions`、`input`、tools、reasoning、`prompt_cache_key`、`previous_response_id`、`conversation_id`/`session_id` 和官方 metadata，不再按 attempt 重建 `prompt_cache_key`；只清掉 API key/authorization/client_metadata。会话使用 `mode=passthrough`。OpenAI 兼容客户端的 body 归一化不变。
 - 新增官方 Claude Code 透传：开启 `compatibility.official_cc_passthrough` 后，官方家族 cli-hop 保留调用方 system/tools/messages、cache_control 位置与 TTL、temperature、context_management、tool_choice 和 thinking，只重绑槽位 `metadata.user_id`，不再注入 `official_full` 完整 prompt、不重打 1h 断点、不按 attempt 重 mint session。内核 persona 投影为 `zero`，避免二次注入。非官方客户端仍走原 persona/rewrite。（#674）
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启一次。启用时在面板打开对应开关并保存投影；不必 `wrap-cli/sync`、不必 `fetch:payload`、不必重建槽。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.211 — 2026-10-22
 
