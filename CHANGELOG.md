@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- 新增提示词档「官方 2.1.303（按模型）」`official_303`，手动选择，默认档仍是官方完整提示词。Opus 4.8 / 5 / 5.5、Fable、Mythos 等按 2.1.303 样本组装：system 为 billing、身份句、2.1.303 主提示词；调用方 system 放进第一条 user 的 `<system-reminder>`（官方调用方的 system 不出站）；Environment 作为尾部 role=system，只替换 `# Environment` 段；恰好 3 个断点，TTL 取面板缓存 TTL。Sonnet、Haiku、Opus 4.0–4.7 沿用现有 cli-hop 结构，只把版本号换成 2.1.303。
+- 选 303 档的槽位 UA、billing `cc_version` 与 CCH 输入为 2.1.303，按 job 热读 kernel.json，不重启槽位；其余四档仍为 2.1.296，出站字节不变。
+- 设置 → 协议新增只读「当前出站参照」：按全局或单个槽位列出版本、UA、billing、beta、断点规则与来源，并列出协议页保存时固定写入的值，存储不一致时提示。
+- 新增 `scripts/outbound-shape.mjs`：把出站 body 归约成脱敏结构，与 2.1.303 骨架逐项对照。
+
+已部署机升级：需要同时更新 Node 控制面、`web/dist` 与 cli-node（新增 profile 模式；不选 303 档时出站与当前 `b5054cb8` 一致）。回滚到旧版本后，旧面板不接受 `official_303`，需在 system提示词页重新选档再保存。OMP 工具图片尾置仍未恢复，另行处理。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.208 — 2026-10-21
 
 - 回退 1.3.208 的请求体重组与缓存断点改动，保持 1.3.207 的 thinking、system 和消息结构；仅在 cli-node 最终 hop 补回缺失的 `x-anthropic-billing-header`。
