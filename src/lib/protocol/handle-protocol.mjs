@@ -109,6 +109,7 @@ import {
 import {
   applyCrsUnofficialPersona,
   detectProxiedOfficialCcFromRoutingFile,
+  ensureBillingAttribution,
   extractFirstUserText,
   isOfficialClaudeCodeTraffic,
   isProxiedOfficialClaudeCode,
@@ -1343,6 +1344,13 @@ export function createHandleProtocol(deps) {
               autoCompactWindow: ctx.autoCompactWindow,
               routing: routingNow,
             })
+            if (!requestContext) {
+              hopBody = ensureBillingAttribution(hopBody, {
+                firstUserText,
+                sessionId: attemptSessionId,
+                cliVersion: OFFICIAL_CLI_VERSION,
+              })
+            }
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
               hopBody = applyCrsUnofficialPersona(hopBody, {
