@@ -10,6 +10,8 @@
 已部署机升级：更新 Node 控制面并执行 `npm run fetch:payload`（或更新控制面镜像）换上新 `bin/kin-computer`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，不必重建槽位容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 - 导入页以 start:false 建空槽后，打开官方登录终端前会先启动已绑定出口的槽位；已运行直接开终端，无出口拒绝，失败可重试。（#650，#657）
+- 池调度：异步 worker 健康探测返回后重新读取 `Date.now()` 再判 cooldown 与凭证门禁，避免探测期间已过期的 cooldown 被重新入队且错过唤醒通知。（#671）
+- JEV 语义审核：`jevModelDocument` 保留 system / user 消息与 input 的来源标签（如 `user message N`），同来源+正文才去重，assistant / tool 不参与，避免历史引用被当成当前提问。（#671）
 
 ## 1.3.209 — 2026-10-22
 
