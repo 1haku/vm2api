@@ -8,6 +8,8 @@
 
 已部署机升级：更新 Node 控制面并执行 `npm run fetch:payload`（或更新控制面镜像）换上新 `bin/kin-computer`，重启一次 Node。无迁移、无新依赖，不必 `wrap-cli/sync`，不必重建槽位容器。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
+- 导入页以 start:false 建空槽后，打开官方登录终端前会先启动已绑定出口的槽位；已运行直接开终端，无出口拒绝，失败可重试。（#650，#657）
+
 ## 1.3.209 — 2026-10-22
 
 - 遥测 `event_data.env` 不再附带客户机硬件（`cpu_model`、`cpu_cores`、`memory_bytes`、`root_disk`、`mac`、`dmi_*` 共 11 项），与官方 Claude Code 2.1.296 的 env 字段一致；`worker.json` 的 identity 也不再写这些键。新 `kin-worker` 发送前会剔除旧 `worker.json` 里残留的同名键。槽位运维页「物理特征」照旧读取和展示。（#646）
