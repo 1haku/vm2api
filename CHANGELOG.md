@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.212 — 2026-10-22
+
+- 版本号保留；原官方透传（#674）已从历史移除，本版无运行时变化。
+
 ## 1.3.211 — 2026-10-22
 
 - 单测对齐 cli-hop 缓存标记已写入的会话 TTL（默认 `1h`，请求带 `5m` 则为 `5m`），以及 OAuth persona 三块 system（billing / identity / persona）；修正 `officialMessageMarker` 过时注释。纯测试修复，无运行时行为变化。（#675）
