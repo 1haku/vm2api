@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.211 — 2026-10-22
+
+- 单测对齐 cli-hop 缓存标记已写入的会话 TTL（默认 `1h`，请求带 `5m` 则为 `5m`），以及 OAuth persona 三块 system（billing / identity / persona）；修正 `officialMessageMarker` 过时注释。纯测试修复，无运行时行为变化。（#675）
+
 ## 1.3.210 — 2026-10-22
 
 - 槽位「采集特征」和终端「系统特征」不再读到宿主机：Docker 槽的 CPU 型号、DMI、MAC 读槽位计算机（`/etc/kin-hardware`、`/etc/kin-dmi`），核数与内存读容器 cgroup 配额；没有配额时读计算机文件，都没有才回落 `/proc`、`/sys`。KVM 槽不变。（#673）
