@@ -1,5 +1,11 @@
 # Changelog
 
+## 未发布
+
+- 遥测 `event_data.env` 不再附带客户机硬件（`cpu_model`、`cpu_cores`、`memory_bytes`、`root_disk`、`mac`、`dmi_*` 共 11 项），与官方 Claude Code 2.1.296 的 env 字段一致；`worker.json` 的 identity 也不再写这些键。新 `kin-worker` 发送前会剔除旧 `worker.json` 里残留的同名键。槽位运维页「物理特征」照旧读取和展示。（#646）
+
+已部署机升级：更新 Node 控制面与 `bin/kin-worker`，重启一次 Node。无迁移、无新依赖。`worker.json` 重写（播种、换票、fleet `action=telemetry`）或换上新 `kin-worker`，两者任一发生后就不再上传硬件键；集群槽在下次启动、重载或出口重建时推送。
+
 ## 1.3.208 — 2026-10-21
 
 - 回退 1.3.208 的请求体重组与缓存断点改动，保持 1.3.207 的 thinking、system 和消息结构；仅在 cli-node 最终 hop 补回缺失的 `x-anthropic-billing-header`。
