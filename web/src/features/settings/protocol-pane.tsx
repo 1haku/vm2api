@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/setting-row'
+import { OutboundReference } from './outbound-reference'
 import {
   cchEnabledFromCompat,
   sessionIdleTtlFromInference,
@@ -49,11 +50,17 @@ function autoCompactWindowValue(value: unknown) {
 export function ProtocolPane({
   compat,
   inference,
+  storedCompat,
+  storedInference,
+  dirty,
   onCompatChange,
   onInferenceChange,
 }: {
   compat: Block
   inference: Block
+  storedCompat: Block | undefined
+  storedInference: Block | undefined
+  dirty: boolean
   onCompatChange: (next: Block) => void
   onInferenceChange: (patch: Block) => void
 }) {
@@ -104,9 +111,11 @@ export function ProtocolPane({
           <SettingRow
             label='官方 Claude Code 家族透传'
             desc={
-              compat.official_cc_passthrough === true
-                ? '开：直连和被识别为中转的官方家族保留入站 system，不套用当前提示词档。'
-                : '关：官方家族也套用协议里的 system 档。打开后才透传。'
+              compat.persona_preset === 'official_303'
+                ? '官方 2.1.303 档的 cli-hop 不读这个开关：lean 模型一律按档案组装，官方调用方的 system 不出站。'
+                : compat.official_cc_passthrough === true
+                  ? '开：直连和被识别为中转的官方家族保留入站 system，不套用当前提示词档。'
+                  : '关：官方家族也套用协议里的 system 档。打开后才透传。'
             }
           >
             <Switch
@@ -269,6 +278,11 @@ export function ProtocolPane({
           }
         />
       </PaneSection>
+      <OutboundReference
+        storedCompat={storedCompat}
+        storedInference={storedInference}
+        dirty={dirty}
+      />
     </div>
   )
 }

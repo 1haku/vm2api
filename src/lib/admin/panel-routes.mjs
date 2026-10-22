@@ -229,6 +229,7 @@ import {
 import { collectSlotIdentity } from '../vm/guest-identity.mjs'
 import { applyOfficialFingerprintToVm, reconcileOfficialFingerprints } from '../identity/official-fingerprint.mjs'
 import { personaPreviewVars } from '../identity/crs-persona.mjs'
+import { buildOutboundProfile } from './outbound-profile.mjs'
 import {
   applyGeneratedFingerprint,
   SLOT_LOCALES,
@@ -5173,6 +5174,19 @@ export function createPanelHandler(ctx) {
       // GET /api/panel/routing
       if (req.method === 'GET' && p === '/api/panel/routing') {
         return json(res, 200, panel.buildRouting({ routingConfig: ctx.routingConfig, stickyRouter }))
+      }
+      // GET /api/panel/outbound-profile?vm= — read-only outbound reference (global or one slot)
+      if (req.method === 'GET' && p === '/api/panel/outbound-profile') {
+        const vmId = url.searchParams.get('vm') || url.searchParams.get('vm_id') || ''
+        let vm = null
+        if (vmId) {
+          if (userMissesVmId(req, cfg.paths.project, vmId)) {
+            return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+          }
+          vm = listVms(cfg.paths.project, ctx.routingConfig).find((item) => item.id === vmId) || null
+          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        }
+        return json(res, 200, panel.ok({ profile: buildOutboundProfile({ routing: ctx.routingConfig || {}, vm }) }))
       }
       // GET /api/panel/persona/preview-vars?timezone= — real template constants for the system prompt preview
       if (req.method === 'GET' && p === '/api/panel/persona/preview-vars') {

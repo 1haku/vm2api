@@ -78,3 +78,98 @@ export async function inheritProtocolOnSlots(
   }
   return { changed, errors }
 }
+
+/** 协议页保存时一律写入的固定值。保存与「当前出站参照」共用这一份，存储值不同时卡片会标出来。 */
+export type ProtocolFixedField = {
+  key: string
+  label: string
+  saved: unknown
+  stored: unknown
+}
+
+export function protocolFixedFields(
+  compat: Record<string, unknown> | undefined,
+  inference: Record<string, unknown> | undefined
+): ProtocolFixedField[] {
+  const breakpoints = (compat?.cache_breakpoints || {}) as Record<
+    string,
+    unknown
+  >
+  return [
+    {
+      key: 'compatibility.overlay_preset',
+      label: 'overlay 方案',
+      saved: 'off',
+      stored: compat?.overlay_preset,
+    },
+    {
+      key: 'compatibility.persona_park',
+      label: 'persona park',
+      saved: false,
+      stored: compat?.persona_park,
+    },
+    {
+      key: 'compatibility.cache_breakpoints.system_tail',
+      label: 'system 尾部断点',
+      saved: false,
+      stored: breakpoints.system_tail,
+    },
+    {
+      key: 'compatibility.cache_breakpoints.tools_tail',
+      label: 'tools 尾部断点',
+      saved: false,
+      stored: breakpoints.tools_tail,
+    },
+    {
+      key: 'compatibility.cache_breakpoints.messages',
+      label: '消息断点',
+      saved: 'cli-hop',
+      stored: breakpoints.messages,
+    },
+    {
+      key: 'inference.engine',
+      label: '推理引擎',
+      saved: 'rust',
+      stored: inference?.engine,
+    },
+    {
+      key: 'inference.fallback_to_go',
+      label: 'Go 回落',
+      saved: false,
+      stored: inference?.fallback_to_go,
+    },
+  ]
+}
+
+/** 存储值与保存时写入值不同的固定字段。 */
+export function protocolFixedDrift(
+  compat: Record<string, unknown> | undefined,
+  inference: Record<string, unknown> | undefined
+): ProtocolFixedField[] {
+  return protocolFixedFields(compat, inference).filter(
+    (field) => field.stored !== field.saved
+  )
+}
+
+/** 把固定值写进保存体（路径与 `protocolFixedFields` 的 key 一致）。不修改入参。 */
+export function withProtocolFixedFields(
+  body: Record<string, unknown>
+): Record<string, unknown> {
+  const compat = (body.compatibility || {}) as Record<string, unknown>
+  const inference = (body.inference || {}) as Record<string, unknown>
+  const out: Record<string, unknown> = structuredClone(body)
+  for (const field of protocolFixedFields(compat, inference)) {
+    const parts = field.key.split('.')
+    let node = out
+    for (const part of parts.slice(0, -1)) {
+      const next = node[part]
+      node[part] =
+        next && typeof next === 'object' && !Array.isArray(next)
+          ? { ...(next as Record<string, unknown>) }
+          : {}
+      node = node[part] as Record<string, unknown>
+    }
+    node[parts[parts.length - 1]] = field.saved
+  }
+  return out
+}
