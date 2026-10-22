@@ -2,6 +2,11 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'official-passthrough',
+  'outbound-log-envelope',
+  'docker-inspect-outcome',
+  'fleet-telemetry-inspect',
+  'slot-shell-kvm',
   'panel-tenant-guards',
   'cluster-native-node',
   'remote-slot-files-permissions',

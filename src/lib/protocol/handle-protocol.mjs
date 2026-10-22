@@ -85,7 +85,7 @@ import {
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
-import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { prepareOutboundEnvelope, prepareCliHopBody, prepareOfficialPassthroughBody } from './outbound-attempt.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
@@ -437,6 +437,7 @@ export function createHandleProtocol(deps) {
     requestContext = null,
     routing = {},
     noGoFallback = false,
+    onEnvelope = null,
   }) {
     const assembler = createClaudeMessageAssembler()
     const workerResult = await dispatchStreamInference({
@@ -456,6 +457,7 @@ export function createHandleProtocol(deps) {
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
+      onEnvelope,
       onEvent: async (line) => {
         if (/response_headers/.test(String(line))) return
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
@@ -1234,6 +1236,13 @@ export function createHandleProtocol(deps) {
       const where = formatCacheBreak(prefix)
       console.warn(`[cache-prefix] request ${logCtx.request_id} turn ${prefix.turn} broke at ${where}`)
     }
+    // 出站日志记录的是传输层最终 POST 给槽位 worker 的 envelope（billing、betas、cch
+    // 都已补齐），不是 applyAttempt 里的中间对象。每次真正发出都会覆盖，所以日志里
+    // 留下的是本请求最后一次发出的内容；从未发出则保持 null。
+    const noteOutboundEnvelope = (envelope) => {
+      if (logCtx.capture_outbound) logBag.outbound_body = envelope?.body ?? null
+      logBag.outbound_headers = envelope?.headers ? redactHeaders(envelope.headers) : null
+    }
     let result
     try {
       result = await getFailoverRunner().run({
@@ -1298,8 +1307,16 @@ export function createHandleProtocol(deps) {
           const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
           const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
           const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
+          const routingNow = getRouting()
+          const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
+          // Official Claude Code already carries the real system, cache markers
+          // and sampling fields. Content stays on the wire; slot identity and
+          // outbound session still follow attempt/VM rebuild semantics.
+          const officialPassthrough = officialTraffic && cliHop && officialCcPassthroughFromRouting(routingNow)
+          const attemptSessionMode = officialPassthrough ? 'rebuild' : sessionContext.mode
           const attemptSessionId = resolveOutboundSessionId(callerSession, {
             ...sessionContext,
+            mode: attemptSessionMode,
             accountId: selected.accountId,
             boundSessionId: keptSession,
             boundAccountId: keptAccount,
@@ -1312,7 +1329,6 @@ export function createHandleProtocol(deps) {
           if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
-          const routingNow = getRouting()
           const repaired = extra.repaired === true
           const preserveThinkingBlocks =
             !repaired &&
@@ -1321,8 +1337,6 @@ export function createHandleProtocol(deps) {
           // cli-node receives the cleaned body after this boundary. Keep every
           // thinking block on the first hop and only let a repaired retry strip it.
           const preserveCliHopThinkingBlocks = !repaired
-          const officialPassthrough = officialTraffic && officialCcPassthroughFromRouting(routingNow)
-          const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
           const preserveCallerEnvironment = !presetFlagEnabled(
             routingNow?.compatibility,
@@ -1333,23 +1347,34 @@ export function createHandleProtocol(deps) {
           if (cliHop) {
             // The front rewrite already produces the official two-block shape.
             const panelRewrite = false
-            hopBody = prepareCliHopBody(repaired ? body : hopBody, {
-              stream: upstreamStream,
-              repaired,
-              cacheTtl: requestedCacheTtl,
-              requestContext,
-              preserveSystem: false,
-              preserveThinkingBlocks: preserveCliHopThinkingBlocks,
-              preserveCallerEnvironment,
-              autoCompactWindow: ctx.autoCompactWindow,
-              routing: routingNow,
-            })
-            if (!requestContext) {
-              hopBody = ensureBillingAttribution(hopBody, {
-                firstUserText,
+            if (officialPassthrough && !requestContext) {
+              hopBody = prepareOfficialPassthroughBody(hopBody, {
+                stream: upstreamStream,
+                identity,
+                inbound,
+                reqHeaders: req.headers,
                 sessionId: attemptSessionId,
-                cliVersion: OFFICIAL_CLI_VERSION,
               })
+              logBag.official_passthrough = true
+            } else {
+              hopBody = prepareCliHopBody(repaired ? body : hopBody, {
+                stream: upstreamStream,
+                repaired,
+                cacheTtl: requestedCacheTtl,
+                requestContext,
+                preserveSystem: false,
+                preserveThinkingBlocks: preserveCliHopThinkingBlocks,
+                preserveCallerEnvironment,
+                autoCompactWindow: ctx.autoCompactWindow,
+                routing: routingNow,
+              })
+              if (!requestContext) {
+                hopBody = ensureBillingAttribution(hopBody, {
+                  firstUserText,
+                  sessionId: attemptSessionId,
+                  cliVersion: OFFICIAL_CLI_VERSION,
+                })
+              }
             }
             hopBody = await materializeRemoteImageSources(hopBody)
             if (panelRewrite) {
@@ -1389,7 +1414,6 @@ export function createHandleProtocol(deps) {
             // Native wire may mix TTLs or leave caller TTL absent. The menu is
             // not an accounting authority; retain the upstream 5m/1h split.
             cacheTtl = null
-            if (logCtx.capture_outbound) logBag.outbound_body = hopBody
 
             if (!panelRewrite) personaHideTokens = 0
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
@@ -1451,7 +1475,7 @@ export function createHandleProtocol(deps) {
             boundVmId: keptVm,
             vmId: selected.vmId,
             epoch: attemptStartedAt,
-            mode: sessionMode,
+            mode: officialPassthrough ? 'rebuild' : sessionMode,
             routing: routingNow,
             clientDiscriminator,
             firstUserText,
@@ -1459,19 +1483,22 @@ export function createHandleProtocol(deps) {
             apiKeyId: req.apiKeyRecord?.id ?? '',
             stream: upstreamStream,
             cacheControlLimit: Number(getRouting()?.compatibility?.cache_control_limit) || 4,
-            toolNameRewrite: openaiCompat ? false : getRouting()?.compatibility?.tool_name_rewrite !== false,
+            toolNameRewrite: officialPassthrough
+              ? false
+              : openaiCompat
+                ? false
+                : getRouting()?.compatibility?.tool_name_rewrite !== false,
             cacheTtl,
             cacheBreakpoints,
             preserveThinkingBlocks,
-            preserveCallerEnvironment,
+            preserveCallerEnvironment: officialPassthrough ? true : preserveCallerEnvironment,
+            officialPassthrough,
             reqHeaders: req.headers,
             homeDir: selected.exec?.homeDir || '',
             credentialMode: credMode,
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
           })
-          if (logCtx.capture_outbound) logBag.outbound_body = prepared.body
-          logBag.outbound_headers = redactHeaders(prepared.headers || {})
           logBag.outbound_summary = summarizeBody(prepared.body)
           logBag.cache_continuity = describeCacheContinuity({
             inbound,
@@ -1505,6 +1532,7 @@ export function createHandleProtocol(deps) {
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
+              onEnvelope: noteOutboundEnvelope,
             })
           }
           let state
@@ -1551,6 +1579,7 @@ export function createHandleProtocol(deps) {
               slotWaitMs: candidate.slotWaitMs,
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
+              onEnvelope: noteOutboundEnvelope,
               onCommit: () => {
                 if (protocol === 'anthropic.messages' && !res.headersSent) writeSSEHeaders(res)
                 onCommit()
