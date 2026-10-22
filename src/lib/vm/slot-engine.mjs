@@ -6,14 +6,22 @@
  * rust 下 official_cc inference 强制 cli-hop。
  * Setup Token 换票走 sessionKey/PKCE 脚本，不启 claude setup-token PTY；
  * 推理仍跟槽位 engine：配 rust 就 cli-hop。
- * persona_preset official|official_full|zero on a VM overrides the global protocol;
+ * persona_preset official|official_full|zero|official_303 on a VM overrides the global protocol;
  * empty inherits routing.compatibility.persona_preset.
  */
-import { normalizePersonaPreset, personaPresetFromLegacyMode } from '../identity/persona-template.mjs'
+import {
+  normalizePersonaPreset,
+  OFFICIAL_303_PRESET,
+  personaPresetFromLegacyMode,
+} from '../identity/persona-template.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
-export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero'])
+export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', OFFICIAL_303_PRESET])
+
+function isOfficial303Alias(raw) {
+  return raw === OFFICIAL_303_PRESET || raw === '303' || raw === 'official-303'
+}
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
 export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag'])
 export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
@@ -97,6 +105,7 @@ export function normalizeSlotPersonaPreset(value, { inherit = false } = {}) {
   )
     return 'official'
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') return 'zero'
+  if (isOfficial303Alias(raw)) return OFFICIAL_303_PRESET
   return inherit ? '' : null
 }
 
@@ -221,6 +230,7 @@ export function personaModeFromPreset(preset) {
   if (preset === 'zero') return 'zero'
   if (preset === 'official') return 'official_prompt'
   if (preset === 'official_full') return 'official_full'
+  if (preset === OFFICIAL_303_PRESET) return OFFICIAL_303_PRESET
   return null
 }
 
@@ -276,7 +286,8 @@ export function parseSlotPersonaPresetPatch(value) {
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') {
     return { ok: true, value: 'zero' }
   }
-  return { ok: false, error: 'persona_preset must be official, official_full, zero, or empty' }
+  if (isOfficial303Alias(raw)) return { ok: true, value: OFFICIAL_303_PRESET }
+  return { ok: false, error: 'persona_preset must be official, official_full, zero, official_303, or empty' }
 }
 
 export function parseSlotEnginePolicyPatch(body = {}) {

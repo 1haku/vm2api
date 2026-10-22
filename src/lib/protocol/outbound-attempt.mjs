@@ -290,9 +290,12 @@ export function prepareCliHopBody(
     preserveCallerEnvironment = false,
     autoCompactWindow = null,
     routing = null,
+    outboundShape = null,
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
+  // official_303 lean: renderOfficial303Body owns system, role=system placement and markers.
+  const lean = outboundShape === 'lean' && !requestContext
   if (preserveSystem) validateCacheBreakpoints(canonicalBody)
   let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
   const windowTokens = Number(autoCompactWindow)
@@ -304,15 +307,17 @@ export function prepareCliHopBody(
   // into the persona template (billing / reporting / 1h) is what diverges from
   // the captured Claude Code body: two ephemeral blocks, TTL omitted.
   if (!preserveSystem) {
-    const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
-    if (leftover == null) delete body.system
-    else body.system = leftover
-    body = stabilizeSystemBudget(body)
+    if (!lean) {
+      const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
+      if (leftover == null) delete body.system
+      else body.system = leftover
+      body = stabilizeSystemBudget(body)
+    }
     body = stabilizeMessageBudgets(body)
   }
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
-  if (!modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
-  if (!preserveSystem) body = collapseSystemBudgetReminders(body)
+  if (!lean && !modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
+  if (!preserveSystem && !lean) body = collapseSystemBudgetReminders(body)
 
   if (!repaired) {
     normalizeThinkingForModel(body)
@@ -323,14 +328,17 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
   body = applyModelRequestRules(body)
   body = ensureOutputConfigSchema(body)
-  if (Object.prototype.hasOwnProperty.call(body, 'temperature')) delete body.temperature
+  // Lean keeps the caller's explicit official conditional fields; it never adds them.
+  if (!lean && Object.prototype.hasOwnProperty.call(body, 'temperature')) delete body.temperature
   if (Object.prototype.hasOwnProperty.call(body, 'top_p')) delete body.top_p
   if (Object.prototype.hasOwnProperty.call(body, 'top_k')) delete body.top_k
-  if (Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
+  if (!lean && Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
-    body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
-    body.messages = officialMessageMarker(body.messages, cacheTtl)
+    if (!lean) {
+      body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
+      body.messages = officialMessageMarker(body.messages, cacheTtl)
+    }
     if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
   return body

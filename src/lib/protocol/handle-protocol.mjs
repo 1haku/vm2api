@@ -83,6 +83,8 @@ import {
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
 import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { OFFICIAL_303_PRESET, officialPromptShape, profileForPreset } from '../identity/official-profiles.mjs'
+import { renderOfficial303Body } from '../identity/official-303.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
 import {
@@ -137,6 +139,7 @@ import {
 import {
   applyCacheTtlToUsage,
   cacheBreakpointsFromRoutingFile,
+  cacheTtlFromRouting,
   pinConversationCacheTtl,
   resolveCacheTtl,
   fillMissingCacheTtl,
@@ -1307,6 +1310,10 @@ export function createHandleProtocol(deps) {
           if (cliHop) {
             // The front rewrite already produces the official two-block shape.
             const panelRewrite = false
+            const outboundProfile = profileForPreset(resolvedPersona)
+            // official_303: lean models get the 2.1.303 assembler; full-prompt models keep this path at 2.1.303.
+            const outboundShape =
+              !requestContext && resolvedPersona === OFFICIAL_303_PRESET ? officialPromptShape(body?.model) : null
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
@@ -1317,12 +1324,27 @@ export function createHandleProtocol(deps) {
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
               routing: routingNow,
+              outboundShape,
             })
+            if (outboundShape === 'lean') {
+              hopBody = renderOfficial303Body(hopBody, {
+                callerSystem: personaIn?.system,
+                officialCaller: officialTraffic,
+                identity,
+                compat: routingNow?.compatibility || {},
+                cacheTtl: cacheTtlFromRouting(routingNow),
+                firstUserText,
+                sessionId: attemptSessionId,
+                oneM: hasClaudeCode1mSuffix(inbound?.model),
+              })
+              // Top-level body field: kernel keeps unknown fields; cli-node reads and deletes it.
+              hopBody.kin_outbound_shape = 'lean'
+            }
             if (!requestContext) {
               hopBody = ensureBillingAttribution(hopBody, {
                 firstUserText,
                 sessionId: attemptSessionId,
-                cliVersion: OFFICIAL_CLI_VERSION,
+                cliVersion: outboundProfile.cliVersion,
               })
             }
             hopBody = await materializeRemoteImageSources(hopBody)
@@ -1368,6 +1390,9 @@ export function createHandleProtocol(deps) {
             if (!panelRewrite) personaHideTokens = 0
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
+            if (outboundShape) {
+              logBag.outbound_profile = { cli_version: outboundProfile.cliVersion, shape: outboundShape }
+            }
             logBag.official_cc_inference = 'cli-hop'
             logBag.provider = 'local_cli'
             logBag.outbound_summary = summarizeBody(hopBody)
