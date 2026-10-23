@@ -249,7 +249,10 @@ export async function startRealChain({
       readBody,
       cfg,
       requireAuth: () => true,
-      requestLog: { start: () => ({ request_id: 'req_303_gateway' }), finish: (_ctx, bag) => logs.push(bag) },
+      requestLog: {
+        start: () => ({ request_id: 'req_303_gateway', mode: 'debug', capture_outbound: true }),
+        finish: (_ctx, bag) => logs.push(bag),
+      },
       stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
       groupsRepo: { rateMultiplier: () => 1 },
       routingConfigPath: routingPath,

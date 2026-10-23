@@ -127,6 +127,17 @@ test('official_303 lean on the real chain: skeleton, rules, version, CCH', { ski
   assert.equal(wire.headers.accept, 'application/json, text/event-stream')
   assert.equal(wire.headers['accept-encoding'], 'gzip, br')
   assert.equal(wire.headers['x-stainless-timeout'], '600')
+  const logged = h.logs.at(-1)
+  assert.equal(logged.outbound_headers_source, 'cli_final')
+  assert.doesNotMatch(JSON.stringify(logged.outbound_headers), /local-fixture-key/)
+  assert.ok(logged.worker_envelope_headers)
+  for (const [key, value] of Object.entries(logged.outbound_headers)) {
+    if (value === '***REDACTED***') continue
+    assert.equal(value, wire.headers[key], key)
+  }
+  for (const key of ['accept', 'accept-encoding', 'content-length', 'user-agent', 'anthropic-beta']) {
+    assert.equal(logged.outbound_headers[key], wire.headers[key], key)
+  }
   assert.match(
     billingOf(wire),
     /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli; cch=[0-9a-f]{5}; cc_prompt_id=/,

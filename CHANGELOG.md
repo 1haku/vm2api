@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 请求日志的 `outbound_headers` 改为新 cli-node 在最终 fetch 前回传的脱敏请求头，新增采集来源；Node → worker 中间头另存 `worker_envelope_headers`。流式与非流式入站均支持，内部事件不发给客户端、不触发提交或上游 idle 计时；旧 CLI 未回传时明确显示未获取，旧日志不冒充最终值。需同时更新 Node、web 与新 cli-node；本轮尚未发布 payload 或部署。
 - cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。
 
 ## 1.3.225 — 2026-10-24

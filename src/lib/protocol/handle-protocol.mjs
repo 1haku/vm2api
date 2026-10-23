@@ -440,6 +440,7 @@ export function createHandleProtocol(deps) {
     routing = {},
     noGoFallback = false,
     onEnvelope = null,
+    onOutboundHeaders = null,
   }) {
     const assembler = createClaudeMessageAssembler()
     const workerResult = await dispatchStreamInference({
@@ -460,6 +461,7 @@ export function createHandleProtocol(deps) {
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
       onEnvelope,
+      onOutboundHeaders,
       onEvent: async (line) => {
         if (/response_headers/.test(String(line))) return
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
@@ -487,6 +489,8 @@ export function createHandleProtocol(deps) {
       upstream_status: null,
       outbound_body: null,
       outbound_headers: null,
+      outbound_headers_source: 'unavailable',
+      worker_envelope_headers: null,
       outbound_summary: null,
       cache_continuity: null,
       vm_id: null,
@@ -1229,12 +1233,18 @@ export function createHandleProtocol(deps) {
       const where = formatCacheBreak(prefix)
       console.warn(`[cache-prefix] request ${logCtx.request_id} turn ${prefix.turn} broke at ${where}`)
     }
-    // 出站日志记录的是传输层最终 POST 给槽位 worker 的 envelope（billing、betas、cch
-    // 都已补齐），不是 applyAttempt 里的中间对象。每次真正发出都会覆盖，所以日志里
-    // 留下的是本请求最后一次发出的内容；从未发出则保持 null。
+    // Keep the envelope separately; only the CLI send boundary owns final headers.
+    // Clear each attempt so a failed retry cannot retain the previous hop's snapshot.
     const noteOutboundEnvelope = (envelope) => {
       if (logCtx.capture_outbound) logBag.outbound_body = envelope?.body ?? null
-      logBag.outbound_headers = envelope?.headers ? redactHeaders(envelope.headers) : null
+      logBag.worker_envelope_headers = envelope?.headers ? redactHeaders(envelope.headers) : null
+      logBag.outbound_headers = null
+      logBag.outbound_headers_source = 'unavailable'
+    }
+    const noteOutboundHeaders = (headers) => {
+      if (!logCtx.capture_outbound) return
+      logBag.outbound_headers = redactHeaders(headers)
+      logBag.outbound_headers_source = 'cli_final'
     }
     let result
     try {
@@ -1527,6 +1537,7 @@ export function createHandleProtocol(deps) {
               routing: getRouting(),
               noGoFallback: !!pinVmId,
               onEnvelope: noteOutboundEnvelope,
+              onOutboundHeaders: noteOutboundHeaders,
             })
           }
           let state
@@ -1574,6 +1585,7 @@ export function createHandleProtocol(deps) {
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
               onEnvelope: noteOutboundEnvelope,
+              onOutboundHeaders: noteOutboundHeaders,
               onCommit: () => {
                 if (protocol === 'anthropic.messages' && !res.headersSent) writeSSEHeaders(res)
                 onCommit()
