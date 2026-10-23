@@ -62,19 +62,14 @@ export function planCliCchHotfix(manifest) {
   let fix
   let fixed = false
   for (const entry of [...CCH_HOTFIXES].reverse()) {
-    if (
-      entry.before === file.sha256 &&
-      file.asset === 'cli-node' &&
-      file.size === entry.beforeSize
-    ) {
+    if (entry.before === file.sha256 && file.asset === 'cli-node' && file.size === entry.beforeSize) {
       fix = entry
       break
     }
   }
   if (!fix) {
     fix = CCH_HOTFIXES.find(
-      (entry) =>
-        entry.sha256 === file.sha256 && file.size === entry.size && file.asset === entry.asset,
+      (entry) => entry.sha256 === file.sha256 && file.size === entry.size && file.asset === entry.asset,
     )
     fixed = Boolean(fix)
   }
