@@ -4,6 +4,12 @@
 
 - cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。
 
+## 1.3.225 — 2026-10-24
+
+- CI：PR 的 run 先合入 base 分支最新提交再测，Re-run 即对着当前 main（GitHub 的 `refs/pull/<n>/merge` 停在 PR 最后一次 push 时的 base）；`cancel-in-progress` 只对 PR 生效，main 每次 push 都留下结论。新增 `pr-rerun.yml`：main 的 ci 由红转绿时自动重跑最近一次 ci 失败的 open PR（非草稿、无冲突），也可手动触发。
+
+已部署机升级：无运行时变化（仅 CI / 文档），可不升级。
+
 ## 1.3.224 — 2026-10-24
 
 - API 直连原生 Anthropic Messages：端点上显式配置的头优先于调用方协议头；`anthropic-beta` 取端点与调用方的并集（未知 beta / safeguards 照常透传）；调用方带来的 `context-1m` 按模型页 1M 策略剥离或放行，端点自己配的不受影响。修复 #667 后 Claude Code 请求使端点 headers 配置失效、并绕过 1M 门禁的问题。
