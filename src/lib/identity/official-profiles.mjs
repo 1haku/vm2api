@@ -27,7 +27,6 @@ export const OFFICIAL_PROFILES = Object.freeze({
     stainlessPackageVersion: FIXTURE_303.meta.stainless_package_version,
     buildTime: FIXTURE_303.meta.build_time,
     gitSha: FIXTURE_303.meta.git_sha,
-    descriptive: false,
     topLevelOrder: Object.freeze([
       'model',
       'messages',
@@ -57,7 +56,6 @@ export const OFFICIAL_PROFILES = Object.freeze({
   '2.1.296': Object.freeze({
     cliVersion: '2.1.296',
     stainlessPackageVersion: '0.128.0',
-    descriptive: true,
     system: Object.freeze([
       Object.freeze({ slot: 'billing', cache: false }),
       Object.freeze({ slot: 'identity', cache: true }),

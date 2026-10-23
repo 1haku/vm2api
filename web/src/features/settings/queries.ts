@@ -119,52 +119,19 @@ export function healthProbeQueryOptions() {
   })
 }
 
-type Sourced<T> = { value: T; source: string; note?: string }
-
-export type ShapeRow = {
-  shape: 'lean' | 'full'
-  label: string
-  models: string
-  rules: {
-    system?: string[]
-    messages?: string[]
-    markers?: number
-    note?: string
-  }
-}
-
 /** `GET /api/panel/outbound-profile` → `src/lib/admin/outbound-profile.mjs`. */
 export type OutboundProfile = {
-  scope: 'global' | 'vm'
-  vm_id: string | null
-  preset: Sourced<string>
-  profile: { version: string; descriptive: boolean; source: string }
-  user_agent: Sourced<string>
-  stainless_package_version: Sourced<string>
-  billing: { fields: string[]; cc_version: string; source: string }
-  anthropic_beta: {
-    credential_mode: string | null
-    sample_model: string
-    value: string
-    note: string
-    source: string
-  }
-  shapes: ShapeRow[] | null
-  model_line_sample: string | null
-  top_level_order: string[] | null
-  cache_ttl: Sourced<string>
-  cch_enabled: Sourced<boolean>
-  timezone: Sourced<string | null>
-  thinking_display: Sourced<string>
-  official_cc_passthrough: Sourced<boolean>
+  preset: string
+  cli_version: string
+  user_agent: string
+  anthropic_beta: string
+  beta_sample_model: string
 }
 
-export function outboundProfileQueryOptions(vm: string) {
+export function outboundProfileQueryOptions() {
   return queryOptions({
-    queryKey: ['panel', 'outbound-profile', vm] as const,
+    queryKey: ['panel', 'outbound-profile'] as const,
     queryFn: () =>
-      api<{ profile: OutboundProfile }>(
-        `/api/panel/outbound-profile${vm ? `?vm=${encodeURIComponent(vm)}` : ''}`
-      ),
+      api<{ profile: OutboundProfile }>('/api/panel/outbound-profile'),
   })
 }

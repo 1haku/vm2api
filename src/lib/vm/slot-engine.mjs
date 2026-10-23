@@ -18,10 +18,6 @@ import { isCodexVm } from './vm-kind.mjs'
 
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', OFFICIAL_303_PRESET])
-
-function isOfficial303Alias(raw) {
-  return raw === OFFICIAL_303_PRESET || raw === '303' || raw === 'official-303'
-}
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
 export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag'])
 export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
@@ -105,7 +101,7 @@ export function normalizeSlotPersonaPreset(value, { inherit = false } = {}) {
   )
     return 'official'
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') return 'zero'
-  if (isOfficial303Alias(raw)) return OFFICIAL_303_PRESET
+  if (raw === OFFICIAL_303_PRESET || raw === '303' || raw === 'official-303') return OFFICIAL_303_PRESET
   return inherit ? '' : null
 }
 
@@ -271,22 +267,8 @@ export function parseSlotPersonaPresetPatch(value) {
   if (!raw || raw === 'inherit' || raw === 'global' || raw === 'default') {
     return { ok: true, value: '' }
   }
-  if (raw === 'official_full' || raw === 'full' || raw === 'agent_official') {
-    return { ok: true, value: 'official_full' }
-  }
-  if (
-    raw === 'official' ||
-    raw === 'official_prompt' ||
-    raw === 'prompt' ||
-    raw === 'agent_prompt' ||
-    raw === 'cc_prompt'
-  ) {
-    return { ok: true, value: 'official' }
-  }
-  if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') {
-    return { ok: true, value: 'zero' }
-  }
-  if (isOfficial303Alias(raw)) return { ok: true, value: OFFICIAL_303_PRESET }
+  const preset = normalizeSlotPersonaPreset(raw)
+  if (preset) return { ok: true, value: preset }
   return { ok: false, error: 'persona_preset must be official, official_full, zero, official_303, or empty' }
 }
 

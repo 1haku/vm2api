@@ -47,6 +47,9 @@ describe('persona template contract', () => {
       'official_full'
     )
     expect(personaInjectFromPreset('zero', 'rewrite')).toBe('zero')
+    expect(personaInjectFromPreset('official_303', 'rewrite')).toBe(
+      'official_full'
+    )
     expect(personaInjectFromPreset('custom', 'append')).toBe('append')
   })
 })

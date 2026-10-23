@@ -39,10 +39,10 @@ import {
   inheritProtocolOnSlots,
   sessionIdleTtlFromInference,
   thinkingDisplayFromCompat,
-  withProtocolFixedFields,
 } from '@/features/settings/protocol-authority'
 import {
   notifyQueryOptions,
+  outboundProfileQueryOptions,
   routingQueryOptions,
 } from '@/features/settings/queries'
 import { QuotaTierPane } from '@/features/settings/quota-tier-pane'
@@ -93,13 +93,20 @@ export function SettingsPage() {
         body.compatibility = {
           ...compat,
           persona_preset: preset,
+          overlay_preset: 'off',
           persona_standing: String(compat.persona_standing ?? ''),
           persona_inject: personaInjectFromPreset(
             preset,
             compat.persona_inject
           ),
+          persona_park: false,
           cache_ttl: cacheTtlFromCompat(compat),
-          cache_breakpoints: breakpoints,
+          cache_breakpoints: {
+            ...breakpoints,
+            system_tail: false,
+            tools_tail: false,
+            messages: 'cli-hop',
+          },
           detect_proxied_official_cc: detectProxiedOfficialCcFromCompat(compat),
           claude_code_only: compat.claude_code_only === true,
           official_cc_passthrough: compat.official_cc_passthrough === true,
@@ -115,14 +122,14 @@ export function SettingsPage() {
         const inference = (body.inference as Record<string, unknown>) || {}
         body.inference = {
           ...inference,
+          engine: 'rust',
+          fallback_to_go: false,
           session_idle_ttl_seconds: sessionIdleTtlFromInference(inference),
         }
       }
-      // Fixed protocol values come from one list that the outbound reference card also shows.
-      const payload = tab === 'protocol' ? withProtocolFixedFields(body) : body
       return api<RoutingSaveResult>('/api/panel/routing', {
         method: 'PUT',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       })
     },
     onSuccess: async (saved) => {
@@ -165,7 +172,9 @@ export function SettingsPage() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: routingQueryOptions().queryKey }),
         qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
-        qc.invalidateQueries({ queryKey: ['panel', 'outbound-profile'] }),
+        qc.invalidateQueries({
+          queryKey: outboundProfileQueryOptions().queryKey,
+        }),
         ...(tab === 'notify'
           ? [qc.invalidateQueries({ queryKey: notifyQueryOptions().queryKey })]
           : []),
@@ -388,15 +397,6 @@ export function SettingsPage() {
                       Record<string, unknown> | undefined) || {}
                   }
                   inference={inference}
-                  storedCompat={
-                    routing.data?.compatibility as
-                      Record<string, unknown> | undefined
-                  }
-                  storedInference={
-                    routing.data?.inference as
-                      Record<string, unknown> | undefined
-                  }
-                  dirty={dirty}
                   onCompatChange={(next) =>
                     setDraft((current) => ({ ...current, compatibility: next }))
                   }

@@ -5227,18 +5227,9 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/routing') {
         return json(res, 200, panel.buildRouting({ routingConfig: ctx.routingConfig, stickyRouter }))
       }
-      // GET /api/panel/outbound-profile?vm= — read-only outbound reference (global or one slot)
+      // GET /api/panel/outbound-profile — read-only outbound reference for the global preset
       if (req.method === 'GET' && p === '/api/panel/outbound-profile') {
-        const vmId = url.searchParams.get('vm') || url.searchParams.get('vm_id') || ''
-        let vm = null
-        if (vmId) {
-          if (userMissesVmId(req, cfg.paths.project, vmId)) {
-            return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-          }
-          vm = listVms(cfg.paths.project, ctx.routingConfig).find((item) => item.id === vmId) || null
-          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-        }
-        return json(res, 200, panel.ok({ profile: buildOutboundProfile({ routing: ctx.routingConfig || {}, vm }) }))
+        return json(res, 200, panel.ok({ profile: buildOutboundProfile(ctx.routingConfig || {}) }))
       }
       // GET /api/panel/persona/preview-vars?timezone= — real template constants for the system prompt preview
       if (req.method === 'GET' && p === '/api/panel/persona/preview-vars') {
