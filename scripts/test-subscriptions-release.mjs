@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'cli-cch-hotfix',
   'gpt-model-policy',
   'codex-models',
   'resource-owner',
@@ -238,6 +239,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'cli-cch-history',
   'image-permissions',
   'responses-ws-subscriptions',
   'vm-test-schedule',
@@ -275,6 +277,8 @@ const result = spawnSync(
       KIN_COMPUTER_BIN: '',
       KIN_AUTOMODE_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
       KIN_AUTOMODE_CLI: '/opt/vm2api/image-wrap-cli/cli-node',
+      KIN_CCH_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
+      KIN_CCH_CLI: '/opt/vm2api/image-wrap-cli/cli-node',
       KIN_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
       KIN_EGRESS_BIN: '/opt/vm2api/image-bin/kin-egress',
     },

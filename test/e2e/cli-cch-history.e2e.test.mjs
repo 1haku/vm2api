@@ -128,7 +128,13 @@ async function startRealChain({ kernelBin, cliBin, preset, cacheTtl }) {
       kernel.kill('SIGKILL')
       await closed
     })
-    for (let i = 0; i < 100 && !fs.existsSync(socketPath) && kernel.exitCode == null; i++)
+    const readyDeadline = performance.now() + 15000
+    while (
+      performance.now() < readyDeadline &&
+      !fs.existsSync(socketPath) &&
+      kernel.exitCode == null &&
+      kernel.signalCode == null
+    )
       await new Promise((resolve) => setTimeout(resolve, 50))
     assert.ok(fs.existsSync(socketPath), log.slice(-1200))
     const health = await new Promise((resolve, reject) => {
