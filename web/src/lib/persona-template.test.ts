@@ -47,6 +47,9 @@ describe('persona template contract', () => {
       'official_full'
     )
     expect(personaInjectFromPreset('zero', 'rewrite')).toBe('zero')
+    expect(personaInjectFromPreset('official_303', 'rewrite')).toBe(
+      'official_full'
+    )
     expect(personaInjectFromPreset('custom', 'append')).toBe('append')
   })
 })
@@ -422,6 +425,7 @@ describe('agent standing + system preview', () => {
       official_full: true,
       zero: false,
       custom: true,
+      official_303: true,
     })
     const back = setPresetFlag(off, 'persona_env_presets', 'zero', true, {})
     expect('persona_env_presets' in back).toBe(false)
@@ -442,6 +446,7 @@ describe('agent standing + system preview', () => {
       official_full: false,
       zero: false,
       custom: false,
+      official_303: false,
     })
     expect(agentStandingVar(standingOn, 'official')).toBe(
       `${DEFAULT_AGENT_STANDING}\n`
@@ -468,6 +473,7 @@ describe('agent standing + system preview', () => {
       official_full: false,
       zero: false,
       custom: false,
+      official_303: false,
     })
   })
 

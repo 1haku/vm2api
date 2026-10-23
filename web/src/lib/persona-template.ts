@@ -22,6 +22,7 @@ export const PERSONA_PRESETS: readonly PersonaPreset[] = [
   'official_full',
   'zero',
   'custom',
+  'official_303',
 ]
 export const DEFAULT_PERSONA_PRESET: PersonaPreset = 'official_full'
 export const OVERLAY_PRESETS: readonly OverlayPreset[] = [
@@ -45,6 +46,7 @@ export const PERSONA_PRESET_OPTIONS: [PersonaPreset, string][] = [
   ['official_full', '官方完整提示词'],
   ['zero', '0注入'],
   ['custom', '自定义'],
+  ['official_303', '官方 2.1.303（按模型）'],
 ]
 export const OVERLAY_PRESET_OPTIONS: [OverlayPreset, string][] = [
   ['off', '关闭'],
@@ -108,6 +110,11 @@ export const PERSONA_TEMPLATE_VARS: [string, string][] = [
   ['cwd', '调用方 cwd（已清洗）'],
   ['cli_version', '官方 CLI 版本号'],
   ['session_id', '出站会话 id'],
+  ['main_prompt_303', '官方 2.1.303 lean 主提示词（记忆目录按槽位填写）'],
+  [
+    'env_303',
+    '官方 2.1.303 Environment 段（槽位身份 + 调用方 cwd / git / shell）',
+  ],
 ]
 
 export const OVERLAY_TEMPLATE_VARS: [string, string][] = [
@@ -139,9 +146,9 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'identity',
-        note: '官方身份句（Claude Agent SDK）',
+        note: '交互 CLI 身份句',
         type: 'text',
-        text: '{{identity}}',
+        text: '{{identity_cli}}',
       },
       {
         id: 'agent',
@@ -218,7 +225,7 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         id: 'billing_zero',
         hide: true,
         type: 'text',
-        text: '{{billing_semi}} prompt_version=<{{identity_compact}}>',
+        text: '{{billing_semi}} prompt_version=<{{identity_cli}}>',
       },
       {
         id: 'identity_slot',
@@ -249,6 +256,28 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
     ],
     custom: [],
+    official_303: [
+      {
+        id: 'billing',
+        note: '计费归因头，版本 2.1.303，不打缓存点',
+        type: 'text',
+        text: '{{billing}}',
+      },
+      {
+        id: 'identity',
+        note: '交互 CLI 身份句。断点 TTL 取面板缓存 TTL',
+        type: 'text',
+        text: '{{identity_cli}}',
+        cache_control: { type: 'ephemeral' },
+      },
+      {
+        id: 'main',
+        note: '2.1.303 lean 主提示词。reminder / Environment / 消息断点由档案决定，不在模板里',
+        type: 'text',
+        text: '{{agent_standing}}{{main_prompt_303}}',
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
   }
 
 export const DEFAULT_OVERLAY_TEMPLATES: Record<
@@ -310,6 +339,8 @@ export function normalizePersonaPreset(value: unknown): PersonaPreset {
   )
     return 'zero'
   if (raw === 'custom' || raw === 'diy' || raw === 'manual') return 'custom'
+  if (raw === 'official_303' || raw === '303' || raw === 'official-303')
+    return 'official_303'
   return DEFAULT_PERSONA_PRESET
 }
 
@@ -490,7 +521,9 @@ export function personaInjectFromPreset(
   legacy: unknown
 ): string {
   if (preset === 'official') return 'official_prompt'
-  if (preset === 'official_full') return 'official_full'
+  // 2.1.303 档在模板渲染路径上就是官方完整提示词。
+  if (preset === 'official_full' || preset === 'official_303')
+    return 'official_full'
   if (preset === 'zero') return 'zero'
   return String(legacy ?? '').trim() || 'rewrite'
 }
