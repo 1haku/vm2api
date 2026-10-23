@@ -10,6 +10,7 @@
 - 选 303 档的槽位 UA、billing `cc_version` 与 CCH 输入为 2.1.303，按 job 热读 kernel.json，不重启槽位；其余四档仍为 2.1.296。
 - 设置 → 协议新增只读「当前出站参照」：按已保存的全局档位列出提示词档、CLI 版本、UA、billing `cc_version` 与 OAuth beta 样例（`GET /api/panel/outbound-profile`）。协议页保存逻辑不变。
 - 新增 `scripts/outbound-shape.mjs`（出站 body 归约成脱敏结构，与 2.1.303 骨架逐项对照；`--wire` 校验 CLI 最终字节）与 `scripts/outbound-replay.mjs`（私有 fixture 经真实 kernel + cli-node 链路回放并判定）。
+- `scripts/fix-cli-cch.mjs` 的 `CCH_HOTFIXES` 登记 1.3.221 manifest 钉住的 `cli-node-303-944f6457`，与单元回归一致。
 - manifest 钉住 `cli-node-303-944f6457`（`944f6457`）。cli-node 出站前剥离 `kin_outbound_shape`；补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。控制面的出站参照 UA 同步为 `cli`，Node → worker 的 envelope 日志不冒充 CLI 最终请求头。
 - 仓库自带的 `src/config/routing.json` 默认请求日志模式由 `debug` 改为 `normal`（普通）；Debug 需在 设置 → 日志 手动切换，或用 `KIN_REQUEST_LOG_MODE=debug` / 单请求 `X-Kin-Debug: 1`。已部署机的 `routing.json` 不被覆盖，现有档位保持不变。
 

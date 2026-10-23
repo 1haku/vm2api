@@ -44,6 +44,14 @@ export const CCH_HOTFIXES = [
     asset: 'cli-node-cch-system-only-b5054cb8',
     releases: ['payload-2026.10.19-kernel-cli', 'payload-2026.10.22-computer-linux'],
   },
+  {
+    before: '5d6b33b68d5461bb810befc45d49f0734aa808e722dffd1a1d31bdc2a2c3e6ed',
+    beforeSize: 27174984,
+    sha256: '944f645772f02ed5ca032d4b80151d00184a7c91a3ca3cb4e9e3746cf40025d8',
+    size: 27175272,
+    asset: 'cli-node-303-944f6457',
+    releases: ['payload-2026.10.22-computer-linux'],
+  },
 ]
 
 export function planCliCchHotfix(manifest) {
@@ -51,10 +59,27 @@ export function planCliCchHotfix(manifest) {
   const files = manifest.files.filter((file) => file.path === CLI_PATH)
   if (files.length !== 1) throw new Error('expected exactly one Anthropic cli-node entry')
   const file = files[0]
-  const fix = CCH_HOTFIXES.find((entry) => entry.before === file.sha256 || entry.sha256 === file.sha256)
+  let fix
+  let fixed = false
+  for (const entry of [...CCH_HOTFIXES].reverse()) {
+    if (
+      entry.before === file.sha256 &&
+      file.asset === 'cli-node' &&
+      file.size === entry.beforeSize
+    ) {
+      fix = entry
+      break
+    }
+  }
+  if (!fix) {
+    fix = CCH_HOTFIXES.find(
+      (entry) =>
+        entry.sha256 === file.sha256 && file.size === entry.size && file.asset === entry.asset,
+    )
+    fixed = Boolean(fix)
+  }
   if (!fix || !fix.releases.includes(manifest.release)) throw new Error('unknown CLI payload; refusing replacement')
-  const fixed = file.sha256 === fix.sha256
-  if (file.size !== (fixed ? fix.size : fix.beforeSize) || file.asset !== (fixed ? fix.asset : 'cli-node'))
+  if (!fixed && (file.size !== fix.beforeSize || file.asset !== 'cli-node'))
     throw new Error('unexpected CLI payload metadata; refusing replacement')
   return { file, fix, fixed }
 }
