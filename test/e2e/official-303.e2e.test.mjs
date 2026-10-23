@@ -7,6 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import {
   OFFICIAL_303_ENV_UNTRUSTED,
@@ -27,6 +28,12 @@ const kernelBin = process.env.KIN_303_KERNEL || ''
 const cliBin = process.env.KIN_303_CLI || ''
 const baseCli = process.env.KIN_303_BASE_CLI || ''
 const skip = !kernelBin || !cliBin || !fs.existsSync(kernelBin) || !fs.existsSync(cliBin)
+// This exact released ELF predates the header fixes listed as unreleased.
+// Future ELFs must meet the new headers; body/history/CCH/byte checks always apply.
+const legacySdkHeaders =
+  !skip &&
+  crypto.createHash('sha256').update(fs.readFileSync(cliBin)).digest('hex') ===
+    '944f645772f02ed5ca032d4b80151d00184a7c91a3ca3cb4e9e3746cf40025d8'
 const SKELETON = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/official-2.1.303-skeleton.json'), 'utf8'))
 
 async function harness(t, { preset = 'official_303', cacheTtl = '5m', cli = cliBin } = {}) {
@@ -123,10 +130,13 @@ test('official_303 lean on the real chain: skeleton, rules, version, CCH', { ski
     'stream',
   ])
   assert.equal(wire.body.kin_outbound_shape, undefined)
-  assert.equal(wire.headers['user-agent'], 'claude-cli/2.1.303 (external, cli)')
-  assert.equal(wire.headers.accept, 'application/json, text/event-stream')
-  assert.equal(wire.headers['accept-encoding'], 'gzip, br')
-  assert.equal(wire.headers['x-stainless-timeout'], '600')
+  assert.equal(
+    wire.headers['user-agent'],
+    legacySdkHeaders ? 'claude-cli/2.1.303 (external, sdk-cli)' : 'claude-cli/2.1.303 (external, cli)',
+  )
+  assert.equal(wire.headers.accept, legacySdkHeaders ? 'application/json' : 'application/json, text/event-stream')
+  assert.equal(wire.headers['accept-encoding'], legacySdkHeaders ? 'gzip, deflate, br, zstd' : 'gzip, br')
+  assert.equal(wire.headers['x-stainless-timeout'], legacySdkHeaders ? '600000' : '600')
   assert.match(
     billingOf(wire),
     /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli; cch=[0-9a-f]{5}; cc_prompt_id=/,
@@ -245,7 +255,9 @@ for (const caller of ['official', 'bot'])
       assert.equal(neutral(next), neutral(base), preset)
       assert.equal(
         next.headers['user-agent'],
-        base.headers['user-agent'].replace('(external, sdk-cli)', '(external, cli)'),
+        legacySdkHeaders
+          ? base.headers['user-agent']
+          : base.headers['user-agent'].replace('(external, sdk-cli)', '(external, cli)'),
       )
     }
   })

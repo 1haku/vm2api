@@ -15,7 +15,7 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** 只读：已保存的全局提示词档实际发出的版本与请求头。槽位覆盖见槽位详情。 */
+/** Global configuration reference; native CLI headers can differ. */
 export function OutboundReference() {
   const query = useQuery(outboundProfileQueryOptions())
   const profile = query.data?.profile
@@ -24,7 +24,7 @@ export function OutboundReference() {
     <PaneSection
       icon={Compass}
       title='当前出站参照'
-      desc='只读，按已保存的全局提示词档列出。结构规则见 system提示词页；缓存 TTL、CCH、thinking 显示以上面的开关为准。'
+      desc='按已保存的全局提示词档列出配置参照，不是上游请求抓包。结构规则见 system提示词页；缓存 TTL、CCH、thinking 显示以上面的开关为准。'
       aside={profile ? <Badge>{profile.cli_version}</Badge> : null}
     >
       {query.isError ? (
