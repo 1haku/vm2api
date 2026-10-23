@@ -68,7 +68,10 @@ import {
   resolveOverlayTemplate,
   resolvePersonaTemplate,
   templateHidesAnything,
+  templatePresetFor,
+  OFFICIAL_303_PRESET,
 } from './persona-template.mjs'
+import { buildOfficial303Environment, renderOfficial303MainPrompt } from './official-profiles.mjs'
 
 export {
   AGENT_EXPANSION_CACHE_CONTROL,
@@ -796,6 +799,8 @@ export function personaTemplateVars({
     cwd: String(env?.cwd || '').trim(),
     cli_version: parseCliVersion(cliVersion),
     session_id: String(sessionId || '').trim(),
+    main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
+    env_303: () => (withEnv ? buildOfficial303Environment(env, { model: model || env?.modelId }) : ''),
   }
 }
 
@@ -818,6 +823,8 @@ export function personaPreviewVars({ timezone = 'UTC', model = 'claude-sonnet-5'
     timezone: vars.timezone,
     model: vars.model,
     cli_version: vars.cli_version,
+    main_prompt_303: vars.main_prompt_303(),
+    env_303: vars.env_303(),
   }
 }
 
@@ -1352,7 +1359,8 @@ export function personaUsesTemplate(settings) {
     settings.explicit ||
     settings.preset === 'official' ||
     settings.preset === 'official_full' ||
-    settings.preset === 'zero'
+    settings.preset === 'zero' ||
+    settings.preset === OFFICIAL_303_PRESET
   )
 }
 
@@ -1375,6 +1383,7 @@ export function personaPresetFromHopMode(mode) {
     return 'official'
   if (raw === 'zero' || raw === 'zero_inject' || raw === '0inject' || raw === '0-inject') return 'zero'
   if (raw === 'custom' || raw === 'diy' || raw === 'manual') return 'custom'
+  if (raw === OFFICIAL_303_PRESET || raw === '303' || raw === 'official-303') return OFFICIAL_303_PRESET
   return null
 }
 
@@ -1387,7 +1396,7 @@ export function personaPresetFromHopMode(mode) {
 export function personaHidesUsageFromRoutingFile(filePath, mode) {
   const settings = personaTemplateSettingsFromRoutingFile(filePath)
   const hopPreset = mode != null ? personaPresetFromHopMode(mode) : null
-  const preset = hopPreset || settings.preset
+  const preset = templatePresetFor(hopPreset || settings.preset)
   const map = settings.switches.persona_hide_presets
   if (map && typeof map === 'object' && typeof map[preset] === 'boolean') return map[preset]
   if (typeof settings.hides === 'boolean') return settings.hides
@@ -1402,7 +1411,7 @@ export function personaHidesUsageFromRoutingFile(filePath, mode) {
  */
 export function standingUsageFromRoutingFile(filePath, mode) {
   const settings = personaTemplateSettingsFromRoutingFile(filePath)
-  const preset = (mode != null && personaPresetFromHopMode(mode)) || settings.preset
+  const preset = templatePresetFor((mode != null && personaPresetFromHopMode(mode)) || settings.preset)
   return {
     text: agentStandingVar(settings.switches, preset).trim(),
     hide: presetFlagEnabled(settings.switches, 'agent_standing_hide_presets', preset),
@@ -1775,11 +1784,14 @@ export function applyCrsUnofficialPersona(
   const rawCallerAgent = extractCallerAgentPrompt(body.system)
   const fileSettings = personaTemplateSettingsFromRoutingFile(routingFile)
   const hopPreset = mode != null ? personaPresetFromHopMode(mode) : null
-  const templateSettings = hopPreset
+  const chosen = hopPreset
     ? { ...fileSettings, explicit: true, preset: hopPreset }
     : mode == null
       ? fileSettings
       : { ...fileSettings, explicit: false, preset: personaPresetFromLegacyMode(resolved) }
+  // The 2.1.303 assembler only runs on the cli-hop lean path; template rendering here is official_full.
+  const templateSettings =
+    chosen.preset === OFFICIAL_303_PRESET ? { ...chosen, preset: templatePresetFor(chosen.preset) } : chosen
   const preserveEnvironment =
     personaUsesTemplate(templateSettings) &&
     !presetFlagEnabled(templateSettings.switches, 'persona_env_presets', templateSettings.preset)
