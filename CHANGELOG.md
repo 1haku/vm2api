@@ -4,10 +4,11 @@
 
 - 新增提示词档「官方 2.1.303（按模型）」`official_303`，手动选择，默认档仍是官方完整提示词。Opus 4.8 / 5 / 5.5、Fable、Mythos 等按 2.1.303 样本组装：system 为 billing、身份句、2.1.303 主提示词；调用方 system 放进第一条 user 的 `<system-reminder>`（官方调用方的 system 不出站，`<total_tokens>` 计数先抹平）；Environment 作为尾部 role=system，只替换 `# Environment` 段；断点为身份句、主提示词、最后一条 user，4 条消息起再加上一条 user（共 3–4 个），TTL 取面板缓存 TTL。Sonnet、Haiku、Opus 4.0–4.7 沿用现有 cli-hop 结构（含 1.3.218 的两个 user 断点），只把版本号换成 2.1.303。
 - 「官方提示词」模板的身份块与「0注入」billing 里的 `prompt_version=<…>` 改为交互 CLI 身份句 `You are Claude Code, Anthropic's official CLI for Claude.`；已保存的自定义模板不变。
-- 网关生成的 billing 与 cli-node 兜底 billing 的 `cc_entrypoint` 固定为 `cli`（原 `sdk-cli`）；UA 后缀与 `cc_turn_origin` 不变。所有档位的出站 billing 字节随之变化，各会话首轮重建一次缓存。
+- 网关生成的 billing 与 cli-node 兜底 billing 的 `cc_entrypoint` 固定为 `cli`（原 `sdk-cli`），出站 UA 也锁为 `(external, cli)`；`cc_turn_origin` 不变。所有档位的出站 billing 字节随之变化，各会话首轮重建一次缓存。
 - 选 303 档的槽位 UA、billing `cc_version` 与 CCH 输入为 2.1.303，按 job 热读 kernel.json，不重启槽位；其余四档仍为 2.1.296。
 - 设置 → 协议新增只读「当前出站参照」：按已保存的全局档位列出提示词档、CLI 版本、UA、billing `cc_version` 与 OAuth beta 样例（`GET /api/panel/outbound-profile`）。协议页保存逻辑不变。
 - 新增 `scripts/outbound-shape.mjs`（出站 body 归约成脱敏结构，与 2.1.303 骨架逐项对照；`--wire` 校验 CLI 最终字节）与 `scripts/outbound-replay.mjs`（私有 fixture 经真实 kernel + cli-node 链路回放并判定）。
+- cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。控制面的出站参照 UA 同步为 `cli`，Node → worker 的 envelope 日志不冒充 CLI 最终请求头。
 
 已部署机升级：需要同时更新 Node 控制面、`web/dist` 与 cli-node（新增 profile 模式与 `cc_entrypoint=cli`；除 billing 外，不选 303 档时出站结构与当前 `b5054cb8` 一致）。**新 cli-node 上线前不要选 303 档**：旧 cli-node 会把 `kin_outbound_shape` 当调用方字段转发，上游 400。回滚到旧版本后，旧面板不接受 `official_303`，需在 system提示词页重新选档再保存。OMP 工具图片尾置仍未恢复，另行处理。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 

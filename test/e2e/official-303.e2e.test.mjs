@@ -123,7 +123,10 @@ test('official_303 lean on the real chain: skeleton, rules, version, CCH', { ski
     'stream',
   ])
   assert.equal(wire.body.kin_outbound_shape, undefined)
-  assert.match(wire.headers['user-agent'], /^claude-cli\/2\.1\.303 /)
+  assert.equal(wire.headers['user-agent'], 'claude-cli/2.1.303 (external, cli)')
+  assert.equal(wire.headers.accept, 'application/json, text/event-stream')
+  assert.equal(wire.headers['accept-encoding'], 'gzip, br')
+  assert.equal(wire.headers['x-stainless-timeout'], '600')
   assert.match(
     billingOf(wire),
     /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli; cch=[0-9a-f]{5}; cc_prompt_id=/,
@@ -240,6 +243,9 @@ for (const caller of ['official', 'bot'])
           })),
         })
       assert.equal(neutral(next), neutral(base), preset)
-      assert.equal(next.headers['user-agent'], base.headers['user-agent'])
+      assert.equal(
+        next.headers['user-agent'],
+        base.headers['user-agent'].replace('(external, sdk-cli)', '(external, cli)'),
+      )
     }
   })

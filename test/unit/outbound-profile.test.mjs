@@ -8,7 +8,7 @@ test('outbound reference follows the saved global preset: 303 → 2.1.303, other
   const profile = buildOutboundProfile({ compatibility: { persona_preset: 'official_303' } })
   assert.equal(profile.preset, 'official_303')
   assert.equal(profile.cli_version, '2.1.303')
-  assert.equal(profile.user_agent, 'claude-cli/2.1.303 (external, sdk-cli)')
+  assert.equal(profile.user_agent, 'claude-cli/2.1.303 (external, cli)')
   assert.match(profile.anthropic_beta, /oauth-2025-04-20/)
   for (const routing of [
     { compatibility: { persona_preset: 'official_full' } },
@@ -18,7 +18,7 @@ test('outbound reference follows the saved global preset: 303 → 2.1.303, other
   ]) {
     const other = buildOutboundProfile(routing)
     assert.equal(other.cli_version, '2.1.296', JSON.stringify(routing))
-    assert.equal(other.user_agent, 'claude-cli/2.1.296 (external, sdk-cli)')
+    assert.match(other.user_agent, /^claude-cli\/2\.1\.296 \(external, cli\)$/)
   }
   assert.equal(buildOutboundProfile({ compatibility: { persona_inject: 'official_prompt' } }).preset, 'official')
 })
