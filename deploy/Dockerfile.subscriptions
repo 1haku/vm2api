@@ -58,6 +58,7 @@ COPY --from=payload-build /payload/share/crag/ /opt/vm2api/image-crag/
 COPY deploy/payload.json ./deploy/payload.json
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
+  && chmod 755 /opt/vm2api/image-wrap-cli/cli-node /opt/vm2api/image-wrap-cli/cc-node \
   && cp /opt/vm2api/image-bin/kin-kernel /opt/vm2api/image-wrap-cli/kin-kernel.bin \
   && rm -f /opt/vm2api/src/lib/oauth/auth.js \
   && cp -a /opt/vm2api/src/config /opt/vm2api/image-config \

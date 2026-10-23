@@ -4,6 +4,8 @@
 
 合入上游 v1.3.220（`a60211c0`）：Node 与原生 CLI 的 CCH 仅处理第一个 canonical system billing block，历史消息和后续 system 示例保持原文。CLI 锁定为 `5d6b33b6`，通过上游热修脚本检查并仅更新本机 Claude/vm-02 的 CLI，不重建容器或更换身份。发布增加真实 Node→kernel→CLI 三轮历史不变性及 CCH 一致性测试，原生冷启动沿用最多 15 秒就绪检查。保留 Lite 压缩参数修复、仅 admin 生图授权、日重置、订阅计费和优先级；无数据库迁移及新依赖。
 
+候选镜像显式设置 cli-node/cc-node 的执行权限，避免校验通过的缓存资产因下载文件模式为 0644 而无法启动；大小和 SHA256 校验继续保留，原生调用测试必须通过。
+
 合入上游 v1.3.219（`f57d0cfc`）：兼容上游近期历史重写，采用其当前已回退的官方透传实现，同时保留 fork 历史、订阅槽位权限、用户日志隔离和实际结算。新增图像接口及 042 图像日志列，副本迁移只允许新列的 NULL/0 默认值，历史费用和归属不重写；KVM guest-exec 退出码、双 user 缓存断点和上游租户限制同步保留。
 
 Responses Lite 修复：携带 `x-openai-internal-codex-responses-lite: true` 的最终 Codex 请求固定 `parallel_tool_calls=false`、`reasoning.context=all_turns`，普通请求不改并行工具设置；不修改输入历史，重试、HTTP 和 WebSocket 使用同一出站路径。已用真实小请求复现 Lite+true 的 400 和 Lite+false 的 200。失败日志补记上游错误消息。
