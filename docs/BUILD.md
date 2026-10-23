@@ -111,7 +111,7 @@ npm run test:web          # 要先 pnpm -C web install
 node --check src/server.mjs
 ```
 
-CI（`.github/workflows/test.yml`）在 main push / PR 上运行，也可手动触发，只有一个 job：Node 格式与语法、`worker/` / `api-kernel/` 的 gofmt；拉取并校验钉住的 payload；Node unit；Go vet 与 test；web 格式、测试与构建。基线是生产验证过的产物，CI 不做 ARM64、真链路 e2e 或历史升级回归。
+CI（`.github/workflows/test.yml`）在 main push / PR 上运行，也可手动触发，只有一个 job：Node 格式与语法、`worker/` / `api-kernel/` 的 gofmt；拉取并校验钉住的 payload；Node unit；Go vet 与 test；web 格式、测试与构建。基线是生产验证过的产物，CI 不做 ARM64、真链路 e2e 或历史升级回归。PR 的 run 检出实时的 `refs/pull/<n>/merge`，重跑即对着当前 main；main 的 ci 由红转绿时，`.github/workflows/pr-rerun.yml` 自动重跑最近一次 ci 失败的 open PR（非草稿、无冲突），也可手动触发。
 
 ## 升级一台已部署的机
 
