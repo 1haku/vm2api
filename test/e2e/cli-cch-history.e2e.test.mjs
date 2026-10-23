@@ -30,7 +30,10 @@ test('CLI seals system billing without changing quoted billing in growing histor
     model: 'claude-opus-5-5',
     max_tokens: 128,
     stream: true,
-    system: [{ type: 'text', text: 'Preserve the fixture and continue the conversation.' }],
+    system: [
+      { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.296; cc_entrypoint=sdk-cli; cch=00000;' },
+      { type: 'text', text: 'Preserve the fixture and continue the conversation.' },
+    ],
     tools: [{ name: 'Read', description: 'Read a fixture', input_schema: { type: 'object', properties: {} } }],
     messages: [
       { role: 'user', content: 'Read the fixture.' },
