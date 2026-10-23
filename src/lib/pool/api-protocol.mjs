@@ -16,6 +16,8 @@ import {
   responsesSseToChatChunk,
 } from '../protocol/codex-convert.mjs'
 import { usageFromSseLine } from '../protocol/handle-codex.mjs'
+import { BETA_CONTEXT_1M } from '../protocol/claude-code-betas.mjs'
+import { shouldPassContext1mByPolicy } from '../protocol/model-policy.mjs'
 
 export function resolveInferenceBackend(req) {
   if (req?.apiKeyKind !== 'managed') return 'oauth'
@@ -40,9 +42,8 @@ function joinHeaderMap(headers = {}) {
 /**
  * Native Anthropic Messages is a compatibility boundary.  Keep protocol
  * headers supplied by the caller, including beta names this gateway does not
- * know yet.  Endpoint headers still provide defaults and credentials; these
- * caller values are applied after them so an upstream beta opt-in is not
- * silently replaced by the endpoint configuration.
+ * know yet.  Headers the operator configured on the endpoint win; anthropic-beta
+ * is the union of endpoint and caller tokens so neither opt-in is dropped.
  */
 function forwardAnthropicProtocolHeaders(headers = {}, protocol = '', protocolKind = '') {
   if (protocol !== 'anthropic.messages' || protocolKind !== 'anthropic') return {}
@@ -66,13 +67,33 @@ function forwardAnthropicProtocolHeaders(headers = {}, protocol = '', protocolKi
   return out
 }
 
-function mergeHeadersCaseInsensitive(base = {}, override = {}) {
+function splitBetas(value) {
+  return String(value || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** Caller context-1m follows the model-page 1M policy, same as the slot path. */
+function callerBetaTokens(value, model) {
+  const tokens = splitBetas(value)
+  if (!tokens.includes(BETA_CONTEXT_1M) || shouldPassContext1mByPolicy(model)) return tokens
+  return tokens.filter((t) => t !== BETA_CONTEXT_1M)
+}
+
+function mergeCallerProtocolHeaders(base = {}, caller = {}, configured = {}, model = '') {
   const out = { ...base }
-  for (const [name, value] of Object.entries(override)) {
-    const lower = String(name).toLowerCase()
-    for (const existing of Object.keys(out)) {
-      if (existing.toLowerCase() === lower) delete out[existing]
+  const configuredNames = new Set(Object.keys(configured).map((k) => k.toLowerCase()))
+  for (const [name, value] of Object.entries(caller)) {
+    const existing = Object.keys(out).filter((k) => k.toLowerCase() === name)
+    if (name === 'anthropic-beta') {
+      const merged = new Set([...existing.flatMap((k) => splitBetas(out[k])), ...callerBetaTokens(value, model)])
+      for (const k of existing) delete out[k]
+      if (merged.size) out[name] = [...merged].join(',')
+      continue
     }
+    if (configuredNames.has(name)) continue
+    for (const k of existing) delete out[k]
     out[name] = value
   }
   return out
@@ -230,7 +251,7 @@ export async function runApiInference({
     : { ...canonical, model: picked.upstream_model, stream: true }
   if (requestContext) Object.assign(body, prepareClassifierBody(body))
   const callerProtocolHeaders = forwardAnthropicProtocolHeaders(req?.headers, protocol, protocolKind)
-  const headers = mergeHeadersCaseInsensitive(
+  const headers = mergeCallerProtocolHeaders(
     {
       'content-type': 'application/json',
       accept: 'text/event-stream',
@@ -241,6 +262,8 @@ export async function runApiInference({
       }),
     },
     callerProtocolHeaders,
+    extraHeaders,
+    canonical.model,
   )
 
   let upstream

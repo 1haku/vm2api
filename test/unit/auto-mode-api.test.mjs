@@ -214,7 +214,7 @@ test('native Anthropic API backend forwards safeguards and caller protocol heade
   const jsonResult = await runApiInference({ ...common, clientStream: false })
   assert.equal(jsonResult.ok, true)
   assert.deepEqual(envelope.body && JSON.parse(envelope.body).safeguards, body.safeguards)
-  assert.equal(envelope.headers['anthropic-beta'], req.headers['anthropic-beta'])
+  assert.equal(envelope.headers['anthropic-beta'], `endpoint-default,${req.headers['anthropic-beta']}`)
   assert.equal(envelope.headers['anthropic-version'], req.headers['anthropic-version'])
   assert.deepEqual(jsonResult.body.safeguard_results, safeguardResults)
 
@@ -232,6 +232,86 @@ test('native Anthropic API backend forwards safeguards and caller protocol heade
   })
   assert.equal(streamResult.ok, true)
   assert.deepEqual(envelope.body && JSON.parse(envelope.body).safeguards, body.safeguards)
-  assert.equal(envelope.headers['anthropic-beta'], req.headers['anthropic-beta'])
+  assert.equal(envelope.headers['anthropic-beta'], `endpoint-default,${req.headers['anthropic-beta']}`)
   assert.ok(chunks.some((chunk) => chunk.includes('safeguard_results')))
+})
+
+test('native Anthropic API backend keeps endpoint headers and applies the 1M policy to caller betas', async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'api-headers-'))
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(temp, 'run'))
+  fs.writeFileSync(path.join(temp, 'run', 'api-kernel.token'), 'fixture-token')
+  let envelope
+  const server = http.createServer(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    envelope = JSON.parse(raw)
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    const events = [
+      { type: 'message_start', message: { id: 'msg_h', role: 'assistant', type: 'message', content: [] } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+      { type: 'message_stop' },
+    ]
+    for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
+    res.end()
+  })
+  await new Promise((resolve) => server.listen(path.join(temp, 'run', 'api-kernel.sock'), resolve))
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+
+  const run = (model, endpointHeaders) => {
+    const body = { model, max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] }
+    return runApiInference({
+      req: {
+        headers: {
+          'anthropic-beta': 'oauth-2025-04-20,context-1m-2025-08-07,future-beta',
+          'user-agent': 'claude-cli/2.1.278 (external, sdk-cli)',
+          'x-app': 'cli',
+        },
+      },
+      cfg: { paths: { data: temp } },
+      scheduler: {
+        pick: () => ({
+          ok: true,
+          endpoint: {
+            id: 'fixture',
+            kind: 'custom',
+            protocol: 'anthropic',
+            auth_scheme: 'bearer',
+            base_url: 'https://fixture.invalid',
+            headers: endpointHeaders,
+          },
+          upstream_model: model,
+          key: { id: 'fixture', api_key: 'fixture-key' },
+        }),
+      },
+      store: {},
+      protocol: 'anthropic.messages',
+      inbound: body,
+      convertedBody: toClaudeMessages('anthropic.messages', body, { rewrite: false }).claude,
+      converters: { createClaudeMessageAssembler, applyClaudeSSELineToMessage },
+      clientStream: false,
+      timeoutMs: 3000,
+    })
+  }
+
+  // claude-opus-4-7 does not pass context-1m by default; the endpoint's own opt-in still goes through.
+  assert.equal(
+    (await run('claude-opus-4-7', { 'User-Agent': 'relay-ua', 'anthropic-beta': 'oauth-2025-04-20' })).ok,
+    true,
+  )
+  assert.equal(envelope.headers['anthropic-beta'], 'oauth-2025-04-20,future-beta')
+  assert.equal(envelope.headers['User-Agent'], 'relay-ua')
+  assert.equal(envelope.headers['user-agent'], undefined)
+  assert.equal(envelope.headers['x-app'], 'cli')
+  assert.equal(envelope.headers.authorization, 'Bearer fixture-key')
+
+  assert.equal((await run('claude-opus-4-7', { 'anthropic-beta': 'context-1m-2025-08-07' })).ok, true)
+  assert.equal(envelope.headers['anthropic-beta'], 'context-1m-2025-08-07,oauth-2025-04-20,future-beta')
+
+  // claude-sonnet-5 passes context-1m under the default model policy.
+  assert.equal((await run('claude-sonnet-5', {})).ok, true)
+  assert.equal(envelope.headers['anthropic-beta'], 'oauth-2025-04-20,context-1m-2025-08-07,future-beta')
+  assert.equal(envelope.headers['user-agent'], 'claude-cli/2.1.278 (external, sdk-cli)')
 })
