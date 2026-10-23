@@ -6,16 +6,19 @@
  *   node scripts/outbound-shape.mjs --shape <body.json>
  *   node scripts/outbound-shape.mjs --diff <a.json> <b.json>
  *   node scripts/outbound-shape.mjs --against-profile 2.1.303 <body.json>
+ *   node scripts/outbound-shape.mjs --against-profile 2.1.303 <capture.json> --wire
  *   node scripts/outbound-shape.mjs --make-skeleton <raw.json> > test/fixtures/official-2.1.303-skeleton.json
  *
  * Inputs may be a Messages body, a capture with `{ body }`, or a `.shape.json`
- * produced by this tool.
+ * produced by this tool. `--wire` needs a CLI capture `{ raw, body, headers }` and adds
+ * the final-bytes rules (key order, version, UA, CCH, content-length).
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   checkOfficial303Rules,
+  checkOfficial303Wire,
   diffShapes,
   isAllowedSkeletonDiff,
   outboundShape,
@@ -55,11 +58,17 @@ function main(argv) {
     const diffs = diffShapes(JSON.parse(fs.readFileSync(skeleton, 'utf8')), load(rest[1]))
     const problems = checkOfficial303Rules(loadBody(rest[1]))
     const blocking = diffs.filter((diff) => !isAllowedSkeletonDiff(diff))
-    print({ blocking, allowed: diffs.filter(isAllowedSkeletonDiff).map((diff) => diff.path), rules: problems })
-    return blocking.length || problems.length ? 1 : 0
+    const report = { blocking, allowed: diffs.filter(isAllowedSkeletonDiff).map((diff) => diff.path), rules: problems }
+    if (rest[2] !== '--wire') {
+      print(report)
+      return blocking.length || problems.length ? 1 : 0
+    }
+    report.wire = checkOfficial303Wire(JSON.parse(fs.readFileSync(rest[1], 'utf8')))
+    print(report)
+    return blocking.length || problems.length || report.wire.some((p) => p.blocking !== false) ? 1 : 0
   }
   process.stderr.write(
-    'usage: outbound-shape.mjs --shape <f> | --diff <a> <b> | --against-profile 2.1.303 <f> | --make-skeleton <raw>\n',
+    'usage: outbound-shape.mjs --shape <f> | --diff <a> <b> | --against-profile 2.1.303 <f> [--wire] | --make-skeleton <raw>\n',
   )
   return 2
 }

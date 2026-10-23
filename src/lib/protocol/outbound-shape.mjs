@@ -3,7 +3,16 @@
  * prompt text, ids or secrets leave this module. The unit tests and the real
  * wire capture check go through the same functions.
  */
-import { classifySystemText, isBillingText } from '../identity/official-profiles.mjs'
+import { createHash } from 'node:crypto'
+import { computeClaudeCodeCch, projectClaudeCodeCchText } from '../identity/cch.mjs'
+import {
+  OFFICIAL_303_IDENTITY,
+  OFFICIAL_303_MAIN_PROMPT,
+  OFFICIAL_PROFILES,
+  classifySystemText,
+  isBillingText,
+  isOfficialIdentityText,
+} from '../identity/official-profiles.mjs'
 
 function markerShape(control) {
   if (!control || typeof control !== 'object') return null
@@ -215,4 +224,161 @@ export function isAllowedSkeletonDiff(diff) {
   if (at === 'tools.count') return true
   if (at.startsWith('thinking') || at.startsWith('output_config_keys')) return true
   return false
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function billingText(system) {
+  const texts = Array.isArray(system) ? system.map((b) => String(b?.text ?? b ?? '')) : [String(system ?? '')]
+  return texts.find((text) => isBillingText(text)) || ''
+}
+
+/**
+ * Rules on the bytes the CLI finally sends (`wire = { raw, body, headers }`). Problems are
+ * `{ id, ...details }`; details are keys, indexes and versions only. `blocking: false` marks
+ * notes that go into the report without failing the capture.
+ */
+export function checkOfficial303Wire(wire, { profile = OFFICIAL_PROFILES['2.1.303'] } = {}) {
+  const problems = []
+  const body = wire?.body || {}
+  const keys = Object.keys(body)
+  if (keys.includes('kin_outbound_shape')) problems.push({ id: 'wire.kin_outbound_shape' })
+  const order = profile.topLevelOrder
+  const actual = keys.filter((key) => order.includes(key))
+  const expected = order.filter((key) => keys.includes(key))
+  if (actual.join(',') !== expected.join(',')) problems.push({ id: 'wire.top_level_order', expected, actual })
+  keys.forEach((key, index) => {
+    if (!order.includes(key) && key !== 'kin_outbound_shape')
+      problems.push({ id: 'wire.extra_key', key, index, blocking: false })
+  })
+  const billing = billingText(body.system)
+  if (!billing) problems.push({ id: 'wire.billing_missing' })
+  else {
+    const version = /\bcc_version=([^;\s]+)/.exec(billing)?.[1] || ''
+    if (!version.startsWith(`${profile.cliVersion}.`)) problems.push({ id: 'wire.billing_version', version })
+  }
+  const ua = String(wire?.headers?.['user-agent'] || '')
+  if (!new RegExp(`^claude-cli/${escapeRegExp(profile.cliVersion)} `).test(ua))
+    problems.push({ id: 'wire.user_agent', ua: /^claude-cli\/[^\s]+/.exec(ua)?.[0] || '' })
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  let lastUser = -1
+  messages.forEach((message, i) => {
+    if (message?.role === 'user') lastUser = i
+  })
+  messages.forEach((message, index) => {
+    if (index > lastUser && message?.role === 'system' && typeof message.content !== 'string')
+      problems.push({ id: 'wire.tail_system_not_string', index })
+  })
+  if (billing) {
+    const cch = /\bcch=([0-9a-f]{5});/.exec(billing)?.[1]
+    let expectedCch = null
+    try {
+      expectedCch = computeClaudeCodeCch(Buffer.from(projectClaudeCodeCchText(wire.raw), 'utf8'))
+    } catch {}
+    if (!cch || cch === '00000' || cch !== expectedCch)
+      problems.push({ id: 'wire.cch', sealed: Boolean(cch && cch !== '00000') })
+  }
+  const length = Buffer.byteLength(String(wire?.raw ?? ''))
+  if (length !== Number(wire?.headers?.['content-length']))
+    problems.push({ id: 'wire.content_length', bytes: length, header: wire?.headers?.['content-length'] ?? null })
+  return problems
+}
+
+function partTexts(content) {
+  if (typeof content === 'string') return [content]
+  if (!Array.isArray(content)) return []
+  return content
+    .filter((part) => typeof part?.text === 'string' && ['text', 'input_text'].includes(part.type))
+    .map((part) => part.text)
+}
+
+/** Caller system text as the inbound protocol carries it. */
+function callerSystemTexts(inbound, protocol) {
+  if (protocol === 'openai.chat') {
+    return (inbound?.messages || [])
+      .filter((message) => message?.role === 'system' || message?.role === 'developer')
+      .flatMap((message) => partTexts(message.content))
+  }
+  if (protocol === 'openai.responses') {
+    const input = Array.isArray(inbound?.input) ? inbound.input : []
+    return [
+      ...(typeof inbound?.instructions === 'string' ? [inbound.instructions] : []),
+      ...input
+        .filter((item) => item?.role === 'system' || item?.role === 'developer')
+        .flatMap((item) => partTexts(item.content)),
+    ]
+  }
+  const system = inbound?.system
+  if (typeof system === 'string') return [system]
+  return Array.isArray(system)
+    ? system.map((block) => (typeof block === 'string' ? block : String(block?.text || '')))
+    : []
+}
+
+/** Every text slot of an outbound body with its path. */
+function outboundTexts(body) {
+  const out = []
+  if (typeof body?.system === 'string') out.push({ at: 'system', text: body.system })
+  else if (Array.isArray(body?.system))
+    body.system.forEach((block, i) => out.push({ at: `system[${i}]`, text: String(block?.text ?? block ?? '') }))
+  ;(Array.isArray(body?.messages) ? body.messages : []).forEach((message, i) => {
+    if (typeof message?.content === 'string') return out.push({ at: `messages[${i}]`, text: message.content })
+    ;(Array.isArray(message?.content) ? message.content : []).forEach((block, j) => {
+      if (typeof block?.text === 'string') out.push({ at: `messages[${i}].content[${j}]`, text: block.text })
+      if (Array.isArray(block?.content))
+        block.content.forEach((inner, k) => {
+          if (typeof inner?.text === 'string')
+            out.push({ at: `messages[${i}].content[${j}].content[${k}]`, text: inner.text })
+        })
+      else if (typeof block?.content === 'string')
+        out.push({ at: `messages[${i}].content[${j}].content`, text: block.content })
+    })
+  })
+  return out
+}
+
+const sha12 = (text) => createHash('sha256').update(text).digest('hex').slice(0, 12)
+
+/**
+ * Where the caller's system text ended up on a lean 303 body. Official callers: none of it
+ * (profile-owned paragraphs excepted). Others: only in the first user's leading reminder.
+ * Reports paragraph hashes and paths, never text.
+ */
+export function checkCallerPlacement(outBody, inbound, { officialCaller, protocol = 'anthropic.messages' } = {}) {
+  const problems = []
+  for (const key of ['temperature', 'context_management']) {
+    if (Object.hasOwn(outBody || {}, key) && !Object.hasOwn(inbound || {}, key))
+      problems.push({ id: `caller.${key}_added` })
+  }
+  let skipped = 0
+  const paragraphs = []
+  for (const text of callerSystemTexts(inbound, protocol)) {
+    for (const para of text.split(/\n{2,}/).map((part) => part.trim())) {
+      if (para.length < 40) continue
+      if (isBillingText(para) || isOfficialIdentityText(para)) continue
+      if (OFFICIAL_303_MAIN_PROMPT.includes(para) || OFFICIAL_303_IDENTITY.includes(para)) {
+        skipped++
+        continue
+      }
+      paragraphs.push(para)
+    }
+  }
+  const slots = outboundTexts(outBody)
+  const firstUser = (outBody?.messages || []).findIndex((message) => message?.role === 'user')
+  const allowedAt = `messages[${firstUser}].content[0]`
+  for (const para of paragraphs) {
+    const hits = slots.filter((slot) => slot.text.includes(para)).map((slot) => slot.at)
+    const detail = { para_sha: sha12(para), para_len: para.length }
+    if (officialCaller) {
+      for (const at of hits) problems.push({ id: 'caller.official_system_leak', ...detail, at })
+      continue
+    }
+    const reminder = slots.find((slot) => slot.at === allowedAt && slot.text.startsWith('<system-reminder>'))
+    if (!reminder?.text.includes(para)) problems.push({ id: 'caller.system_missing', ...detail })
+    for (const at of hits) if (at !== allowedAt) problems.push({ id: 'caller.system_leak', ...detail, at })
+  }
+  if (skipped) problems.push({ id: 'caller.skipped', count: skipped, blocking: false })
+  return problems
 }

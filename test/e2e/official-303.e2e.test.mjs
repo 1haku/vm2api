@@ -6,20 +6,12 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import http from 'node:http'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
-import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
-import { createRespond, readBody } from '../../src/lib/http/respond.mjs'
-import { rememberRustHealth, clearRustHealthCache } from '../../src/lib/transport/kernel-router.mjs'
 import {
   OFFICIAL_303_ENV_UNTRUSTED,
   OFFICIAL_303_IDENTITY,
   OFFICIAL_303_MAIN_PROMPT,
-  profileForPreset,
 } from '../../src/lib/identity/official-profiles.mjs'
 import {
   checkOfficial303Rules,
@@ -28,6 +20,7 @@ import {
   outboundShape,
 } from '../../src/lib/protocol/outbound-shape.mjs'
 import { computeClaudeCodeCch, projectClaudeCodeCchText } from '../../src/lib/identity/cch.mjs'
+import { startRealChain } from './helpers/real-chain.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const kernelBin = process.env.KIN_303_KERNEL || ''
@@ -36,230 +29,15 @@ const baseCli = process.env.KIN_303_BASE_CLI || ''
 const skip = !kernelBin || !cliBin || !fs.existsSync(kernelBin) || !fs.existsSync(cliBin)
 const SKELETON = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/official-2.1.303-skeleton.json'), 'utf8'))
 
-function unixRequest(socketPath, token, endpoint) {
-  return new Promise((resolve, reject) => {
-    const req = http.request({ socketPath, path: endpoint, headers: { 'x-internal-token': token } }, (res) => {
-      let text = ''
-      res.on('data', (chunk) => {
-        text += chunk
-      })
-      res.on('end', () => resolve(text))
-    })
-    req.on('error', reject)
-    req.end()
-  })
-}
-
-function sse(model) {
-  const events = [
-    {
-      type: 'message_start',
-      message: {
-        id: 'msg_303',
-        type: 'message',
-        role: 'assistant',
-        model,
-        content: [],
-        stop_reason: null,
-        stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-      },
-    },
-    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
-    { type: 'content_block_stop', index: 0 },
-    { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
-    { type: 'message_stop' },
-  ]
-  return events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
-}
-
 async function harness(t, { preset = 'official_303', cacheTtl = '5m', cli = cliBin } = {}) {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vm2api-303-e2e-'))
-  t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
-  const captured = []
-  const upstream = http.createServer(async (req, res) => {
-    let raw = ''
-    for await (const chunk of req) raw += chunk
-    if (!req.url.startsWith('/v1/messages')) return res.writeHead(404).end()
-    const body = JSON.parse(raw)
-    captured.push({ raw, body, headers: { ...req.headers } })
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_303' })
-    res.end(sse(body.model))
-  })
-  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve))
-  t.after(async () => {
-    upstream.closeAllConnections()
-    await new Promise((resolve) => upstream.close(resolve))
-  })
-  const socketPath = path.join(temp, 'kernel.sock')
-  const token = 'local-303-token'
-  const tokenPath = path.join(temp, 'internal.token')
-  fs.writeFileSync(tokenPath, token)
-  const homeDir = path.join(temp, 'cli-home')
-  fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true })
-  const credentialPath = path.join(homeDir, '.claude', 'credentials.json')
-  fs.writeFileSync(credentialPath, JSON.stringify({ anthropicApiKey: { apiKey: 'local-fixture-key' } }))
-  const configPath = path.join(temp, 'kernel.json')
-  const kernelConfig = (presetNow) => ({
-    vm_id: 'vm-01',
-    socket_path: socketPath,
-    credential_path: credentialPath,
-    internal_token: token,
-    provider: 'local_cli',
-    claude_bin: cli,
-    slots_per_worker: 2,
-    system_layout: 'identity',
-    persona_preset: presetNow,
-    // Same projection as writeKernelConfig.
-    cli_version: profileForPreset(presetNow).cliVersion,
-    default_cache_ttl: cacheTtl,
-    cch_enabled: true,
-    timezone: 'America/New_York',
-    test_endpoints: true,
-    anthropic_base_url: `http://127.0.0.1:${upstream.address().port}`,
-  })
-  fs.writeFileSync(configPath, JSON.stringify(kernelConfig(preset)))
-  const env = {
-    ...process.env,
-    CLAUDE_CONFIG_DIR: temp,
-    ANTHROPIC_API_KEY: 'local-fixture-key',
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${upstream.address().port}`,
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-    DISABLE_TELEMETRY: '1',
-    DISABLE_ERROR_REPORTING: '1',
-    NO_PROXY: '127.0.0.1,localhost',
-    KIN_ENVELOPE_PATH: path.join(temp, 'no-envelope.json'),
-  }
-  for (const key of [
-    'HTTP_PROXY',
-    'HTTPS_PROXY',
-    'ALL_PROXY',
-    'http_proxy',
-    'https_proxy',
-    'all_proxy',
-    'ANTHROPIC_AUTH_TOKEN',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'CLAUDE_CODE_VERSION',
-  ])
-    delete env[key]
-  const kernel = spawn(kernelBin, ['--gateway-worker', '--config', configPath], {
-    cwd: temp,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  const closed = once(kernel, 'close')
-  let log = ''
-  kernel.stdout.on('data', (c) => {
-    log += c
-  })
-  kernel.stderr.on('data', (c) => {
-    log += c
-  })
-  t.after(async () => {
-    kernel.kill('SIGKILL')
-    await closed
-  })
-  for (let i = 0; i < 100 && !fs.existsSync(socketPath) && kernel.exitCode == null; i++)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  assert.ok(fs.existsSync(socketPath), log.slice(-1200))
-  const health = JSON.parse(await unixRequest(socketPath, token, '/internal/health'))
-  const vm = {
-    id: 'vm-01',
-    claude: { mode: 'api-key' },
-    runtime: { kernel_socket: socketPath, worker_token_file: tokenPath, worker_run_dir: temp },
-  }
-  const exec = { vmId: vm.id, vm, homeDir, oauth: {}, timezone: 'UTC' }
-  const routingPath = path.join(temp, 'routing.json')
-  const writeRouting = (presetNow) => {
-    const routing = {
-      inference: { engine: 'rust', health_ttl_ms: 60000 },
-      compatibility: {
-        persona_preset: presetNow,
-        cache_ttl: cacheTtl,
-        min_max_tokens: 128,
-        detect_proxied_official_cc: true,
-        thinking_display: 'omitted',
-        overlay_preset: 'off',
-      },
-      failover: { stream_keepalive_ms: 0 },
-    }
-    fs.writeFileSync(routingPath, JSON.stringify(routing))
-    return routing
-  }
-  let routing = writeRouting(preset)
-  const previousKernelBin = process.env.KIN_KERNEL_BIN
-  process.env.KIN_KERNEL_BIN = kernelBin
-  t.after(() => {
-    if (previousKernelBin === undefined) delete process.env.KIN_KERNEL_BIN
-    else process.env.KIN_KERNEL_BIN = previousKernelBin
-  })
-  rememberRustHealth(exec, { ok: true, health })
-  t.after(() => clearRustHealthCache(vm.id))
-  const cfg = {
-    rewrite: { enabled: false },
-    intercept: { rules: [] },
-    distill: { enabled: false },
-    limits: { max_body_bytes: 4 * 1024 * 1024, upstream_timeout_ms: 15000, stream_idle_timeout_ms: 15000 },
-    paths: { project: temp, data: temp },
-  }
-  const logs = []
-  const handler = createHandleProtocol({
-    ...createRespond(cfg),
-    readBody,
-    cfg,
-    requireAuth: () => true,
-    requestLog: { start: () => ({ request_id: 'req_303_gateway' }), finish: (_ctx, bag) => logs.push(bag) },
-    stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
-    groupsRepo: { rateMultiplier: () => 1 },
-    routingConfigPath: routingPath,
-    routingConfig: routing,
-    getRoutingConfig: () => routing,
-    apiKeyStore: {},
-    accountQuota: {},
-    stickyRouter: { extractPoolKey: () => null, collectPoolKeys: () => [] },
-    failoverRunner: {
-      async run(opts) {
-        const candidate = { vmId: vm.id, accountId: 'fixture-account', vm, exec }
-        const prepared = await opts.applyAttempt(opts.canonicalBody, candidate)
-        return opts.callAttempt({
-          candidate,
-          body: prepared.body,
-          attemptMeta: prepared.meta,
-          signal: opts.signal,
-          deliveryMode: opts.deliveryMode,
-          onCommit() {},
-        })
-      },
-    },
-  })
-  const gateway = http.createServer((req, res) => {
-    req.apiKeyKind = 'master'
-    handler.handleProtocol(req, res, 'anthropic.messages', '/v1/messages').catch((error) => {
-      res.writeHead(500)
-      res.end(String(error.stack))
-    })
-  })
-  await new Promise((resolve) => gateway.listen(0, '127.0.0.1', resolve))
-  t.after(async () => {
-    gateway.closeAllConnections()
-    await new Promise((resolve) => gateway.close(resolve))
-  })
+  const chain = await startRealChain({ kernelBin, cliBin: cli, preset, cacheTtl })
+  t.after(chain.close)
   const send = async (body, userAgent) => {
-    const response = await fetch(`http://127.0.0.1:${gateway.address().port}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': userAgent },
-      body: JSON.stringify(body),
-    })
-    const text = await response.text()
-    assert.equal(response.status, 200, text)
-    return captured.at(-1)
+    const wire = await chain.send({ request: { path: '/v1/messages', headers: { 'user-agent': userAgent }, body } })
+    assert.equal(wire.status, 200, wire.response)
+    return { raw: wire.raw, body: wire.body, headers: wire.headers }
   }
-  const switchPreset = (presetNow) => {
-    routing = writeRouting(presetNow)
-    fs.writeFileSync(configPath, JSON.stringify(kernelConfig(presetNow)))
-  }
-  return { send, switchPreset, logs, health: () => unixRequest(socketPath, token, '/internal/health') }
+  return { send, switchPreset: chain.switchPreset, logs: chain.logs, health: chain.health }
 }
 
 const ENV = [
