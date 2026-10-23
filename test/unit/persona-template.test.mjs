@@ -96,7 +96,7 @@ test('official preset renders billing + identity byte-identical to the legacy bu
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
   assert.equal(out.length, 2)
   assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', DEFAULT_CLI_VERSION, 's-1') })
-  assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_SYSTEM })
+  assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM })
 })
 
 test('official preset keeps user system in the optional fifth segment', () => {
@@ -142,12 +142,11 @@ test('agent standing preset flags default off and isolate per preset', () => {
   assert.equal(agentStandingVar({ agent_standing: '', agent_standing_presets: { official: true } }, 'official'), '')
 })
 
-test('zero prompt_version uses the compact Anthropic Claude identity', () => {
+test('zero prompt_version uses the interactive CLI identity', () => {
   const billing = buildZeroBillingText('ping', '2.1.241', 's-2')
-  assert.ok(billing.includes(`prompt_version=<${CRS_COMPACT_IDENTITY}>`))
+  assert.ok(billing.includes(`prompt_version=<${CRS_OFFICIAL_CLI_SYSTEM}>`))
   assert.ok(!billing.includes(CRS_OFFICIAL_SYSTEM))
-  const vars = personaTemplateVars({ firstUserText: 'ping', sessionId: 's-2', env: { timezone: 'UTC' } })
-  assert.equal(vars.identity_compact, CRS_COMPACT_IDENTITY)
+  assert.ok(!billing.includes(CRS_COMPACT_IDENTITY))
 })
 
 test('whole-preset usage mask: persona_hide_presets > persona_hides > template hide flags', () => {
@@ -365,7 +364,11 @@ test('cli-hop strip then rewrites official and official_full from the configured
         false,
         `${preset} strip drops billing`,
       )
-      assert.equal(strippedTexts.includes(CRS_OFFICIAL_SYSTEM), false, `${preset} strip drops identity`)
+      assert.equal(
+        strippedTexts.filter((text) => text === CRS_OFFICIAL_CLI_SYSTEM).length,
+        1,
+        `${preset} strip leaves one identity`,
+      )
       const out = applyCrsUnofficialPersona(stripped, {
         routingFile: file,
         mode: preset,
@@ -378,7 +381,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
         preset,
       )
       assert.ok(
-        texts.some((text) => text === (preset === 'official_full' ? CRS_OFFICIAL_CLI_SYSTEM : CRS_OFFICIAL_SYSTEM)),
+        texts.some((text) => text === CRS_OFFICIAL_CLI_SYSTEM),
         preset,
       )
       assert.ok(
@@ -652,7 +655,7 @@ test('template edits are hot-read without a restart', () => {
       },
       { routingFile: file },
     )
-    assert.equal(before.system[1].text, CRS_OFFICIAL_SYSTEM)
+    assert.equal(before.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
     write({ persona_preset: 'zero', overlay_preset: 'off' })
     const after = applyCrsUnofficialPersona(
       {

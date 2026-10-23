@@ -1,12 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { CCH_HOTFIXES, planCliCchHotfix, repairCliCch } from '../../scripts/fix-cli-cch.mjs'
 
 const current = CCH_HOTFIXES.at(-1)
-const artifact = process.env.KIN_CCH_CLI || path.resolve(import.meta.dirname, '../../share/wrap-cli/cli-node')
+const artifact =
+  process.env.KIN_CCH_HOTFIX_CLI ||
+  process.env.KIN_CCH_CLI ||
+  path.resolve(import.meta.dirname, '../../share/wrap-cli/cli-node')
+// The pinned payload moved past the hotfix build; only use it when it is still that ELF.
+const artifactIsHotfix =
+  fs.existsSync(artifact) &&
+  crypto.createHash('sha256').update(fs.readFileSync(artifact)).digest('hex') === current.sha256
 
 function manifest(fix = current, release = fix.releases[0]) {
   return {
@@ -106,7 +114,9 @@ test('an existing repair lock is preserved and blocks a second writer', async (t
   assert.equal(fs.existsSync(path.join(dest, 'share')), false)
 })
 
-test('a verified repair is backed up, pins only CLI, and is idempotent', async (t) => {
+test('a verified repair is backed up, pins only CLI, and is idempotent', {
+  skip: !artifactIsHotfix && `set KIN_CCH_CLI to ${current.asset}`,
+}, async (t) => {
   assert.ok(fs.existsSync(artifact), 'fetch the pinned payload before running this integration test')
   const value = manifest()
   const dest = installation(t, value)

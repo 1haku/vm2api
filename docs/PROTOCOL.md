@@ -30,7 +30,7 @@
 | `persona_park` | `false` | 与 `overlay_preset=off` 对齐 |
 | `cache_ttl` | `1h` | Node 重写时新增点的缺省 TTL；`x-kin-cache-ttl` 参与首次会话选择，不覆盖 native 透传 caller / 模板显式 TTL |
 
-**official 模板**保留 billing + Agent SDK identity + 可选 caller_agent / caller_system，并在 agent 块之后写槽位 `# Environment`（`{{env}}`，只含 `Timezone: <槽位时区>`，不挂 cache，不破 agent 块的 1h global 缓存）；不会自动追加完整 agent prompt。
+**official 模板**保留 billing + 交互 CLI identity（`You are Claude Code, Anthropic's official CLI for Claude.`）+ 可选 caller_agent / caller_system，并在 agent 块之后写槽位 `# Environment`（`{{env}}`，只含 `Timezone: <槽位时区>`，不挂 cache，不破 agent 块的 1h global 缓存）；不会自动追加完整 agent prompt。网关生成的 billing 一律 `cc_entrypoint=cli`；0注入的 `prompt_version=<…>` 也是同一句交互 CLI identity。
 
 **official_full 模板**在相同前缀后固定追加完整 `agent_official`，带 ephemeral 1h cache；调用方 system 作为末块追加。
 
@@ -79,7 +79,8 @@ Go worker JSON 透传，不必因人设重建 worker。
 ## beta 与 1M
 
 - 存盘的 `kin-cc-headers.json` **只**留 `anthropic-version` / `anthropic-beta`。UA、stainless、session、accept-language 只出槽位指纹 + 代码 pin。
-- 出站 UA 锁 `claude-cli/2.1.293 (external, sdk-cli)`。Stainless 仍是 `js` / `Linux` / `x64` / `node` / `v26.3.0` / `0.112.1`，`retry-count=0`，`timeout=600`。
+- 出站 UA 锁 `claude-cli/<当前档版本> (external, cli)`，版本按档位取 2.1.296 / 2.1.303。Stainless 是 `js` / `Linux` / `x64` / `node` / `v26.3.0` / `0.128.0`，`retry-count=0`；CLI 把配置的毫秒 timeout 转为秒写入头（缺省 `600`）。
+- cli-node SDK 请求显式带 `Accept: application/json, text/event-stream`、`Accept-Encoding: gzip, br`。`Content-Length` 在 CCH 密封和最终序列化之后按 UTF-8 字节数设置；不是响应长度，不能拿它填写 SSE 响应。面板 `outbound_headers` 是 Node → worker 的 envelope，不是 CLI 最终 HTTP 请求头。
 - 非官方裸模型 **不注入、不重放** `context-1m-2025-08-07`。入站末尾 `[1m]`（如 `claude-sonnet-5[1m]`）在矩阵允许时注入该 beta（官方/非官方都算）。
 - 官方 CC：矩阵 `betas.pass_context_1m` 决定透传/剥离；未入库时回退 `defaults.context_1m_whitelist`（seed：`sonnet-5*`）。同一 `[1m]` 后缀在允许时也会注入。
 - 出站 `model` 去掉 `[1m]` 后缀。

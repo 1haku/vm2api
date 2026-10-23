@@ -281,7 +281,7 @@ test('OAuth cli-hop applies the resolved Protocol custom persona template', asyn
     assert.ok(prepared?.body)
     const billing = prepared.body.system.filter((block) => /^x-anthropic-billing-header:/.test(block.text || ''))
     assert.equal(billing.length, 1, 'cli-hop includes exactly one billing attribution block')
-    assert.match(billing[0].text, /cc_version=.*; cc_entrypoint=sdk-cli;/)
+    assert.match(billing[0].text, /cc_version=.*; cc_entrypoint=cli;/)
     assert.equal(prepared.body.system.filter((block) => !billing.includes(block)).length, 2)
     assert.ok(prepared.body.system.some((block) => String(block.text || '').includes('CUSTOM_PERSONA UTC')))
   } finally {
