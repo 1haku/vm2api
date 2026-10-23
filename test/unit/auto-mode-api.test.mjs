@@ -6,7 +6,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { classifierFixture } from '../fixtures/auto-mode.mjs'
 import { runApiInference } from '../../src/lib/pool/api-protocol.mjs'
-import { createClaudeMessageAssembler, applyClaudeSSELineToMessage } from '../../src/lib/protocol/convert.mjs'
+import {
+  createClaudeMessageAssembler,
+  applyClaudeSSELineToMessage,
+  toClaudeMessages,
+} from '../../src/lib/protocol/convert.mjs'
 
 test('API classifier backend preserves contract, rejects model substitution and exposes real failures', async (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-mode-api-'))
@@ -120,4 +124,114 @@ test('API classifier backend preserves contract, rejects model substitution and 
   assert.equal(incompatible.status, 400)
   assert.equal(incompatible.body.error.code, 'classifier_model_incompatible')
   assert.equal(calls, count)
+})
+
+test('native Anthropic API backend forwards safeguards and caller protocol headers', async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'safeguards-api-'))
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(temp, 'run'))
+  fs.writeFileSync(path.join(temp, 'run', 'api-kernel.token'), 'fixture-token')
+
+  const safeguardResults = [
+    {
+      type: 'dangerous_tool_use',
+      status: { type: 'available', tool_uses: { toolu_1: { status: 'evaluated', outcome: 'not_flagged' } } },
+    },
+  ]
+  let envelope
+  const server = http.createServer(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    envelope = JSON.parse(raw)
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    const events = [
+      {
+        type: 'message_start',
+        message: {
+          id: 'msg_safeguard_api',
+          role: 'assistant',
+          type: 'message',
+          content: [],
+          model: 'claude-sonnet-5',
+          safeguard_results: safeguardResults,
+        },
+      },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn', safeguard_results: safeguardResults },
+        usage: { output_tokens: 1 },
+      },
+      { type: 'message_stop' },
+    ]
+    for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
+    res.end()
+  })
+  await new Promise((resolve) => server.listen(path.join(temp, 'run', 'api-kernel.sock'), resolve))
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+
+  const body = {
+    model: 'claude-sonnet-5',
+    max_tokens: 64,
+    safeguards: [{ type: 'dangerous_tool_use', classifier_context: { permission_mode: 'auto' } }],
+    messages: [{ role: 'user', content: 'hi' }],
+  }
+  const converted = toClaudeMessages('anthropic.messages', body, { rewrite: false }).claude
+  assert.deepEqual(converted.safeguards, body.safeguards)
+  const req = {
+    headers: {
+      'anthropic-beta': 'interleaved-thinking-2025-05-14,dangerous-tool-use-2026-09-03,future-beta',
+      'anthropic-version': '2023-06-01',
+      'user-agent': 'claude-cli/2.1.278 (external, sdk-cli)',
+    },
+  }
+  const common = {
+    req,
+    cfg: { paths: { data: temp } },
+    scheduler: {
+      pick: () => ({
+        ok: true,
+        endpoint: {
+          id: 'fixture',
+          kind: 'claude',
+          protocol: 'anthropic',
+          base_url: 'https://fixture.invalid',
+          headers: { 'Anthropic-Beta': 'endpoint-default' },
+        },
+        upstream_model: body.model,
+        key: { id: 'fixture', api_key: 'fixture-key' },
+      }),
+    },
+    store: {},
+    protocol: 'anthropic.messages',
+    inbound: body,
+    convertedBody: converted,
+    converters: { createClaudeMessageAssembler, applyClaudeSSELineToMessage },
+    timeoutMs: 3000,
+  }
+
+  const jsonResult = await runApiInference({ ...common, clientStream: false })
+  assert.equal(jsonResult.ok, true)
+  assert.deepEqual(envelope.body && JSON.parse(envelope.body).safeguards, body.safeguards)
+  assert.equal(envelope.headers['anthropic-beta'], req.headers['anthropic-beta'])
+  assert.equal(envelope.headers['anthropic-version'], req.headers['anthropic-version'])
+  assert.deepEqual(jsonResult.body.safeguard_results, safeguardResults)
+
+  const chunks = []
+  const streamResult = await runApiInference({
+    ...common,
+    clientStream: true,
+    res: { headersSent: false, write: (chunk) => chunks.push(String(chunk)), end() {} },
+    converters: {
+      ...common.converters,
+      writeSSEHeaders: (res) => {
+        res.headersSent = true
+      },
+    },
+  })
+  assert.equal(streamResult.ok, true)
+  assert.deepEqual(envelope.body && JSON.parse(envelope.body).safeguards, body.safeguards)
+  assert.equal(envelope.headers['anthropic-beta'], req.headers['anthropic-beta'])
+  assert.ok(chunks.some((chunk) => chunk.includes('safeguard_results')))
 })
