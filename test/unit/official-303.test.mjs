@@ -15,6 +15,7 @@ import {
 import { ensureBillingAttribution } from '../../src/lib/identity/crs-persona.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 import {
+  checkCallerPlacement,
   checkOfficial303Rules,
   diffShapes,
   isAllowedSkeletonDiff,
@@ -218,6 +219,7 @@ const budget = (n) => `<${'total_tokens'}>${n} tokens left</${'total_tokens'}>`
 
 test('two rounds: the previous user carries the first-round write marker; prefix bytes match', () => {
   const system = [{ type: 'text', text: `You are a helpful bot. ${budget(812345)}` }]
+  const blocking = (problems) => problems.filter((p) => p.blocking !== false).map((p) => p.id)
   const first = lean(
     { model: 'claude-opus-5-5', max_tokens: 1024, system, messages: [{ role: 'user', content: 'q1' }] },
     {
@@ -251,6 +253,17 @@ test('two rounds: the previous user carries the first-round write marker; prefix
   assert.equal(second.messages.at(-1).role, 'system')
   assert.deepEqual(checkOfficial303Rules(first), [])
   assert.deepEqual(checkOfficial303Rules(second), [])
+  for (const [out, inbound] of [
+    [first, { system }],
+    [second, { system: [{ type: 'text', text: `You are a helpful bot. ${budget(799000)}` }] }],
+  ]) {
+    assert.deepEqual(blocking(checkCallerPlacement(out, inbound, { officialCaller: false })), [])
+  }
+  const leaked = structuredClone(second)
+  leaked.system[2].text += `\n\nYou are a helpful bot. ${budget(15000000)}`
+  assert.deepEqual(blocking(checkCallerPlacement(leaked, { system }, { officialCaller: false })), [
+    'caller.system_leak',
+  ])
 })
 
 test('multi-turn history: role=system goes out as the official string, other bytes stay', () => {

@@ -13,6 +13,7 @@ import {
   isBillingText,
   isOfficialIdentityText,
 } from '../identity/official-profiles.mjs'
+import { stabilizeOfficialContextBudget } from './outbound-attempt.mjs'
 
 function markerShape(control) {
   if (!control || typeof control !== 'object') return null
@@ -358,7 +359,10 @@ export function checkCallerPlacement(outBody, inbound, { officialCaller, protoco
   let skipped = 0
   const paragraphs = []
   for (const text of callerSystemTexts(inbound, protocol)) {
-    for (const para of text.split(/\n{2,}/).map((part) => part.trim())) {
+    // The reminder carries the stabilized `<total_tokens>` counter, not the caller's live one.
+    for (const para of stabilizeOfficialContextBudget(text)
+      .split(/\n{2,}/)
+      .map((part) => part.trim())) {
       if (para.length < 40) continue
       if (isBillingText(para) || isOfficialIdentityText(para)) continue
       if (OFFICIAL_303_MAIN_PROMPT.includes(para) || OFFICIAL_303_IDENTITY.includes(para)) {
