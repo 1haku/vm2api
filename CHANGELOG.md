@@ -4,6 +4,11 @@
 
 - cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。
 - 保留调用方自带 description+schema 的 web_search 族 function 工具，不再改写成原生服务端搜索；非搜索名工具不受影响。（#691）
+- 以 v1.3.221 生产验证产物为基线：`deploy/payload.json` 改指 `payload-2026.10.23-v1.3.221`，并钉住 `kin-worker` / `kin-egress` / `kin-slot-gate`（与线上逐字节一致）。release.yml 与 amd64 镜像不再从源码编译这三个 helper；改 `worker/` 后须重新钉 payload 才会发出。ARM64 镜像与附件不变。
+- CI 合并为单个 job：格式与语法、payload 校验、Node unit、Go vet/test、web；去掉 ARM64 冒烟、真链路 CCH e2e 与 ARM64 主机脚本测试。
+- 删除 1.3.198–1.3.219 的 CLI CCH 历史热修 `scripts/fix-cli-cch.mjs` 及其测试与文档；钉住的 cli-node `944f6457` 已含该修复。
+
+已部署机升级（以上三条）：payload 字节与 1.3.221 相同，只换了 Release 名，不必 `fetch:payload`、不必 `wrap-cli/sync`。
 
 ## 1.3.221 — 2026-10-23
 
