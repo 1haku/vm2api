@@ -2,9 +2,11 @@
 
 ## 未发布
 
+## 1.3.220 — 2026-10-23
+
 - cch：Node 与原生 CLI 只投影/赋值首个 canonical system billing block，不再误把 messages 或后续 system 中的 billing 示例当作真实计费头改写历史；manifest 钉住已在线验证的 cli-node；提供 `scripts/fix-cli-cch.mjs` 热修 1.3.198–1.3.219 四种历史 CLI payload。（#692）
 
-已部署机升级：须 `npm run fetch:payload`（或等价方式）换上新 cli-node；已在 1.3.198–1.3.219 部署的机器须显式执行 `fix-cli-cch`；勿做集群 sync、勿 recreate 槽位。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+已部署机升级：须 `npm run fetch:payload`（或等价方式）换上新 cli-node；已在 1.3.198–1.3.219 部署的机器须显式执行 `fix-cli-cch`；勿做集群 sync、勿 recreate 槽位。**仅更新 Node 控制面不够**。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.219 — 2026-10-23
 
