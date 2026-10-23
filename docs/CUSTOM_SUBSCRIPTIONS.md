@@ -2,6 +2,8 @@
 
 ## 版本与功能
 
+合入上游 v1.3.223（`2433866e`）：原生 Anthropic API 转发 beta/safeguards 等调用方协议头，保持服务端鉴权头；按新 payload 清单发布固定 SHA 的 kin-worker/kin-egress/kin-slot-gate，定制镜像保留 Go vet/race 测试但不再用本地编译结果覆盖这些发布资产。历史 CCH 热修脚本与对应测试按上游删除，现有原生 303/296 链路和订阅回归仍保留。现有提示词档、日志、Lite 修复、仅 admin 生图与全部额度设置不变。若既有自编译 helper 与新固定字节不同，须刷新相应运行进程而非仅换模板；不重建账号容器。无数据库迁移和新依赖。
+
 原生验收确认 `944f6457` 的 billing 为 cli，但最终 UA 仍为 sdk-cli，Accept 为 application/json，Accept-Encoding 为 gzip, deflate, br, zstd，x-stainless-timeout 为 600000；后续请求头修复尚未进该 payload。仅对这个精确 SHA 使用已发布头部契约，未来二进制仍须满足新头部断言，body/历史/CCH/Content-Length 检查不放宽。面板「当前出站参照」明确为配置参照，避免误称 CLI 最终抓包。
 
 合入上游 v1.3.221 及 `98d2357f` 自定义 web_search 修复：新增手动选择的 official_303 提示词档案和只读出站参照；billing/UA 改为 cli 入口，CLI 锁定为 `944f6457`，已包含 CCH 修复。沿用现网提示词、日志和全部订阅/权限配置，不自动选择 303；仅更新本机 Claude CLI 子进程，不重建槽位。发布增加真实 303 链路和现有 296 档对比，历史 CCH 热修测试使用独立旧 CLI 夹具，不把新 profile CLI 误认成旧热修包。保留 Lite 压缩修复、仅 admin 生图、日重置和优先级；无数据库迁移及新依赖。

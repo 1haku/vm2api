@@ -15,16 +15,14 @@ COPY deploy/payload.json deploy/payload.json
 COPY scripts/fetch-payload.mjs scripts/fetch-payload.mjs
 RUN node scripts/fetch-payload.mjs --dest /payload
 
-# Complete custom build: lockfile dependencies and tested Go sources.
+# Keep Go source checks, but ship the exact published helper bytes from payload.
 FROM golang:1.26-bookworm AS worker-build
 WORKDIR /build/worker
 COPY worker/go.mod worker/go.sum ./
 RUN go mod download
 COPY worker/ ./
-RUN go test -race ./... \
- && CGO_ENABLED=0 go build -trimpath -o /out/kin-worker ./cmd/kin-worker \
- && CGO_ENABLED=0 go build -trimpath -o /out/kin-egress ./cmd/kin-egress \
- && CGO_ENABLED=0 go build -trimpath -o /out/kin-slot-gate ./cmd/kin-slot-gate
+RUN go vet ./... && go test -race ./... \
+ && mkdir -p /out && printf 'Go vet and race tests passed\n' > /out/worker-source-checks
 
 FROM golang:1.26-bookworm AS api-kernel-build
 WORKDIR /build/api-kernel
@@ -50,7 +48,7 @@ COPY docker/kin-os ./docker/kin-os
 COPY docker/kin-kvm ./docker/kin-kvm
 COPY --from=web-build /build/web/dist ./web/dist
 COPY --from=payload-build /payload/bin/ /opt/vm2api/image-bin/
-COPY --from=worker-build /out/ /opt/vm2api/image-bin/
+COPY --from=worker-build /out/worker-source-checks /opt/vm2api/deploy/worker-source-checks
 COPY --from=api-kernel-build /out/ /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY --from=payload-build /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
