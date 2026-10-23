@@ -115,7 +115,7 @@ test('forceConfigured rewrites official and proxied-official system onto the pre
   assert.equal(out.system[3].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.match(out.system.at(-1).text, /RFC 2119/)
   assert.match(out.system.at(-1).text, /<workstation>/)
-  assert.ok(!out.system.some((block) => String(block?.text || '').includes('cc_entrypoint=cli')))
+  assert.ok(!out.system.some((block) => String(block?.text || '').includes('cch=bdff0')))
 })
 
 test('forceConfigured custom preset still writes billing and keeps caller system', () => {
@@ -368,7 +368,7 @@ test('fingerprint is stable for the same first user text and cli version', () =>
   assert.notEqual(a, other)
   assert.equal(
     a,
-    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=sdk-cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
+    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
   )
 })
 
@@ -517,7 +517,7 @@ test('oh-my-pi OAuth stealth prefix does not skip rewrite even with official UA 
   assert.equal(out.system.length, 4)
   assert.equal(out.system[0].text, CRS_OFFICIAL_SYSTEM)
   assert.match(out.system[1].text, /Oh My Pi coding harness/)
-  assert.match(out.system[2].text, /cc_entrypoint=sdk-cli;/)
+  assert.match(out.system[2].text, /cc_entrypoint=cli;/)
   assert.match(out.system[1].text, /<workstation>/)
   assert.ok(!JSON.stringify(out.system).includes('local-agent'))
   assert.ok(!JSON.stringify(out.system).includes('cc_entrypoint=local-agent'))
@@ -604,7 +604,7 @@ test('official_prompt keeps billing identity overlay, slot env, and skips inject
   )
   assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /x-anthropic-billing-header:/)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
   assert.match(out.system[3].text, /^# Environment\n - Timezone: /)
   assert.equal(out.system[3].cache_control, undefined)
@@ -877,7 +877,7 @@ test('desktop billing and Agent SDK leftovers are dropped, not parked', () => {
   assert.equal(out.system.length, 5)
   assert.equal(out.system[1].text, CRS_AGENT_EXPANSION)
   assert.equal(out.system[4].text, 'you are a linter')
-  assert.match(out.system[2].text, /cc_entrypoint=sdk-cli;/)
+  assert.match(out.system[2].text, /cc_entrypoint=cli;/)
   assert.ok(!JSON.stringify(out.system).includes('claude-desktop'))
   assert.ok(!JSON.stringify(out.system).includes('running inside'))
   assert.ok(!firstUserContent(out).includes('claude-desktop'))
@@ -1232,7 +1232,7 @@ test('zero inject writes billing prompt_version, env timezone, and leftover', ()
   )
   assert.equal(out.system.length, 5)
   assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
-  assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
+  assert.match(out.system[0].text, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
   assert.ok(!/\n/.test(out.system[0].text))
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
@@ -1291,7 +1291,7 @@ test('zero inject with no caller system is billing plus env timezone', () => {
     { mode: 'zero' },
   )
   assert.equal(out.system.length, 4)
-  assert.match(out.system[0].text, /prompt_version=<You are Anthropic Claude Agent SDK\.>/)
+  assert.match(out.system[0].text, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
   assert.equal(out.system[1].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.equal(out.system[2].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.ok(!out.system.some((b) => b?.text === CRS_AGENT_EXPANSION))

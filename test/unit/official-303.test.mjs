@@ -104,7 +104,7 @@ test('official caller: system is billing + identity + 2.1.303 main; caller syste
   assert.equal(out.system.length, 3)
   assert.match(
     out.system[0].text,
-    /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=00000;/,
+    /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli; cch=00000;/,
   )
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, OFFICIAL_303_IDENTITY)
@@ -214,8 +214,10 @@ test('non-official caller without system: no reminder; still three markers', () 
   assert.deepEqual(checkOfficial303Rules(out), [])
 })
 
-test('two rounds share every byte before the first-round user marker', () => {
-  const system = [{ type: 'text', text: 'You are a helpful bot.' }]
+const budget = (n) => `<${'total_tokens'}>${n} tokens left</${'total_tokens'}>`
+
+test('two rounds: the previous user carries the first-round write marker; prefix bytes match', () => {
+  const system = [{ type: 'text', text: `You are a helpful bot. ${budget(812345)}` }]
   const first = lean(
     { model: 'claude-opus-5-5', max_tokens: 1024, system, messages: [{ role: 'user', content: 'q1' }] },
     {
@@ -226,7 +228,7 @@ test('two rounds share every byte before the first-round user marker', () => {
     {
       model: 'claude-opus-5-5',
       max_tokens: 1024,
-      system,
+      system: [{ type: 'text', text: `You are a helpful bot. ${budget(799000)}` }],
       messages: [
         { role: 'user', content: 'q1' },
         { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
@@ -236,9 +238,19 @@ test('two rounds share every byte before the first-round user marker', () => {
     { officialCallerFlag: false },
   )
   assert.deepEqual(second.system, first.system)
-  assert.deepEqual(stripMarkers(second.messages[0]), stripMarkers(first.messages[0]))
+  assert.deepEqual(second.messages[0], first.messages[0])
+  assert.ok(first.messages[0].content[0].text.includes(budget(15000000)))
+  assert.deepEqual(
+    markers(first).at.map((m) => m.where),
+    ['system[1]', 'system[2]', 'messages[0].content[1]'],
+  )
+  assert.deepEqual(
+    markers(second).at.map((m) => m.where),
+    ['system[1]', 'system[2]', 'messages[0].content[1]', 'messages[2].content[0]'],
+  )
   assert.equal(second.messages.at(-1).role, 'system')
-  assert.equal(second.messages.at(-2).content.at(-1).cache_control.type, 'ephemeral')
+  assert.deepEqual(checkOfficial303Rules(first), [])
+  assert.deepEqual(checkOfficial303Rules(second), [])
 })
 
 test('multi-turn history: role=system goes out as the official string, other bytes stay', () => {
@@ -261,8 +273,10 @@ test('multi-turn history: role=system goes out as the official string, other byt
   assert.ok(out.messages[1].content.endsWith(AFTER_ENV))
   assert.match(out.messages[1].content, /exact model ID is claude-opus-5-5\[1m\]/)
   assert.equal(out.messages[4].content, '<total_tokens>15000000 tokens left</total_tokens>')
+  assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral' })
   assert.deepEqual(out.messages[3].content[0].cache_control, { type: 'ephemeral' })
-  assert.equal(markers(out).total, 3)
+  assert.equal(markers(out).total, 4)
+  assert.deepEqual(checkOfficial303Rules(out), [])
   const again = lean(body)
   assert.deepEqual(again.messages[1], out.messages[1])
 })

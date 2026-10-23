@@ -197,8 +197,9 @@ export function SystemPromptWorkspace({
               <p className='text-muted-foreground'>
                 Opus 4.8 / 5 / 5.5、Fable、Mythos 等：下面三块 system；调用方
                 system 放进第一条 user 的 &lt;system-reminder&gt;（官方调用方的
-                system 不出站）；Environment 作为尾部 role=system；断点 3
-                个，TTL 取协议页的缓存 TTL。
+                system 不出站）；Environment 作为尾部
+                role=system；最后一条与上一条 user 的末尾非 thinking 块打点（共
+                3–4 个断点），TTL 取协议页的缓存 TTL。
               </p>
               <p className='text-muted-foreground'>
                 Sonnet、Haiku、Opus 4.0–4.7：沿用现有 cli-hop

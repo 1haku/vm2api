@@ -77,7 +77,7 @@ test('profile per preset: only official_303 binds 2.1.303', () => {
     'output_config',
     'stream',
   ])
-  assert.equal(profile.maxMarkers, 3)
+  assert.equal(profile.maxMarkers, 4)
   assert.deepEqual(profile.autoFill, [])
 })
 

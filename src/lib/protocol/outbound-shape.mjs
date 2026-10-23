@@ -184,12 +184,15 @@ export function checkOfficial303Rules(body) {
     const marked = message.cache_control || (message.blocks || []).some((block) => block.cache_control)
     if (marked) problems.push(`messages[${i}] role=system carries a marker`)
   })
+  const userAt = messages.flatMap((message, i) => (message.role === 'user' ? [i] : []))
+  const expectedUsers = messages.length >= 4 && userAt.length >= 2 ? userAt.slice(-2) : userAt.slice(-1)
   const messageMarkers = shape.markers.at.filter((m) => m.where.startsWith('messages['))
-  if (messageMarkers.length !== 1) problems.push(`message markers ${messageMarkers.length} != 1`)
-  else if (!messageMarkers[0].where.startsWith(`messages[${lastUser}].`)) {
-    problems.push(`message marker at ${messageMarkers[0].where}, last user is messages[${lastUser}]`)
+  const markedUsers = messageMarkers.map((m) => Number(/^messages\[(\d+)\]/.exec(m.where)[1]))
+  if (markedUsers.join(',') !== expectedUsers.join(',')) {
+    problems.push(`message markers at [${markedUsers.join(',')}], expected users [${expectedUsers.join(',')}]`)
   }
-  if (shape.markers.total !== 3) problems.push(`markers ${shape.markers.total} != 3`)
+  const total = 2 + expectedUsers.length
+  if (shape.markers.total !== total) problems.push(`markers ${shape.markers.total} != ${total}`)
   const ttls = new Set(shape.markers.at.map((m) => m.ttl))
   if (ttls.size > 1) problems.push(`mixed marker TTLs ${[...ttls].join(',')}`)
   const tail = messages.slice(lastUser + 1)

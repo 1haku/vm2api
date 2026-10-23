@@ -89,9 +89,9 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'identity',
-      note: '官方身份句（Claude Agent SDK）',
+      note: '交互 CLI 身份句',
       type: 'text',
-      text: '{{identity}}',
+      text: '{{identity_cli}}',
     }),
     Object.freeze({
       id: 'agent',
@@ -168,7 +168,7 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       id: 'billing_zero',
       hide: true,
       type: 'text',
-      text: '{{billing_semi}} prompt_version=<{{identity_compact}}>',
+      text: '{{billing_semi}} prompt_version=<{{identity_cli}}>',
     }),
     Object.freeze({
       id: 'identity_slot',

@@ -6,7 +6,7 @@
  *   system[1] identity (marker)
  *   system[2] lean main prompt (marker)
  *   first user: <system-reminder> with non-official caller system, then the turn
- *   last user: last non-thinking block marked
+ *   last user, and the user before it once there are 4+ messages: last non-thinking block marked
  *   trailing role=system: Environment (no marker, after the last marker)
  *
  * The caller's markers never reach the wire. Every marker uses the panel TTL.
@@ -29,6 +29,7 @@ import {
 import { modelSupportsMidConversationSystem } from '../protocol/anthropic-policy.mjs'
 import { liftMidConversationSystemMessages } from '../protocol/sanitize.mjs'
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { stabilizeOfficialContextBudget } from '../protocol/outbound-attempt.mjs'
 
 const PROFILE = OFFICIAL_PROFILES['2.1.303']
 const ENV_HEADING = /^# Environment\b/m
@@ -75,13 +76,12 @@ function stripMessageMarkers(messages) {
   })
 }
 
-/** Billing never carries a marker; template markers take the panel TTL; at most three stay (latest kept). */
-function systemWithPanelMarkers(blocks, marker) {
+/** Billing never carries a marker; template markers take the panel TTL; at most `budget` stay (latest kept). */
+function systemWithPanelMarkers(blocks, marker, budget) {
   const next = blocks.map((block) => {
     if (isBillingText(block.text)) return withoutCacheControl(block)
     return block.cache_control ? { ...block, cache_control: { ...marker } } : block
   })
-  let budget = PROFILE.maxMarkers
   for (let i = next.length - 1; i >= 0; i--) {
     if (!next[i].cache_control) continue
     if (budget > 0) budget -= 1
@@ -134,6 +134,12 @@ function officialSystemContent(message) {
   return { ...message, content: block.text }
 }
 
+function markableUser(message) {
+  if (message?.role !== 'user') return false
+  if (typeof message.content === 'string') return Boolean(message.content.trim())
+  return Array.isArray(message.content) && message.content.some(markableBlock)
+}
+
 function lastUserIndex(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]?.role === 'user') return i
@@ -164,25 +170,32 @@ function markableBlock(block) {
   return true
 }
 
-function markLastUser(messages, marker) {
-  const index = lastUserIndex(messages)
-  if (index < 0) return messages
+function markUser(messages, index, marker) {
   const message = messages[index]
-  let content
   if (typeof message.content === 'string') {
-    if (!message.content.trim()) return messages
-    content = [{ type: 'text', text: message.content, cache_control: { ...marker } }]
-  } else if (Array.isArray(message.content)) {
-    const at = message.content.findLastIndex(markableBlock)
-    if (at < 0) return messages
-    content = message.content.slice()
-    content[at] = { ...content[at], cache_control: { ...marker } }
-  } else {
-    return messages
+    messages[index] = { ...message, content: [{ type: 'text', text: message.content, cache_control: { ...marker } }] }
+    return
   }
+  const at = message.content.findLastIndex(markableBlock)
+  const content = message.content.slice()
+  content[at] = { ...content[at], cache_control: { ...marker } }
+  messages[index] = { ...message, content }
+}
+
+/**
+ * The last user writes this turn. From 4 messages on, the user before it also
+ * carries a marker: it sits on the previous request's write, so a turn longer
+ * than the 20-block lookback still reads it instead of only system + tools.
+ */
+function markLastUsers(messages, marker) {
+  const users = []
+  for (let i = messages.length - 1; i >= 0 && users.length < 2; i--) {
+    if (markableUser(messages[i])) users.push(i)
+  }
+  if (users.length > 1 && messages.length < 4) users.pop()
   const next = messages.slice()
-  next[index] = { ...message, content }
-  return next
+  for (const index of users) markUser(next, index, marker)
+  return { messages: next, count: users.length }
 }
 
 function orderTopLevel(body) {
@@ -216,7 +229,8 @@ export function renderOfficial303Body(
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return body
   const model = String(body.model || '')
   const marker = panelMarker(cacheTtl)
-  const leftover = officialCaller ? '' : callerLeftover(callerSystem)
+  // The reminder sits before both message markers; a live token counter there would move every turn.
+  const leftover = officialCaller ? '' : stabilizeOfficialContextBudget(callerLeftover(callerSystem))
 
   const roleSystemTexts = body.messages.filter((message) => message?.role === 'system').flatMap(messageTexts)
   const facts = parseInboundEnvFacts([...systemTexts(callerSystem), ...roleSystemTexts])
@@ -233,7 +247,6 @@ export function renderOfficial303Body(
     model,
   })
   let system = renderPersonaTemplate(resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates), vars)
-  system = systemWithPanelMarkers(system, marker)
 
   let messages = stripMessageMarkers(body.messages).map((message) =>
     message?.role === 'system' ? officialSystemContent(message) : message,
@@ -265,10 +278,16 @@ export function renderOfficial303Body(
     }
   }
   if (leftover) messages = prependReminder(messages, leftover)
-  messages = markLastUser(messages, marker)
 
   let out = { ...body, system, messages }
   delete out.cache_control
+  // Lift before marking: merging the turns around a lifted role=system changes the user indexes.
   if (!modelSupportsMidConversationSystem(model)) out = liftMidConversationSystemMessages(out)
+  const marked = markLastUsers(out.messages, marker)
+  out = {
+    ...out,
+    system: systemWithPanelMarkers(out.system, marker, PROFILE.maxMarkers - marked.count),
+    messages: marked.messages,
+  }
   return orderTopLevel(out)
 }

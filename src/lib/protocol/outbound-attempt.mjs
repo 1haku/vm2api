@@ -95,7 +95,7 @@ export function stripCliOwnedSystem(system, { preserveCallerEnvironment = false 
 const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
 const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
 
-function stabilizeOfficialContextBudget(text) {
+export function stabilizeOfficialContextBudget(text) {
   const raw = String(text ?? '')
   if (!raw.includes('<total_tokens>')) return raw
   return raw.replace(VOLATILE_CONTEXT_BUDGET, OFFICIAL_CONTEXT_BUDGET)

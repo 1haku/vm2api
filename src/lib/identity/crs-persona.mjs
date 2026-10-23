@@ -11,7 +11,7 @@
  *             Agent is not injected.
  *             If the caller already sent an agent prompt, that text occupies
  *             the official agent slot. Console label: 官方提示词.
- *   zero    — 与 official_full 同 3 槽：billing（prompt_version 藏短身份）+ 零宽 identity 槽
+ *   zero    — 与 official_full 同 3 槽：billing（prompt_version 藏交互 CLI 身份句）+ 零宽 identity 槽
  *             + 零宽 agent 槽（5m cache）。无 agent 长文、无 Environment。Caller leftover 仍追加。
  *             客户端 usage 遮罩前三块。槽位 persona_preset 会覆盖全局，测 zero 必须槽上也是 zero。
  *   append  — attach the official identity line to the caller system
@@ -310,7 +310,7 @@ function boundedBillingIndex(value, min) {
   return n
 }
 
-/** 2.1.293 appends both indexes, or neither. Entrypoint stays sdk-cli. */
+/** 2.1.293 appends both indexes, or neither. */
 export function billingTurnSuffix(promptIndex, turnIndex) {
   const prompt = boundedBillingIndex(promptIndex, 0)
   const turn = boundedBillingIndex(turnIndex, 1)
@@ -376,7 +376,7 @@ export function buildBillingAttributionText(
   const fp = computeClaudeCodeFingerprint(firstUserText ?? '', ver)
   const promptId = billingPromptId(sessionId, firstUserText, ver)
   const tail = billingTurnSuffix(indexes?.promptIndex, indexes?.turnIndex)
-  return `x-anthropic-billing-header: cc_version=${ver}.${fp}; cc_entrypoint=sdk-cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${promptId};${tail}`
+  return `x-anthropic-billing-header: cc_version=${ver}.${fp}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${promptId};${tail}`
 }
 
 /** Add the billing block exactly once before the cli-node hop. */
@@ -736,7 +736,7 @@ export function configuredTimezone(identity = {}, facts = {}) {
 export function buildZeroBillingText(firstUserText, cliVersion = DEFAULT_CLI_VERSION, sessionId = '') {
   const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
   const header = billing.endsWith(';') ? billing : `${billing};`
-  return `${header} prompt_version=<${CRS_COMPACT_IDENTITY}>`
+  return `${header} prompt_version=<${CRS_OFFICIAL_CLI_SYSTEM}>`
 }
 
 function timezoneEnvBlock(env = {}, sourceTexts = []) {
@@ -1168,7 +1168,7 @@ function insertOfficialCallerAgent(system, callerAgent) {
   if (!text || !Array.isArray(system)) return system
   if (system.some((block) => String(block?.text || '').includes(text))) return system
   const block = { type: 'text', text, cache_control: { ...OFFICIAL_CALLER_AGENT_CACHE } }
-  const identityAt = system.findIndex((item) => item?.text === CRS_OFFICIAL_SYSTEM)
+  const identityAt = system.findIndex((item) => isStandaloneOfficialLine(item?.text || ''))
   const at = identityAt >= 0 ? identityAt + 1 : Math.min(system.length, 2)
   return [...system.slice(0, at), block, ...system.slice(at)]
 }

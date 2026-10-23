@@ -45,11 +45,11 @@ export const OFFICIAL_PROFILES = Object.freeze({
     ]),
     messages: Object.freeze({
       reminder: 'first_user_head',
-      marker: 'last_user',
+      marker: 'last_two_users',
       environment: 'tail_system_message',
     }),
     environmentFallback: 'merge_into_main',
-    maxMarkers: 3,
+    maxMarkers: 4,
     ttlSource: 'panel',
     autoFill: Object.freeze([]),
   }),
