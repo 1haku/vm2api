@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。
+
 ## 1.3.221 — 2026-10-23
 
 - 新增提示词档「官方 2.1.303（按模型）」`official_303`，手动选择，默认档仍是官方完整提示词。Opus 4.8 / 5 / 5.5、Fable、Mythos 等按 2.1.303 样本组装：system 为 billing、身份句、2.1.303 主提示词；调用方 system 放进第一条 user 的 `<system-reminder>`（官方调用方的 system 不出站，`<total_tokens>` 计数先抹平）；Environment 作为尾部 role=system，只替换 `# Environment` 段；断点为身份句、主提示词、最后一条 user，4 条消息起再加上一条 user（共 3–4 个），TTL 取面板缓存 TTL。Sonnet、Haiku、Opus 4.0–4.7 沿用现有 cli-hop 结构（含 1.3.218 的两个 user 断点），只把版本号换成 2.1.303。
@@ -10,10 +12,11 @@
 - 选 303 档的槽位 UA、billing `cc_version` 与 CCH 输入为 2.1.303，按 job 热读 kernel.json，不重启槽位；其余四档仍为 2.1.296。
 - 设置 → 协议新增只读「当前出站参照」：按已保存的全局档位列出提示词档、CLI 版本、UA、billing `cc_version` 与 OAuth beta 样例（`GET /api/panel/outbound-profile`）。协议页保存逻辑不变。
 - 新增 `scripts/outbound-shape.mjs`（出站 body 归约成脱敏结构，与 2.1.303 骨架逐项对照；`--wire` 校验 CLI 最终字节）与 `scripts/outbound-replay.mjs`（私有 fixture 经真实 kernel + cli-node 链路回放并判定）。
-- manifest 钉住 `cli-node-303-944f6457`（`944f6457`）。cli-node 出站前剥离 `kin_outbound_shape`；补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。控制面的出站参照 UA 同步为 `cli`，Node → worker 的 envelope 日志不冒充 CLI 最终请求头。
+- 控制面的出站参照 UA 同步为 `cli`，Node → worker 的 envelope 日志不冒充 CLI 最终请求头。
+- payload 改钉 cli-node `944f6457`（附件 `cli-node-303-944f6457`）：在 1.3.220 的 CCH system-only 修复上加 profile 模式（`official_303`）并锁 `cc_entrypoint=cli`。
 - 仓库自带的 `src/config/routing.json` 默认请求日志模式由 `debug` 改为 `normal`（普通）；Debug 需在 设置 → 日志 手动切换，或用 `KIN_REQUEST_LOG_MODE=debug` / 单请求 `X-Kin-Debug: 1`。已部署机的 `routing.json` 不被覆盖，现有档位保持不变。
 
-已部署机升级：须 `npm run fetch:payload`（或等价方式）换上 manifest 钉住的 **新** cli-node（`cli-node-303-944f6457`），并同时更新 Node 控制面与 `web/dist`。**勿**在旧 cli-node（含 1.3.220 的 `b5054cb8` / `cli-node-cch-system-only-b5054cb8` 或其它历史 pin）上启用 `official_303`——旧二进制会把 `kin_outbound_shape` 当调用方字段转发，上游 400。新增 profile 模式与 `cc_entrypoint=cli`；除 billing 外，不选 303 档时出站结构对齐新 cli-node。勿做集群 sync、勿 recreate 槽位。回滚到旧版本后，旧面板不接受 `official_303`，需在 system提示词页重新选档再保存。OMP 工具图片尾置仍未恢复，另行处理。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+已部署机升级：需要同时更新 Node 控制面、`web/dist` 与 cli-node（`npm run fetch:payload` 换上 `944f6457` 后 `wrap-cli/sync`；新 cli-node 已含 1.3.220 的 CCH 修复，不必再跑 `fix-cli-cch`；除 billing 外，不选 303 档时出站结构与 `b5054cb8` 一致）。槽内已是 `944f6457` 的机器 `SLOT_SYNC=skip`。**新 cli-node 上线前不要选 303 档**：旧 cli-node 会把 `kin_outbound_shape` 当调用方字段转发，上游 400。回滚到旧版本后，旧面板不接受 `official_303`，需在 system提示词页重新选档再保存。OMP 工具图片尾置仍未恢复，另行处理。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.3.220 — 2026-10-23
 
