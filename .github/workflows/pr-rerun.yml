@@ -1,6 +1,6 @@
 # When main's ci goes from red back to green, re-run open PRs whose latest ci
 # failed: they may have failed only because main itself was broken. test.yml
-# checks out the live merge ref, so the re-run tests against the fixed main.
+# merges the current base first, so the re-run tests against the fixed main.
 name: pr-rerun
 
 on:

@@ -24,9 +24,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # A re-run reuses the triggering SHA; fetch the live merge ref instead
-          # so re-running a PR tests it against today's main.
-          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || '' }}
+          fetch-depth: 0
+      - name: merge current base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # refs/pull/<n>/merge keeps the base from the PR's last push and a
+          # re-run reuses it; merge today's base so a re-run tests against it.
+          git fetch --no-tags origin "$BASE_REF"
+          git -c user.name=ci -c user.email=ci@localhost merge --no-edit FETCH_HEAD
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
