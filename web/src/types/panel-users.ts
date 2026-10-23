@@ -8,6 +8,7 @@ export type PanelUser = {
   vm_create_quota?: number
   concurrency?: number
   rpm_limit?: number
+  image_generation_enabled?: boolean
   created_at?: string
   last_login_at?: string
 }

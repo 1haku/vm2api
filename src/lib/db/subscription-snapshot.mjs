@@ -49,6 +49,11 @@ export function subscriptionSnapshot(db) {
             outbound_session_id: row.outbound_session_id ?? null,
             // Upstream 041 adds only a nullable inbound device identifier.
             inbound_device_id: row.inbound_device_id ?? null,
+            image_model: row.image_model ?? null,
+            image_usage: row.image_usage ?? null,
+            image_input_tokens: row.image_input_tokens ?? 0,
+            image_output_tokens: row.image_output_tokens ?? 0,
+            image_cost: row.image_cost ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
             web_search_requests: row.web_search_requests ?? 0,
@@ -168,6 +173,10 @@ export function subscriptionSnapshot(db) {
     ? db.prepare('SELECT * FROM custom_request_rpm_events').all()
     : []
   state.rpm_events = { count: rpmEvents.length, hash: digest(rpmEvents) }
+  const imagePermissions = exists(db, 'custom_user_image_permissions')
+    ? db.prepare('SELECT * FROM custom_user_image_permissions').all()
+    : []
+  state.image_permissions = { count: imagePermissions.length, hash: digest(imagePermissions) }
   return state
 }
 
@@ -204,4 +213,6 @@ export function verifySubscriptionSchema(db) {
     throw new Error('Custom migration 005 missing')
   if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='006'").get())
     throw new Error('Custom migration 006 missing')
+  if (!db.prepare("SELECT 1 FROM custom_schema_migrations WHERE version='007'").get())
+    throw new Error('Custom migration 007 missing')
 }

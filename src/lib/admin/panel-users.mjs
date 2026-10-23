@@ -8,6 +8,7 @@
 import crypto from 'node:crypto'
 import { resolveStoreDb, withTransaction } from '../db/database.mjs'
 import { RequestLimitsRepo, requestLimit } from '../db/repos/request-limits-repo.mjs'
+import { ImagePermissionsRepo } from '../db/repos/image-permissions-repo.mjs'
 import { UsersRepo } from '../db/repos/users-repo.mjs'
 import { clampVmCreateQuota } from './resource-owner.mjs'
 import { reclaimAssignedVms } from '../vm/vm-registry.mjs'
@@ -114,6 +115,7 @@ export function publicUserView(rec) {
     vm_create_quota: clampVmCreateQuota(rec.vm_create_quota, 0),
     concurrency: rec.concurrency ?? (rec.role === 'admin' ? 0 : 5),
     rpm_limit: rec.rpm_limit ?? 0,
+    image_generation_enabled: rec.image_generation_enabled === true,
     created_at: rec.created_at,
     updated_at: rec.updated_at,
     last_login_at: rec.last_login_at || null,
@@ -137,7 +139,13 @@ export class PanelUserStore {
   }
 
   withLimits(rec) {
-    return rec ? { ...rec, ...new RequestLimitsRepo(this.db).userLimits(rec) } : null
+    return rec
+      ? {
+          ...rec,
+          ...new RequestLimitsRepo(this.db).userLimits(rec),
+          image_generation_enabled: new ImagePermissionsRepo(this.db).enabled(rec.id),
+        }
+      : null
   }
 
   getById(id) {
@@ -253,6 +261,8 @@ export class PanelUserStore {
     next.updated_at = nowIso()
     return withTransaction(this.db, () => {
       new RequestLimitsRepo(this.db).saveUser(next, patch)
+      if (Object.hasOwn(patch, 'image_generation_enabled'))
+        new ImagePermissionsRepo(this.db).save(next.id, patch.image_generation_enabled)
       return this.withLimits(this.repo.update(next))
     })
   }

@@ -544,6 +544,9 @@ function EditUserForm({
   const [quota, setQuota] = useState(user.vm_create_quota ?? 0)
   const [concurrency, setConcurrency] = useState(user.concurrency ?? 5)
   const [rpm, setRpm] = useState(user.rpm_limit ?? 0)
+  const [imageEnabled, setImageEnabled] = useState(
+    user.image_generation_enabled === true
+  )
 
   const patch = useMutation({
     mutationFn: () =>
@@ -555,6 +558,7 @@ function EditUserForm({
           vm_create_quota: quota,
           concurrency,
           rpm_limit: rpm,
+          image_generation_enabled: imageEnabled,
         }),
       }),
     onSuccess: async () => {
@@ -576,6 +580,19 @@ function EditUserForm({
       <DialogHeader>
         <DialogTitle>编辑 {user.username}</DialogTitle>
       </DialogHeader>
+      <div className='flex items-center justify-between gap-4 rounded-lg border p-3'>
+        <div>
+          <Label htmlFor='user-image-generation'>允许生图</Label>
+          <p className='text-xs text-muted-foreground'>
+            适用于该用户所有密钥，生图费用计入订阅额度。
+          </p>
+        </div>
+        <Switch
+          id='user-image-generation'
+          checked={imageEnabled}
+          onCheckedChange={setImageEnabled}
+        />
+      </div>
       <RoleFields
         role={role}
         setRole={setRole}

@@ -4,7 +4,7 @@ import { isCodexVm } from '../../vm/vm-kind.mjs'
 import { requestLimit } from './request-limits-repo.mjs'
 import crypto from 'node:crypto'
 import { getDb, withTransaction } from '../database.mjs'
-import { calculateCost, shanghaiDayStartIso } from '../../admin/pricing.mjs'
+import { calculateCost, imageCostFromUsage, shanghaiDayStartIso } from '../../admin/pricing.mjs'
 import { estimateSubscriptionReservationInput } from '../../admin/subscription-estimate.mjs'
 
 const DAY = 86400000
@@ -373,7 +373,7 @@ export class SubscriptionsRepo {
     }
   }
 
-  reserve(key, requestId, body) {
+  reserve(key, requestId, body, { imageOnly = false } = {}) {
     return withTransaction(this.db, () => {
       const sub = this.entitlement(key)
       if (!sub) return null
@@ -391,10 +391,12 @@ export class SubscriptionsRepo {
           503,
           'subscription_window_pending',
         )
-      const input = estimateSubscriptionReservationInput(body)
+      const input = estimateSubscriptionReservationInput(
+        imageOnly ? { model: body.model, input: body.prompt || '' } : body,
+      )
       const requestedOutput = Number(body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? 16384)
       if (!Number.isFinite(requestedOutput) || requestedOutput < 1) throw subscriptionError('输出 Token 上限无效')
-      const estimate = calculateCost(
+      let estimate = calculateCost(
         {
           input_tokens: input.tokens,
           output_tokens: requestedOutput,
@@ -403,6 +405,22 @@ export class SubscriptionsRepo {
         },
         body.model,
       )
+      if (imageOnly) {
+        // Use the upstream image rate, not GPT Image's zero text-output rate.
+        // Reserve an output budget per image; actual settlement uses reported usage.
+        const count = number(body.n, 1, 1, 100)
+        if (!Number.isInteger(count)) throw subscriptionError('图像数量须为整数')
+        const inputs = (Array.isArray(body.images) ? body.images.length : body.image ? 1 : 0) + (body.mask ? 1 : 0)
+        const image = imageCostFromUsage(
+          {
+            input_tokens: input.tokens + inputs * 8192,
+            input_tokens_details: { text_tokens: input.tokens, image_tokens: inputs * 8192 },
+            output_tokens: 16384 * count,
+          },
+          body.model,
+        )
+        estimate = { ...image, total_cost: image.image_cost }
+      }
       const limited = sub.group.daily_limit_usd > 0 || sub.group.weekly_limit_usd > 0
       if (limited && !estimate?.known)
         throw subscriptionError('此模型尚未配置计价，无法使用限额订阅', 403, 'subscription_unpriced_model')

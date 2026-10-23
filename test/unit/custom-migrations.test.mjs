@@ -14,6 +14,29 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { RequestLimitsRepo } from '../../src/lib/db/repos/request-limits-repo.mjs'
 import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 
+test('042 and custom 007 add image defaults without changing historical spend or enabling users', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-migrations-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  db.exec(
+    "INSERT INTO usage_logs(id,request_id,created_at,user_id,actual_cost,total_cost,input_tokens) VALUES('old-image','old-image','2026-10-22T00:00:00Z','owner',1.25,1.25,100)",
+  )
+  for (const column of ['image_model', 'image_usage', 'image_input_tokens', 'image_output_tokens', 'image_cost'])
+    db.exec('ALTER TABLE usage_logs DROP COLUMN ' + column)
+  db.exec("DELETE FROM schema_migrations WHERE version='042'")
+  db.exec('DROP TABLE custom_user_image_permissions')
+  db.exec("DELETE FROM custom_schema_migrations WHERE version='007'")
+  const before = subscriptionSnapshot(db)
+  applyMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_user_image_permissions').get().n, 0)
+  db.exec("UPDATE usage_logs SET image_cost=1 WHERE id='old-image'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)))
+})
+
 test('006 adds daily reset defaults without changing subscriptions and detects changed reset markers', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-reset-migration-'))
   const db = createDatabase({ dataDir: dir })
@@ -342,7 +365,7 @@ test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions
     db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
     '027_usage_logs_session_effort.sql',
   )
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 6)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 7)
   assert.equal(db.prepare('SELECT action FROM custom_subscription_events').get().action, 'sentinel')
 })
 

@@ -2,6 +2,12 @@
 
 ## 版本与功能
 
+合入上游 v1.3.219（`f57d0cfc`）：兼容上游近期历史重写，采用其当前已回退的官方透传实现，同时保留 fork 历史、订阅槽位权限、用户日志隔离和实际结算。新增图像接口及 042 图像日志列，副本迁移只允许新列的 NULL/0 默认值，历史费用和归属不重写；KVM guest-exec 退出码、双 user 缓存断点和上游租户限制同步保留。
+
+Responses Lite 修复：携带 `x-openai-internal-codex-responses-lite: true` 的最终 Codex 请求固定 `parallel_tool_calls=false`、`reasoning.context=all_turns`，普通请求不改并行工具设置；不修改输入历史，重试、HTTP 和 WebSocket 使用同一出站路径。已用真实小请求复现 Lite+true 的 400 和 Lite+false 的 200。失败日志补记上游错误消息。
+
+生图按用户授权：定制迁移 007 创建独立权限表，默认不开放；管理员在用户编辑页切换「允许生图」，作用于该用户所有密钥，并检查 Images 端点和 Responses 生图工具（包括模型映射后）。部署按用户指示仅为 `admin` 开启。生图接入原有订阅准入、并发/RPM、预留释放与实际费用结算；沿用上游图像价格，独立 Images 请求按每张 16,384 输出 Token、每张输入图 8,192 Token 的预算预留，Base64 不当文本估算，最终仅按上游 usage 记账。master 属于管理员凭据，普通用户无法授予自身生图权限。
+
 合入上游 v1.3.214（`ff1b9bc3`，含 1.3.209–213）：修复 Responses 首次真实输出前的失败切换，新增官方 Claude Code/Codex 内容透传并继续按槽位重建会话；出站日志记录最终 worker envelope，JEV 保留消息来源；修复窄屏布局、官方登录启动和 KVM 终端 HOME。只更新 kin-computer 闭源资产及 Go worker，不重新生成现有槽位身份；既有单文件 worker 挂载需在空闲时重载原容器刷新，保留容器 ID。无数据库迁移及新依赖；保留独立日重置、实际计费、用户隔离、官方周窗口、128 MiB、Turnstile 和 GPTPlus/vm-02 优先级，官方透传开关沿用线上配置。发布检查增加官方透传、最终 envelope、容器缺失处理和 KVM 终端回归。
 
 合入上游 v1.3.208（`593d465a`，含 1.3.207）：遥测设置重做并新增 1 分钟至 24 小时的上传间隔，默认 10 分钟；修复仅有官方 userID 时的遥测身份读取，移除旧 persona_rules 白名单规则。采用上游最终回退后的请求体布局，仅补齐 cli-hop 计费标头，最终闭源 payload 与 1.3.206 相同。无数据库迁移和新依赖；保留独立日重置、订阅账本及额度预估、日志隔离、Turnstile、128 MiB、vm-02 与 GPTPlus 的优先设置。升级控制面与 Go worker，按既有遥测开关仅更新 Claude 遥测旁路，不重建账号容器。

@@ -23,7 +23,7 @@ const { PanelUserStore } = await import('../../src/lib/admin/panel-users.mjs')
 const { parseAllowedVms } = await import('../../src/lib/admin/key-scope.mjs')
 const { createVmPool } = await import('../../src/lib/admin/vm-pools.mjs')
 const { VmPoolsRepo } = await import('../../src/lib/db/repos/vm-pools-repo.mjs')
-const { createDatabase } = await import('../../src/lib/db/database.mjs')
+const { createDatabase, openDatabase, closeDatabase } = await import('../../src/lib/db/database.mjs')
 const { SubscriptionsRepo } = await import('../../src/lib/db/repos/subscriptions-repo.mjs')
 const { createPanelSession, verifyPanelSession } = await import('../../src/lib/core/security.mjs')
 const { readCodexAccounts, upsertCodexAccount } = await import('../../src/lib/vm/codex-slot.mjs')
@@ -300,6 +300,53 @@ test('subscribers can select only assigned active plans and their slots without 
     { apiKeyStore: store },
   ).call('POST', '/api/panel/api-keys')
   assert.ok([400, 403].includes(revoked.status))
+})
+
+test('tenant cannot delete a self-created slot; admin still can', async (t) => {
+  const root = makeProject(t)
+  openDatabase({ dbPath: ':memory:' })
+  t.after(() => closeDatabase())
+  writeVm(root, {
+    id: 'vm-mine',
+    platform: 'anthropic',
+    family: 'claude',
+    owner_user_id: 'u-1',
+    origin: 'user_created',
+  })
+  const tenantDel = await makeHandler(root, TENANT, {}, {}).call('DELETE', '/api/panel/vms/vm-mine')
+  assert.equal(tenantDel.status, 403)
+  assert.equal(tenantDel.body?.error?.code, 'forbidden')
+  assert.ok(fs.existsSync(path.join(root, 'vms', 'vm-mine.json')))
+
+  const adminDel = await makeHandler(root, ADMIN, {}, {}).call('DELETE', '/api/panel/vms/vm-mine')
+  assert.equal(adminDel.status, 200, JSON.stringify(adminDel.body))
+  assert.equal(adminDel.body?.data?.deleted, 'vm-mine')
+})
+
+test('only admins can create or switch keys to the API category', async (t) => {
+  const { root, store, key } = keyFixture(t)
+  const before = store.list().length
+  const create = await makeHandler(root, TENANT, { name: 'direct', category: 'api' }, { apiKeyStore: store }).call(
+    'POST',
+    '/api/panel/api-keys',
+  )
+  assert.equal(create.status, 403)
+  assert.equal(create.body.error.code, 'key_category_forbidden')
+  assert.equal(store.list().length, before)
+
+  const patch = await makeHandler(root, TENANT, { category: ' API ' }, { apiKeyStore: store }).call(
+    'PATCH',
+    `/api/panel/api-keys/${key.id}`,
+  )
+  assert.equal(patch.status, 403)
+  assert.equal(store.getById(key.id).category, 'oauth')
+
+  const admin = await makeHandler(root, ADMIN, { category: 'api' }, { apiKeyStore: store }).call(
+    'PATCH',
+    `/api/panel/api-keys/${key.id}`,
+  )
+  assert.equal(admin.status, 200, JSON.stringify(admin.body))
+  assert.equal(store.getById(key.id).category, 'api')
 })
 
 test('admin key edits keep user_id, group_id and any slot', async (t) => {

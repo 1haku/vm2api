@@ -2,7 +2,14 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
-  'official-passthrough',
+  'gpt-model-policy',
+  'codex-models',
+  'resource-owner',
+  'pricing-view',
+  'codex-image-tool',
+  'handle-codex-images',
+  'image-edit-multipart',
+  'image-tool-models',
   'outbound-log-envelope',
   'docker-inspect-outcome',
   'fleet-telemetry-inspect',
@@ -231,6 +238,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'image-permissions',
   'responses-ws-subscriptions',
   'vm-test-schedule',
   'slot-credential-clear',

@@ -71,6 +71,7 @@ import { getModelPolicy, saveModelPolicy, resetModelPolicy, listPolicyModels } f
 import {
   getGptModelPolicy,
   listGptPolicyModels,
+  listImageToolModels,
   saveGptModelPolicy,
   resetGptModelPolicy,
 } from '../protocol/gpt-model-policy.mjs'
@@ -884,6 +885,14 @@ export function createPanelHandler(ctx) {
     return normalized
   }
 
+  function isApiCategory(value) {
+    return (
+      String(value || '')
+        .trim()
+        .toLowerCase() === 'api'
+    )
+  }
+
   /** Slots a key may be scoped to; a tenant's foreign slots read as missing. */
   function keyScopeVms(req, key = {}) {
     const ident = panelIdentity(req)
@@ -1637,6 +1646,12 @@ export function createPanelHandler(ctx) {
             error: { code: 'key_pool_forbidden', message: '只有管理员可以设置账号池' },
           })
         }
+        if (ident.role !== 'admin' && isApiCategory(body?.category)) {
+          return json(res, 403, {
+            ok: false,
+            error: { code: 'key_category_forbidden', message: '只有管理员可以创建 API 直连密钥' },
+          })
+        }
         const input = normalizePanelApiKeyInput(body, req)
         try {
           new SubscriptionsRepo(apiKeyStore.db).assertKey(
@@ -1704,6 +1719,12 @@ export function createPanelHandler(ctx) {
           return json(res, 403, {
             ok: false,
             error: { code: 'key_pool_forbidden', message: '只有管理员可以设置账号池' },
+          })
+        }
+        if (ident.role !== 'admin' && isApiCategory(body?.category)) {
+          return json(res, 403, {
+            ok: false,
+            error: { code: 'key_category_forbidden', message: '只有管理员可以创建 API 直连密钥' },
           })
         }
         try {
@@ -5083,7 +5104,17 @@ export function createPanelHandler(ctx) {
         if (platform === 'openai' || platform === 'gpt' || platform === 'codex') {
           const pol = getGptModelPolicy()
           const models = listGptPolicyModels()
-          return json(res, 200, panel.ok({ policy: pol, models, effective: models, platform: 'openai' }))
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: pol,
+              models,
+              effective: models,
+              image_tools: listImageToolModels(),
+              platform: 'openai',
+            }),
+          )
         }
         const pol = getModelPolicy()
         return json(
@@ -5103,7 +5134,17 @@ export function createPanelHandler(ctx) {
         if (platform === 'openai' || platform === 'gpt' || platform === 'codex') {
           const saved = saveGptModelPolicy(body.policy || body)
           const models = listGptPolicyModels()
-          return json(res, 200, panel.ok({ policy: saved, models, effective: models, platform: 'openai' }))
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: saved,
+              models,
+              effective: models,
+              image_tools: listImageToolModels(),
+              platform: 'openai',
+            }),
+          )
         }
         const saved = saveModelPolicy(body.policy || body)
         seedModelCatalog()
@@ -5125,7 +5166,17 @@ export function createPanelHandler(ctx) {
         if (platform === 'openai' || platform === 'gpt' || platform === 'codex') {
           const saved = resetGptModelPolicy()
           const models = listGptPolicyModels()
-          return json(res, 200, panel.ok({ policy: saved, models, effective: models, platform: 'openai' }))
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: saved,
+              models,
+              effective: models,
+              image_tools: listImageToolModels(),
+              platform: 'openai',
+            }),
+          )
         }
         const saved = resetModelPolicy()
         seedModelCatalog()
@@ -5235,6 +5286,7 @@ export function createPanelHandler(ctx) {
             policy: getGptModelPolicy(),
             models: listGptPolicyModels(),
             effective: listGptPolicyModels(),
+            image_tools: listImageToolModels(),
             platform: 'openai',
             synced: result.synced,
             source: result.source,

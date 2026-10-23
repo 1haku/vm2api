@@ -59,6 +59,15 @@ export function ownerScopeFromRequest(req, usersRepo = null) {
     const sub = new SubscriptionsRepo(db).entitlement(rec)
     if (sub) return { type: 'subscription', vmIds: sub.vmIds, groupId: sub.group_id, key: rec }
   }
+  // 面板会话没有 apiKeyRecord，必须按会话角色收窄，否则租户会落到平台池
+  if (!rec && req?.panelUser && req?.apiKeyKind !== 'master') {
+    const role = String(req.panelRole || '')
+      .trim()
+      .toLowerCase()
+    if (role === 'admin' || role === 'super') return PLATFORM_SCOPE
+    const userId = normalizeOwnerId(req.panelUserId)
+    return userId ? { type: 'user', userId } : { type: 'none' }
+  }
   let ownerRole = null
   const userId = normalizeOwnerId(rec?.user_id)
   if (userId && usersRepo?.getById) {
@@ -103,10 +112,6 @@ export function countUserCreatedVms(vms, userId) {
   const owner = normalizeOwnerId(userId)
   if (!owner) return 0
   return (vms || []).filter((vm) => vmOwnerId(vm) === owner && vmOriginOf(vm) === VM_ORIGIN.userCreated).length
-}
-
-export function canUserDeleteVm(vm, userId) {
-  return vmOwnerId(vm) === normalizeOwnerId(userId) && vmOriginOf(vm) === VM_ORIGIN.userCreated
 }
 
 export function canBindProxyToVm(proxy, vm, { role } = {}) {

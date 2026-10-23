@@ -47,6 +47,20 @@ function setup(t, config = {}) {
 }
 const body = { model: 'claude-sonnet-4-6', max_tokens: 100, messages: [{ role: 'user', content: 'hello' }] }
 
+test('image admission reserves image output rates and settles actual cost once with normal quota enforcement', (t) => {
+  const { repo, db, a } = setup(t, { daily_limit_usd: 2, weekly_limit_usd: 3, subscription_concurrency: 3 })
+  const input = { model: 'gpt-image-2.5-flare', prompt: 'a square', n: 2 }
+  const admitted = repo.reserve(a, 'images', input, { imageOnly: true })
+  assert.ok(admitted.reserved >= 0.98304, 'two images must reserve image-output cost, not zero text-output cost')
+  assert.throws(() => repo.reserve(a, 'too-many', { ...input, n: 10 }, { imageOnly: true }), /额度/)
+  assert.throws(() => repo.reserve(a, 'unknown', { ...input, model: 'unknown-image' }, { imageOnly: true }), /计价/)
+  repo.settle('images', admitted.id, 0.0321)
+  repo.settle('images', admitted.id, 0.0321)
+  assert.equal(repo.list('a')[0].daily_used, 0.0321)
+  assert.equal(repo.list('a')[0].weekly_used, 0.0321)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+})
+
 test('long history reservation is bounded by catalog context while pending, balance and settlement stay enforced', (t) => {
   const { repo, db, a } = setup(t, { daily_limit_usd: 150, weekly_limit_usd: 375, subscription_concurrency: 10 })
   const settings = new SettingsRepo(db)
