@@ -1,7 +1,7 @@
 name: oneshot-cut-220
 # ephemeral tip-cut helper — delete after v1.3.220 ships
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 jobs:
   cut:
     runs-on: ubuntu-latest
