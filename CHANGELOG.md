@@ -2,7 +2,7 @@
 
 ## 未发布
 
-- 303 环境块的模型句覆盖官方 catalog。lean 模型走 `officialModelLine`；Sonnet、Haiku、Opus 4.0–4.7 的 full 路径只看 `role=system` 的 `# Environment` 块，缺句时追加到该块末尾，不另建消息。用户或助手正文里引用同一句不算已有。`auto` 仍是 `You are powered by the model auto.`，未知 id 仍只报 id。cli-node 自己组环境时用同一整句，1M 后缀为 `(1M context)`。`cc_entrypoint` 已是 `sdk-cli`，未再改。
+- system提示词新增按模型附加：`model_env_extra` 里每个模型 id 一句，模板用 `{{model_sentence}}` 取当前模型的那一句，追加在 Environment 之后。没配置的模型不追加。官方完整和 303 的内置模板带这块，可在页面改写或清空。出站不再按模型写死句子。
 - 网关生成的 billing 与 cli-node 缺失 billing 时的兜底头改为 `cc_entrypoint=sdk-cli`，与 2.1.303 抓包一致；调用方自带的 billing 不改写。出站 UA 已是 `(external, sdk-cli)`，`cc_turn_origin` 仍为 `sdk`。所有档位的出站 billing 字节随之变化，各会话首轮重建一次缓存。
 - 请求日志的 `outbound_headers` 改为新 cli-node 在最终 fetch 前回传的脱敏请求头，新增采集来源；Node → worker 中间头另存 `worker_envelope_headers`。流式与非流式入站均支持，内部事件不发给客户端、不触发提交或上游 idle 计时；旧 CLI 未回传时明确显示未获取，旧日志不冒充最终值。需同时更新 Node、web 与新 cli-node；本轮尚未发布 payload 或部署。
 - cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。

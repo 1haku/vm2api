@@ -115,6 +115,7 @@ export const PERSONA_TEMPLATE_VARS: [string, string][] = [
     'env_303',
     '官方 2.1.303 Environment 段（槽位身份 + 调用方 cwd / git / shell）',
   ],
+  ['model_sentence', '当前模型的官方模型句，追加在 Environment 之后，可在本页改写'],
 ]
 
 export const OVERLAY_TEMPLATE_VARS: [string, string][] = [
@@ -201,6 +202,13 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         cache_control: { type: 'ephemeral', ttl: '1h' },
       },
       {
+        id: 'env_extra',
+        note: 'Environment 之后的附加段。默认是当前模型句，可在本页改写或清空',
+        drop_if_empty: true,
+        type: 'text',
+        text: '{{model_sentence}}',
+      },
+      {
         id: 'caller_system',
         note: '调用方 system 仍追加在完整提示词之后',
         drop_if_empty: true,
@@ -264,6 +272,13 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         type: 'text',
         text: '{{agent_standing}}{{main_prompt_303}}',
         cache_control: { type: 'ephemeral' },
+      },
+      {
+        id: 'env_extra',
+        note: 'Environment 之后的附加段。默认是当前模型句，可在本页改写或清空',
+        drop_if_empty: true,
+        type: 'text',
+        text: '{{model_sentence}}',
       },
     ],
   }

@@ -55,6 +55,7 @@ export const PERSONA_TEMPLATE_VARS = Object.freeze([
   Object.freeze(['session_id', '出站会话 id']),
   Object.freeze(['main_prompt_303', '官方 2.1.303 lean 主提示词（记忆目录按槽位填写）']),
   Object.freeze(['env_303', '官方 2.1.303 Environment 段（槽位身份 + 调用方 cwd / git / shell）']),
+  Object.freeze(['model_sentence', '当前模型的官方模型句，追加在 Environment 之后，可在本页改写']),
 ])
 
 export const OVERLAY_TEMPLATE_VARS = Object.freeze([
@@ -144,6 +145,13 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
     }),
     Object.freeze({
+      id: 'env_extra',
+      note: 'Environment 之后的附加段。默认是当前模型句，可在 system提示词页改写或清空',
+      drop_if_empty: true,
+      type: 'text',
+      text: '{{model_sentence}}',
+    }),
+    Object.freeze({
       id: 'caller_system',
       note: '调用方 system 仍追加在完整提示词之后',
       drop_if_empty: true,
@@ -207,6 +215,13 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       type: 'text',
       text: '{{agent_standing}}{{main_prompt_303}}',
       cache_control: Object.freeze({ type: 'ephemeral' }),
+    }),
+    Object.freeze({
+      id: 'env_extra',
+      note: 'Environment 之后的附加段。默认是当前模型句，可在 system提示词页改写或清空',
+      drop_if_empty: true,
+      type: 'text',
+      text: '{{model_sentence}}',
     }),
   ]),
 })

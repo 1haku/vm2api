@@ -46,7 +46,6 @@ import {
   CRS_AGENT_EXPANSION,
   CRS_OFFICIAL_AGENT_IDENTITY,
 } from '../identity/official-cc-system-2.1.241.mjs'
-import { officialModelLine } from '../identity/official-profiles.mjs'
 import {
   applyCacheTtlToBody,
   applyMessageBreakpoints,
@@ -274,43 +273,6 @@ function stripEagerInputStreaming(tools) {
   return changed ? next : tools
 }
 
-const MODEL_SENTENCE_RE = /You are powered by the model(?: named)? /
-const ENV_HEADING = /^# Environment\b/m
-
-function environmentText(message) {
-  if (message?.role !== 'system') return ''
-  const content = message.content
-  if (typeof content === 'string') return ENV_HEADING.test(content) ? content : ''
-  if (!Array.isArray(content)) return ''
-  const block = content.find((item) => item?.type === 'text' && ENV_HEADING.test(String(item.text || '')))
-  return typeof block?.text === 'string' ? block.text : ''
-}
-
-function withEnvironmentText(message, text) {
-  if (typeof message.content === 'string') return { ...message, content: text }
-  const content = message.content.slice()
-  const at = content.findIndex((item) => item?.type === 'text' && ENV_HEADING.test(String(item.text || '')))
-  content[at] = { ...content[at], text }
-  return { ...message, content }
-}
-
-/**
- * Full-prompt models keep the caller's environment message. The sentence belongs
- * in that block, after the environment lines. A quote in user or assistant text
- * is not the sentence.
- */
-function ensureModelSentence(body, { oneM = false } = {}) {
-  if (!body || !Array.isArray(body.messages)) return body
-  const sentence = officialModelLine(body.model, { oneM })
-  if (!sentence) return body
-  const at = body.messages.findLastIndex((message) => environmentText(message))
-  if (at < 0) return body
-  const text = environmentText(body.messages[at])
-  if (MODEL_SENTENCE_RE.test(text)) return body
-  const messages = body.messages.slice()
-  messages[at] = withEnvironmentText(body.messages[at], `${text.replace(/\s+$/, '')}\n\n${sentence}`)
-  return { ...body, messages }
-}
 /**
  * Caller fields plus Node-owned message breakpoints.
  * CLI owns persona layout and system/tools markers; kernel only forwards.
@@ -361,7 +323,6 @@ export function prepareCliHopBody(
     body = stabilizeMessageBudgets(body)
   }
   // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
-  if (!lean && !requestContext) body = ensureModelSentence(body, { oneM: hasClaudeCode1mSuffix(body.model) })
   if (!lean && !modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
   if (!preserveSystem && !lean) body = collapseSystemBudgetReminders(body)
 

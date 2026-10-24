@@ -73,7 +73,7 @@ import {
   templatePresetFor,
   OFFICIAL_303_PRESET,
 } from './persona-template.mjs'
-import { buildOfficial303Environment, renderOfficial303MainPrompt } from './official-profiles.mjs'
+import { buildOfficial303Environment, officialModelLine, renderOfficial303MainPrompt } from './official-profiles.mjs'
 
 export {
   AGENT_EXPANSION_CACHE_CONTROL,
@@ -131,6 +131,18 @@ export const CLAUDE_CODE_SECURITY_MONITOR_MARKERS = Object.freeze([
   '## Output Format',
 ])
 
+/** Panel map: model id → text appended after Environment. Unlisted models add nothing. */
+export function modelEnvExtra(compat = {}, model = '') {
+  const map = compat?.model_env_extra
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return ''
+  const id = String(model || '')
+    .trim()
+    .toLowerCase()
+  const slash = id.lastIndexOf('/')
+  const key = (slash >= 0 ? id.slice(slash + 1) : id).replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '')
+  const text = map[key]
+  return typeof text === 'string' ? text.trim() : ''
+}
 export const CRS_SYSTEM_INTRO = `You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
 
 IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.`
@@ -765,6 +777,7 @@ export function personaTemplateVars({
   agentOfficial = '',
   leftover = '',
   model = '',
+  compat = {},
   timezoneOnlyEnv = false,
   messages = null,
 } = {}) {
@@ -804,6 +817,7 @@ export function personaTemplateVars({
     session_id: String(sessionId || '').trim(),
     main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
     env_303: () => (withEnv ? buildOfficial303Environment(env, { model: model || env?.modelId }) : ''),
+    model_sentence: () => modelEnvExtra(compat, model || env?.modelId),
   }
 }
 
@@ -828,6 +842,7 @@ export function personaPreviewVars({ timezone = 'UTC', model = 'claude-sonnet-5'
     cli_version: vars.cli_version,
     main_prompt_303: vars.main_prompt_303(),
     env_303: vars.env_303(),
+    model_sentence: vars.model_sentence(),
   }
 }
 
@@ -1749,6 +1764,7 @@ function applyTemplatePersona(
       timezoneOnlyEnv: Boolean(harness) || timezoneOnlyEnv,
       leftover: midSystem ? '' : leftover,
       model: modelId,
+      compat: switches,
       messages,
     }),
   )
