@@ -72,7 +72,13 @@ export function profileForPreset(preset) {
   const raw = String(preset ?? '')
     .trim()
     .toLowerCase()
-  if (raw === 'official' || raw === 'official_full' || raw === 'official_303' || raw === '303')
+  if (
+    raw === 'official' ||
+    raw === 'official_full' ||
+    raw === 'official_303' ||
+    raw === '303' ||
+    raw === 'official-303'
+  )
     return OFFICIAL_PROFILES['2.1.303']
   return OFFICIAL_PROFILES['2.1.296']
 }

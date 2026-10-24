@@ -60,7 +60,7 @@ test('model shape follows official 2.1.303 he(model)', () => {
 })
 
 test('official presets bind 2.1.303 while legacy presets retain 2.1.296', () => {
-  for (const preset of ['official', 'official_full', 'official_303', '303']) {
+  for (const preset of ['official', 'official_full', 'official_303', '303', 'official-303']) {
     assert.equal(profileForPreset(preset).cliVersion, '2.1.303', String(preset))
   }
   for (const preset of ['zero', 'custom', '', undefined]) {
