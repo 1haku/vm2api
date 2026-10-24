@@ -66,6 +66,8 @@ test('preview vars carry the 2.1.303 main prompt and Environment', () => {
     timezone: 'UTC',
     model: 'claude-opus-5-5',
   })
+  assert.match(vars.agent_official, /^You are an interactive agent that helps users according to your "Output Style"/)
+  assert.doesNotMatch(vars.agent_official, /helps users with software engineering tasks/)
   assert.match(vars.main_prompt_303, /^\nYou are an agent working with the user/)
   assert.match(vars.env_303, /^# Environment\nYou have been invoked in the following environment: /)
 })

@@ -53,6 +53,7 @@ import {
   parseInboundEnvFacts,
   sanitizeInboundCwd,
 } from './official-cc-system-2.1.241.mjs'
+import { CRS_OFFICIAL_AGENT_PROMPT_303 } from './official-cc-system-2.1.303-full.mjs'
 import {
   DEFAULT_OVERLAY_PRESET,
   DEFAULT_PERSONA_PRESET,
@@ -781,7 +782,7 @@ export function personaTemplateVars({
     reporting: CRS_REPORTING_OUTCOMES,
     dynamic_boundary: '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__',
     agent_expansion: CRS_AGENT_EXPANSION,
-    agent_official: agentOfficial || CRS_OFFICIAL_AGENT_PROMPT,
+    agent_official: agentOfficial || CRS_OFFICIAL_AGENT_PROMPT_303,
     agent_standing: String(agentStanding || ''),
     env: () => (withEnv ? envTimezoneOnly() : ''),
     caller_agent: String(callerAgent || '').trim(),
