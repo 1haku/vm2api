@@ -13,6 +13,7 @@ import {
   CRS_STANDING_CONSTRAINT,
   CRS_AGENT_EXPANSION,
   CRS_OFFICIAL_AGENT_PROMPT,
+  CRS_OFFICIAL_AGENT_PROMPT_303,
   AGENT_EXPANSION_CACHE_CONTROL,
   CRS_EMPTY_IDENTITY_TEXT,
   CRS_AGENT_PROMPT_MINIMAL,
@@ -130,7 +131,7 @@ test('forceConfigured rewrites official and proxied-official system onto the pre
   })
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT_303)
   assert.match(out.system.at(-1).text, /RFC 2119/)
   assert.match(out.system.at(-1).text, /<workstation>/)
   assert.ok(!out.system.some((block) => String(block?.text || '').includes('cch=bdff0')))
@@ -171,7 +172,7 @@ test('empty unofficial system still writes the official full prompt', () => {
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT_303)
   assert.deepEqual(out.system[2].cache_control, {
     type: 'ephemeral',
     ttl: '1h',
@@ -784,7 +785,7 @@ test('official_full puts the caller system after the full agent prompt', () => {
     { mode: 'official_full', park: false },
   )
   assert.equal(out.system.length, 5)
-  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
+  assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT_303)
   assert.equal(out.system[4].text, '你是一个高速收费员。')
   assert.equal(out.messages.length, 1)
   assert.equal(out.messages[0].role, 'user')
@@ -808,7 +809,7 @@ test('pi and omp harness prompts replace the official full system instead of sta
     const texts = out.system.map((block) => block.text)
     const joined = texts.join('\n')
     assert.equal(texts.filter((text) => text.includes('Oh My Pi coding harness')).length, 1, mode)
-    assert.equal(texts.includes(CRS_OFFICIAL_AGENT_PROMPT), false, mode)
+    assert.equal(texts.includes(CRS_OFFICIAL_AGENT_PROMPT_303), false, mode)
     assert.equal(joined.includes('# Text output'), false, mode)
     assert.equal(joined.includes('# auto memory'), false, mode)
     assert.equal(joined.includes('# Context management'), false, mode)
