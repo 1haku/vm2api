@@ -115,7 +115,10 @@ export const PERSONA_TEMPLATE_VARS: [string, string][] = [
     'env_303',
     '官方 2.1.303 Environment 段（槽位身份 + 调用方 cwd / git / shell）',
   ],
-  ['model_sentence', '当前模型的官方模型句，追加在 Environment 之后，可在本页改写'],
+  [
+    'model_sentence',
+    '当前模型的官方模型句，追加在 Environment 之后，可在本页改写',
+  ],
 ]
 
 export const OVERLAY_TEMPLATE_VARS: [string, string][] = [
@@ -778,6 +781,22 @@ export function applyPersonaEnvVars(
   const next = { ...vars }
   for (const name of PERSONA_ENV_VARS) next[name] = ''
   return next
+}
+/** 预览用的模型句只取当前草稿。没配的模型是空，不回落到服务端默认。 */
+export function previewModelSentence(
+  compat: Record<string, unknown> | undefined,
+  model: string
+): string {
+  const map = compat?.model_env_extra
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return ''
+  const id = model
+    .trim()
+    .toLowerCase()
+    .replace(/^.*\//, '')
+    .replace(/\[[^\]]*\]$/, '')
+    .replace(/-\d{8}$/, '')
+  const text = (map as Record<string, unknown>)[id]
+  return typeof text === 'string' ? text.trim() : ''
 }
 
 /** 官方完整档按块 id 选择。缺省全开；关 env_official 时预览改走时区段。 */

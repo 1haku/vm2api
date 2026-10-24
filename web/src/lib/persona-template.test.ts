@@ -14,6 +14,7 @@ import {
   presetSeed,
   personaHideEnabled,
   presetFlagEnabled,
+  previewModelSentence,
   previewSystemBlocks,
   setPersonaHide,
   setPresetFlag,
@@ -199,6 +200,30 @@ describe('agent standing + system preview', () => {
         'env'
       )
     ).toBe('absent')
+  })
+  it('previews the draft sentence for the selected model and clears it', () => {
+    const edited = {
+      model_env_extra: {
+        'claude-sonnet-5-5': 'Sonnet extra.',
+        'claude-haiku-5-5': 'Haiku extra.',
+      },
+    }
+    const block = (model: string, compat: Record<string, unknown>) =>
+      previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.official_303, {
+        model_sentence: previewModelSentence(compat, model),
+      }).find((item) => item.id === 'env_extra')
+    expect(block('claude-sonnet-5-5', edited)?.text).toBe('Sonnet extra.')
+    expect(block('claude-haiku-5-5', edited)?.text).toBe('Haiku extra.')
+    expect(block('claude-opus-5-5', edited)).toBeUndefined()
+    expect(block('claude-sonnet-5-5', { model_env_extra: {} })).toBeUndefined()
+    expect(
+      previewSystemBlocks(
+        DEFAULT_PERSONA_TEMPLATES.official_303.filter(
+          (item) => item.id !== 'env_extra'
+        ),
+        { model_sentence: previewModelSentence(edited, 'claude-sonnet-5-5') }
+      ).some((item) => item.text.includes('Sonnet extra.'))
+    ).toBe(false)
   })
 
   it('omits generated env when the per-preset switch is off', () => {
