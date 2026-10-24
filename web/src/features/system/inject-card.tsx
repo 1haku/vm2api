@@ -15,11 +15,11 @@ import {
   type RawBlock,
 } from '@/lib/persona-template'
 import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-
 type Compat = Record<string, unknown>
 
 /** 模板对某个注入位的引用状态：引用了就可开关，自带就锁开，都没有就锁关。 */

@@ -276,7 +276,7 @@ describe('agent standing + system preview', () => {
       ],
       { ...vars, env_timezone_only: tokyo }
     )
-    expect(selected.at(-1)?.text).toBe(tokyo)
+    expect(selected[selected.length - 1]?.text).toBe(tokyo)
     expect(
       previewSystemBlocks(
         DEFAULT_PERSONA_TEMPLATES.official,
