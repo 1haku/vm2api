@@ -368,7 +368,7 @@ test('fingerprint is stable for the same first user text and cli version', () =>
   assert.notEqual(a, other)
   assert.equal(
     a,
-    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
+    `x-anthropic-billing-header: cc_version=2.1.234.${expectedFp(user, '2.1.234')}; cc_entrypoint=sdk-cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${billingPromptId('', user, '2.1.234')};`,
   )
 })
 
@@ -517,7 +517,7 @@ test('oh-my-pi OAuth stealth prefix does not skip rewrite even with official UA 
   assert.equal(out.system.length, 4)
   assert.equal(out.system[0].text, CRS_OFFICIAL_SYSTEM)
   assert.match(out.system[1].text, /Oh My Pi coding harness/)
-  assert.match(out.system[2].text, /cc_entrypoint=cli;/)
+  assert.match(out.system[2].text, /cc_entrypoint=sdk-cli;/)
   assert.match(out.system[1].text, /<workstation>/)
   assert.ok(!JSON.stringify(out.system).includes('local-agent'))
   assert.ok(!JSON.stringify(out.system).includes('cc_entrypoint=local-agent'))
@@ -877,7 +877,7 @@ test('desktop billing and Agent SDK leftovers are dropped, not parked', () => {
   assert.equal(out.system.length, 5)
   assert.equal(out.system[1].text, CRS_AGENT_EXPANSION)
   assert.equal(out.system[4].text, 'you are a linter')
-  assert.match(out.system[2].text, /cc_entrypoint=cli;/)
+  assert.match(out.system[2].text, /cc_entrypoint=sdk-cli;/)
   assert.ok(!JSON.stringify(out.system).includes('claude-desktop'))
   assert.ok(!JSON.stringify(out.system).includes('running inside'))
   assert.ok(!firstUserContent(out).includes('claude-desktop'))
