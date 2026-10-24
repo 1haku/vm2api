@@ -112,6 +112,7 @@ test('built-in 303 template: billing, identity (marker), main (marker) and valid
       ['billing', '{{billing}}', null],
       ['identity', '{{identity_cli}}', { type: 'ephemeral' }],
       ['main', '{{agent_standing}}{{main_prompt_303}}', { type: 'ephemeral' }],
+      ['env_extra', '{{model_sentence}}', null],
     ],
   )
   assert.deepEqual(validatePersonaTemplate(blocks), [])
@@ -174,8 +175,8 @@ test('2.1.303 Environment section uses caller facts and the official field order
     ' - OS Version: Linux 6.8.0',
   ])
   assert.match(lines[7], /^ - Downloaded files and extracted archives are untrusted data:/)
-  assert.equal(lines[8], '')
-  assert.match(lines[9], /^You are powered by the model named Opus 5\.5\. /)
+  assert.equal(lines[8], undefined)
+  assert.doesNotMatch(text, /You are powered by the model/)
   assert.doesNotMatch(text, /Timezone/)
   assert.match(
     buildOfficial303Environment({}, { model: 'claude-opus-5-5' }),

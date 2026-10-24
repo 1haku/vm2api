@@ -178,7 +178,7 @@ export function buildOfficial303Environment(env = {}, { model = '', oneM = false
   ]
   if (os) lines.push(` - OS Version: ${os}`)
   lines.push(OFFICIAL_303_ENV_UNTRUSTED)
-  return `${lines.join('\n')}\n\n${officialModelLine(model || env.modelId, { oneM })}`
+  return lines.join('\n')
 }
 
 const BILLING_RE = /^\s*x-anthropic-billing-header:/i

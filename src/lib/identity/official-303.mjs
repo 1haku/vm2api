@@ -248,10 +248,6 @@ export function renderOfficial303Body(
     compat,
   })
   const template = resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates)
-  const templateHasSentence =
-    Array.isArray(template) && template.some((block) => String(block?.text || '').includes('{{model_sentence}}'))
-  const extra = templateHasSentence ? '' : String(vars.model_sentence() || '').trim()
-  const withExtra = (text) => (extra ? `${String(text || '').replace(/\s+$/, '')}\n\n${extra}` : text)
   let system = renderPersonaTemplate(template, vars)
 
   let messages = stripMessageMarkers(body.messages).map((message) =>
@@ -264,9 +260,7 @@ export function renderOfficial303Body(
       const next = replaceEnvironmentInMessage(message, (section) => {
         // Each turn renders from its own facts so history bytes stay identical on later turns.
         const own = environmentEnv(parseInboundEnvFacts([section]), { identity, model })
-        return withExtra(
-          buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) }),
-        )
+        return buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) })
       })
       if (!next) return message
       replaced = true
@@ -274,14 +268,14 @@ export function renderOfficial303Body(
     })
     if (!replaced) {
       const at = lastUserIndex(messages)
-      if (at >= 0) messages.splice(at + 1, 0, { role: 'system', content: withExtra(requestEnvironment) })
+      if (at >= 0) messages.splice(at + 1, 0, { role: 'system', content: requestEnvironment })
     }
   } else {
     // Official merges the session sections into the main block when role=system is unavailable.
     const main = system.length - 1
     if (main >= 0 && !isBillingText(system[main].text)) {
       system = system.map((block, i) =>
-        i === main ? { ...block, text: `${block.text}\n\n${withExtra(requestEnvironment)}` } : block,
+        i === main ? { ...block, text: `${block.text}\n\n${requestEnvironment}` } : block,
       )
     }
   }
