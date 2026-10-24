@@ -9,6 +9,16 @@
 - 缓存前缀兼容 oh-my-pi 的图片预算：omp 超出图片上限（未识别的 provider 未配 `imageCountBudget` 时为 5 张）后，每来一张新截图就丢弃最旧一张；最旧那张在长会话里位置很深，改动之后的历史全部失效，每张截图都整段重写。现在会话一旦观察到客户端丢图，网关按 omp 丢图后的同一形态（含 `(see attached image)` → `[image omitted: provider image limit]` 与报错结果的提升图说明）去掉水位以下的图片：超过 48 条消息的图片会把水位推到最近 24 条，客户端在水位以上丢图时跳过剩余图片的较旧一半，客户端此后的丢图都落在水位以下。客户端仍保留的图片中，最近 24 条消息内的与最新截图始终发出。水位按调用方会话（含 API key）记录，换号后仍然有效；水位以下的历史与上一轮不一致（压缩、回退、同长度替换）时清零。从不丢图的客户端出站不变。
 - 历史改动后的缓存断点：读断点放在改动前最近一个确实写过且仍在 TTL 内的缓存位（只认已确认成功的请求写下的位置；未写 `ttl` 的断点按上游的 5 分钟计；重启后退回改动前最后一条 user）；写断点放在改动之后最旧一张仍发送的图片前面，下一次去图从这里只重写这张图之后的部分；下一轮显式读这个位置。不超过 4 个断点，尾部断点的 TTL 保留。上游缓存模型下（预算 5，截图每 1/3/8/20 轮一张，240 轮，缓存写入按 2 倍、未缓存输入按 1 倍计），总费用约为理想值的 2.0–2.6 倍；不在图片前写入时为 4.5–15 倍，仅客户端丢图时为 6–45 倍。`[cache-prefix]` 日志附 `anchored messages[N]`、`checkpoint messages[N]` 与图片水位。
 
+## 1.3.226 — 2026-10-24
+
+- 协议 / billing（#698）：调用方自带的 billing 不再改写 `cc_entrypoint`；网关生成或 cli-node 缺失 billing 时的补头仍为 `cc_entrypoint=sdk-cli`，并带上 `cc_turn_origin` 与轮次索引。文档明确 CCH 密封块属于 billing body、非 User-Agent；补充 crs-persona 与面板协议页回归测试。
+- 出站身份对齐 2.1.303：中间 hop 与出站 UA 为 `(external, sdk-cli)`；官方身份预设、`official_303` 别名与「官方完整提示词」模板/首句对齐 2.1.303 样本；透传抓包到的 Claude 身份相关头。
+- 各档位网关生成与 cli-node 兜底 billing 的 `cc_entrypoint` 由 `cli` 改回 `sdk-cli`（与 2.1.303 抓包一致）；出站 billing 字节随之变化，各会话首轮重建一次缓存。
+- 请求日志：`outbound_headers` 改为 cli-node 在最终 fetch 前回传的脱敏请求头；Node → worker 中间头存入 `worker_envelope_headers`。流式与非流式入站均支持；旧 CLI 未回传时显示未获取，旧日志不冒充最终值。
+- payload 钉住 `payload-2026.10.24-cli-303-sdk`，cli-node `cb2f8fb9`（27784880 字节）。新 cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout`（缺省 `600000` → `600` 秒）。
+
+已部署机升级：须同时更新 Node 控制面与 `web/dist`，执行 `npm run fetch:payload` 换上 `payload-2026.10.24-cli-303-sdk` 后 `wrap-cli/sync`，再重启 Node；仅更新 Node 不够。勿对槽位做 sync/recreate 以外的破坏性操作。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.3.225 — 2026-10-24
 
 - CI：PR 的 run 先合入 base 分支最新提交再测，Re-run 即对着当前 main（GitHub 的 `refs/pull/<n>/merge` 停在 PR 最后一次 push 时的 base）；`cancel-in-progress` 只对 PR 生效，main 每次 push 都留下结论。新增 `pr-rerun.yml`：main 的 ci 由红转绿时自动重跑最近一次 ci 失败的 open PR（非草稿、无冲突），也可手动触发。
