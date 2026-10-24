@@ -201,29 +201,25 @@ describe('agent standing + system preview', () => {
       )
     ).toBe('absent')
   })
-  it('previews the draft sentence for the selected model and clears it', () => {
+  it('keeps the model sentence off until the preset switch is enabled', () => {
     const edited = {
       model_env_extra: {
         'claude-sonnet-5-5': 'Sonnet extra.',
         'claude-haiku-5-5': 'Haiku extra.',
       },
     }
+    const on = {
+      ...edited,
+      model_env_extra_presets: { official_303: true },
+    }
     const block = (model: string, compat: Record<string, unknown>) =>
       previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.official_303, {
-        model_sentence: previewModelSentence(compat, model),
+        model_sentence: previewModelSentence(compat, model, 'official_303'),
       }).find((item) => item.id === 'env_extra')
-    expect(block('claude-sonnet-5-5', edited)?.text).toBe('Sonnet extra.')
-    expect(block('claude-haiku-5-5', edited)?.text).toBe('Haiku extra.')
-    expect(block('claude-opus-5-5', edited)).toBeUndefined()
-    expect(block('claude-sonnet-5-5', { model_env_extra: {} })).toBeUndefined()
-    expect(
-      previewSystemBlocks(
-        DEFAULT_PERSONA_TEMPLATES.official_303.filter(
-          (item) => item.id !== 'env_extra'
-        ),
-        { model_sentence: previewModelSentence(edited, 'claude-sonnet-5-5') }
-      ).some((item) => item.text.includes('Sonnet extra.'))
-    ).toBe(false)
+    expect(block('claude-sonnet-5-5', edited)).toBeUndefined()
+    expect(block('claude-sonnet-5-5', on)?.text).toBe('Sonnet extra.')
+    expect(block('claude-haiku-5-5', on)?.text).toBe('Haiku extra.')
+    expect(block('claude-opus-5-5', on)).toBeUndefined()
   })
 
   it('omits generated env when the per-preset switch is off', () => {

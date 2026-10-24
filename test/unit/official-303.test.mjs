@@ -386,11 +386,13 @@ test('renderOfficial303Body adds only the editable extra for the current model',
   assert.equal(empty.includes('Sonnet extra.'), false)
   assert.equal(empty.includes('Haiku extra.'), false)
   const compat = {
+    model_env_extra_presets: { official_303: true },
     model_env_extra: {
       'claude-sonnet-5-5': 'Sonnet extra.',
       'claude-haiku-5-5': 'Haiku extra.',
     },
   }
+  assert.equal(wire('claude-sonnet-5-5', { model_env_extra: compat.model_env_extra }).includes('Sonnet extra.'), false)
   const sonnet = wire('claude-sonnet-5-5', compat)
   const haiku = wire('claude-haiku-5-5', compat)
   assert.equal(sonnet.includes('Sonnet extra.'), true)

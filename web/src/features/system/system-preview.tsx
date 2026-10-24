@@ -124,7 +124,7 @@ export function SystemPreview({
             caller_agent: withCaller ? PREVIEW_CALLER_AGENT : '',
             caller_system: withCaller ? PREVIEW_CALLER_SYSTEM : '',
             model: previewModel,
-            model_sentence: previewModelSentence(compat, previewModel),
+            model_sentence: previewModelSentence(compat, previewModel, preset),
           },
           compat,
           preset

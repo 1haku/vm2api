@@ -324,11 +324,11 @@ export function agentStandingText(compat = {}) {
  * remain opt-out for backwards-compatible masking/env behavior.
  */
 export function presetFlagEnabled(compat, field, preset) {
-  const defaultValue = field === 'agent_standing_presets' ? false : true
+  const defaultValue = field === 'agent_standing_presets' || field === 'model_env_extra_presets' ? false : true
   const map = compat?.[field]
   if (!map || typeof map !== 'object' || Array.isArray(map)) return defaultValue
   const value = map[normalizePersonaPreset(preset)]
-  if (field === 'agent_standing_presets') return value === true
+  if (field === 'agent_standing_presets' || field === 'model_env_extra_presets') return value === true
   return value !== false
 }
 
@@ -341,6 +341,7 @@ export const PRESET_FLAG_FIELDS = Object.freeze([
   'agent_standing_hide_presets',
   'persona_env_presets',
   'persona_hide_presets',
+  'model_env_extra_presets',
 ])
 
 /** 官方完整档可按块 id 关掉。缺省或非对象 = 全部保留。 */

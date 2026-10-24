@@ -407,9 +407,13 @@ export type PresetFlagField =
   | 'agent_standing_presets'
   | 'agent_standing_hide_presets'
   | 'persona_env_presets'
+  | 'model_env_extra_presets'
 
 function presetFlagDefault(field: PresetFlagField): boolean {
-  return field === 'agent_standing_presets' ? false : true
+  return field === 'agent_standing_presets' ||
+    field === 'model_env_extra_presets'
+    ? false
+    : true
 }
 
 export function presetFlagEnabled(
@@ -421,7 +425,8 @@ export function presetFlagEnabled(
   const map = compat?.[field]
   if (!map || typeof map !== 'object' || Array.isArray(map)) return defaultValue
   const value = (map as Record<string, unknown>)[preset]
-  if (field === 'agent_standing_presets') return value === true
+  if (field === 'agent_standing_presets' || field === 'model_env_extra_presets')
+    return value === true
   return value !== false
 }
 
@@ -782,11 +787,13 @@ export function applyPersonaEnvVars(
   for (const name of PERSONA_ENV_VARS) next[name] = ''
   return next
 }
-/** 预览用的模型句只取当前草稿。没配的模型是空，不回落到服务端默认。 */
+/** 预览用的模型句。开关默认关；打开后才取当前草稿里该模型的句子。 */
 export function previewModelSentence(
   compat: Record<string, unknown> | undefined,
-  model: string
+  model: string,
+  preset: PersonaPreset
 ): string {
+  if (!presetFlagEnabled(compat, 'model_env_extra_presets', preset)) return ''
   const map = compat?.model_env_extra
   if (!map || typeof map !== 'object' || Array.isArray(map)) return ''
   const id = model

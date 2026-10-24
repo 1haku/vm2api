@@ -246,6 +246,7 @@ export function renderOfficial303Body(
     withEnv: true,
     model,
     compat,
+    preset: OFFICIAL_303_PRESET,
   })
   const template = resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates)
   let system = renderPersonaTemplate(template, vars)

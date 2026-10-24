@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+
 type Compat = Record<string, unknown>
 
 /** 模板对某个注入位的引用状态：引用了就可开关，自带就锁开，都没有就锁关。 */
@@ -143,6 +144,14 @@ export function InjectCard({
           state={env}
           on={presetFlagEnabled(compat, 'persona_env_presets', preset)}
           onChange={flip('persona_env_presets')}
+        />
+        <FlagRow
+          id='flag-model-extra'
+          label='模型附加句'
+          hint='默认关'
+          state='switch'
+          on={presetFlagEnabled(compat, 'model_env_extra_presets', preset)}
+          onChange={flip('model_env_extra_presets')}
         />
       </FlagGroup>
 

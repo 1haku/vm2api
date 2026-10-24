@@ -778,6 +778,7 @@ export function personaTemplateVars({
   leftover = '',
   model = '',
   compat = {},
+  preset = '',
   timezoneOnlyEnv = false,
   messages = null,
 } = {}) {
@@ -817,7 +818,8 @@ export function personaTemplateVars({
     session_id: String(sessionId || '').trim(),
     main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
     env_303: () => (withEnv ? buildOfficial303Environment(env, { model: model || env?.modelId }) : ''),
-    model_sentence: () => modelEnvExtra(compat, model || env?.modelId),
+    model_sentence: () =>
+      presetFlagEnabled(compat, 'model_env_extra_presets', preset) ? modelEnvExtra(compat, model || env?.modelId) : '',
   }
 }
 
@@ -1763,6 +1765,7 @@ function applyTemplatePersona(
       agentOfficial: harness,
       timezoneOnlyEnv: Boolean(harness) || timezoneOnlyEnv,
       leftover: midSystem ? '' : leftover,
+      preset,
       model: modelId,
       compat: switches,
       messages,
