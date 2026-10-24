@@ -140,6 +140,15 @@ test('model line follows the 2.1.303 catalog; unknown models omit name and cutof
     'You are powered by the model named Mythos 5. The exact model ID is claude-mythos-5. Assistant knowledge cutoff is January 2026.',
   )
   assert.equal(officialModelLine('claude-fable-6'), 'You are powered by the model claude-fable-6.')
+  assert.equal(
+    officialModelLine('claude-sonnet-5-5'),
+    'You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.',
+  )
+  assert.equal(
+    officialModelLine('claude-haiku-5-5'),
+    'You are powered by the model named Haiku 5.5. The exact model ID is claude-haiku-5-5. Assistant knowledge cutoff is June 2026.',
+  )
+  assert.equal(officialModelLine('auto'), 'You are powered by the model auto.')
 })
 
 test('2.1.303 Environment section uses caller facts and the official field order', () => {

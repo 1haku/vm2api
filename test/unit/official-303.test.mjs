@@ -378,6 +378,39 @@ test('full-prompt models keep the existing cli-hop body; only the billing versio
   assert.equal(neutral(v303), neutral(v296))
   assert.match(v303.system[0].text, /cc_version=2\.1\.303\./)
 })
+test('full-prompt Sonnet appends a missing model sentence inside the environment block', () => {
+  const quoted = 'Please keep this note: You are powered by the model named Sonnet 5.5.'
+  const env = [
+    '# Environment',
+    'You have been invoked in the following environment: ',
+    ' - Primary working directory: /tmp/cc-hello-empty',
+    ' - Is a git repository: false',
+    ' - Platform: linux',
+    ' - Shell: unknown',
+    ' - OS Version: Linux 6.6.114.1-microsoft-standard-WSL2',
+  ].join('\n')
+  const body = officialCaller('claude-sonnet-5-5')
+  body.messages = [
+    { role: 'user', content: [{ type: 'text', text: quoted }] },
+    { role: 'system', content: [{ type: 'text', text: env }] },
+  ]
+  const out = prepareCliHopBody(body, { outboundShape: 'full', cacheTtl: '1h' })
+  assert.deepEqual(
+    out.messages.map((message) => message.role),
+    ['user', 'system'],
+  )
+  assert.equal(Array.isArray(out.messages[1].content), true)
+  assert.equal(out.messages[1].content.length, 1)
+  assert.equal(out.messages[1].content[0].type, 'text')
+  assert.equal(out.messages[1].content[0].text.startsWith('# Environment\n'), true)
+  assert.equal(
+    out.messages[1].content[0].text.endsWith(
+      '\n\nYou are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.',
+    ),
+    true,
+  )
+  assert.equal(out.messages[0].content[0].text, quoted)
+})
 
 test('kernel.json cli_version follows the slot profile', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-303-cfg-'))
