@@ -384,6 +384,32 @@ export class PoolScheduler extends EventEmitter {
     this.unitCircuit = unitCircuit
     if (runtimeRepo) this.unitCircuit.bindRepo(runtimeRepo)
     this.restoreStickySeats()
+    /** device key → VM claimed by the first synchronous seat of that machine. */
+    this.machineHomes = new Map()
+  }
+
+  /**
+   * The VM a machine already owns. The sticky row is written after the
+   * request returns; two first sessions of one machine both read it as empty.
+   * The map is filled inside claimSeat, before that await, so the second
+   * session sees the VM the first one just took.
+   */
+  machineHome(deviceKey) {
+    const key = String(deviceKey || '').trim()
+    if (!key) return ''
+    const live = this.stickyRouter?.resolve?.(key)?.vmId || ''
+    if (live) {
+      this.machineHomes.set(key, live)
+      return live
+    }
+    return this.machineHomes.get(key) || ''
+  }
+
+  rememberMachine(deviceKey, vmId) {
+    const key = String(deviceKey || '').trim()
+    const vm = String(vmId || '').trim()
+    if (!key || !vm || this.machineHomes.has(key)) return
+    this.machineHomes.set(key, vm)
   }
 
   /**
@@ -617,6 +643,7 @@ export class PoolScheduler extends EventEmitter {
     allowWait = true,
     familyVmId = null,
     deviceVmId = null,
+    deviceKey = null,
     ownerScope = PLATFORM_SCOPE,
     keyScope = null,
     quotaRequest = null,
@@ -624,7 +651,8 @@ export class PoolScheduler extends EventEmitter {
     const startedAt = Date.now()
     const failoverDeadline = Number(deadline) || Number.POSITIVE_INFINITY
     const familyVm = familyVmId ? String(familyVmId).trim() : ''
-    const deviceVm = deviceVmId ? String(deviceVmId).trim() : ''
+    const machineKey = String(deviceKey || '').trim()
+    const deviceVmOf = () => this.machineHome(machineKey) || String(deviceVmId || '').trim()
     const avoided = (candidate) => !!avoid?.size && (avoid.has(candidate.accountId) || avoid.has(candidate.vmId))
     let stickyCleared = false
     let familyGated = false
@@ -720,10 +748,14 @@ export class PoolScheduler extends EventEmitter {
           // Machine/device home first, then the session's own pin, then family.
           // A new session of a machine that already has a VM takes a free slot
           // there before any other VM. A full home is waited, not skipped.
-          const homes = seatHomes({ deviceVm, sessionVm: sticky.vmId || '', familyVm: familyGated ? '' : familyVm })
+          const homes = seatHomes({
+            deviceVm: deviceVmOf(),
+            sessionVm: sticky.vmId || '',
+            familyVm: familyGated ? '' : familyVm,
+          })
 
           if (!ticket) {
-            const granted = this.openNewSeat(seatKey, candidates, { avoided, homes })
+            const granted = this.openNewSeat(seatKey, candidates, { avoided, homes, deviceKey: machineKey })
             if (granted) return finish(granted)
             if (!candidates.length) {
               const empty = emptyPoolFailure(model, candidates)
@@ -803,12 +835,12 @@ export class PoolScheduler extends EventEmitter {
    * VM is not skipped for another VM here; the caller queues on it. Homes
    * with no free slot drop out, then the configured strategy fills the rest.
    */
-  openNewSeat(seatKey, candidates, { avoided, homes = [] }) {
+  openNewSeat(seatKey, candidates, { avoided, homes = [], deviceKey = '' }) {
     const openable = this.openableCandidates(candidates, avoided)
     if (!openable.length) return null
     for (const home of homes) {
       const match = openable.find((candidate) => candidate.vmId === home.vmId)
-      const granted = match ? this.claimSeat(seatKey, match, home.reason) : null
+      const granted = match ? this.claimSeat(seatKey, match, home.reason, deviceKey) : null
       if (granted) return granted
     }
     const reserved = new Set(homes.map((home) => home.vmId))
@@ -825,7 +857,7 @@ export class PoolScheduler extends EventEmitter {
     })
     if (homeFull) return null
     for (const candidate of this.planner.rank(elsewhere.length ? elsewhere : openable)) {
-      const granted = this.claimSeat(seatKey, candidate, this.planner.strategy)
+      const granted = this.claimSeat(seatKey, candidate, this.planner.strategy, deviceKey)
       if (granted) return granted
     }
     return null
@@ -836,13 +868,14 @@ export class PoolScheduler extends EventEmitter {
    * the seat land together or not at all. The session's existing seat must be
    * on this VM; otherwise a new one opens only under cap and budget.
    */
-  claimSeat(seatKey, candidate, selectionReason) {
+  claimSeat(seatKey, candidate, selectionReason, deviceKey = '') {
     if (!candidate || !grantable(candidate)) return null
     const current = this.planner.seatOf(seatKey)
     if (current && current.vmId !== candidate.vmId) return null
     if (!current && !this.planner.canOpen(candidate.vmId, candidate.seatCap, candidate.headroom)) return null
     const reservation = this.reserve(candidate)
     if (!reservation) return null
+    this.rememberMachine(deviceKey, candidate.vmId)
     const seat =
       current ||
       this.planner.open(seatKey, { vmId: candidate.vmId, accountId: candidate.accountId, cap: candidate.seatCap })

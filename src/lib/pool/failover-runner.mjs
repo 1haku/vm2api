@@ -724,6 +724,7 @@ export class FailoverRunner {
           pinVmId,
           familyVmId,
           deviceVmId: currentDeviceVmId,
+          deviceKey,
           skipSessionSlot: skipSessionSeat,
           ownerScope,
           keyScope,

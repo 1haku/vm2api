@@ -8,6 +8,8 @@ import { PoolScheduler, normalizePoolRouting } from '../../src/lib/pool/pool-sch
 import { SeatPlanner, budgetAllows, rankSeatCandidates } from '../../src/lib/pool/seat-planner.mjs'
 import { servePoolSeatStream } from '../../src/lib/admin/pool-seat-stream.mjs'
 import { AccountQuota } from '../../src/lib/pool/account-quota.mjs'
+import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
+import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 
 const MODEL = 'claude-test'
 
@@ -329,6 +331,52 @@ test('a machine keeps one VM; its next session takes a free slot there and a for
   got.release()
 
   for (const id of ['sess-a', 'sess-b', 'sess-other', 'sess-c']) pool.planner.free(pool.planner.seatOf(planned(id)))
+})
+
+test('two first sessions of one machine claim the same VM before sticky affinity is written', async (t) => {
+  const root = project([
+    { id: 'vm-01', policy: { sessionSlots: 2 } },
+    { id: 'vm-02', policy: { sessionSlots: 2 } },
+  ])
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const sticky = new StickyRouter({ dataDir: root, config: { sticky: { enabled: true, ttl_seconds: 600 } } })
+  const pool = new PoolScheduler({
+    projectRoot: root,
+    runtimeRepo: new RuntimeRepo(),
+    accountQuota: { canAccept: () => ({ ok: true }) },
+    workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
+    stickyRouter: sticky,
+    config: { seat_grace_ms: 0 },
+  })
+  const original = pool.eligibleCandidates.bind(pool)
+  pool.eligibleCandidates = async (args) => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    return original(args)
+  }
+  const runner = new FailoverRunner({ scheduler: pool, stickyRouter: sticky })
+  const deviceKey = sticky.canonicalDeviceKey('machine-1')
+  const run = (sessionId) =>
+    runner.run({
+      requestId: sessionId,
+      canonicalBody: { model: MODEL },
+      model: MODEL,
+      stickyKey: sticky.canonicalSessionKey(sessionId),
+      seatKey: `seat:sess:${sessionId}`,
+      deviceKey,
+      stickyDeviceId: 'machine-1',
+      callAttempt: async () => ({
+        ok: true,
+        status: 200,
+        terminalState: 'verified',
+        body: { type: 'message', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: {} },
+      }),
+    })
+  const [a, b] = await Promise.all([run('sess-a'), run('sess-b')])
+  assert.equal(a.ok && b.ok, true)
+  assert.equal(a.vmId, b.vmId)
+  assert.equal(pool.planner.openCount(a.vmId), 2)
+  assert.equal(pool.planner.openCount(a.vmId === 'vm-01' ? 'vm-02' : 'vm-01'), 0)
+  assert.equal(sticky.resolve(deviceKey)?.vmId, a.vmId)
 })
 
 test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
