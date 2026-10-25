@@ -786,7 +786,7 @@ export function configuredTimezone(identity = {}, facts = {}) {
 export function buildZeroBillingText(firstUserText, cliVersion = DEFAULT_CLI_VERSION, sessionId = '') {
   const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
   const header = billing.endsWith(';') ? billing : `${billing};`
-  return `${header} prompt_version=<${CRS_OFFICIAL_CLI_SYSTEM}>`
+  return `${header} prompt_version=<${CRS_OFFICIAL_SYSTEM}>`
 }
 
 function timezoneEnvBlock(env = {}, sourceTexts = []) {
@@ -1462,7 +1462,7 @@ export function personaHidesUsageFromRoutingFile(filePath, mode) {
   if (map && typeof map === 'object' && typeof map[preset] === 'boolean') return map[preset]
   if (typeof settings.hides === 'boolean') return settings.hides
   if (!hopPreset && !personaUsesTemplate(settings)) return null
-  return templateHidesAnything(resolvePersonaTemplate(preset, settings.templates))
+  return preset === 'zero' || templateHidesAnything(resolvePersonaTemplate(preset, settings.templates))
 }
 
 /**
@@ -1776,12 +1776,16 @@ function applyTemplatePersona(
   const harness = thirdPartyClientPrompt(body.system, callerOptions)
   if (harness) env.timezone = requiredTimezone(identity, facts)
   env.timezone = String(env.timezone || '').trim() || requiredTimezone(identity, facts)
-  // official always keeps the extracted prompt. A stored template that never
-  // mentions {{caller_agent}} would otherwise drop it and leave only the identity line.
+  const templateHasHarness = blocks.some(
+    (block) =>
+      ['harness', 'guidance'].includes(String(block?.id || '')) ||
+      extractTemplateVars(block?.text).some((name) => ['harness_303', 'guidance_303', 'agent_official'].includes(name)),
+  )
   const templateWantsCallerAgent = blocks.some((block) => extractTemplateVars(block?.text).includes('caller_agent'))
-  const usesCallerAgent = !harness && (preset === 'official' || templateWantsCallerAgent)
+  const usesCallerAgent = !harness && !templateHasHarness && (preset === 'official' || templateWantsCallerAgent)
   const suppliedAgent = usesCallerAgent ? String(rawCallerAgent || '').trim() : ''
-  const callerAgent = suppliedAgent || (preset === 'official' && !harness ? CRS_OFFICIAL_AGENT_PROMPT : '')
+  const callerAgent =
+    suppliedAgent || (preset === 'official' && !harness && !templateHasHarness ? CRS_OFFICIAL_AGENT_PROMPT : '')
   const leftover = harness
     ? ''
     : usesCallerAgent

@@ -92,28 +92,34 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'identity',
-      note: '交互 CLI 身份句',
+      note: '2.1.303 Agent SDK 身份句，不打缓存点',
       type: 'text',
-      text: '{{identity_cli}}',
+      text: '{{identity}}',
     }),
     Object.freeze({
-      id: 'agent',
-      note: '常驻约束 + 调用方官方提示词。空则丢弃。1h 断点在本块，排在会变的第5段之前。',
+      id: 'harness',
+      note: '2.1.303 harness。常驻约束放在段首，空则丢弃',
       drop_if_empty: true,
       type: 'text',
-      text: '{{agent_standing}}{{caller_agent}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      text: '{{agent_standing}}{{harness_303}}',
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
-      id: 'env',
-      note: '槽位 Environment（时区），按档开关，排在 agent 之后不破 1h 前缀缓存',
-      drop_if_empty: true,
+      id: 'dynamic_boundary',
+      note: 'cli-node 拆分点。标记本身不出站',
       type: 'text',
-      text: '{{env}}',
+      text: '{{dynamic_boundary}}',
+    }),
+    Object.freeze({
+      id: 'guidance',
+      note: '2.1.303 guidance。断点 TTL 取面板缓存 TTL，不带 scope',
+      type: 'text',
+      text: '{{guidance_303}}',
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'caller_system',
-      note: '第5段可选。只放顶层 system。role=system 留在消息列表。空则丢弃',
+      note: '第5段可选。只放顶层 system。空则丢弃',
       drop_if_empty: true,
       type: 'text',
       text: '{{caller_system}}',
@@ -128,23 +134,36 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'identity',
-      note: '2.1.303 CLI 身份句；实抓首两 system 块无 cache_control',
+      note: '2.1.303 Agent SDK 身份句，不打缓存点',
       type: 'text',
       text: '{{identity}}',
     }),
     Object.freeze({
-      id: 'agent_official',
-      note: '2.1.303 完整提示词稳定段；动态工具、skills、memory 和日期仍由调用路径提供',
+      id: 'harness',
+      note: '2.1.303 harness。常驻约束放在段首',
       type: 'text',
-      text: '{{agent_standing}}{{agent_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      text: '{{agent_standing}}{{harness_303}}',
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
+    }),
+    Object.freeze({
+      id: 'dynamic_boundary',
+      note: 'cli-node 拆分点。标记本身不出站',
+      type: 'text',
+      text: '{{dynamic_boundary}}',
+    }),
+    Object.freeze({
+      id: 'guidance',
+      note: '2.1.303 完整提示词。断点 TTL 取面板缓存 TTL',
+      type: 'text',
+      text: '{{agent_official}}',
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'env_official',
-      note: '2.1.303 Environment / continuation；动态段保持按槽位和调用方事实生成',
+      note: '2.1.303 Environment。按档开关',
+      drop_if_empty: true,
       type: 'text',
       text: '{{env_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
     }),
     Object.freeze({
       id: 'env_extra',
@@ -163,37 +182,10 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
   ]),
   zero: Object.freeze([
     Object.freeze({
-      id: 'billing_zero',
-      hide: true,
+      id: 'billing',
+      note: '0注入只留计费头，官方身份句放在 prompt_version',
       type: 'text',
-      text: '{{billing_semi}} prompt_version=<{{identity_cli}}>',
-    }),
-    Object.freeze({
-      id: 'identity_slot',
-      hide: true,
-      type: 'text',
-      text: '\u200b',
-    }),
-    Object.freeze({
-      id: 'agent_slot',
-      hide: true,
-      type: 'text',
-      text: '{{agent_standing}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
-    }),
-    Object.freeze({
-      id: 'env',
-      hide: true,
-      drop_if_empty: true,
-      type: 'text',
-      text: '{{env}}',
-    }),
-    Object.freeze({
-      id: 'caller_system',
-      note: '第5段可选。调用方 system 都写这里，空则丢弃',
-      drop_if_empty: true,
-      type: 'text',
-      text: '{{caller_system}}',
+      text: '{{billing_semi}} prompt_version=<{{identity}}>',
     }),
   ]),
   custom: Object.freeze([]),
@@ -358,10 +350,11 @@ export const PRESET_FLAG_FIELDS = Object.freeze([
   'model_env_extra_presets',
 ])
 
-/** 官方完整档可按块 id 关掉。缺省或非对象 = 全部保留。 */
+/** zero、官方、官方完整都可按块 id 关掉。缺省或非对象 = 全部保留。 */
 export function selectedTemplateBlocks(blocks, compat = {}, preset) {
-  if (normalizePersonaPreset(preset) !== 'official_full') return blocks
-  const selected = compat?.persona_block_presets?.[normalizePersonaPreset(preset)]
+  const key = normalizePersonaPreset(preset)
+  if (!['zero', 'official', 'official_full'].includes(key)) return blocks
+  const selected = compat?.persona_block_presets?.[key]
   if (!selected || typeof selected !== 'object' || Array.isArray(selected)) return blocks
   return blocks.filter((block) => selected[String(block?.id || '')] !== false)
 }
@@ -434,7 +427,9 @@ function withStandingSlot(blocks, standingText) {
   const idx = blocks.findIndex((block) => {
     const id = String(block?.id || '')
     const text = String(block?.text || '')
-    return /agent/i.test(id) || text.includes('{{caller_agent}}') || text.includes('{{agent_official}}')
+    return (
+      id === 'harness' || id === 'guidance' || text.includes('{{harness_303}}') || text.includes('{{agent_official}}')
+    )
   })
   const copy = blocks.map((block) => ({ ...block }))
   if (idx < 0) {
