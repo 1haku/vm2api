@@ -16,7 +16,7 @@ import { isCodexVm } from './vm-kind.mjs'
 import { buildWorkerTelemetry } from './worker-telemetry.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference } from './slot-engine.mjs'
-import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
+import { ensureSlotClaudeOwnership, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureSlotComputer, rememberComputer } from '../identity/slot-computer.mjs'
@@ -593,10 +593,8 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
     timezone: vm.timezone || '',
     routing: resolvedRouting,
   })
-  chownSlotRuntimeFile(paths.runDir, vm)
-  chownSlotRuntimeFile(paths.token, vm)
-  chownSlotRuntimeFile(paths.config, vm)
-  if (kernel?.configPath) chownSlotRuntimeFile(kernel.configPath, vm)
+  // Slot uid is added via --group-add. These files stay in the control-plane
+  // group; chownSlotRuntimeFile would move a successful chown back to KIN_VM_GID.
   try {
     fs.chmodSync(paths.token, 0o600)
   } catch {}

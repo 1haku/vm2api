@@ -217,6 +217,31 @@ test('writeWorkerFiles uses the desired kin-eg network even if the container is 
   assert.equal(doc.proxy_required, false)
 })
 
+test('writeWorkerFiles keeps the control-plane gid when chown succeeds', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-worker-group-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const vm = { id: 'vm-10', proxy: { id: 'px-new', host: '1.2.3.4', port: 1080 } }
+  const calls = []
+  const real = fs.chownSync
+  t.mock.method(fs, 'chownSync', (file, uid, gid) => {
+    calls.push({ file, uid, gid })
+    try {
+      real.call(fs, file, uid, gid)
+    } catch {}
+  })
+  writeWorkerFiles(vm, root, { routing: {} })
+  const runDir = path.join(root, 'vms', 'vm-10', 'run')
+  for (const name of ['.', 'worker.json', 'kernel.json']) {
+    const stat = fs.statSync(path.join(runDir, name))
+    assert.equal(stat.gid, process.getgid(), name)
+  }
+  assert.equal(fs.statSync(path.join(runDir, 'internal.token')).mode & 0o077, 0)
+  assert.equal(
+    calls.some((call) => call.file === runDir && call.gid === Number(process.env.KIN_VM_GID || 987)),
+    false,
+  )
+})
+
 test('proxyEndpoint strips userinfo', () => {
   assert.equal(proxyEndpointFromUrl('socks5h://user:pass@72.1.181.43:5437'), '72.1.181.43:5437')
   assert.equal(proxyEndpointFromVm({ proxy: { host: '72.1.181.43', port: 5437 } }), '72.1.181.43:5437')

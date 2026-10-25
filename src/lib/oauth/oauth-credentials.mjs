@@ -338,13 +338,17 @@ export function chownSlotRuntimeFile(filePath, vm) {
 /**
  * Temp + rename drops the previous inode. chown the temp first so the
  * published 0600 file is already the slot uid. Otherwise kin-kernel
- * (container PID 1) gets EACCES and docker --restart loops.
+ * (container PID 1) gets EACCES and docker --restart loops. gid stays with
+ * the control-plane group: the slot reaches it through --group-add.
  */
 export function replaceSlotOwnedFile(filePath, body, vm) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  const { uid } = slotRuntimeOwner(vm || {})
   try {
     fs.writeFileSync(tempPath, body, { mode: 0o600 })
-    chownSlotRuntimeFile(tempPath, vm)
+    try {
+      fs.chownSync(tempPath, uid, process.getgid())
+    } catch {}
     fs.renameSync(tempPath, filePath)
   } catch (error) {
     try {

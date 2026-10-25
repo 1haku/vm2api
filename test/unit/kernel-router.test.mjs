@@ -770,7 +770,7 @@ test('writeKernelConfig uses identity when official_full has no persona_inject',
   assert.equal(overridden.system_layout, 'zero')
 })
 
-test('kernel.json rename chowns the new inode to the slot uid before publish', () => {
+test('kernel.json rename keeps the control-plane gid while adopting the slot uid', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-owner-'))
   const vm = { id: 'vm-01', inference_engine: 'rust' }
   const owner = slotRuntimeOwner(vm)
@@ -793,9 +793,10 @@ test('kernel.json rename chowns the new inode to the slot uid before publish', (
     const changed = writeKernelConfig(root, vm, { token: 'tok', routing: full })
     assert.equal(changed.changed, true)
     const published = kernelOwned()
+    const controlGid = process.getgid()
     assert.ok(published.length >= 1)
     assert.ok(
-      published.every((call) => call.uid === owner.uid && call.gid === owner.gid),
+      published.every((call) => call.uid === owner.uid && call.gid === controlGid),
       JSON.stringify(published),
     )
     assert.ok(
@@ -807,8 +808,9 @@ test('kernel.json rename chowns the new inode to the slot uid before publish', (
     const again = writeKernelConfig(root, vm, { token: 'tok', routing: full })
     assert.equal(again.changed, false)
     assert.equal(fs.readFileSync(again.configPath, 'utf8').includes('"persona_preset": "official_full'), true)
-    assert.ok(
-      kernelOwned().some((call) => call.file === again.configPath && call.uid === owner.uid && call.gid === owner.gid),
+    assert.equal(
+      kernelOwned().some((call) => call.file === again.configPath),
+      false,
     )
   } finally {
     chown.mock.restore()

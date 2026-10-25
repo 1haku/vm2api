@@ -32,7 +32,6 @@ import {
   ensureOfficialCredentialLink,
   ensureSlotSubscriptionType,
   slotUidGidFromHomeDir,
-  chownSlotRuntimeFile,
   replaceSlotOwnedFile,
 } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
@@ -660,17 +659,14 @@ function kernelConfigText(config) {
   return JSON.stringify(config, null, 2) + '\n'
 }
 
-function writeKernelJsonAtomically(configPath, config, vm) {
+function writeKernelJsonAtomically(configPath, config) {
   const body = kernelConfigText(config)
   let same = false
   try {
     same = fs.readFileSync(configPath, 'utf8') === body
   } catch {}
-  if (same) {
-    chownSlotRuntimeFile(configPath, vm)
-    return false
-  }
-  replaceSlotOwnedFile(configPath, body, vm)
+  if (same) return false
+  replaceSlotOwnedFile(configPath, body)
   return true
 }
 
@@ -781,7 +777,7 @@ export function writeKernelConfig(
     if (anthropicBaseUrl) config.anthropic_base_url = anthropicBaseUrl
     if (oauthTokenUrl) config.oauth_token_url = oauthTokenUrl
   }
-  const changed = writeKernelJsonAtomically(configPath, config, vm)
+  const changed = writeKernelJsonAtomically(configPath, config)
   try {
     fs.chmodSync(configPath, 0o640)
   } catch {}
