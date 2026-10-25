@@ -184,6 +184,41 @@ export class SeatPlanner {
     this.changed()
     return seat
   }
+  /**
+   * Put a persisted session back on its slot without treating it as a new
+   * open. `index` is kept when that cell is free; `heldUntil` is the sticky
+   * expiry already stored, not a fresh TTL.
+   */
+  restore(seatKey, { vmId, accountId = null, index = null, heldUntil = null, cap = 0 } = {}) {
+    const key = String(seatKey || '')
+    const id = String(vmId || '')
+    if (!key || !id || this.seats.has(key)) return null
+    let book = this.byVm.get(id)
+    if (!book) {
+      book = new Map()
+      this.byVm.set(id, book)
+    }
+    let slot = Number.isInteger(index) && index >= 0 && !book.has(index) ? index : 0
+    while (book.has(slot)) slot += 1
+    const until = Number(heldUntil) > Date.now() ? Number(heldUntil) : null
+    const seat = {
+      seatKey: key,
+      vmId: id,
+      accountId,
+      index: slot,
+      inflight: 0,
+      heldUntil: until,
+      graceUntil: until,
+      timer: null,
+      live: true,
+    }
+    book.set(slot, seat)
+    this.seats.set(key, seat)
+    if (cap) this.noteCap(id, cap)
+    if (until) this.armHold(seat)
+    this.changed()
+    return seat
+  }
 
   hold(seat) {
     seat.inflight += 1
@@ -217,16 +252,22 @@ export class SeatPlanner {
     return (this.vmQueues.get(seat.vmId) || []).some((ticket) => ticket.seatKey === seat.seatKey)
   }
 
-  /** Keep the slot until sticky TTL. Failover calls `free` and never comes here. */
+  /**
+   * Keep the slot until sticky TTL. A restored seat already carries its
+   * stored expiry; that deadline is kept instead of starting a new TTL.
+   * Failover calls `free` and never comes here.
+   */
   armHold(seat) {
     if (!seat?.live || seat.inflight !== 0 || seat.timer) return
     if (this.queuedOn(seat)) return
+    const stored = Number(seat.heldUntil)
     const ttl = Number(this.stickyTtlMs?.() ?? this.stickyTtlMs) || 0
-    if (!(ttl > 0)) {
+    const until = stored > Date.now() ? stored : Date.now() + ttl
+    const wait = until - Date.now()
+    if (!(wait > 0)) {
       this.free(seat)
       return
     }
-    const until = Date.now() + ttl
     seat.heldUntil = until
     seat.graceUntil = until
     seat.timer = setTimeout(() => {
@@ -239,7 +280,7 @@ export class SeatPlanner {
         return
       }
       this.free(seat)
-    }, ttl)
+    }, wait)
     seat.timer.unref?.()
     this.changed()
   }

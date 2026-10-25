@@ -209,6 +209,51 @@ test('after the request ends the session keeps the slot until sticky TTL; anothe
   pool.planner.free(pool.planner.seatOf(planned('other-session')))
 })
 
+test('a restarted scheduler restores unexpired session seats, so another session still cannot take the VM', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
+  const sessionA = '01a17519-60b0-7218-9d67-d31c47ceedbc'
+  const held = await seat(pool, sessionA)
+  assert.equal(held.vmId, 'vm-01')
+  held.release()
+  const expiresAt = Date.now() + 60_000
+  const rows = {
+    [`sess:${sessionA}`]: {
+      account_id: held.accountId,
+      vm_id: 'vm-01',
+      expires_at: expiresAt,
+      slot_index: held.slotIndex,
+    },
+    'dev2:same-device': { account_id: held.accountId, vm_id: 'vm-01', expires_at: expiresAt, slot_index: null },
+    'family2:parent': { account_id: held.accountId, vm_id: 'vm-01', expires_at: expiresAt, slot_index: null },
+    'sess:expired': { account_id: held.accountId, vm_id: 'vm-01', expires_at: Date.now() - 1, slot_index: 0 },
+  }
+  const restarted = new PoolScheduler({
+    projectRoot: pool.projectRoot,
+    runtimeRepo: new RuntimeRepo(),
+    accountQuota: { canAccept: () => ({ ok: true }) },
+    workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
+    stickyRouter: { config: { ttl_seconds: 86400 }, repo: { all: () => rows } },
+    config: { seat_grace_ms: 0 },
+  })
+  t.after(() => restarted.planner.free(restarted.planner.seatOf(planned(sessionA))))
+  const snap = restarted.seatSnapshot().seats['vm-01']
+  assert.equal(snap.seats_used, 1)
+  assert.equal(snap.sessions.length, 1)
+  assert.equal(snap.sessions[0].session_id, sessionA)
+  assert.equal(snap.sessions[0].state, 'held')
+  assert.equal(snap.sessions[0].index, held.slotIndex)
+  assert.equal(snap.sessions[0].held_until, expiresAt)
+  const again = await restarted.selectAndReserve({ model: MODEL, seatKey: `seat:sess:${sessionA}`, allowWait: false })
+  assert.equal(again.ok, true)
+  assert.equal(again.vmId, 'vm-01')
+  assert.equal(again.selectionReason, 'seat-held')
+  again.release()
+  const other = await restarted.selectAndReserve({ model: MODEL, seatKey: 'seat:sess:other-session', allowWait: false })
+  assert.equal(other.ok, false)
+  assert.equal(restarted.planner.openCount('vm-01'), 1)
+  assert.equal(restarted.seatSnapshot().seats['vm-01'].sessions[0].session_id, sessionA)
+})
+
 test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
   assert.equal(budgetAllows(0.05, 2, 0.02), false)
   assert.equal(budgetAllows(0.05, 1, 0.02), true)

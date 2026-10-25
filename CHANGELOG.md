@@ -3,7 +3,7 @@
 ## 未发布
 - #730：面板模型目录固定模型 `auto`；三种目录模式在其启用时均列出，`worker_only` 也会追加已启用的 `auto`；停用后不列出。请求 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
 - #730：auto mode 分类器契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径 `max_tokens=8192`。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
-- 修复同一 client session 占到 VM 后被其它 session 抢走槽位：席位按 session 计，不再按 device 把同一客户端的多个会话挤在一个槽上。请求结束后槽位不释放，一直留给这个 session，直到粘性 TTL 到期，或 VM 不可调度 / 额度、凭证、暂停、换 VM 重试才释放。面板席位格与悬浮说明列出这台 VM 上实际占着槽的 session。
+- 修复同一 client session 占到 VM 后被其它 session 抢走槽位：席位按 session 计，不再按 device 把同一客户端的多个会话挤在一个槽上。请求结束后槽位不释放，一直留给这个 session，直到粘性 TTL 到期，或 VM 不可调度 / 额度、凭证、暂停、换 VM 重试才释放。Node 重启后按未过期的粘性绑定把这些槽占回去，面板不会先显示空闲。面板席位格与悬浮说明列出这台 VM 上实际占着槽的 session。
 
 - cli-hop 每次请求从 routing 文件读一次 `cc_entrypoint`。system 身份、guidance 和补出的 billing 使用同一次结果；文件正在写入时退回内存快照。改 `sdk-cli` / `cli` 后这三处一起变。
 

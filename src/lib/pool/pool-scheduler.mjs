@@ -38,7 +38,7 @@ import { slotAllowsModel } from './slot-model-gate.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 import { resolveCredentialScheduleLevel } from './credential-weight.mjs'
-import { PLATFORM_SCOPE, normalizeOwnerId, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { PLATFORM_SCOPE, normalizeOwnerId, vmMatchesOwnerScope, vmOwnerId } from '../admin/resource-owner.mjs'
 import { keyAllowsVm } from '../admin/key-scope.mjs'
 import {
   kernelFaults,
@@ -179,6 +179,14 @@ function scopedSeatKey(seatKey, scope = PLATFORM_SCOPE) {
   const type = scope?.type || 'platform'
   const owner = type === 'user' ? `user:${normalizeOwnerId(scope.userId)}` : type
   return `${owner}|${seatKey}`
+}
+
+/** `sess:<id>` after an optional `p:anthropic:` scope. Family and device rows are not seats. */
+function sessionIdFromStickyKey(key) {
+  const raw = String(key || '')
+  const body = raw.startsWith('p:anthropic:') ? raw.slice('p:anthropic:'.length) : raw
+  if (!body.startsWith('sess:') || body.includes(':k')) return ''
+  return body.slice('sess:'.length)
 }
 
 /**
@@ -356,6 +364,42 @@ export class PoolScheduler extends EventEmitter {
     })
     this.unitCircuit = unitCircuit
     if (runtimeRepo) this.unitCircuit.bindRepo(runtimeRepo)
+    this.restoreStickySeats()
+  }
+
+  /**
+   * The seat book is memory. Sticky rows survive a restart, so a new process
+   * must occupy those slots again before any new session can take them.
+   * Only canonical `sess:` rows count; device affinity and family pins do not.
+   * The owner scope is the VM's owner, matching scopedSeatKey.
+   */
+  restoreStickySeats(now = Date.now()) {
+    const rows = this.stickyRouter?.repo?.all?.()
+    if (!rows) return 0
+    let restored = 0
+    for (const [key, ent] of Object.entries(rows)) {
+      const sessionId = sessionIdFromStickyKey(key)
+      if (!sessionId || !ent?.vm_id || !ent?.account_id) continue
+      if (!ent.expires_at || now >= Number(ent.expires_at)) continue
+      let vm = null
+      try {
+        vm = this.projectRoot ? getVm(this.projectRoot, ent.vm_id) : null
+      } catch {
+        vm = null
+      }
+      const owner = vmOwnerId(vm)
+      const scope = owner ? { type: 'user', userId: owner } : PLATFORM_SCOPE
+      const seatKey = scopedSeatKey(`seat:sess:${sessionId}`, scope)
+      const seat = this.planner.restore(seatKey, {
+        vmId: ent.vm_id,
+        accountId: ent.account_id,
+        index: ent.slot_index == null ? null : Number(ent.slot_index),
+        heldUntil: Number(ent.expires_at),
+        cap: vm ? seatCapOf(vm, this.config.default_session_slots) : 0,
+      })
+      if (seat) restored += 1
+    }
+    return restored
   }
 
   /**
