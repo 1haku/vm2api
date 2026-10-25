@@ -1,6 +1,9 @@
 # Changelog
 
 ## 未发布
+- 设置 → 协议和 system提示词可切换出站入口 `sdk-cli` / `cli`。网关生成的 billing、出站 UA、cli-node 兜底 billing 使用同一个值。调用方自带的 billing 入口不改，CCH 密封只改 `cch`。保存后写入各 Claude 槽 `kernel.json` 的 `cc_entrypoint`，cli-node 每次请求热读，不重启槽。缺省仍是 `sdk-cli`。当前 cli-node 源码已改，运行中的二进制要重编后才认这个字段。
+
+
 - cli-node 对齐 2.1.303 计费行和 beta 选择器后重编。源码 `9e6a3bde`，隔离导出，只补已提交代码所需的 `SYSTEM_PROMPT_REPORTING_OUTCOMES`。plain 117487744 字节 `d3fdd0b7…`；UPX 5.0.2 `--best --lzma` 后 27794208 字节，SHA256 `3aea7dbcdc721b46cc22cd9e95ffec28c811749e32a1a50bcecf6bc67c86a07c`。`upx -t` 通过，`--version` 为 `2.1.303 (Claude Code)`。已替换本机 `share/wrap-cli/cli-node`。payload 未更新，未部署。
 - 官方档和完整档的 system 对齐 2.1.303：billing、身份、harness（`1h` + `scope global`）、guidance（`1h`）。拆分边界只交给 cli-node，最终请求不出站。调用方 system 和第三方 harness 接在 guidance 后，不替换官方提示。
 

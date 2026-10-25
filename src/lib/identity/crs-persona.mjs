@@ -421,18 +421,25 @@ export function buildBillingAttributionText(
   cliVersion = DEFAULT_CLI_VERSION,
   sessionId = '',
   indexes = null,
+  entrypoint = 'sdk-cli',
 ) {
   const ver = parseCliVersion(cliVersion)
   const fp = computeClaudeCodeFingerprint(firstUserText ?? '', ver)
   const promptId = billingPromptId(sessionId, firstUserText, ver)
   const tail = billingTurnSuffix(indexes?.promptIndex, indexes?.turnIndex)
-  return `x-anthropic-billing-header: cc_version=${ver}.${fp}; cc_entrypoint=sdk-cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${promptId};${tail}`
+  const entry = entrypoint === 'cli' ? 'cli' : 'sdk-cli'
+  return `x-anthropic-billing-header: cc_version=${ver}.${fp}; cc_entrypoint=${entry}; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${promptId};${tail}`
+}
+
+/** Panel switch. Only `cli` leaves the shipped `sdk-cli` default. */
+export function ccEntrypointFromRouting(routing) {
+  return routing?.compatibility?.cc_entrypoint === 'cli' ? 'cli' : 'sdk-cli'
 }
 
 /** Add the billing block exactly once before the cli-node hop. */
 export function ensureBillingAttribution(
   body,
-  { firstUserText = '', cliVersion = DEFAULT_CLI_VERSION, sessionId = '', indexes = null } = {},
+  { firstUserText = '', cliVersion = DEFAULT_CLI_VERSION, sessionId = '', indexes = null, entrypoint = 'sdk-cli' } = {},
 ) {
   if (!body || typeof body !== 'object') return body
   const hasBilling = (system) => {
@@ -443,7 +450,7 @@ export function ensureBillingAttribution(
   if (hasBilling(body.system)) return body
   const block = {
     type: 'text',
-    text: buildBillingAttributionText(firstUserText, cliVersion, sessionId, indexes),
+    text: buildBillingAttributionText(firstUserText, cliVersion, sessionId, indexes, entrypoint),
   }
   if (Array.isArray(body.system)) return { ...body, system: [block, ...body.system] }
   if (body.system == null || body.system === '') return { ...body, system: [block] }
@@ -783,8 +790,13 @@ export function configuredTimezone(identity = {}, facts = {}) {
   return validTimezone(src.timezone) || validTimezone(fp.timezone) || validTimezone(inbound.timezone) || ''
 }
 
-export function buildZeroBillingText(firstUserText, cliVersion = DEFAULT_CLI_VERSION, sessionId = '') {
-  const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId)
+export function buildZeroBillingText(
+  firstUserText,
+  cliVersion = DEFAULT_CLI_VERSION,
+  sessionId = '',
+  entrypoint = 'sdk-cli',
+) {
+  const billing = buildBillingAttributionText(firstUserText, cliVersion, sessionId, null, entrypoint)
   const header = billing.endsWith(';') ? billing : `${billing};`
   return `${header} prompt_version=<${CRS_OFFICIAL_SYSTEM}>`
 }
@@ -816,12 +828,14 @@ export function personaTemplateVars({
   preset = '',
   timezoneOnlyEnv = false,
   messages = null,
+  entrypoint = 'sdk-cli',
 } = {}) {
   const billing = buildBillingAttributionText(
     firstUserText,
     cliVersion,
     sessionId,
     billingIndexesFromMessages(messages),
+    entrypoint,
   )
   const envTimezoneOnly = () => buildOfficialEnvironmentSection(env, { sourceTexts, contextManagement: false })
   return {
@@ -1758,6 +1772,7 @@ function applyTemplatePersona(
     identity,
     model,
     callerAgent: rawCallerAgent = '',
+    entrypoint = 'sdk-cli',
   } = {},
 ) {
   const messages = Array.isArray(body.messages) ? body.messages : []
@@ -1813,6 +1828,7 @@ function applyTemplatePersona(
       model: modelId,
       compat: switches,
       messages,
+      entrypoint,
     }),
   )
 
@@ -1843,6 +1859,7 @@ export function applyCrsUnofficialPersona(
     sessionId,
     identity,
     model,
+    entrypoint,
   } = {},
 ) {
   if (!body || typeof body !== 'object') return body
@@ -1852,6 +1869,14 @@ export function applyCrsUnofficialPersona(
   // Read the caller's agent prompt before stripLeakySystem drops it as known official text.
   const rawCallerAgent = extractCallerAgentPrompt(body.system)
   const fileSettings = personaTemplateSettingsFromRoutingFile(routingFile)
+  let routing = null
+  try {
+    routing = routingFile ? JSON.parse(fs.readFileSync(routingFile, 'utf8')) : null
+  } catch {
+    routing = null
+  }
+  const resolvedEntrypoint =
+    entrypoint === 'cli' || entrypoint === 'sdk-cli' ? entrypoint : ccEntrypointFromRouting(routing)
   const hopPreset = mode != null ? personaPresetFromHopMode(mode) : null
   const chosen = hopPreset
     ? { ...fileSettings, explicit: true, preset: hopPreset }
@@ -1882,6 +1907,7 @@ export function applyCrsUnofficialPersona(
       identity,
       model,
       callerAgent: rawCallerAgent,
+      entrypoint: resolvedEntrypoint,
     })
   }
   const doPark =
