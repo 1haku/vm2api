@@ -387,16 +387,17 @@ export function stampBillingPromptId(body, sessionId, firstUserText = '') {
   return changed ? { ...body, system } : body
 }
 const SUBAGENT_BILLING_RE = /\s*\bcc_is_subagent\s*=\s*true\s*;?/gi
-const BILLING_LINE_RE = /^\s*x-anthropic-billing-header:/i
+const BILLING_HEADER_LINE_RE = /(^\s*x-anthropic-billing-header:)([^\r\n]*)/i
 
-/** Official main requests omit cc_is_subagent. Only the first billing line is billing. */
+/** Official main requests omit cc_is_subagent. Only the first billing header line is billing. */
 export function stripSubagentBilling(body) {
   if (!body || typeof body !== 'object') return body
   let found = false
   const rewrite = (text) => {
-    if (found || !BILLING_LINE_RE.test(text)) return text
+    if (found || !BILLING_HEADER_LINE_RE.test(text)) return text
     found = true
-    return String(text).replace(SUBAGENT_BILLING_RE, '')
+    BILLING_HEADER_LINE_RE.lastIndex = 0
+    return String(text).replace(BILLING_HEADER_LINE_RE, (line) => line.replace(SUBAGENT_BILLING_RE, ''))
   }
   if (typeof body.system === 'string') {
     const system = rewrite(body.system)

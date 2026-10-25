@@ -17,7 +17,11 @@ import {
   renderOfficial303Guidance,
   renderOfficial303MainPrompt,
 } from '../../src/lib/identity/official-profiles.mjs'
-import { ensureBillingAttribution, personaTemplateVars } from '../../src/lib/identity/crs-persona.mjs'
+import {
+  ensureBillingAttribution,
+  personaTemplateVars,
+  stripSubagentBilling,
+} from '../../src/lib/identity/crs-persona.mjs'
 import { renderPersonaTemplate } from '../../src/lib/identity/persona-template.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 import {
@@ -196,15 +200,20 @@ test('missing thinking stays omitted through the final payload; a repair does no
   })
   assert.equal(repaired.body.thinking, undefined)
 })
-test('a non-billing system literal keeps cc_is_subagent', () => {
-  const literal = 'Document the field cc_is_subagent=true; do not send it.'
-  const body = officialCaller()
-  body.system.push({ type: 'text', text: literal })
-  body.messages = [{ role: 'user', content: literal }]
-  const out = lean(body, { officialCallerFlag: false })
-  assert.equal(out.system.at(-1).text.includes(literal) || out.messages[0].content[0].text.includes(literal), true)
-  assert.equal(JSON.stringify(out.messages).includes('cc_is_subagent=true'), true)
-  assert.equal(out.system[0].text.includes('cc_is_subagent'), false)
+test('a literal after the billing header line keeps cc_is_subagent', () => {
+  const note = '\nDocument the field cc_is_subagent=true; do not send it.'
+  const body = {
+    system: [
+      { type: 'text', text: `x-anthropic-billing-header: cc_version=2.1.303.abc; cc_is_subagent=true;${note}` },
+      { type: 'text', text: `later block cc_is_subagent=true;${note}` },
+    ],
+  }
+  const out = stripSubagentBilling(body)
+  assert.equal(out.system[0].text.startsWith('x-anthropic-billing-header: cc_version=2.1.303.abc;'), true)
+  assert.equal(out.system[0].text.split('\n')[0].includes('cc_is_subagent'), false)
+  assert.equal(out.system[0].text.endsWith(note), true)
+  assert.equal(out.system[1].text, body.system[1].text)
+  assert.equal(body.system[0].text.includes('cc_is_subagent=true;'), true)
 })
 
 test('top level follows the 2.1.303 order and adds no sampling or context_management', () => {
