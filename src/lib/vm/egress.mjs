@@ -256,10 +256,17 @@ function listenerPid(port) {
   return match ? Number(match[1]) : 0
 }
 
-function ownsEgressProcess(pid) {
+function ownsEgressProcess(pid, configPath) {
   if (!pidAlive(pid)) return false
-  const args = processText(pid, 'cmdline').split('\0')
-  return args.some((arg) => path.basename(String(arg || '')).startsWith('kin-egress'))
+  const args = processText(pid, 'cmdline').split('\0').filter(Boolean)
+  const configIndex = args.indexOf('-config')
+  if (configIndex < 0 || !args[configIndex + 1]) return false
+  const command = args.find((arg) => path.basename(String(arg || '')).startsWith('kin-egress'))
+  if (!command) return false
+  const argument = args[configIndex + 1]
+  return (
+    path.basename(argument) === path.basename(configPath) && argument.includes(path.basename(path.dirname(configPath)))
+  )
 }
 
 function egressProcessPids() {
@@ -478,10 +485,12 @@ export async function startEgressProcess({
       }
     } catch {}
   }
+  const portOwner = listenerPid(tcpPort)
+  if (portOwner && !ownsEgressProcess(portOwner, cfgPath)) {
+    return { ok: false, error: 'egress_port_busy', pid: portOwner }
+  }
   const superseded = [
-    ...new Set(
-      [...(configMatches ? [existing] : []), ...staleEgressPids(cfgPath), listenerPid(tcpPort)].filter(Boolean),
-    ),
+    ...new Set([...(configMatches ? [existing] : []), ...staleEgressPids(cfgPath), portOwner].filter(Boolean)),
   ]
   for (const pid of superseded) {
     const stopped = await stopOwnedEgress(pid)
