@@ -432,14 +432,7 @@ function withStandingSlot(blocks, standingText) {
     )
   })
   const copy = blocks.map((block) => ({ ...block }))
-  if (idx < 0) {
-    copy.splice(Math.min(copy.length, 2), 0, {
-      id: 'agent_standing',
-      type: 'text',
-      text: '{{agent_standing}}',
-    })
-    return copy
-  }
+  if (idx < 0) return blocks
   const existing = String(copy[idx].text || '')
   copy[idx].text = existing.replace(/\u200b/g, '').trim() ? `{{agent_standing}}${existing}` : '{{agent_standing}}'
   return copy

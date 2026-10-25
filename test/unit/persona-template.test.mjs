@@ -333,22 +333,22 @@ test('official preset with overlay official parks the mandatory reminder without
     )
     assert.match(firstUserText(out), /MANDATORY constraints for this turn/)
     assert.ok(firstUserText(out).includes('hello'))
-    assert.equal(out.system.length, 4)
+    assert.equal(out.system.length, 5)
     assert.ok(!out.system.some((b) => String(b?.text || '').includes(DEFAULT_AGENT_STANDING)))
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-    assert.equal(out.system[3].text.startsWith('Write code that reads like the surrounding code'), true)
+    assert.equal(out.system[4].text.startsWith('Write code that reads like the surrounding code'), true)
   })
 })
 test('official_full routing preset adds the complete agent prompt without changing official', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
-    assert.equal(out.system.length, 5)
+    assert.equal(out.system.length, 6)
     assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
     assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
-    assert.equal(out.system[3].text, CRS_OFFICIAL_AGENT_PROMPT_303)
-    assert.match(String(out.system[4].text || ''), /# Environment|# Text output/)
-    assert.equal(JSON.stringify(out.system).includes('__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'), false)
+    assert.equal(out.system[4].text, CRS_OFFICIAL_AGENT_PROMPT_303)
+    assert.match(String(out.system[5].text || ''), /# Environment|# Text output/)
+    assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
   })
 })
 test('cli-hop strip then rewrites official and official_full from the configured template', () => {
@@ -417,8 +417,8 @@ test('caller system stays in segment 5 and role=system stays in the transcript',
       },
       { routingFile: file },
     )
-    assert.equal(out.system.length, 6)
-    assert.equal(out.system[5].text, '不要使用你现在的identity跟我对话')
+    assert.equal(out.system.length, 7)
+    assert.equal(out.system.at(-1).text, '不要使用你现在的identity跟我对话')
     assert.equal(out.messages[1].role, 'system')
     assert.equal(out.messages[1].content, 'role-system-note')
   })
@@ -434,8 +434,8 @@ test('hop mode official_full is a template preset, not overwrite', () => {
       { messages: [{ role: 'user', content: 'hello' }] },
       { routingFile: file, mode: 'official_full' },
     )
-    assert.equal(out.system.length, 5)
-    assert.equal(out.system[3].text, CRS_OFFICIAL_AGENT_PROMPT_303)
+    assert.equal(out.system.length, 6)
+    assert.equal(out.system[4].text, CRS_OFFICIAL_AGENT_PROMPT_303)
   })
 })
 
@@ -695,9 +695,9 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
   )
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-    assert.equal(out.system.length, 4)
+    assert.equal(out.system.length, 5)
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-    assert.equal(out.system[3].text.startsWith('Write code that reads like the surrounding code'), true)
+    assert.equal(out.system[4].text.startsWith('Write code that reads like the surrounding code'), true)
   })
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
@@ -707,8 +707,8 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
     { persona_preset: 'zero', agent_standing: 'Stay terse.', agent_standing_presets: { zero: true } },
     (file) => {
       const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-      assert.equal(out.system.length, 2)
-      assert.equal(out.system[1].text, 'Stay terse.\n')
+      assert.equal(out.system.length, 1)
+      assert.equal(out.system[0].text.includes('Stay terse.'), false)
       assert.equal(out.system.at(-1).text.includes(caller), false)
     },
   )
@@ -739,7 +739,10 @@ test('each preset switch injects standing even if that template dropped the plac
     },
     (file) => {
       const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-      assert.equal(out.system.find((block) => String(block.text || '').startsWith('Stay terse.')).text, 'Stay terse.\n')
+      assert.equal(
+        out.system.some((block) => String(block.text || '').startsWith('Stay terse.')),
+        false,
+      )
     },
   )
   withRoutingFile(

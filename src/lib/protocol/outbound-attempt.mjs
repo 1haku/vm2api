@@ -75,7 +75,7 @@ function systemBlockText(block) {
 export function isCliOwnedSystemText(text) {
   const t = String(text || '').trim()
   if (!t) return true
-  if (/^x-anthropic-billing-header/i.test(t)) return true
+  if (/^x-anthropic-billing-header/i.test(t)) return !/prompt_version=</.test(t)
   if (t.startsWith('# Environment')) return true
   if (t === CLI_IDENTITY || t === CRS_OFFICIAL_SYSTEM || t === CRS_OFFICIAL_AGENT_IDENTITY) return true
   if (t === CRS_COMPACT_IDENTITY || t === CRS_OFFICIAL_CLI_SYSTEM) return true
@@ -345,7 +345,15 @@ export function prepareCliHopBody(
   if (!lean && Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
-    if (!lean) {
+    const preparedZero =
+      Array.isArray(body.system) &&
+      body.system.some(
+        (block) => /^x-anthropic-billing-header/i.test(textOf(block)) && /prompt_version=</.test(textOf(block)),
+      )
+    const shaped =
+      Array.isArray(body.system) &&
+      body.system.some((block) => textOf(block).trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+    if (!lean && !shaped && !preparedZero) {
       body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
       body.messages = officialMessageMarker(body.messages, cacheTtl)
     }

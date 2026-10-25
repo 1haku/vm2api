@@ -82,7 +82,8 @@ export function profileForPreset(preset) {
     raw === 'official_full' ||
     raw === 'official_303' ||
     raw === '303' ||
-    raw === 'official-303'
+    raw === 'official-303' ||
+    raw === 'zero'
   )
     return OFFICIAL_PROFILES['2.1.303']
   return OFFICIAL_PROFILES['2.1.296']

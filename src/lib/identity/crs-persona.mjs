@@ -851,7 +851,7 @@ export function personaTemplateVars({
     cwd: String(env?.cwd || '').trim(),
     cli_version: parseCliVersion(cliVersion),
     session_id: String(sessionId || '').trim(),
-    keep_dynamic_boundary: preset === OFFICIAL_303_PRESET,
+    keep_dynamic_boundary: ['official', 'official_full', OFFICIAL_303_PRESET].includes(preset),
     main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
     harness_303: OFFICIAL_303_HARNESS,
     guidance_303: () => renderOfficial303Guidance({ cwd: env?.cwd }),
