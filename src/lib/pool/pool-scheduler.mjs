@@ -347,10 +347,11 @@ export class PoolScheduler extends EventEmitter {
     this.lastUsed = new Map()
     this.cooldownTimers = new Map()
     this.planner = new SeatPlanner({
-      graceMs: this.config.seat_grace_ms,
+      graceMs: 0,
       reservePct: this.config.seat_budget_reserve_pct,
       strategy: this.config.strategy,
       stickyWaitMs: () => this.config.sticky_wait_timeout_ms,
+      stickyTtlMs: () => (Number(this.stickyRouter?.config?.ttl_seconds) || 86400) * 1000,
       onChange: () => this.emit('change'),
     })
     this.unitCircuit = unitCircuit
@@ -358,9 +359,11 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /**
-   * `seatKey` is the device seat identity (resolveSeatIdentity). Requests with
-   * one go through the seat planner; pinned diagnostics, seatless probes and
-   * keyless callers keep the direct pick-and-wait path.
+   * `seatKey` is the client-session seat identity (resolveSeatIdentity).
+   * Requests with one go through the seat planner; pinned diagnostics,
+   * seatless probes and keyless callers keep the direct pick-and-wait path.
+   * A granted seat stays on its VM until sticky TTL, or until the home is
+   * unschedulable / an error frees it. Request end does not free the slot.
    */
   async selectAndReserve(args = {}) {
     const pinned = !!String(args.pinVmId || '').trim()
@@ -527,12 +530,13 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /**
-   * Seat path (R1–R7). A seated device rides its seat and waits for VM
-   * concurrency in that VM's FIFO, never on another VM. A new device takes a
-   * free seat (sticky VM first, then strategy) or queues in arrival order:
-   * on its sticky VM until `sticky_wait_timeout_ms`, then globally until
-   * `fallback_wait_timeout_ms`. A seated device's concurrency wait times out
+   * Seat path. A seated session rides its seat and waits for VM concurrency
+   * in that VM's FIFO, never on another VM. A new session takes a free seat
+   * (sticky VM first, then strategy) or queues in arrival order: on its
+   * sticky VM until `sticky_wait_timeout_ms`, then globally until
+   * `fallback_wait_timeout_ms`. A seated session's concurrency wait times out
    * after `sticky_wait_timeout_ms`. Timeouts are `pool_queue_timeout`.
+   * Finishing a request keeps the seat until sticky TTL.
    */
   async selectSeat({
     model,
@@ -736,7 +740,7 @@ export class PoolScheduler extends EventEmitter {
 
   /**
    * Synchronous claim: the reservation (concurrency, quota/RPM, circuit) and
-   * the seat land together or not at all. The device's existing seat must be
+   * the seat land together or not at all. The session's existing seat must be
    * on this VM; otherwise a new one opens only under cap and budget.
    */
   claimSeat(seatKey, candidate, selectionReason) {
@@ -1837,9 +1841,11 @@ export class PoolScheduler extends EventEmitter {
 
   /**
    * Seats, queues and live requests per VM for panel rows and the seat stream.
-   * `queue_depth` counts every request waiting on that VM (seat, concurrency,
-   * cooldown/RPM); `conc_waiting` is the concurrency share of it; `inflight`
-   * is requests holding a reservation on it right now (seatless and pinned too).
+   * `seats_used` is sessions holding a slot (in flight or held until sticky
+   * TTL). `sessions` lists those occupants. `queue_depth` counts every request
+   * waiting on that VM (seat, concurrency, cooldown/RPM); `conc_waiting` is
+   * the concurrency share of it; `inflight` is requests holding a reservation
+   * on it right now (seatless and pinned too).
    */
   seatSnapshot() {
     const { seats, global_queue_depth } = this.planner.snapshot()
@@ -1850,13 +1856,17 @@ export class PoolScheduler extends EventEmitter {
         seats_grace: 0,
         queue_depth: 0,
         conc_waiting: 0,
+        sessions: [],
       })
     for (const bucket of this.waiters.values()) {
       for (const entry of bucket.values()) {
         if (entry?.vmId) row(entry.vmId).queue_depth += 1
       }
     }
-    for (const entry of Object.values(seats)) entry.inflight = 0
+    for (const entry of Object.values(seats)) {
+      entry.inflight = 0
+      if (!Array.isArray(entry.sessions)) entry.sessions = []
+    }
     for (const [vmId, count] of this.vmInflight) row(vmId).inflight = count
     return { seats, global_queue_depth, queue_max: this.config.queue_max }
   }
