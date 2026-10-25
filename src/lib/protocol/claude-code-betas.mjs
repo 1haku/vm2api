@@ -85,7 +85,7 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
     .replace(/\[1m\]/gi, '')
     .replace(/-\d{8}$/, '')
   if (Object.hasOwn(PER_TURN_MODELS, model)) add('per-turn-control-2026-07-01', BETA_MID_CONVERSATION_TOOL_CHANGES)
-  if (Object.hasOwn(MID_TOOL_CHANGE_MODELS, model)) add(BETA_MID_CONVERSATION_TOOL_CHANGES)
+  if (Object.hasOwn(MID_TOOL_CHANGE_MODELS, model) || model === 'auto') add(BETA_MID_CONVERSATION_TOOL_CHANGES)
   if (body.thread != null && Object.hasOwn(MID_OUTPUT_CONFIG_MODELS, model)) add(BETA_MID_CONVERSATION_OUTPUT_CONFIG)
   if (body.output_config?.effort != null) add(BETA_EFFORT)
   if (body.thinking?.display === 'updates') add(BETA_THINKING_DISPLAY_UPDATES)

@@ -142,6 +142,11 @@ test('request gates preserve caller opt-ins and remain isolated between requests
   assert.ok(!enabled.includes('timing-2026-09-09'))
   assert.deepEqual(withRequestProtocolBetas(['caller-beta'], { model: 'claude-sonnet-4-6' }), ['caller-beta'])
 })
+
+test('auto gets tool-changes because it is absent from the catalog and not per-turn', () => {
+  const auto = withRequestProtocolBetas(['caller-beta'], { model: 'auto' })
+  assert.deepEqual(auto, ['caller-beta', 'mid-conversation-tool-changes-2026-07-01'])
+})
 test('a cache scope adds prompt-caching-scope and a bare marker does not', () => {
   const scoped = withRequestProtocolBetas([], {
     system: [{ type: 'text', text: 'harness', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
