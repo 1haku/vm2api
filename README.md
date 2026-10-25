@@ -83,7 +83,7 @@
 - **模型**页改为卡片矩阵。`claude-haiku-5-5` 的默认上下文、`max_tokens` 和输出上限是 100K；已经改过的管理员值不会被重置。
 - **托管密钥**可以限定平台（全部 / Anthropic / OpenAI）和勾选的槽。打到范围外返回 403。
 - **流空闲**默认 180 秒，在「重试与切号」里改。长工具参数可打开流式下发，避免静默超时。
-- **cli-node** 本机交付文件已换成 2.1.303：`share/wrap-cli/cli-node`，UPX 后 27,177,428 字节，SHA256 `2c1b271df033e23830cc8cdc0181fab60d4de96ff8cf4cd406651aecd9b5ae9f`。payload 尚未更新，线上槽位未部署。
+- **cli-node** 本机交付文件已换成 2.1.303：`share/wrap-cli/cli-node`，UPX 后 27,794,208 字节，SHA256 `3aea7dbcdc721b46cc22cd9e95ffec28c811749e32a1a50bcecf6bc67c86a07c`。payload 尚未更新，线上槽位未部署。
 
 ---
 
@@ -296,7 +296,7 @@ Since 1.3.122, the caller-visible changes are:
 - **Models** are a card matrix. Haiku 5.5 defaults to a 100K context and output cap; an admin override is kept.
 - **Keys** can be limited to Anthropic or OpenAI and to selected slots. A call outside that scope returns 403.
 - **Stream idle** defaults to 180 seconds under retry settings. Long tool arguments can be streamed.
-- **cli-node** local delivery is now 2.1.303: `share/wrap-cli/cli-node`, 27,177,428 bytes after UPX, SHA256 `2c1b271df033e23830cc8cdc0181fab60d4de96ff8cf4cd406651aecd9b5ae9f`. The payload and live slots are unchanged.
+- **cli-node** local delivery is now 2.1.303: `share/wrap-cli/cli-node`, 27,794,208 bytes after UPX, SHA256 `3aea7dbcdc721b46cc22cd9e95ffec28c811749e32a1a50bcecf6bc67c86a07c`. The payload and live slots are unchanged.
 
 Details: [CHANGELOG.md](CHANGELOG.md). Guide: [vm2api.fkcodex.com/zh](https://vm2api.fkcodex.com/zh/).
 
