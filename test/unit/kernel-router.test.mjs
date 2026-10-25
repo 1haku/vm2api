@@ -772,7 +772,7 @@ test('writeKernelConfig uses identity when official_full has no persona_inject',
 
 test('kernel.json rename keeps the control-plane gid while adopting the slot uid', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-owner-'))
-  const vm = { id: 'vm-01', inference_engine: 'rust' }
+  const vm = { id: 'vm-10', inference_engine: 'rust' }
   const owner = slotRuntimeOwner(vm)
   const calls = []
   const chown = mock.method(fs, 'chownSync', (file, uid, gid) => {
@@ -780,7 +780,7 @@ test('kernel.json rename keeps the control-plane gid while adopting the slot uid
   })
   const kernelOwned = () => calls.filter((call) => String(call.file).includes(`${path.sep}kernel.json`))
   try {
-    assert.equal(owner.uid, Number(process.env.KIN_VM_UID_BASE || 10000) + 1)
+    assert.equal(owner.uid, Number(process.env.KIN_VM_UID_BASE || 10000) + 10)
     assert.equal(owner.gid, Number(process.env.KIN_VM_GID || 987))
     assert.equal(String(owner.uid), socksUidFor(vm))
     const zero = { compatibility: { persona_preset: 'zero', cache_ttl: '5m' } }

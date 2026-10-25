@@ -659,14 +659,14 @@ function kernelConfigText(config) {
   return JSON.stringify(config, null, 2) + '\n'
 }
 
-function writeKernelJsonAtomically(configPath, config) {
+function writeKernelJsonAtomically(configPath, config, vm) {
   const body = kernelConfigText(config)
   let same = false
   try {
     same = fs.readFileSync(configPath, 'utf8') === body
   } catch {}
   if (same) return false
-  replaceSlotOwnedFile(configPath, body)
+  replaceSlotOwnedFile(configPath, body, vm)
   return true
 }
 
@@ -777,7 +777,7 @@ export function writeKernelConfig(
     if (anthropicBaseUrl) config.anthropic_base_url = anthropicBaseUrl
     if (oauthTokenUrl) config.oauth_token_url = oauthTokenUrl
   }
-  const changed = writeKernelJsonAtomically(configPath, config)
+  const changed = writeKernelJsonAtomically(configPath, config, vm)
   try {
     fs.chmodSync(configPath, 0o640)
   } catch {}

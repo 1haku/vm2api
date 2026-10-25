@@ -343,7 +343,7 @@ export function chownSlotRuntimeFile(filePath, vm) {
  */
 export function replaceSlotOwnedFile(filePath, body, vm) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
-  const { uid } = slotRuntimeOwner(vm || {})
+  const uid = vm?.id ? slotRuntimeOwner(vm).uid : -1
   try {
     fs.writeFileSync(tempPath, body, { mode: 0o600 })
     try {
