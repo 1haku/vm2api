@@ -14,14 +14,7 @@ import {
   modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
 import { liftMidConversationSystemMessages, promoteContentToBlocks } from './sanitize.mjs'
-import {
-  applyThinkingDisplay,
-  ensureOfficialPrintThinking,
-  ensureUnofficialAdaptiveThinking,
-  ensureUnofficialEffortHigh,
-  normalizeThinkingForModel,
-  thinkingDisplayMode,
-} from './thinking.mjs'
+import { applyThinkingDisplay, thinkingDisplayMode } from './thinking.mjs'
 import { ensureOutputConfigSchema } from './request-rectifier.mjs'
 import {
   applyCrsIdentityReplace,
@@ -59,7 +52,7 @@ import {
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
-import { applyModelRequestRules } from './model-policy.mjs'
+
 import { isApiKeyMode, isAnySetupTokenMode } from '../oauth/credential-mode.mjs'
 import { prepareClassifierBody } from './request-purpose.mjs'
 
@@ -336,21 +329,13 @@ export function prepareCliHopBody(
   if (!lean && !modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
   if (!preserveSystem && !lean) body = collapseSystemBudgetReminders(body)
 
-  if (!repaired) {
-    normalizeThinkingForModel(body)
-    body = pinHaikuCliThinking(body)
-    body = ensureUnofficialEffortHigh(body)
-  }
+  // Native cli-node applies model policy and the medium effort default.
+  // Explicit sampling fields stay omitted or present exactly as the caller sent them.
   body = applyThinkingDisplay(body, thinkingDisplayMode(routing))
   body = stripSubagentBilling(body)
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
-  body = applyModelRequestRules(body)
   body = ensureOutputConfigSchema(body)
-  // Lean keeps the caller's explicit official conditional fields; it never adds them.
-  if (!lean && Object.prototype.hasOwnProperty.call(body, 'temperature')) delete body.temperature
-  if (Object.prototype.hasOwnProperty.call(body, 'top_p')) delete body.top_p
-  if (Object.prototype.hasOwnProperty.call(body, 'top_k')) delete body.top_k
-  if (!lean && Object.prototype.hasOwnProperty.call(body, 'context_management')) delete body.context_management
+
   if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
   if (!requestContext) {
     const preparedZero =
@@ -368,13 +353,6 @@ export function prepareCliHopBody(
     if (Array.isArray(body.tools)) body = { ...body, tools: stripEagerInputStreaming(body.tools) }
   }
   return body
-}
-/** Only legacy Haiku rejects thinking; Haiku 5.5 supports adaptive thinking. */
-export function pinHaikuCliThinking(body = {}) {
-  if (!body || typeof body !== 'object') return body
-  const model = String(body.model || '')
-  if (!/haiku/i.test(model) || /haiku-5/i.test(model)) return body
-  return { ...body, thinking: { type: 'disabled' } }
 }
 
 export function prepareOutboundAttempt({
