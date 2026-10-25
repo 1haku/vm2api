@@ -14,8 +14,12 @@ const FIXTURE_303 = require('./official-cc-system-2.1.303.json')
 export { OFFICIAL_303_PRESET }
 
 export const OFFICIAL_303_IDENTITY = FIXTURE_303.identity_cli
-/** Starts with `\n`, exactly as captured. `{{memory_dir}}` is filled per slot. */
-export const OFFICIAL_303_MAIN_PROMPT = FIXTURE_303.main_prompt
+export const OFFICIAL_303_AGENT_IDENTITY = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+/** Harness ends before guidance. `{{memory_dir}}` lives in guidance and is filled per slot. */
+export const OFFICIAL_303_HARNESS = FIXTURE_303.harness
+export const OFFICIAL_303_GUIDANCE = FIXTURE_303.guidance
+/** Harness plus guidance, the previous single main block. */
+export const OFFICIAL_303_MAIN_PROMPT = `${OFFICIAL_303_HARNESS}${OFFICIAL_303_GUIDANCE}`
 export const OFFICIAL_303_ENV_INTRO = FIXTURE_303.environment_intro
 export const OFFICIAL_303_ENV_UNTRUSTED = FIXTURE_303.environment_untrusted
 
@@ -38,8 +42,9 @@ export const OFFICIAL_PROFILES = Object.freeze({
     ]),
     system: Object.freeze([
       Object.freeze({ slot: 'billing', cache: false }),
-      Object.freeze({ slot: 'identity', cache: true }),
-      Object.freeze({ slot: 'main', cache: true }),
+      Object.freeze({ slot: 'identity', cache: false }),
+      Object.freeze({ slot: 'harness', cache: true, scope: 'global' }),
+      Object.freeze({ slot: 'guidance', cache: true }),
     ]),
     messages: Object.freeze({
       reminder: 'first_user_head',
@@ -156,9 +161,13 @@ export function officialModelLine(model = '', { oneM = false } = {}) {
 }
 
 /** Memory lives under the slot user's home, bucketed by the working directory (official `~/.claude/projects/<slug>/memory/`). */
-export function renderOfficial303MainPrompt({ cwd = '' } = {}) {
+export function renderOfficial303Guidance({ cwd = '' } = {}) {
   const slug = officialProjectSlug(sanitizeInboundCwd(cwd) || OFFICIAL_SLOT_CWD)
-  return OFFICIAL_303_MAIN_PROMPT.replace('{{memory_dir}}', `${OFFICIAL_SLOT_CWD}/.claude/projects/${slug}/memory/`)
+  return OFFICIAL_303_GUIDANCE.replace('{{memory_dir}}', `${OFFICIAL_SLOT_CWD}/.claude/projects/${slug}/memory/`)
+}
+
+export function renderOfficial303MainPrompt({ cwd = '' } = {}) {
+  return `${OFFICIAL_303_HARNESS}${renderOfficial303Guidance({ cwd })}`
 }
 
 /**
@@ -183,9 +192,9 @@ export function buildOfficial303Environment(env = {}, { model = '', oneM = false
 
 const BILLING_RE = /^\s*x-anthropic-billing-header:/i
 const IDENTITY_TEXTS = new Set([
-  "You are Claude Code, Anthropic's official CLI for Claude.",
+  OFFICIAL_303_IDENTITY,
+  OFFICIAL_303_AGENT_IDENTITY,
   "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.",
-  "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
 ])
 
 export function isOfficialIdentityText(text) {
@@ -202,7 +211,8 @@ export function classifySystemText(text) {
   if (isBillingText(t)) return 'billing'
   if (isOfficialIdentityText(t)) return 'identity'
   if (t.trimStart().startsWith('# Environment')) return 'env'
-  if (t.includes('You are an agent working with the user toward their goals')) return 'main'
+  if (t.includes('You are an agent working with the user toward their goals')) return 'harness'
+  if (t.trimStart().startsWith('Write code that reads like the surrounding code')) return 'guidance'
   if (t.includes('You are an interactive agent that helps users')) return 'main_full'
   if (t.trimStart().startsWith('# Reporting outcomes')) return 'reporting'
   return 'other'

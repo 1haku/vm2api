@@ -73,7 +73,13 @@ import {
   templatePresetFor,
   OFFICIAL_303_PRESET,
 } from './persona-template.mjs'
-import { buildOfficial303Environment, officialModelLine, renderOfficial303MainPrompt } from './official-profiles.mjs'
+import {
+  OFFICIAL_303_HARNESS,
+  buildOfficial303Environment,
+  officialModelLine,
+  renderOfficial303Guidance,
+  renderOfficial303MainPrompt,
+} from './official-profiles.mjs'
 
 export {
   AGENT_EXPANSION_CACHE_CONTROL,
@@ -377,6 +383,32 @@ export function stampBillingPromptId(body, sessionId, firstUserText = '') {
     if (text === block.text) return block
     changed = true
     return { ...block, text }
+  })
+  return changed ? { ...body, system } : body
+}
+const SUBAGENT_BILLING_RE = /\s*\bcc_is_subagent\s*=\s*true\s*;?/gi
+
+/** Official main requests omit cc_is_subagent. Native slots still mark themselves as subagents. */
+export function stripSubagentBilling(body) {
+  if (!body || typeof body !== 'object') return body
+  const rewrite = (text) => String(text).replace(SUBAGENT_BILLING_RE, '')
+  if (typeof body.system === 'string') {
+    const system = rewrite(body.system)
+    return system === body.system ? body : { ...body, system }
+  }
+  if (!Array.isArray(body.system)) return body
+  let changed = false
+  const system = body.system.map((block) => {
+    if (typeof block === 'string') {
+      const text = rewrite(block)
+      if (text === block) return block
+      changed = true
+      return text
+    }
+    if (!block || typeof block.text !== 'string' || !SUBAGENT_BILLING_RE.test(block.text)) return block
+    SUBAGENT_BILLING_RE.lastIndex = 0
+    changed = true
+    return { ...block, text: rewrite(block.text) }
   })
   return changed ? { ...body, system } : body
 }
@@ -817,6 +849,8 @@ export function personaTemplateVars({
     cli_version: parseCliVersion(cliVersion),
     session_id: String(sessionId || '').trim(),
     main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
+    harness_303: OFFICIAL_303_HARNESS,
+    guidance_303: () => renderOfficial303Guidance({ cwd: env?.cwd }),
     env_303: () => (withEnv ? buildOfficial303Environment(env, { model: model || env?.modelId }) : ''),
     model_sentence: () =>
       presetFlagEnabled(compat, 'model_env_extra_presets', preset) ? modelEnvExtra(compat, model || env?.modelId) : '',
@@ -843,6 +877,8 @@ export function personaPreviewVars({ timezone = 'UTC', model = 'claude-sonnet-5'
     model: vars.model,
     cli_version: vars.cli_version,
     main_prompt_303: vars.main_prompt_303(),
+    harness_303: vars.harness_303,
+    guidance_303: vars.guidance_303(),
     env_303: vars.env_303(),
     model_sentence: vars.model_sentence(),
   }

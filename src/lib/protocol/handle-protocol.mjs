@@ -437,6 +437,7 @@ export function createHandleProtocol(deps) {
     want1m = false,
     preserveCacheBreakpoints = false,
     cliHop = false,
+    repaired = false,
     requestContext = null,
     routing = {},
     noGoFallback = false,
@@ -457,6 +458,7 @@ export function createHandleProtocol(deps) {
       routing,
       preserveCacheBreakpoints,
       cliHop,
+      repaired,
       requestContext,
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
@@ -1457,7 +1459,10 @@ export function createHandleProtocol(deps) {
               requestId: logCtx.request_id,
             })
             logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(hopBody) || attemptSessionId)
-            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext } }
+            return {
+              body: hopBody,
+              meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext, repaired },
+            }
           }
 
           cacheTtl = requestedCacheTtl
@@ -1531,7 +1536,7 @@ export function createHandleProtocol(deps) {
             requestId: logCtx.request_id,
           })
           logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(outbound) || attemptSessionId)
-          return { body: outbound, meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId } }
+          return { body: outbound, meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId, repaired } }
         },
         callAttempt: async ({ candidate, body, attemptMeta, deliveryMode: attemptDelivery, signal, onCommit }) => {
           if (!clientStream) {
@@ -1547,6 +1552,7 @@ export function createHandleProtocol(deps) {
               cacheTtl,
               preserveCacheBreakpoints,
               cliHop: attemptMeta?.cliHop === true,
+              repaired: attemptMeta?.repaired === true,
               requestContext: attemptMeta?.requestContext || requestContext,
               want1m,
               routing: getRouting(),
@@ -1586,6 +1592,7 @@ export function createHandleProtocol(deps) {
               cacheTtl,
               preserveCacheBreakpoints,
               cliHop: attemptMeta?.cliHop === true,
+              repaired: attemptMeta?.repaired === true,
               requestContext: attemptMeta?.requestContext || requestContext,
               body,
               reqHeaders: req.headers,

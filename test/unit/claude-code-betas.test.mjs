@@ -142,6 +142,16 @@ test('request gates preserve caller opt-ins and remain isolated between requests
   assert.ok(!enabled.includes('timing-2026-09-09'))
   assert.deepEqual(withRequestProtocolBetas(['caller-beta'], { model: 'claude-sonnet-4-6' }), ['caller-beta'])
 })
+test('a cache scope adds prompt-caching-scope and a bare marker does not', () => {
+  const scoped = withRequestProtocolBetas([], {
+    system: [{ type: 'text', text: 'harness', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
+  })
+  assert.ok(scoped.includes('prompt-caching-scope-2026-01-05'))
+  const plain = withRequestProtocolBetas([], {
+    system: [{ type: 'text', text: 'harness', cache_control: { type: 'ephemeral' } }],
+  })
+  assert.ok(!plain.includes('prompt-caching-scope-2026-01-05'))
+})
 
 test('explicit fallback requests arm only the corresponding server beta', () => {
   const defaultFallback = withRequestProtocolBetas([], { fallbacks: 'default' })

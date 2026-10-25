@@ -6,6 +6,8 @@
 import { createHash } from 'node:crypto'
 import { computeClaudeCodeCch, projectClaudeCodeCchText } from '../identity/cch.mjs'
 import {
+  OFFICIAL_303_GUIDANCE,
+  OFFICIAL_303_HARNESS,
   OFFICIAL_303_IDENTITY,
   OFFICIAL_303_MAIN_PROMPT,
   OFFICIAL_PROFILES,
@@ -170,10 +172,15 @@ export function checkOfficial303Rules(body) {
   const shape = outboundShape(body)
   const system = shape.system || []
   const kinds = system.map((block) => block.kind)
-  if (kinds.join(',') !== 'billing,identity,main')
-    problems.push(`system kinds ${kinds.join(',')} != billing,identity,main`)
+  if (kinds.join(',') !== 'billing,identity,harness,guidance')
+    problems.push(`system kinds ${kinds.join(',')} != billing,identity,harness,guidance`)
   if (system[0]?.cache_control) problems.push('billing carries a marker')
-  if (!system[1]?.cache_control || !system[2]?.cache_control) problems.push('identity / main must carry markers')
+  if (system[1]?.cache_control) problems.push('identity carries a marker')
+  if (!system[2]?.cache_control || !system[3]?.cache_control) problems.push('harness / guidance must carry markers')
+  if (system[2]?.cache_control?.ttl === '1h' && system[2].cache_control.scope !== 'global')
+    problems.push('1h harness marker must carry scope global')
+  if (system[2]?.cache_control?.ttl !== '1h' && system[2]?.cache_control?.scope)
+    problems.push('5m harness marker must not carry scope')
   if (shape.tools?.markers) problems.push('tools carry markers')
   const messages = shape.messages || []
   let lastUser = -1
@@ -365,7 +372,12 @@ export function checkCallerPlacement(outBody, inbound, { officialCaller, protoco
       .map((part) => part.trim())) {
       if (para.length < 40) continue
       if (isBillingText(para) || isOfficialIdentityText(para)) continue
-      if (OFFICIAL_303_MAIN_PROMPT.includes(para) || OFFICIAL_303_IDENTITY.includes(para)) {
+      if (
+        OFFICIAL_303_MAIN_PROMPT.includes(para) ||
+        OFFICIAL_303_HARNESS.includes(para) ||
+        OFFICIAL_303_GUIDANCE.includes(para) ||
+        OFFICIAL_303_IDENTITY.includes(para)
+      ) {
         skipped++
         continue
       }

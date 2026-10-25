@@ -16,6 +16,7 @@ import {
 import { liftMidConversationSystemMessages, promoteContentToBlocks } from './sanitize.mjs'
 import {
   applyThinkingDisplay,
+  ensureOfficialPrintThinking,
   ensureUnofficialAdaptiveThinking,
   ensureUnofficialEffortHigh,
   normalizeThinkingForModel,
@@ -35,6 +36,7 @@ import {
   refreshOfficialSystemEnvironment,
   hasEnvironmentSection,
   stampBillingPromptId,
+  stripSubagentBilling,
   collapseSystemBudgetReminders,
   CRS_OFFICIAL_SYSTEM,
   CRS_OFFICIAL_CLI_SYSTEM,
@@ -332,6 +334,7 @@ export function prepareCliHopBody(
     body = ensureUnofficialEffortHigh(body)
   }
   body = applyThinkingDisplay(body, thinkingDisplayMode(routing))
+  body = stripSubagentBilling(body)
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
   body = applyModelRequestRules(body)
   body = ensureOutputConfigSchema(body)

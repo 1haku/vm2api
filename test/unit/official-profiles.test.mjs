@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  OFFICIAL_303_AGENT_IDENTITY,
+  OFFICIAL_303_GUIDANCE,
+  OFFICIAL_303_HARNESS,
   OFFICIAL_303_IDENTITY,
   OFFICIAL_303_MAIN_PROMPT,
   OFFICIAL_PROFILES,
@@ -10,6 +13,7 @@ import {
   officialModelLine,
   officialPromptShape,
   profileForPreset,
+  renderOfficial303Guidance,
   renderOfficial303MainPrompt,
 } from '../../src/lib/identity/official-profiles.mjs'
 import {
@@ -104,14 +108,15 @@ test('official_303 is a selectable preset; the default stays official_full', () 
   assert.equal(parseSlotPersonaPresetPatch('nope').ok, false)
 })
 
-test('built-in 303 template: billing, identity (marker), main (marker) and valid placeholders', () => {
+test('built-in 303 template: billing, identity, harness, guidance and valid placeholders', () => {
   const blocks = resolvePersonaTemplate('official_303')
   assert.deepEqual(
     blocks.map((block) => [block.id, block.text, block.cache_control ?? null]),
     [
       ['billing', '{{billing}}', null],
-      ['identity', '{{identity_cli}}', { type: 'ephemeral' }],
-      ['main', '{{agent_standing}}{{main_prompt_303}}', { type: 'ephemeral' }],
+      ['identity', '{{identity}}', null],
+      ['harness', '{{agent_standing}}{{harness_303}}', { type: 'ephemeral', scope: 'global' }],
+      ['guidance', '{{guidance_303}}', { type: 'ephemeral' }],
       ['env_extra', '{{model_sentence}}', null],
     ],
   )
@@ -119,16 +124,20 @@ test('built-in 303 template: billing, identity (marker), main (marker) and valid
   assert.deepEqual(validatePersonaTemplate([{ type: 'text', text: '{{env_303}}' }]), [])
 })
 
-test('2.1.303 main prompt keeps the captured bytes and fills the memory directory per cwd', () => {
+test('2.1.303 harness and guidance keep the captured split and fill the memory directory per cwd', () => {
   assert.equal(OFFICIAL_303_IDENTITY, "You are Claude Code, Anthropic's official CLI for Claude.")
-  assert.ok(OFFICIAL_303_MAIN_PROMPT.startsWith('\nYou are an agent working with the user toward their goals'))
-  assert.ok(OFFICIAL_303_MAIN_PROMPT.endsWith('<total_tokens>15000000 tokens left</total_tokens>'))
-  assert.equal(OFFICIAL_303_MAIN_PROMPT.split('{{memory_dir}}').length, 2)
-  const rendered = renderOfficial303MainPrompt({ cwd: '/srv/app' })
+  assert.equal(OFFICIAL_303_AGENT_IDENTITY, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
+  assert.ok(OFFICIAL_303_HARNESS.startsWith('\nYou are an agent working with the user toward their goals'))
+  assert.ok(OFFICIAL_303_HARNESS.endsWith("it's clickable.\n\n"))
+  assert.ok(OFFICIAL_303_GUIDANCE.startsWith('Write code that reads like the surrounding code'))
+  assert.ok(OFFICIAL_303_GUIDANCE.endsWith('<total_tokens>15000000 tokens left</total_tokens>'))
+  assert.equal(OFFICIAL_303_MAIN_PROMPT, `${OFFICIAL_303_HARNESS}${OFFICIAL_303_GUIDANCE}`)
+  assert.equal(OFFICIAL_303_GUIDANCE.split('{{memory_dir}}').length, 2)
+  const rendered = renderOfficial303Guidance({ cwd: '/srv/app' })
   assert.match(rendered, /persistent file-based memory at `\/home\/kincli\/\.claude\/projects\/-srv-app\/memory\/`/)
   assert.doesNotMatch(rendered, /\{\{memory_dir\}\}/)
-  assert.match(renderOfficial303MainPrompt(), /projects\/-home-kincli\/memory\//)
-  assert.equal(renderOfficial303MainPrompt({ cwd: '/srv/app' }), rendered)
+  assert.match(renderOfficial303Guidance(), /projects\/-home-kincli\/memory\//)
+  assert.equal(renderOfficial303MainPrompt({ cwd: '/srv/app' }), `${OFFICIAL_303_HARNESS}${rendered}`)
 })
 
 test('model line follows the 2.1.303 catalog; unknown models omit name and cutoff', () => {
@@ -187,7 +196,10 @@ test('2.1.303 Environment section uses caller facts and the official field order
 test('system text classifier for the shape tool', () => {
   assert.equal(classifySystemText('x-anthropic-billing-header: cc_version=2.1.303.abc;'), 'billing')
   assert.equal(classifySystemText(OFFICIAL_303_IDENTITY), 'identity')
-  assert.equal(classifySystemText(OFFICIAL_303_MAIN_PROMPT), 'main')
+  assert.equal(classifySystemText(OFFICIAL_303_AGENT_IDENTITY), 'identity')
+  assert.equal(classifySystemText(OFFICIAL_303_HARNESS), 'harness')
+  assert.equal(classifySystemText(OFFICIAL_303_GUIDANCE), 'guidance')
+  assert.equal(classifySystemText(OFFICIAL_303_MAIN_PROMPT), 'harness')
   assert.equal(classifySystemText('# Environment\n - Platform: linux'), 'env')
   assert.equal(classifySystemText('caller notes'), 'other')
 })

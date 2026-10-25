@@ -64,6 +64,12 @@ function hasHourCache(node) {
   return node.cache_control?.ttl === '1h' || hasHourCache(node.content)
 }
 
+function hasCacheScope(node) {
+  if (Array.isArray(node)) return node.some(hasCacheScope)
+  if (!node || typeof node !== 'object') return false
+  return node.cache_control?.scope != null || hasCacheScope(node.content)
+}
+
 export function withRequestProtocolBetas(tokens = [], body = {}) {
   const betas = [...new Set(tokens.filter(Boolean))]
   const add = (token) => {
@@ -106,6 +112,8 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
   if (body.cache_control?.evict_on_complete) add('prompt-caching-evict-2026-05-12')
   if (hasHourCache(body) || hasHourCache(body.system) || hasHourCache(body.tools) || hasHourCache(body.messages))
     add(BETA_EXTENDED_CACHE_TTL)
+  if (hasCacheScope(body) || hasCacheScope(body.system) || hasCacheScope(body.tools) || hasCacheScope(body.messages))
+    add(BETA_PROMPT_CACHING_SCOPE)
   if (Array.isArray(body.messages)) {
     let hasSystem = false
     let hasClearAt = false
