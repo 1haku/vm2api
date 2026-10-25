@@ -493,6 +493,35 @@ test('routing.json cc_entrypoint reaches the rendered template billing without a
   }
 })
 
+test('one routing read keeps billing, system identity and env on the same entrypoint', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-entrypoint-sync-'))
+  const file = path.join(dir, 'routing.json')
+  const body = { model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hello' }] }
+  const render = (entrypoint) => {
+    fs.writeFileSync(file, JSON.stringify({
+      compatibility: { persona_preset: 'official_full', cc_entrypoint: entrypoint, persona_park: false },
+    }))
+    return applyCrsUnofficialPersona(structuredClone(body), {
+      forceConfigured: true,
+      routingFile: file,
+      mode: 'official_full',
+      entrypoint,
+    })
+  }
+  try {
+    const cli = render('cli')
+    assert.match(cli.system[0].text, /cc_entrypoint=cli;/)
+    assert.equal(cli.system[1].text, "You are Claude Code, Anthropic's official CLI for Claude.")
+    assert.match(cli.system.map((block) => block.text).join('\n'), /! <command>/)
+    const sdk = render('sdk-cli')
+    assert.match(sdk.system[0].text, /cc_entrypoint=sdk-cli;/)
+    assert.equal(sdk.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
+    assert.doesNotMatch(sdk.system.map((block) => block.text).join('\n'), /! <command>/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('cliVersion can be parsed from a slot user-agent', () => {
   const out = applyCrsUnofficialPersona(
     {

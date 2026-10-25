@@ -1,6 +1,8 @@
 # Changelog
 
 ## 未发布
+- cli-hop 每次请求从 routing 文件读一次 `cc_entrypoint`。system 身份、guidance 和补出的 billing 使用同一次结果；文件正在写入时退回内存快照。改 `sdk-cli` / `cli` 后这三处一起变。
+
 - 动态 profile 按出站入口分成两套。`cc_entrypoint=cli` 用交互身份句，并保留 guidance 里的 `! <command>` 提示。缺省 `sdk-cli` 用 Agent SDK 身份句，去掉这句，对齐 `--print` 抓包。billing、UA 和兜底头仍走原来的入口开关。
 
 - 设置 → 协议和 system提示词可切换出站入口 `sdk-cli` / `cli`。网关生成的 billing、出站 UA、cli-node 兜底 billing 使用同一个值。调用方自带的 billing 入口不改，CCH 密封只改 `cch`。保存后写入各 Claude 槽 `kernel.json` 的 `cc_entrypoint`，当前本机 cli-node 每次请求热读，不重启槽。缺省仍是 `sdk-cli`。plain ELF 已验证两个值同步切换，非法值回到 `sdk-cli`。
