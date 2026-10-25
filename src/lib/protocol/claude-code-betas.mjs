@@ -72,8 +72,11 @@ function hasCacheScope(node) {
 
 export function withRequestProtocolBetas(tokens = [], body = {}) {
   const betas = [...new Set(tokens.filter(Boolean))]
-  const add = (token) => {
-    if (!betas.includes(token)) betas.push(token)
+  const add = (token, before) => {
+    if (betas.includes(token)) return
+    const at = before ? betas.indexOf(before) : -1
+    if (at === -1) betas.push(token)
+    else betas.splice(at, 0, token)
   }
   // Catalog capabilities do not imply opt-in timing/thread/diagnostic fields.
   const model = String(body.model || '')
@@ -81,7 +84,7 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
     .pop()
     .replace(/\[1m\]/gi, '')
     .replace(/-\d{8}$/, '')
-  if (Object.hasOwn(PER_TURN_MODELS, model)) add('per-turn-control-2026-07-01')
+  if (Object.hasOwn(PER_TURN_MODELS, model)) add('per-turn-control-2026-07-01', BETA_MID_CONVERSATION_TOOL_CHANGES)
   if (Object.hasOwn(MID_TOOL_CHANGE_MODELS, model)) add(BETA_MID_CONVERSATION_TOOL_CHANGES)
   if (body.thread != null && Object.hasOwn(MID_OUTPUT_CONFIG_MODELS, model)) add(BETA_MID_CONVERSATION_OUTPUT_CONFIG)
   if (body.output_config?.effort != null) add(BETA_EFFORT)
@@ -115,7 +118,6 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
   if (hasCacheScope(body) || hasCacheScope(body.system) || hasCacheScope(body.tools) || hasCacheScope(body.messages))
     add(BETA_PROMPT_CACHING_SCOPE)
   if (Array.isArray(body.messages)) {
-    let hasSystem = false
     let hasClearAt = false
     let hasMessageOutputConfig = false
     let hasMessageEffort = false
@@ -123,7 +125,6 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
     let hasMessageTaskBudget = false
     for (const message of body.messages) {
       if (!message || typeof message !== 'object') continue
-      if (message.role === 'system') hasSystem = true
       if (message.clear_at != null) hasClearAt = true
       const config = message.output_config
       if (!config || typeof config !== 'object') continue
@@ -132,7 +133,6 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
       if (config.format) hasMessageFormat = true
       if (config.task_budget) hasMessageTaskBudget = true
     }
-    if (hasSystem) add(BETA_MID_CONVERSATION_SYSTEM)
     if (hasClearAt) add(BETA_MID_CONVERSATION_SYSTEM_CLEAR_AT)
     if (hasMessageOutputConfig) add(BETA_MID_CONVERSATION_OUTPUT_CONFIG)
     if (hasMessageEffort) add(BETA_EFFORT)
