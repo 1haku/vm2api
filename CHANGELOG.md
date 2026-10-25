@@ -1,6 +1,8 @@
 # Changelog
 
 ## 未发布
+- cli-node 重编并替换本机交付文件。源码基线 `e30047ed` 加当前工作区：`prompts.ts`、`classifierRequest.ts`、`auth.ts`、`model.ts`、`plainTextStorage.ts`。协议依赖 `src/lib/protocol/claude-code-betas.mjs` SHA256 `9633abef…`，网关 `97eea591`。plain ELF 117348480 字节，SHA256 `b8cdb85325e85a976ee998064e3eac45c0eb74a3f4146989ac6db764c7541123`；UPX 5.0.2 `--best --lzma` 后 27788488 字节，SHA256 `efa72baab605c4ecee19a9e130b52ca2e1d6ef317880f5eaa5d90e867cc96aa4`。`upx -t` 通过，明文与压缩版 `--version` 均为 `2.1.303 (Claude Code)`。已替换 `share/wrap-cli/cli-node` 和 `local-src/cli-node/dist/cli-node.upx`。payload 未更新，未部署。
+
 - cli-hop 每次请求从 routing 文件读一次 `cc_entrypoint`。system 身份、guidance 和补出的 billing 使用同一次结果；文件正在写入时退回内存快照。改 `sdk-cli` / `cli` 后这三处一起变。
 
 - 动态 profile 按出站入口分成两套。`cc_entrypoint=cli` 用交互身份句，并保留 guidance 里的 `! <command>` 提示。缺省 `sdk-cli` 用 Agent SDK 身份句，去掉这句，对齐 `--print` 抓包。billing、UA 和兜底头仍走原来的入口开关。
