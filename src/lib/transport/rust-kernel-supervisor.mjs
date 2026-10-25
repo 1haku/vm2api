@@ -682,11 +682,8 @@ export function writeKernelConfig(
   const root = String(process.env.KIN_SLOT_RUN_ROOT || '').trim()
   const runDir = root ? path.join(root, vm.id) : path.join(projectRoot, 'vms', vm.id, 'run')
   const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
-  fs.mkdirSync(runDir, { recursive: true, mode: 0o2777 })
-  fs.chmodSync(runDir, 0o2777)
-  try {
-    fs.chownSync(runDir, -1, process.getgid())
-  } catch {}
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o1733 })
+  fs.chmodSync(runDir, 0o1733)
   const socketPath = path.join(runDir, 'kernel.sock')
   const configPath = path.join(runDir, 'kernel.json')
   const tokenPath = path.join(runDir, 'internal.token')

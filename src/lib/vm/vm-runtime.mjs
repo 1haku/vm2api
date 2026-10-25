@@ -528,11 +528,8 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
   const paths = workerPaths(projectRoot, vm.id)
   const uid = runtimeUidNum(vm)
   const gid = Number(GID)
-  fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o2777 })
-  fs.chmodSync(paths.runDir, 0o2777)
-  try {
-    fs.chownSync(paths.runDir, -1, process.getgid())
-  } catch {}
+  fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o1733 })
+  fs.chmodSync(paths.runDir, 0o1733)
   const shareRuntimeFile = (file) => {
     try {
       fs.chmodSync(file, 0o644)
@@ -597,6 +594,11 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
   chownSlotRuntimeFile(paths.token, vm)
   chownSlotRuntimeFile(paths.config, vm)
   if (kernel?.configPath) chownSlotRuntimeFile(kernel.configPath, vm)
+  try {
+    fs.chmodSync(paths.token, 0o600)
+  } catch {}
+  shareRuntimeFile(paths.config)
+  if (kernel?.configPath) shareRuntimeFile(kernel.configPath)
   ensureSlotClaudeOwnership(path.join(projectRoot, 'vms', vm.id, 'cli-home'), uid, gid)
   return { ...paths, kernelSocket: kernel?.socketPath || paths.kernelSocket }
 }
