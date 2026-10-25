@@ -189,6 +189,25 @@ function sessionIdFromStickyKey(key) {
   return body.slice('sess:'.length)
 }
 
+/** Machine VM, then this session's pin, then family. Empty and duplicate VMs drop out with their reason. */
+function seatHomes({ deviceVm = '', sessionVm = '', familyVm = '' } = {}) {
+  const homes = [
+    { vmId: String(deviceVm || '').trim(), reason: 'device-affinity' },
+    { vmId: String(sessionVm || '').trim(), reason: 'sticky' },
+    { vmId: String(familyVm || '').trim(), reason: 'family-affinity' },
+  ]
+  const seen = new Set()
+  return homes.filter((home) => {
+    if (!home.vmId || seen.has(home.vmId)) return false
+    seen.add(home.vmId)
+    return true
+  })
+}
+
+function byVmHas(candidates, vmId) {
+  return (candidates || []).some((candidate) => candidate.vmId === vmId)
+}
+
 /**
  * Nothing eligible. Fable keeps its Max gate; otherwise an upstream cooldown on
  * the dropped accounts names the cause: any 529 overload cooldown is capacity
@@ -698,24 +717,34 @@ export class PoolScheduler extends EventEmitter {
           }
           this.planner.pump(seat.vmId)
         } else {
-          const stickyVms = [familyGated ? '' : familyVm, deviceVm, sticky.vmId || ''].filter(Boolean)
+          // Machine/device home first, then the session's own pin, then family.
+          // A new session of a machine that already has a VM takes a free slot
+          // there before any other VM. A full home is waited, not skipped.
+          const homes = seatHomes({ deviceVm, sessionVm: sticky.vmId || '', familyVm: familyGated ? '' : familyVm })
+
           if (!ticket) {
-            const granted = this.openNewSeat(seatKey, candidates, { avoided, stickyVms })
+            const granted = this.openNewSeat(seatKey, candidates, { avoided, homes })
             if (granted) return finish(granted)
             if (!candidates.length) {
               const empty = emptyPoolFailure(model, candidates)
               return { ...fail(empty.reason), retry_after_ms: empty.retry_after_ms }
             }
             if (!allowWait || now >= failoverDeadline) return fail('all_accounts_busy')
-            const home = stickyVms
-              .map((vmId) => byVm.get(vmId))
-              .find((candidate) => candidate && (!candidate.busy || stickyShouldWait(candidate.waitReason)))
+            let home = null
+            for (const entry of homes) {
+              const candidate = byVm.get(entry.vmId)
+              if (candidate && (!candidate.busy || stickyShouldWait(candidate.waitReason))) {
+                home = candidate
+                break
+              }
+            }
             ticket = home
               ? this.enqueueTicket({
                   seatKey,
                   kind: 'seat',
                   vmId: home.vmId,
                   candidates: byVm,
+
                   stickyUntil: Math.min(failoverDeadline, now + this.config.sticky_wait_timeout_ms),
                   deadline: failoverDeadline,
                 })
@@ -769,16 +798,33 @@ export class PoolScheduler extends EventEmitter {
     return open.length ? open : openable
   }
 
-  /** Sticky VMs first (family, device, session), then the configured strategy. */
-  openNewSeat(seatKey, candidates, { avoided, stickyVms = [] }) {
+  /**
+   * Preferred homes first, but only a home with a free slot. A full machine
+   * VM is not skipped for another VM here; the caller queues on it. Homes
+   * with no free slot drop out, then the configured strategy fills the rest.
+   */
+  openNewSeat(seatKey, candidates, { avoided, homes = [] }) {
     const openable = this.openableCandidates(candidates, avoided)
     if (!openable.length) return null
-    for (const vmId of stickyVms) {
-      const home = openable.find((candidate) => candidate.vmId === vmId)
-      const granted = home ? this.claimSeat(seatKey, home, 'sticky') : null
+    for (const home of homes) {
+      const match = openable.find((candidate) => candidate.vmId === home.vmId)
+      const granted = match ? this.claimSeat(seatKey, match, home.reason) : null
       if (granted) return granted
     }
-    for (const candidate of this.planner.rank(openable)) {
+    const reserved = new Set(homes.map((home) => home.vmId))
+    const elsewhere = openable.filter((candidate) => !reserved.has(candidate.vmId))
+    const homeFull = homes.some((home) => {
+      let cap = 0
+      let present = false
+      for (const item of candidates) {
+        if (item?.vmId !== home.vmId) continue
+        present = true
+        cap = Number(item.seatCap) || 0
+      }
+      return present && cap > 0 && this.planner.openCount(home.vmId) >= cap
+    })
+    if (homeFull) return null
+    for (const candidate of this.planner.rank(elsewhere.length ? elsewhere : openable)) {
       const granted = this.claimSeat(seatKey, candidate, this.planner.strategy)
       if (granted) return granted
     }
@@ -829,6 +875,7 @@ export class PoolScheduler extends EventEmitter {
       candidates,
       deadline,
       stickyUntil,
+
       enqueuedAt: Date.now(),
       queued: false,
       granted: null,

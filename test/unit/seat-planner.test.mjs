@@ -290,6 +290,47 @@ test('a restarted scheduler does not turn a seatless probe sticky row into a sea
   restarted.planner.free(restarted.planner.seatOf(planned('real-session')))
 })
 
+test('a machine keeps one VM; its next session takes a free slot there and a foreign session does not', async (t) => {
+  const pool = setup(
+    t,
+    [
+      { id: 'vm-01', policy: { sessionSlots: 2 } },
+      { id: 'vm-02', policy: { sessionSlots: 2 } },
+    ],
+    { sticky: 80, fallback: 80 },
+  )
+  const first = await seat(pool, 'sess-a', { deviceVmId: 'vm-01' })
+  assert.equal(first.ok, true)
+  assert.equal(first.vmId, 'vm-01')
+  assert.equal(first.selectionReason, 'device-affinity')
+  first.release()
+  const sibling = await seat(pool, 'sess-b', { deviceVmId: 'vm-01' })
+  assert.equal(sibling.ok, true)
+  assert.equal(sibling.vmId, 'vm-01')
+  assert.equal(sibling.selectionReason, 'device-affinity')
+  assert.equal(pool.planner.openCount('vm-01'), 2)
+  assert.equal(pool.planner.openCount('vm-02'), 0)
+  const foreign = await seat(pool, 'sess-other', { deviceVmId: 'vm-02', allowWait: false })
+  assert.equal(foreign.ok, true)
+  assert.equal(foreign.vmId, 'vm-02')
+  // The machine's VM is full: queue on it. Do not grant another VM before the sticky wait.
+  let granted = false
+  const crowded = seat(pool, 'sess-c', { deviceVmId: 'vm-01' }).then((hold) => ((granted = true), hold))
+  await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('sess-c')))
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(granted, false)
+  assert.equal(pool.planner.globalQueue.length, 0)
+  const got = await crowded
+  assert.equal(got.ok, true)
+  assert.equal(got.vmId, 'vm-02')
+  assert.notEqual(got.selectionReason, 'device-affinity')
+  sibling.release()
+  foreign.release()
+  got.release()
+
+  for (const id of ['sess-a', 'sess-b', 'sess-other', 'sess-c']) pool.planner.free(pool.planner.seatOf(planned(id)))
+})
+
 test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
   assert.equal(budgetAllows(0.05, 2, 0.02), false)
   assert.equal(budgetAllows(0.05, 1, 0.02), true)
