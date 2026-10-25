@@ -1,7 +1,7 @@
 # Changelog
 
 ## 未发布
-- 设置 → 协议和 system提示词可切换出站入口 `sdk-cli` / `cli`。网关生成的 billing、出站 UA、cli-node 兜底 billing 使用同一个值。调用方自带的 billing 入口不改，CCH 密封只改 `cch`。保存后写入各 Claude 槽 `kernel.json` 的 `cc_entrypoint`，cli-node 每次请求热读，不重启槽。缺省仍是 `sdk-cli`。当前 cli-node 源码已改，运行中的二进制要重编后才认这个字段。
+- 设置 → 协议和 system提示词可切换出站入口 `sdk-cli` / `cli`。网关生成的 billing、出站 UA、cli-node 兜底 billing 使用同一个值。调用方自带的 billing 入口不改，CCH 密封只改 `cch`。保存后写入各 Claude 槽 `kernel.json` 的 `cc_entrypoint`，当前本机 cli-node 每次请求热读，不重启槽。缺省仍是 `sdk-cli`。plain ELF 已验证两个值同步切换，非法值回到 `sdk-cli`。
 
 
 - cli-node 对齐 2.1.303 计费行和 beta 选择器后重编。源码 `9a0f53da`，协议 `850b57aa`。plain ELF 五模型最终 beta 与 API key 路径的抓包顺序一致，haiku 的 `claude-code` 在第 6 位，auto 为 12 项。plain 117487744 字节 `56f068f0…`；UPX 5.0.2 `--best --lzma` 后 27794232 字节，SHA256 `d9f0ba21f2b12f2b00117e0f2fc8862ac8569477f5a4f5797324d9336c523e0b`。`upx -t` 与压缩后 cli-hop e2e 7/7 通过，`--version` 为 `2.1.303 (Claude Code)`。已替换本机 `share/wrap-cli/cli-node`。payload 未更新，未部署。
