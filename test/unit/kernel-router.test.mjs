@@ -808,9 +808,8 @@ test('kernel.json rename keeps the control-plane gid while adopting the slot uid
     const again = writeKernelConfig(root, vm, { token: 'tok', routing: full })
     assert.equal(again.changed, false)
     assert.equal(fs.readFileSync(again.configPath, 'utf8').includes('"persona_preset": "official_full'), true)
-    assert.equal(
-      kernelOwned().some((call) => call.file === again.configPath),
-      false,
+    assert.ok(
+      kernelOwned().some((call) => call.file === again.configPath && call.uid === owner.uid && call.gid === controlGid),
     )
   } finally {
     chown.mock.restore()

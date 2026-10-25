@@ -16,7 +16,7 @@ import { isCodexVm } from './vm-kind.mjs'
 import { buildWorkerTelemetry } from './worker-telemetry.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference } from './slot-engine.mjs'
-import { ensureSlotClaudeOwnership, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
+import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureSlotComputer, rememberComputer } from '../identity/slot-computer.mjs'
@@ -584,7 +584,13 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
     if (anthropicBaseUrl) workerConfig.anthropic_base_url = anthropicBaseUrl
     if (oauthTokenUrl) workerConfig.oauth_token_url = oauthTokenUrl
   }
-  replaceSlotOwnedFile(paths.config, JSON.stringify(workerConfig, null, 2) + '\n', vm)
+  const workerBody = JSON.stringify(workerConfig, null, 2) + '\n'
+  let workerSame = false
+  try {
+    workerSame = fs.readFileSync(paths.config, 'utf8') === workerBody
+  } catch {}
+  if (workerSame) chownSlotRuntimeFile(paths.config, vm)
+  else replaceSlotOwnedFile(paths.config, workerBody, vm)
   shareRuntimeFile(paths.config)
   const allowed = assertCliHopAllowed(vm, resolvedRouting)
   if (!allowed.ok) throw new Error(allowed.error)

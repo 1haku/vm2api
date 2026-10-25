@@ -32,6 +32,7 @@ import {
   ensureOfficialCredentialLink,
   ensureSlotSubscriptionType,
   slotUidGidFromHomeDir,
+  chownSlotRuntimeFile,
   replaceSlotOwnedFile,
 } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
@@ -665,7 +666,10 @@ function writeKernelJsonAtomically(configPath, config, vm) {
   try {
     same = fs.readFileSync(configPath, 'utf8') === body
   } catch {}
-  if (same) return false
+  if (same) {
+    chownSlotRuntimeFile(configPath, vm)
+    return false
+  }
   replaceSlotOwnedFile(configPath, body, vm)
   return true
 }

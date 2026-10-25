@@ -266,6 +266,31 @@ test('writeWorkerFiles hands runtime files to the slot user when the gateway is 
   }
 })
 
+test('root adopts an unchanged config left by the non-root gateway', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-worker-adopt-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const vm = { id: 'vm-10', proxy: { id: 'px-new', host: '1.2.3.4', port: 1080 } }
+  writeWorkerFiles(vm, dir, { routing: {} })
+  const runDir = path.join(dir, 'vms', 'vm-10', 'run')
+  for (const name of ['worker.json', 'kernel.json']) {
+    fs.chownSync(path.join(runDir, name), process.getuid(), process.getgid())
+  }
+  const calls = []
+  t.mock.method(process, 'getuid', () => 0)
+  t.mock.method(fs, 'chownSync', (file, uid, gid) => {
+    calls.push({ file, uid, gid })
+  })
+  writeWorkerFiles(vm, dir, { routing: {} })
+  const slotGid = Number(process.env.KIN_VM_GID || 987)
+  const slotUid = Number(process.env.KIN_VM_UID_BASE || 10000) + 10
+  for (const name of ['worker.json', 'kernel.json']) {
+    assert.ok(
+      calls.some((call) => call.file === path.join(runDir, name) && call.uid === slotUid && call.gid === slotGid),
+      name,
+    )
+  }
+})
+
 test('proxyEndpoint strips userinfo', () => {
   assert.equal(proxyEndpointFromUrl('socks5h://user:pass@72.1.181.43:5437'), '72.1.181.43:5437')
   assert.equal(proxyEndpointFromVm({ proxy: { host: '72.1.181.43', port: 5437 } }), '72.1.181.43:5437')
