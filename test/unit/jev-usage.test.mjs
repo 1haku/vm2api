@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { createDatabase } from '../../src/lib/db/database.mjs'
 import { JevUsageRepo } from '../../src/lib/db/repos/jev-usage-repo.mjs'
@@ -29,8 +30,7 @@ const value = (extra = {}) => ({
   ...extra,
 })
 function fixture(t) {
-  assert.ok(process.env.TMPDIR, 'Tests require project-owned TMPDIR')
-  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'jev-usage-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-usage-'))
   let db
   t.after(() => {
     db?.close()
@@ -126,8 +126,7 @@ test('telemetry storage errors are visible but cannot change classification flow
 })
 
 test('the additive migration preserves old schema/data and permits old-version reopening', (t) => {
-  assert.ok(process.env.TMPDIR)
-  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'jev-upgrade-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-upgrade-'))
   const migrationDir = path.join(dir, 'baseline-migrations')
   fs.mkdirSync(migrationDir)
   const original = path.resolve(import.meta.dirname, '../../src/lib/db/migrations')

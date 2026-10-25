@@ -2,6 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { openDatabase, closeDatabase } from '../../src/lib/db/database.mjs'
 import { JevUsageRepo } from '../../src/lib/db/repos/jev-usage-repo.mjs'
@@ -9,8 +10,7 @@ import { normalizeJevUsage } from '../../src/lib/protocol/jev-usage.mjs'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 
 test('JEV actual panel route enforces roles, sanitization and pagination', async (t) => {
-  assert.ok(process.env.TMPDIR, 'Require a project-owned test temporary directory')
-  const tmp = fs.mkdtempSync(path.join(process.env.TMPDIR, 'jev-usage-panel-'))
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-usage-panel-'))
   t.after(() => {
     closeDatabase()
     fs.rmSync(tmp, { recursive: true, force: true })
