@@ -158,6 +158,18 @@ test('model line follows the 2.1.303 catalog; unknown models omit name and cutof
     officialModelLine('claude-haiku-5-5'),
     'You are powered by the model named Haiku 5.5. The exact model ID is claude-haiku-5-5. Assistant knowledge cutoff is June 2026.',
   )
+  assert.equal(
+    officialModelLine('claude-sonnet-4'),
+    'You are powered by the model named Sonnet 4. The exact model ID is claude-sonnet-4. Assistant knowledge cutoff is January 2025.',
+  )
+  assert.equal(
+    officialModelLine('claude-opus-4'),
+    'You are powered by the model named Opus 4. The exact model ID is claude-opus-4-0. Assistant knowledge cutoff is January 2025.',
+  )
+  assert.equal(
+    officialModelLine('claude-haiku-4'),
+    'You are powered by the model named Haiku 4.5. The exact model ID is claude-haiku-4. Assistant knowledge cutoff is February 2025.',
+  )
   assert.equal(officialModelLine('auto'), 'You are powered by the model auto.')
 })
 

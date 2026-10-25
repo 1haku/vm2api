@@ -126,11 +126,12 @@ export function officialPromptShape(model = '') {
 /** 2.1.303 catalog (display_name, knowledge_cutoff). Full-prompt models still get this sentence. */
 const MODEL_SENTENCE_CATALOG = Object.freeze({
   'claude-3-5-haiku': ['Haiku 3.5', 'February 2025'],
+  'claude-haiku-4': ['Haiku 4.5', 'February 2025'],
   'claude-haiku-4-5': ['Haiku 4.5', 'February 2025'],
   'claude-haiku-5-5': ['Haiku 5.5', 'June 2026'],
   'claude-3-5-sonnet': ['Sonnet 3.5', 'January 2025'],
   'claude-3-7-sonnet': ['Sonnet 3.7', 'January 2025'],
-  'claude-sonnet-4-0': ['Sonnet 4', 'January 2025'],
+  'claude-sonnet-4': ['Sonnet 4', 'January 2025'],
   'claude-sonnet-4-5': ['Sonnet 4.5', 'January 2025'],
   'claude-sonnet-4-6': ['Sonnet 4.6', 'August 2025'],
   'claude-sonnet-5': ['Sonnet 5', 'January 2026'],

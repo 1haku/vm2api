@@ -144,7 +144,7 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
 
 export const HAIKU_BETA_HEADER = `${BETA_OAUTH},${BETA_INTERLEAVED}`
 
-/** Common 2.1.293 Messages betas; model capabilities and fields are separate gates. */
+/** Official 2.1.303 `--print` prefix. Field-gated tokens stay after it. */
 export function fullClaudeCodeMimicryBetas() {
   return [
     BETA_CLAUDE_CODE,
@@ -153,7 +153,14 @@ export function fullClaudeCodeMimicryBetas() {
     BETA_THINKING_TOKEN_COUNT,
     BETA_CONTEXT_MANAGEMENT,
     BETA_PROMPT_CACHING_SCOPE,
-    BETA_MID_CONVERSATION_SYSTEM,
+    'per-turn-control-2026-07-01',
+    BETA_MID_CONVERSATION_TOOL_CHANGES,
+    BETA_ADVANCED_TOOL_USE,
+    BETA_MID_CONVERSATION_SYSTEM_CLEAR_AT,
+    BETA_EFFORT,
+    BETA_THINKING_BINDING_CONTROLS,
+    BETA_EXTENDED_CACHE_TTL,
+    BETA_CACHE_DIAGNOSIS,
   ]
 }
 
