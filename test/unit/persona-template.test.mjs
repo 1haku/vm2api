@@ -367,13 +367,13 @@ test('cli-hop strip then rewrites official and official_full from the configured
         : []
       assert.equal(
         strippedTexts.some((text) => text.startsWith('x-anthropic-billing-header')),
-        false,
-        `${preset} strip drops billing`,
+        true,
+        `${preset} keeps billing`,
       )
       assert.equal(
         strippedTexts.filter((text) => text === CRS_OFFICIAL_SYSTEM).length,
-        0,
-        `${preset} strip drops the rebuilt identity`,
+        1,
+        `${preset} keeps the identity`,
       )
       const out = applyCrsUnofficialPersona(stripped, {
         routingFile: file,

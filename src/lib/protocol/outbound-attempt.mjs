@@ -315,8 +315,16 @@ export function prepareCliHopBody(
   // Official family keeps the inbound system and its markers. Rewriting them
   // into the persona template (billing / reporting / 1h) is what diverges from
   // the captured Claude Code body: two ephemeral blocks, TTL omitted.
+  const assembledTemplate = (system) => {
+    const blocks = Array.isArray(system) ? system : []
+    const texts = blocks.map(textOf)
+    return (
+      texts.some((text) => text.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') ||
+      texts.some((text) => /^x-anthropic-billing-header/i.test(text) && /prompt_version=</.test(text))
+    )
+  }
   if (!preserveSystem) {
-    if (!lean) {
+    if (!lean && !assembledTemplate(body.system)) {
       const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
       if (leftover == null) delete body.system
       else body.system = leftover
