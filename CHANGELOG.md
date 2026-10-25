@@ -1,7 +1,8 @@
 # Changelog
 
 ## 未发布
-- cli-node 重编并替换本机交付文件。源码基线 `e30047ed` 加当前工作区：`prompts.ts`、`classifierRequest.ts`、`auth.ts`、`model.ts`、`plainTextStorage.ts`。协议依赖 `src/lib/protocol/claude-code-betas.mjs` SHA256 `9633abef…`，网关 `97eea591`。plain ELF 117348480 字节，SHA256 `b8cdb85325e85a976ee998064e3eac45c0eb74a3f4146989ac6db764c7541123`；UPX 5.0.2 `--best --lzma` 后 27788488 字节，SHA256 `efa72baab605c4ecee19a9e130b52ca2e1d6ef317880f5eaa5d90e867cc96aa4`。`upx -t` 通过，明文与压缩版 `--version` 均为 `2.1.303 (Claude Code)`。已替换 `share/wrap-cli/cli-node` 和 `local-src/cli-node/dist/cli-node.upx`。payload 未更新，未部署。
+- 面板模型目录新增固定模型 `auto`。三种目录模式在它启用时都列出，`worker_only` 也会追加；停用后不列出。请求里的 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
+- auto mode 分类器测试契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径为 8192。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
 
 - cli-hop 每次请求从 routing 文件读一次 `cc_entrypoint`。system 身份、guidance 和补出的 billing 使用同一次结果；文件正在写入时退回内存快照。改 `sdk-cli` / `cli` 后这三处一起变。
 
