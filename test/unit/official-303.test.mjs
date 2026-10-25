@@ -12,7 +12,8 @@ import {
   OFFICIAL_303_ENV_UNTRUSTED,
   renderOfficial303MainPrompt,
 } from '../../src/lib/identity/official-profiles.mjs'
-import { ensureBillingAttribution } from '../../src/lib/identity/crs-persona.mjs'
+import { ensureBillingAttribution, personaTemplateVars } from '../../src/lib/identity/crs-persona.mjs'
+import { renderPersonaTemplate } from '../../src/lib/identity/persona-template.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 import {
   checkCallerPlacement,
@@ -105,7 +106,7 @@ test('official caller: system is billing + identity + 2.1.303 main; caller syste
   assert.equal(out.system.length, 3)
   assert.match(
     out.system[0].text,
-    /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli; cch=00000;/,
+    /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=00000;/,
   )
   assert.equal(out.system[0].cache_control, undefined)
   assert.equal(out.system[1].text, OFFICIAL_303_IDENTITY)
@@ -132,7 +133,7 @@ test('official caller: only the role=system Environment section changes; other b
     /^# Environment\nYou have been invoked in the following environment: \n - Primary working directory: \/srv\/app\n/,
   )
   assert.match(env, / - OS Version: Linux 6\.6\.1-test\n/)
-  assert.match(env, /The exact model ID is claude-opus-5-5\[1m\]\./)
+  assert.doesNotMatch(env, /You are powered by the model/)
   assert.doesNotMatch(env, /test-pro\//)
   assert.equal(out.messages[0].content[0].text, CALLER_REMINDER)
 })
@@ -284,7 +285,7 @@ test('multi-turn history: role=system goes out as the official string, other byt
   const out = lean(body)
   assert.equal(typeof out.messages[1].content, 'string')
   assert.ok(out.messages[1].content.endsWith(AFTER_ENV))
-  assert.match(out.messages[1].content, /exact model ID is claude-opus-5-5\[1m\]/)
+  assert.doesNotMatch(out.messages[1].content, /You are powered by the model/)
   assert.equal(out.messages[4].content, '<total_tokens>15000000 tokens left</total_tokens>')
   assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral' })
   assert.deepEqual(out.messages[3].content[0].cache_control, { type: 'ephemeral' })
@@ -318,7 +319,7 @@ test('model without mid-conversation system merges Environment into the main blo
   )
   assert.ok(out.system[2].text.startsWith(renderOfficial303MainPrompt({ cwd: '/srv/app' })))
   assert.match(out.system[2].text, /\n\n# Environment\nYou have been invoked/)
-  assert.match(out.system[2].text, /You are powered by the model claude-fable-6\./)
+  assert.doesNotMatch(out.system[2].text, /You are powered by the model/)
   assert.ok(out.system[2].cache_control)
   assert.equal(markers(out).total, 3)
 })
@@ -379,14 +380,49 @@ test('full-prompt models keep the existing cli-hop body; only the billing versio
   assert.match(v303.system[0].text, /cc_version=2\.1\.303\./)
 })
 
+test('renderOfficial303Body adds only the editable extra for the current model', () => {
+  const wire = (model, compat = {}) => JSON.stringify(lean(officialCaller(model), { compat }))
+  const empty = wire('claude-opus-5-5')
+  assert.equal(empty.includes('Sonnet extra.'), false)
+  assert.equal(empty.includes('Haiku extra.'), false)
+  const compat = {
+    model_env_extra_presets: { official_303: true },
+    model_env_extra: {
+      'claude-sonnet-5-5': 'Sonnet extra.',
+      'claude-haiku-5-5': 'Haiku extra.',
+    },
+  }
+  assert.equal(wire('claude-sonnet-5-5', { model_env_extra: compat.model_env_extra }).includes('Sonnet extra.'), false)
+  const sonnet = wire('claude-sonnet-5-5', compat)
+  const haiku = wire('claude-haiku-5-5', compat)
+  assert.equal(sonnet.includes('Sonnet extra.'), true)
+  assert.equal(sonnet.includes('Haiku extra.'), false)
+  assert.equal(haiku.includes('Haiku extra.'), true)
+  assert.equal(haiku.includes('Sonnet extra.'), false)
+  const cleared = wire('claude-sonnet-5-5', {
+    ...compat,
+    persona_templates: {
+      official_303: [
+        { id: 'billing', type: 'text', text: '{{billing}}' },
+        { id: 'identity', type: 'text', text: '{{identity_cli}}' },
+        { id: 'main', type: 'text', text: '{{main_prompt_303}}' },
+        { id: 'env_extra', type: 'text', text: '' },
+      ],
+    },
+  })
+  assert.equal(cleared.includes('Sonnet extra.'), false)
+  assert.equal(cleared.includes('Haiku extra.'), false)
+})
+
 test('kernel.json cli_version follows the slot profile', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-303-cfg-'))
   const read = (vm, routing) =>
     JSON.parse(fs.readFileSync(writeKernelConfig(root, vm, { token: 't', routing }).configPath, 'utf8'))
   try {
     assert.equal(read({ id: 'vm-01' }, { compatibility: { persona_preset: 'official_303' } }).cli_version, '2.1.303')
-    assert.equal(read({ id: 'vm-02' }, { compatibility: { persona_preset: 'official_full' } }).cli_version, '2.1.296')
-    assert.equal(read({ id: 'vm-03' }, {}).cli_version, '2.1.296')
+    assert.equal(read({ id: 'vm-02' }, { compatibility: { persona_preset: 'official_full' } }).cli_version, '2.1.303')
+    assert.equal(read({ id: 'vm-03' }, {}).cli_version, '2.1.303')
+    assert.equal(read({ id: 'vm-legacy' }, { compatibility: { persona_preset: 'zero' } }).cli_version, '2.1.296')
     assert.equal(
       read({ id: 'vm-04', persona_preset: 'official_303' }, { compatibility: { persona_preset: 'zero' } }).cli_version,
       '2.1.303',

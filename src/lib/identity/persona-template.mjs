@@ -55,6 +55,7 @@ export const PERSONA_TEMPLATE_VARS = Object.freeze([
   Object.freeze(['session_id', '出站会话 id']),
   Object.freeze(['main_prompt_303', '官方 2.1.303 lean 主提示词（记忆目录按槽位填写）']),
   Object.freeze(['env_303', '官方 2.1.303 Environment 段（槽位身份 + 调用方 cwd / git / shell）']),
+  Object.freeze(['model_sentence', '当前模型的官方模型句，追加在 Environment 之后，可在本页改写']),
 ])
 
 export const OVERLAY_TEMPLATE_VARS = Object.freeze([
@@ -119,45 +120,40 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
   official_full: Object.freeze([
     Object.freeze({
       id: 'billing',
-      note: '计费归因头：cc_version / cc_entrypoint / cch / cc_prompt_id，官方必带',
+      note: '2.1.303 计费归因头，不打缓存点',
       type: 'text',
       text: '{{billing}}',
     }),
     Object.freeze({
       id: 'identity',
-      note: '交互 CLI 身份句。cli-node 按这句切第 2 段，不能换成 Agent SDK 句',
+      note: '2.1.303 CLI 身份句；实抓首两 system 块无 cache_control',
       type: 'text',
-      text: '{{identity_cli}}',
-    }),
-    Object.freeze({
-      id: 'reporting',
-      note: '官方 reporting 整段。必须是独立块，cli-node 才把它从静态段里抬出来',
-      type: 'text',
-      text: '{{reporting}}',
+      text: '{{identity}}',
     }),
     Object.freeze({
       id: 'agent_official',
-      note: '静态段。常驻约束在前，官方提示词在后。1h 断点打在这里，排在会变的动态段之前',
+      note: '2.1.303 完整提示词稳定段；动态工具、skills、memory 和日期仍由调用路径提供',
       type: 'text',
       text: '{{agent_standing}}{{agent_official}}',
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
     }),
     Object.freeze({
-      id: 'dynamic_boundary',
-      note: '静态段和动态段的分界。cli-node 丢掉这个标记，只拿它决定 cache scope',
-      type: 'text',
-      text: '{{dynamic_boundary}}',
-    }),
-    Object.freeze({
       id: 'env_official',
-      note: '官方 continuation + Environment。2.1.263 起 1h 缓存，无 scope',
+      note: '2.1.303 Environment / continuation；动态段保持按槽位和调用方事实生成',
       type: 'text',
       text: '{{env_official}}',
       cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
     }),
     Object.freeze({
+      id: 'env_extra',
+      note: 'Environment 之后的附加段。默认是当前模型句，可在 system提示词页改写或清空',
+      drop_if_empty: true,
+      type: 'text',
+      text: '{{model_sentence}}',
+    }),
+    Object.freeze({
       id: 'caller_system',
-      note: '调用方 --append-system-prompt 剩余 system，原文追加不清洗',
+      note: '调用方 system 仍追加在完整提示词之后',
       drop_if_empty: true,
       type: 'text',
       text: '{{caller_system}}',
@@ -219,6 +215,13 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       type: 'text',
       text: '{{agent_standing}}{{main_prompt_303}}',
       cache_control: Object.freeze({ type: 'ephemeral' }),
+    }),
+    Object.freeze({
+      id: 'env_extra',
+      note: 'Environment 之后的附加段。默认是当前模型句，可在 system提示词页改写或清空',
+      drop_if_empty: true,
+      type: 'text',
+      text: '{{model_sentence}}',
     }),
   ]),
 })
@@ -321,11 +324,11 @@ export function agentStandingText(compat = {}) {
  * remain opt-out for backwards-compatible masking/env behavior.
  */
 export function presetFlagEnabled(compat, field, preset) {
-  const defaultValue = field === 'agent_standing_presets' ? false : true
+  const defaultValue = field === 'agent_standing_presets' || field === 'model_env_extra_presets' ? false : true
   const map = compat?.[field]
   if (!map || typeof map !== 'object' || Array.isArray(map)) return defaultValue
   const value = map[normalizePersonaPreset(preset)]
-  if (field === 'agent_standing_presets') return value === true
+  if (field === 'agent_standing_presets' || field === 'model_env_extra_presets') return value === true
   return value !== false
 }
 
@@ -338,7 +341,16 @@ export const PRESET_FLAG_FIELDS = Object.freeze([
   'agent_standing_hide_presets',
   'persona_env_presets',
   'persona_hide_presets',
+  'model_env_extra_presets',
 ])
+
+/** 官方完整档可按块 id 关掉。缺省或非对象 = 全部保留。 */
+export function selectedTemplateBlocks(blocks, compat = {}, preset) {
+  if (normalizePersonaPreset(preset) !== 'official_full') return blocks
+  const selected = compat?.persona_block_presets?.[normalizePersonaPreset(preset)]
+  if (!selected || typeof selected !== 'object' || Array.isArray(selected)) return blocks
+  return blocks.filter((block) => selected[String(block?.id || '')] !== false)
+}
 
 /** {{agent_standing}} 的值：非空时以换行结尾，紧跟下一段不粘连。 */
 export function agentStandingVar(compat = {}, preset) {
@@ -358,7 +370,10 @@ export function parsePersonaTemplateLines(text) {
     try {
       parsed = JSON.parse(line)
     } catch (err) {
-      errors.push({ line: index + 1, message: `不是合法 JSON：${err.message}` })
+      errors.push({
+        line: index + 1,
+        message: `不是合法 JSON：${err.message}`,
+      })
       return
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -409,7 +424,11 @@ function withStandingSlot(blocks, standingText) {
   })
   const copy = blocks.map((block) => ({ ...block }))
   if (idx < 0) {
-    copy.splice(Math.min(copy.length, 2), 0, { id: 'agent_standing', type: 'text', text: '{{agent_standing}}' })
+    copy.splice(Math.min(copy.length, 2), 0, {
+      id: 'agent_standing',
+      type: 'text',
+      text: '{{agent_standing}}',
+    })
     return copy
   }
   const existing = String(copy[idx].text || '')

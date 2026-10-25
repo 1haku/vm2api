@@ -2,6 +2,8 @@
 
 ## 版本与功能
 
+合入上游 v1.3.226 及 main `6f188e94`：同步图片预算缓存前缀、TTL 剩余计费、模型附加句与官方块开关，并按上游关闭 count_tokens HTTP 入口。CLI 固定为 `cb2f8fb9`；official/official_full 的版本随上游变为 2.1.303，保留已选档案及账号配置。原生回归同步更新旧 296/cli 断言，继续校验请求体、历史、CCH、实际 Content-Length 和脱敏日志；CLI fetch 快照不包含传输层自动添加的 Accept-Encoding，该字段独立检查本地上游收到的实际值。上游一次性发布工作流限定在 dofastted/vm2api，避免 fork 合并时误触发发布。更新现存本机 Claude CLI 时先等待空闲，只替换受控 CLI 子进程，保留容器及账号身份。订阅、Lite 压缩修复和用户生图权限继续保留。
+
 合入上游 v1.3.223（`2433866e`）：原生 Anthropic API 转发 beta/safeguards 等调用方协议头，保持服务端鉴权头；按新 payload 清单发布固定 SHA 的 kin-worker/kin-egress/kin-slot-gate，定制镜像保留 Go vet/race 测试但不再用本地编译结果覆盖这些发布资产。历史 CCH 热修脚本与对应测试按上游删除，现有原生 303/296 链路和订阅回归仍保留。现有提示词档、日志、Lite 修复、仅 admin 生图与全部额度设置不变。若既有自编译 helper 与新固定字节不同，须刷新相应运行进程而非仅换模板；不重建账号容器。无数据库迁移和新依赖。
 
 原生验收确认 `944f6457` 的 billing 为 cli，但最终 UA 仍为 sdk-cli，Accept 为 application/json，Accept-Encoding 为 gzip, deflate, br, zstd，x-stainless-timeout 为 600000；后续请求头修复尚未进该 payload。仅对这个精确 SHA 使用已发布头部契约，未来二进制仍须满足新头部断言，body/历史/CCH/Content-Length 检查不放宽。面板「当前出站参照」明确为配置参照，避免误称 CLI 最终抓包。

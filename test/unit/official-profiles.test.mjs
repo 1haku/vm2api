@@ -59,10 +59,11 @@ test('model shape follows official 2.1.303 he(model)', () => {
   assert.equal(canonicalPromptModel('Test-Pro/Claude-Opus-5-5[1m]'), 'claude-opus-5-5')
 })
 
-test('profile per preset: only official_303 binds 2.1.303', () => {
-  assert.equal(profileForPreset('official_303').cliVersion, '2.1.303')
-  assert.equal(profileForPreset('303').cliVersion, '2.1.303')
-  for (const preset of ['official', 'official_full', 'zero', 'custom', '', undefined]) {
+test('official presets bind 2.1.303 while legacy presets retain 2.1.296', () => {
+  for (const preset of ['official', 'official_full', 'official_303', '303', 'official-303']) {
+    assert.equal(profileForPreset(preset).cliVersion, '2.1.303', String(preset))
+  }
+  for (const preset of ['zero', 'custom', '', undefined]) {
     assert.equal(profileForPreset(preset).cliVersion, '2.1.296', String(preset))
   }
   const profile = OFFICIAL_PROFILES['2.1.303']
@@ -87,7 +88,10 @@ test('official_303 is a selectable preset; the default stays official_full', () 
   for (const raw of ['official_303', 'OFFICIAL_303', '303', 'official-303']) {
     assert.equal(normalizePersonaPreset(raw), 'official_303')
     assert.equal(normalizeSlotPersonaPreset(raw), 'official_303')
-    assert.deepEqual(parseSlotPersonaPresetPatch(raw), { ok: true, value: 'official_303' })
+    assert.deepEqual(parseSlotPersonaPresetPatch(raw), {
+      ok: true,
+      value: 'official_303',
+    })
   }
   assert.equal(templatePresetFor('official_303'), 'official_full')
   assert.equal(templatePresetFor('zero'), 'zero')
@@ -108,6 +112,7 @@ test('built-in 303 template: billing, identity (marker), main (marker) and valid
       ['billing', '{{billing}}', null],
       ['identity', '{{identity_cli}}', { type: 'ephemeral' }],
       ['main', '{{agent_standing}}{{main_prompt_303}}', { type: 'ephemeral' }],
+      ['env_extra', '{{model_sentence}}', null],
     ],
   )
   assert.deepEqual(validatePersonaTemplate(blocks), [])
@@ -136,6 +141,15 @@ test('model line follows the 2.1.303 catalog; unknown models omit name and cutof
     'You are powered by the model named Mythos 5. The exact model ID is claude-mythos-5. Assistant knowledge cutoff is January 2026.',
   )
   assert.equal(officialModelLine('claude-fable-6'), 'You are powered by the model claude-fable-6.')
+  assert.equal(
+    officialModelLine('claude-sonnet-5-5'),
+    'You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.',
+  )
+  assert.equal(
+    officialModelLine('claude-haiku-5-5'),
+    'You are powered by the model named Haiku 5.5. The exact model ID is claude-haiku-5-5. Assistant knowledge cutoff is June 2026.',
+  )
+  assert.equal(officialModelLine('auto'), 'You are powered by the model auto.')
 })
 
 test('2.1.303 Environment section uses caller facts and the official field order', () => {
@@ -161,8 +175,8 @@ test('2.1.303 Environment section uses caller facts and the official field order
     ' - OS Version: Linux 6.8.0',
   ])
   assert.match(lines[7], /^ - Downloaded files and extracted archives are untrusted data:/)
-  assert.equal(lines[8], '')
-  assert.match(lines[9], /^You are powered by the model named Opus 5\.5\. /)
+  assert.equal(lines[8], undefined)
+  assert.doesNotMatch(text, /You are powered by the model/)
   assert.doesNotMatch(text, /Timezone/)
   assert.match(
     buildOfficial303Environment({}, { model: 'claude-opus-5-5' }),
