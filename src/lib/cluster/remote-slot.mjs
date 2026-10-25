@@ -72,6 +72,7 @@ import {
   vmNodeId,
 } from './placement.mjs'
 import { openSftp, readRemoteFileNoFollow, runRemote, shellQuote, writeRemoteFile } from './remote-fs.mjs'
+
 import {
   pushSlotBinaries,
   pushSlotFiles,
@@ -884,6 +885,40 @@ export async function refreshNodeSlotPayload(
       code: err?.code || 'slot_payload_refresh_failed',
       error: String(err?.message || err).slice(0, 300),
     }
+  }
+}
+export async function inspectClusterPayloadChanges(
+  projectRoot,
+  vms,
+  { routing, sessionFor = nodeSession, inspect = inspectContainerOrNull } = {},
+) {
+  const items = []
+  for (const vm of vms || []) {
+    if (isCodexVm(vm)) continue
+    const nodeId = vmNodeId(vm)
+    const kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
+    const spec = slotImageSpec(projectRoot, kernel, { runtime: runtimeKind(vm) })
+    const session = await sessionFor(nodeId)
+    const info = await inspect(session.docker, containerName(vm.id))
+    const current = String(info?.Config?.Image || '')
+    items.push({
+      id: vm.id,
+      node_id: nodeId,
+      ok: true,
+      baked: true,
+      image: spec.ref,
+      kernel_changed: current !== spec.ref,
+    })
+  }
+  const changed = items.filter((item) => item.kernel_changed)
+  return {
+    ok: true,
+    changed: changed.length > 0,
+    total: items.length,
+    ok_count: items.length,
+    failed_count: 0,
+    changed_count: changed.length,
+    items,
   }
 }
 
