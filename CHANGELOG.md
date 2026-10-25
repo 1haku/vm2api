@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 本机 `share/wrap-cli/cli-node` 替换为隔离快照构建：源码 `ed9fd21`，外部依赖 `src/lib/protocol/claude-code-betas.mjs` SHA256 `0dd4d8d9…`，另补已提交代码所需的 `SYSTEM_PROMPT_REPORTING_OUTCOMES` 导出。plain 111237248 字节 `d6fd3a91…`；UPX 5.0.2 `--best --lzma` 后 27177428 字节，SHA256 `2c1b271df033e23830cc8cdc0181fab60d4de96ff8cf4cd406651aecd9b5ae9f`。`upx -t` 通过，`--version` 为 `2.1.303 (Claude Code)`。尚未更新 payload，未部署。
 - 面板 official_303 出站对齐官方 --print：缺省 thinking 补 `adaptive` / `omitted`（调用方已写的不改）；billing 去掉 `cc_is_subagent=true`。system 改为 billing、身份、harness、guidance 四段。身份不打点；harness 与 guidance 打点，1h 时 harness 另带 `scope: global` 并加上 `prompt-caching-scope` beta，5m 不带 scope。不改二进制。
 - 模型附加句改为按档开关，默认关闭。关闭时 `{{model_sentence}}` 不渲染；打开后才取 `model_env_extra` 里当前模型的句子。清空模板块后也不追加。
 - 网关生成的 billing 与 cli-node 缺失 billing 时的兜底头改为 `cc_entrypoint=sdk-cli`，与 2.1.303 抓包一致；调用方自带的 billing 不改写。出站 UA 已是 `(external, sdk-cli)`，`cc_turn_origin` 仍为 `sdk`。所有档位的出站 billing 字节随之变化，各会话首轮重建一次缓存。
