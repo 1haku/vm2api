@@ -370,7 +370,9 @@ export class PoolScheduler extends EventEmitter {
   /**
    * The seat book is memory. Sticky rows survive a restart, so a new process
    * must occupy those slots again before any new session can take them.
-   * Only canonical `sess:` rows count; device affinity and family pins do not.
+   * Only canonical `sess:` rows that actually held a slot (`slot_index` set)
+   * count. Seatless probes keep a sticky pin with a null slot and must not
+   * become a seat here. Device affinity and family pins do not either.
    * The owner scope is the VM's owner, matching scopedSeatKey.
    */
   restoreStickySeats(now = Date.now()) {
@@ -380,6 +382,7 @@ export class PoolScheduler extends EventEmitter {
     for (const [key, ent] of Object.entries(rows)) {
       const sessionId = sessionIdFromStickyKey(key)
       if (!sessionId || !ent?.vm_id || !ent?.account_id) continue
+      if (ent.slot_index == null || !Number.isInteger(Number(ent.slot_index))) continue
       if (!ent.expires_at || now >= Number(ent.expires_at)) continue
       let vm = null
       try {
@@ -393,7 +396,7 @@ export class PoolScheduler extends EventEmitter {
       const seat = this.planner.restore(seatKey, {
         vmId: ent.vm_id,
         accountId: ent.account_id,
-        index: ent.slot_index == null ? null : Number(ent.slot_index),
+        index: Number(ent.slot_index),
         heldUntil: Number(ent.expires_at),
         cap: vm ? seatCapOf(vm, this.config.default_session_slots) : 0,
       })

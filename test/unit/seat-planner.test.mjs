@@ -254,6 +254,42 @@ test('a restarted scheduler restores unexpired session seats, so another session
   assert.equal(restarted.seatSnapshot().seats['vm-01'].sessions[0].session_id, sessionA)
 })
 
+test('a restarted scheduler does not turn a seatless probe sticky row into a seat', async (t) => {
+  const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
+  const probe = await seat(pool, 'probe-session', { skipSessionSlot: true, allowWait: false })
+  assert.equal(probe.ok, true)
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  probe.release()
+  const expiresAt = Date.now() + 60_000
+  const rows = {
+    'sess:probe-session': {
+      account_id: probe.accountId,
+      vm_id: 'vm-01',
+      expires_at: expiresAt,
+      slot_index: null,
+    },
+  }
+  const restarted = new PoolScheduler({
+    projectRoot: pool.projectRoot,
+    runtimeRepo: new RuntimeRepo(),
+    accountQuota: { canAccept: () => ({ ok: true }) },
+    workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
+    stickyRouter: { config: { ttl_seconds: 86400 }, repo: { all: () => rows } },
+    config: { seat_grace_ms: 0 },
+  })
+  assert.equal(restarted.planner.openCount('vm-01'), 0)
+  assert.equal(restarted.seatSnapshot().seats['vm-01'], undefined)
+  const next = await restarted.selectAndReserve({
+    model: MODEL,
+    seatKey: 'seat:sess:real-session',
+    allowWait: false,
+  })
+  assert.equal(next.ok, true)
+  assert.equal(next.vmId, 'vm-01')
+  next.release()
+  restarted.planner.free(restarted.planner.seatOf(planned('real-session')))
+})
+
 test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
   assert.equal(budgetAllows(0.05, 2, 0.02), false)
   assert.equal(budgetAllows(0.05, 1, 0.02), true)
