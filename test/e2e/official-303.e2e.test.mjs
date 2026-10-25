@@ -146,7 +146,7 @@ test('official_303 lean on the real chain: skeleton, rules, version, CCH', { ski
   assert.equal(wire.body.messages[1].content.endsWith(AFTER_ENV), true)
   assert.deepEqual(
     wire.body.system.map((block) => block.cache_control),
-    [undefined, undefined, { type: 'ephemeral' }, { type: 'ephemeral' }],
+    [undefined, undefined, { type: 'ephemeral' }, undefined, { type: 'ephemeral' }],
   )
   assertCch(wire)
   assert.deepEqual(h.logs.at(-1).outbound_profile, { cli_version: '2.1.303', shape: 'lean' })
@@ -171,7 +171,7 @@ test('official_303 lean: non-official caller and a second turn keep the cached p
     '<system-reminder>\nYou are a helpful bot.\n</system-reminder>\n',
   )
   assert.deepEqual(first.body.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
-  assert.deepEqual(first.body.system[3].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(first.body.system[4].cache_control, { type: 'ephemeral', ttl: '1h' })
   const second = await h.send(
     {
       ...bot,

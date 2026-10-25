@@ -278,6 +278,12 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         cache_control: { type: 'ephemeral', scope: 'global' },
       },
       {
+        id: 'dynamic_boundary',
+        note: 'cli-node 用它把前面的 harness 标成 1h global，后面的 guidance 标成 1h。标记本身不出站',
+        type: 'text',
+        text: '{{dynamic_boundary}}',
+      },
+      {
         id: 'guidance',
         note: '2.1.303 guidance。断点 TTL 取面板缓存 TTL，不带 scope',
         type: 'text',

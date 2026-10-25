@@ -116,6 +116,7 @@ test('built-in 303 template: billing, identity, harness, guidance and valid plac
       ['billing', '{{billing}}', null],
       ['identity', '{{identity}}', null],
       ['harness', '{{agent_standing}}{{harness_303}}', { type: 'ephemeral', scope: 'global' }],
+      ['dynamic_boundary', '{{dynamic_boundary}}', null],
       ['guidance', '{{guidance_303}}', { type: 'ephemeral' }],
       ['env_extra', '{{model_sentence}}', null],
     ],

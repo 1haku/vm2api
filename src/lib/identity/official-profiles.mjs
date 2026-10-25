@@ -213,6 +213,7 @@ export function classifySystemText(text) {
   if (isOfficialIdentityText(t)) return 'identity'
   if (t.trimStart().startsWith('# Environment')) return 'env'
   if (t.includes('You are an agent working with the user toward their goals')) return 'harness'
+  if (t.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') return 'boundary'
   if (t.trimStart().startsWith('Write code that reads like the surrounding code')) return 'guidance'
   if (t.includes('You are an interactive agent that helps users')) return 'main_full'
   if (t.trimStart().startsWith('# Reporting outcomes')) return 'reporting'

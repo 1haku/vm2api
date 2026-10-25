@@ -218,6 +218,12 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
+      id: 'dynamic_boundary',
+      note: 'cli-node 用它把前面的 harness 标成 1h global，后面的 guidance 标成 1h。标记本身不出站',
+      type: 'text',
+      text: '{{dynamic_boundary}}',
+    }),
+    Object.freeze({
       id: 'guidance',
       note: '2.1.303 guidance。断点 TTL 取面板缓存 TTL，不带 scope',
       type: 'text',
@@ -456,9 +462,9 @@ export function renderPersonaTemplate(blocks, vars = {}) {
   for (const block of source) {
     if (!block || typeof block !== 'object') continue
     const text = renderText(block.text, vars)
-    // The marker only tells cli-node where the global prefix ends. HTTP has no
-    // splitter, so a rendered block would ship the literal upstream.
-    if (text === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') continue
+    // cli-hop needs the literal so splitSysPromptPrefix can separate harness
+    // from guidance. HTTP has no splitter and must not send it upstream.
+    if (text === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__' && vars?.keep_dynamic_boundary !== true) continue
     const blank = !text.trim()
     const emptyEnvironment =
       blank &&

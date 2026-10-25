@@ -40,6 +40,7 @@ const SECRET_BODY = {
       text: '\nYou are an agent working with the user toward their goals',
       cache_control: { type: 'ephemeral' },
     },
+    { type: 'text', text: '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__' },
     {
       type: 'text',
       text: 'Write code that reads like the surrounding code: match its comment density.',
@@ -62,7 +63,7 @@ test('shape keeps structure only: no prompt text, ids or secrets', () => {
   }
   assert.deepEqual(
     shape.system.map((block) => block.kind),
-    ['billing', 'identity', 'harness', 'guidance'],
+    ['billing', 'identity', 'harness', 'boundary', 'guidance'],
   )
   assert.deepEqual(shape.billing_fields, ['cc_version', 'cc_entrypoint', 'cch'])
   assert.equal(shape.messages[0].blocks[0].kind, 'reminder')

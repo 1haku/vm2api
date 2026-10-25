@@ -112,7 +112,7 @@ function stripMarkers(value) {
 
 test('official caller: system is billing, identity, harness, guidance; caller system never reaches the wire', () => {
   const out = lean(officialCaller())
-  assert.equal(out.system.length, 4)
+  assert.equal(out.system.length, 5)
   assert.match(
     out.system[0].text,
     /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=00000;/,
@@ -122,7 +122,9 @@ test('official caller: system is billing, identity, harness, guidance; caller sy
   assert.equal(out.system[1].text, OFFICIAL_303_AGENT_IDENTITY)
   assert.equal(out.system[1].cache_control, undefined)
   assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-  assert.equal(out.system[3].text, renderOfficial303Guidance({ cwd: '/srv/app' }))
+  assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+  assert.equal(out.system[3].cache_control, undefined)
+  assert.equal(out.system[4].text, renderOfficial303Guidance({ cwd: '/srv/app' }))
   assert.deepEqual(out.thinking, { type: 'adaptive', display: 'summarized' })
   const wire = JSON.stringify(out)
   assert.ok(!wire.includes('You are an interactive agent that helps users'), 'old 2.1.296 full prompt dropped')
@@ -161,11 +163,11 @@ test('harness and guidance carry the panel TTL; 1h harness also carries scope gl
     assert.equal(found.total, 3, ttl)
     assert.deepEqual(
       found.at.map((m) => m.where),
-      ['system[2]', 'system[3]', 'messages[0].content[1]'],
+      ['system[2]', 'system[4]', 'messages[0].content[1]'],
     )
     assert.equal(out.system[1].cache_control, undefined)
     assert.deepEqual(out.system[2].cache_control, harness)
-    assert.deepEqual(out.system[3].cache_control, expected)
+    assert.deepEqual(out.system[4].cache_control, expected)
     assert.deepEqual(out.messages[0].content[1].cache_control, expected)
     assert.equal(out.tools[0].cache_control, undefined)
     assert.deepEqual(checkOfficial303Rules(out), [], ttl)
@@ -303,11 +305,11 @@ test('two rounds: the previous user carries the first-round write marker; prefix
   assert.ok(first.messages[0].content[0].text.includes(budget(15000000)))
   assert.deepEqual(
     markers(first).at.map((m) => m.where),
-    ['system[2]', 'system[3]', 'messages[0].content[1]'],
+    ['system[2]', 'system[4]', 'messages[0].content[1]'],
   )
   assert.deepEqual(
     markers(second).at.map((m) => m.where),
-    ['system[2]', 'system[3]', 'messages[0].content[1]', 'messages[2].content[0]'],
+    ['system[2]', 'system[4]', 'messages[0].content[1]', 'messages[2].content[0]'],
   )
   assert.equal(second.messages.at(-1).role, 'system')
   assert.deepEqual(checkOfficial303Rules(first), [])
@@ -376,10 +378,11 @@ test('model without mid-conversation system merges Environment into guidance', (
     false,
   )
   assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-  assert.ok(out.system[3].text.startsWith(renderOfficial303Guidance({ cwd: '/srv/app' })))
-  assert.match(out.system[3].text, /\n\n# Environment\nYou have been invoked/)
-  assert.doesNotMatch(out.system[3].text, /You are powered by the model/)
-  assert.ok(out.system[3].cache_control)
+  assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+  assert.ok(out.system[4].text.startsWith(renderOfficial303Guidance({ cwd: '/srv/app' })))
+  assert.match(out.system[4].text, /\n\n# Environment\nYou have been invoked/)
+  assert.doesNotMatch(out.system[4].text, /You are powered by the model/)
+  assert.ok(out.system[4].cache_control)
   assert.equal(markers(out).total, 3)
 })
 
