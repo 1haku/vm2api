@@ -181,9 +181,16 @@ export function iptablesPlan({ chain, bridge, subnet, tcpPort, dnsPort }) {
   }
 }
 
+function commandPrefix(name) {
+  const raw = String(process.env.KIN_EGRESS_CMD_PREFIX || '').trim()
+  if (!raw || !['ss', 'iptables'].includes(name)) return []
+  return raw.split(/\s+/).filter(Boolean)
+}
+
 function sh(argv, { timeout = 15_000 } = {}) {
+  const command = [...commandPrefix(argv[0]), ...argv]
   try {
-    const out = execFileSync(argv[0], argv.slice(1), {
+    const out = execFileSync(command[0], command.slice(1), {
       encoding: 'utf8',
       timeout,
       stdio: ['ignore', 'pipe', 'pipe'],

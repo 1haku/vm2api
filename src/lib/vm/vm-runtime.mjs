@@ -299,13 +299,17 @@ export function runtimePatch(vm, info, extra = {}) {
     kernel_socket: rest.kernel_socket || vm.runtime?.kernel_socket || null,
     egress: rest.egress || (isLocalEgressProxy(vm.proxy) ? 'local' : 'explicit-socks5'),
     ...rest,
+    ...(rest.kernel_socket ? { kernel_socket: rest.kernel_socket } : {}),
   }
   return vm
 }
 
 function workerPaths(projectRoot, vmId) {
   const slotRoot = path.join(projectRoot, 'vms', vmId)
-  const runDir = path.join(slotRoot, 'run')
+  // Docker Desktop on WSL hides Unix sockets created on the mounted project
+  // disk. A local deploy can point the slot runtime at a persistent Linux path.
+  const root = String(process.env.KIN_SLOT_RUN_ROOT || '').trim()
+  const runDir = root ? path.join(root, vmId) : path.join(slotRoot, 'run')
   return {
     slotRoot,
     runDir,
@@ -483,10 +487,8 @@ export async function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
  * running runner is enough — missing sock must not docker rm the VM.
  */
 export function slotKernelAlive(existing, paths, vm) {
-  if (!existing?.running) return true
-  if (isKvmRuntime(vm) || existing.runtime === 'kvm') return true
-  // No kernel in a GPT slot container: running is alive.
-  if (isCodexVm(vm) && existing.role === CODEX_SLOT_ROLE) return true
+  if (isKvmRuntime(vm) || existing?.runtime === 'kvm') return true
+  if (isCodexVm(vm) && existing?.role === CODEX_SLOT_ROLE) return true
   return fs.existsSync(paths.kernelSocket)
 }
 
@@ -957,6 +959,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       worker_socket: paths.socket,
       worker_run_dir: paths.runDir,
       worker_token_file: paths.token,
+      kernel_socket: paths.kernelSocket,
       memory: mem,
       routing: resolvedRouting,
       ...(kvm ? { accel: accelOpt || vm.runtime?.accel } : {}),

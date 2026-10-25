@@ -679,8 +679,8 @@ export function writeKernelConfig(
   vm,
   { token, proxyUrl, proxyRequired, officialCcInference, timezone, routing } = {},
 ) {
-  if (!projectRoot || !vm?.id) return null
-  const runDir = path.join(projectRoot, 'vms', vm.id, 'run')
+  const root = String(process.env.KIN_SLOT_RUN_ROOT || '').trim()
+  const runDir = root ? path.join(root, vm.id) : path.join(projectRoot, 'vms', vm.id, 'run')
   const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 })
   const socketPath = path.join(runDir, 'kernel.sock')
