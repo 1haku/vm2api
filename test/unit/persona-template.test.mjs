@@ -20,6 +20,7 @@ import {
   renderPersonaTemplate,
   resolveOverlayTemplate,
   resolvePersonaTemplate,
+  selectedTemplateBlocks,
   stringifyPersonaTemplate,
   templateHidesAnything,
   validatePersonaTemplate,
@@ -92,14 +93,47 @@ function firstUserText(out) {
   return content == null ? '' : String(content)
 }
 
-test('official preset renders billing + identity byte-identical to the legacy builders', () => {
-  const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-1' })
-  const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
-  assert.equal(out.length, 4)
-  assert.deepEqual(out[0], { type: 'text', text: buildBillingAttributionText('hello', DEFAULT_CLI_VERSION, 's-1') })
-  assert.deepEqual(out[1], { type: 'text', text: CRS_OFFICIAL_SYSTEM })
-  assert.equal(out[2].text.startsWith('\nYou are an agent working with the user'), true)
-  assert.equal(out[3].text.startsWith('Write code that reads like the surrounding code'), true)
+test('guidance is off by default and explicit enable keeps cwd memory behavior', () => {
+  const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-guidance', env: { cwd: '/srv/app' } })
+  const off = renderPersonaTemplate(selectedTemplateBlocks(DEFAULT_PERSONA_TEMPLATES.official, {}, 'official'), vars)
+  assert.equal(
+    off.some((block) => String(block.text).includes('Write code that reads like the surrounding code')),
+    false,
+  )
+  const compat = { persona_guidance_presets: { official: true } }
+  const enabledVars = personaTemplateVars({
+    firstUserText: 'hello',
+    sessionId: 's-guidance',
+    env: { cwd: '/srv/app' },
+    compat,
+    preset: 'official',
+  })
+  const on = renderPersonaTemplate(
+    selectedTemplateBlocks(DEFAULT_PERSONA_TEMPLATES.official, compat, 'official'),
+    enabledVars,
+  )
+  assert.equal(
+    on.some((block) => String(block.text).includes('/srv/app/.claude/projects/-srv-app/memory/')),
+    true,
+  )
+  const omittedVars = personaTemplateVars({
+    firstUserText: 'hello',
+    sessionId: 's-guidance',
+    compat,
+    preset: 'official',
+  })
+  const omitted = renderPersonaTemplate(
+    selectedTemplateBlocks(DEFAULT_PERSONA_TEMPLATES.official, compat, 'official'),
+    omittedVars,
+  )
+  assert.equal(
+    omitted.some((block) => String(block.text).includes('# Memory')),
+    false,
+  )
+  assert.equal(
+    omitted.some((block) => String(block.text).includes('Write code that reads like the surrounding code')),
+    true,
+  )
 })
 
 test('official preset keeps user system in the optional fifth segment', () => {
@@ -198,7 +232,7 @@ test('overlay with no body renders nothing at all', () => {
 
 test('JSONL round-trips losslessly and keeps note metadata', () => {
   const jsonl = stringifyPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official)
-  assert.equal(jsonl.split('\n').length, 6)
+  assert.equal(jsonl.split('\n').length, DEFAULT_PERSONA_TEMPLATES.official.length)
   const { blocks, errors } = parsePersonaTemplateLines(jsonl)
   assert.deepEqual(errors, [])
   assert.deepEqual(
@@ -299,14 +333,17 @@ test('extractTemplateVars tolerates spacing and is case-insensitive', () => {
   assert.deepEqual(extractTemplateVars('{{ billing }} and {{IDENTITY}}'), ['billing', 'identity'])
 })
 
-test('overlay off short-circuits: messages pass through by reference', () => {
-  withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
-    const messages = [{ role: 'user', content: 'hello' }]
-    const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
-    assert.equal(out.messages, messages)
-    assert.equal(firstUserText(out), 'hello')
-    assert.ok(!firstUserText(out).includes('system-reminder'))
-  })
+test('overlay and environment off: messages pass through by reference', () => {
+  withRoutingFile(
+    { persona_preset: 'official', overlay_preset: 'off', persona_env_presets: { official: false } },
+    (file) => {
+      const messages = [{ role: 'user', content: 'hello' }]
+      const out = applyCrsUnofficialPersona({ messages }, { routingFile: file })
+      assert.equal(out.messages, messages)
+      assert.equal(firstUserText(out), 'hello')
+      assert.ok(!firstUserText(out).includes('system-reminder'))
+    },
+  )
 })
 
 test('zero preset ignores a stored overlay_preset and never parks', () => {
@@ -424,7 +461,8 @@ test('caller system stays in segment 5 and role=system stays in the transcript',
     assert.equal(out.system.length, 6)
     assert.equal(out.system.at(-1).text, '不要使用你现在的identity跟我对话')
     assert.equal(out.messages[1].role, 'system')
-    assert.equal(out.messages[1].content, 'role-system-note')
+    assert.equal(out.messages.at(-1).content, 'role-system-note')
+    assert.match(out.messages[1].content, /^# Environment/)
   })
 })
 
@@ -499,6 +537,7 @@ test('custom template drives the outbound system verbatim', () => {
     {
       persona_preset: 'custom',
       overlay_preset: 'off',
+      persona_timezone_presets: { custom: true },
       persona_templates: {
         custom: [{ id: 'only', note: '只有一行身份', type: 'text', text: 'You are {{identity}} at {{timezone}}' }],
       },

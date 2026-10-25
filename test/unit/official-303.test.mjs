@@ -88,7 +88,14 @@ function officialCaller(model = 'claude-opus-5-5') {
 }
 
 function lean(body, { ttl = '5m', officialCallerFlag = true, compat = {}, oneM = false, entrypoint = 'sdk-cli' } = {}) {
-  const routing = { compatibility: { cache_ttl: ttl, cc_entrypoint: entrypoint, ...compat } }
+  const routing = {
+    compatibility: {
+      cache_ttl: ttl,
+      cc_entrypoint: entrypoint,
+      persona_guidance_presets: { official_full: true },
+      ...compat,
+    },
+  }
   const prepared = prepareCliHopBody(body, { outboundShape: 'lean', routing, cacheTtl: ttl })
   return renderOfficial303Body(prepared, {
     callerSystem: body.system,

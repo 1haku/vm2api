@@ -20,6 +20,7 @@ import {
   agentStandingVar,
   renderPersonaTemplate,
   resolvePersonaTemplate,
+  selectedTemplateBlocks,
 } from './persona-template.mjs'
 import {
   OFFICIAL_PROFILES,
@@ -252,9 +253,11 @@ export function renderOfficial303Body(
     preset: OFFICIAL_303_PRESET,
     entrypoint,
   })
-  const template = resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates).filter(
-    (block) => block?.id !== 'caller_system',
-  )
+  const template = selectedTemplateBlocks(
+    resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates),
+    compat,
+    OFFICIAL_303_PRESET,
+  ).filter((block) => block?.id !== 'caller_system')
   let system = renderPersonaTemplate(template, vars)
 
   let messages = stripMessageMarkers(body.messages).map((message) =>
