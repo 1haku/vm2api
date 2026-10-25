@@ -872,7 +872,10 @@ export function personaTemplateVars({
     cli_version: parseCliVersion(cliVersion),
     session_id: String(sessionId || '').trim(),
     keep_dynamic_boundary: ['official', 'official_full', OFFICIAL_303_PRESET].includes(preset),
-    main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd, entrypoint }),
+    main_prompt_303: () =>
+      presetFlagEnabled(compat, 'persona_guidance_presets', preset)
+        ? renderOfficial303MainPrompt({ cwd: env?.cwd, entrypoint })
+        : OFFICIAL_303_HARNESS,
     harness_303: OFFICIAL_303_HARNESS,
     guidance_303: () =>
       presetFlagEnabled(compat, 'persona_guidance_presets', preset)
