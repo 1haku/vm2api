@@ -981,7 +981,9 @@ export function filterPublicModelIds(workerIds = []) {
     ),
   ]
 
-  if (mode === 'worker_only') return ids
+  if (mode === 'worker_only') {
+    return policy.models.auto?.enabled === false || ids.includes('auto') ? ids : [...ids, 'auto']
+  }
 
   // policy_only and legacy worker_intersect_policy: #/models is the catalog.
   return getPolicyCatalogIds({ enabledOnly: true })
