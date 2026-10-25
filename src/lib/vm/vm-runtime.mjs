@@ -528,14 +528,17 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
   const paths = workerPaths(projectRoot, vm.id)
   const uid = runtimeUidNum(vm)
   const gid = Number(GID)
-  fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o2770 })
-  fs.chmodSync(paths.runDir, 0o2770)
+  const root = typeof process.getuid === 'function' && process.getuid() === 0
+  const dirMode = root ? 0o700 : 0o2770
+  const fileMode = root ? 0o600 : 0o640
+  fs.mkdirSync(paths.runDir, { recursive: true, mode: dirMode })
+  fs.chmodSync(paths.runDir, dirMode)
   try {
-    fs.chownSync(paths.runDir, -1, process.getgid())
+    fs.chownSync(paths.runDir, root ? uid : -1, root ? gid : process.getgid())
   } catch {}
   const shareRuntimeFile = (file) => {
     try {
-      fs.chmodSync(file, 0o640)
+      fs.chmodSync(file, fileMode)
     } catch {}
   }
   let token = ''
@@ -1114,8 +1117,9 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       '256',
       '--user',
       runtimeUser(vm),
-      '--group-add',
-      String(process.getgid()),
+      ...(typeof process.getuid === 'function' && process.getuid() === 0
+        ? []
+        : ['--group-add', String(process.getgid())]),
       '--read-only',
       '--tmpfs',
       '/tmp:rw,noexec,nosuid,size=32m',

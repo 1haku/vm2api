@@ -678,10 +678,16 @@ export function writeKernelConfig(
   const root = String(process.env.KIN_SLOT_RUN_ROOT || '').trim()
   const runDir = root ? path.join(root, vm.id) : path.join(projectRoot, 'vms', vm.id, 'run')
   const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
-  fs.mkdirSync(runDir, { recursive: true, mode: 0o2770 })
-  fs.chmodSync(runDir, 0o2770)
+  const privileged = typeof process.getuid === 'function' && process.getuid() === 0
+  const dirMode = privileged ? 0o700 : 0o2770
+  fs.mkdirSync(runDir, { recursive: true, mode: dirMode })
+  fs.chmodSync(runDir, dirMode)
   try {
-    fs.chownSync(runDir, -1, process.getgid())
+    fs.chownSync(
+      runDir,
+      privileged ? Number(process.env.KIN_VM_UID_BASE || 10000) + Number(String(vm.id).replace(/\D/g, '') || 1) : -1,
+      privileged ? Number(process.env.KIN_VM_GID || 987) : process.getgid(),
+    )
   } catch {}
   const socketPath = path.join(runDir, 'kernel.sock')
   const configPath = path.join(runDir, 'kernel.json')
@@ -779,7 +785,7 @@ export function writeKernelConfig(
   }
   const changed = writeKernelJsonAtomically(configPath, config, vm)
   try {
-    fs.chmodSync(configPath, 0o640)
+    fs.chmodSync(configPath, privileged ? 0o600 : 0o640)
   } catch {}
   // kin-kernel hot-reloads kernel.json: the change must reach wherever the slot reads it.
   if (changed) host.queueSyncRun(record, path.join(projectRoot, 'vms', vm.id))
