@@ -841,7 +841,7 @@ export function personaTemplateVars({
   return {
     billing,
     billing_semi: billing.endsWith(';') ? billing : `${billing};`,
-    identity: CRS_OFFICIAL_SYSTEM,
+    identity: entrypoint === 'cli' ? CRS_OFFICIAL_CLI_SYSTEM : CRS_OFFICIAL_SYSTEM,
     identity_cli: CRS_OFFICIAL_CLI_SYSTEM,
     identity_compact: CRS_COMPACT_IDENTITY,
     reporting: CRS_REPORTING_OUTCOMES,
@@ -866,9 +866,9 @@ export function personaTemplateVars({
     cli_version: parseCliVersion(cliVersion),
     session_id: String(sessionId || '').trim(),
     keep_dynamic_boundary: ['official', 'official_full', OFFICIAL_303_PRESET].includes(preset),
-    main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd }),
+    main_prompt_303: () => renderOfficial303MainPrompt({ cwd: env?.cwd, entrypoint }),
     harness_303: OFFICIAL_303_HARNESS,
-    guidance_303: () => renderOfficial303Guidance({ cwd: env?.cwd }),
+    guidance_303: () => renderOfficial303Guidance({ cwd: env?.cwd, entrypoint }),
     env_303: () => (withEnv ? buildOfficial303Environment(env, { model: model || env?.modelId }) : ''),
     model_sentence: () =>
       presetFlagEnabled(compat, 'model_env_extra_presets', preset) ? modelEnvExtra(compat, model || env?.modelId) : '',

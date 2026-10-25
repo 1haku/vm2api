@@ -163,13 +163,19 @@ export function officialModelLine(model = '', { oneM = false } = {}) {
 }
 
 /** Memory lives under the slot user's home, bucketed by the working directory (official `~/.claude/projects/<slug>/memory/`). */
-export function renderOfficial303Guidance({ cwd = '' } = {}) {
+const INTERACTIVE_GUIDANCE_BULLET =
+  ' - If you need the user to run a shell command themselves (e.g., an interactive login like `gcloud auth login`), suggest they type `! <command>` in the prompt \u2014 the `!` prefix runs the command in this session so its output lands directly in the conversation.\n'
+
+/** `cli` keeps the interactive `!` bullet. `sdk-cli` is the --print capture and drops it. */
+export function renderOfficial303Guidance({ cwd = '', entrypoint = 'sdk-cli' } = {}) {
   const slug = officialProjectSlug(sanitizeInboundCwd(cwd) || OFFICIAL_SLOT_CWD)
-  return OFFICIAL_303_GUIDANCE.replace('{{memory_dir}}', `${OFFICIAL_SLOT_CWD}/.claude/projects/${slug}/memory/`)
+  let text = OFFICIAL_303_GUIDANCE.replace('{{memory_dir}}', `${OFFICIAL_SLOT_CWD}/.claude/projects/${slug}/memory/`)
+  if (entrypoint !== 'cli') text = text.replace(INTERACTIVE_GUIDANCE_BULLET, '')
+  return text
 }
 
-export function renderOfficial303MainPrompt({ cwd = '' } = {}) {
-  return `${OFFICIAL_303_HARNESS}${renderOfficial303Guidance({ cwd })}`
+export function renderOfficial303MainPrompt({ cwd = '', entrypoint = 'sdk-cli' } = {}) {
+  return `${OFFICIAL_303_HARNESS}${renderOfficial303Guidance({ cwd, entrypoint })}`
 }
 
 /**

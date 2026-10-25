@@ -129,7 +129,7 @@ test('2.1.303 harness and guidance keep the captured split and fill the memory d
   assert.equal(OFFICIAL_303_IDENTITY, "You are Claude Code, Anthropic's official CLI for Claude.")
   assert.equal(OFFICIAL_303_AGENT_IDENTITY, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
   assert.ok(OFFICIAL_303_HARNESS.startsWith('\nYou are an agent working with the user toward their goals'))
-  assert.ok(OFFICIAL_303_HARNESS.endsWith("it's clickable.\n\n"))
+  assert.ok(OFFICIAL_303_HARNESS.trimEnd().endsWith("it's clickable."))
   assert.ok(OFFICIAL_303_GUIDANCE.startsWith('Write code that reads like the surrounding code'))
   assert.ok(OFFICIAL_303_GUIDANCE.endsWith('<total_tokens>15000000 tokens left</total_tokens>'))
   assert.equal(OFFICIAL_303_MAIN_PROMPT, `${OFFICIAL_303_HARNESS}${OFFICIAL_303_GUIDANCE}`)
@@ -137,8 +137,15 @@ test('2.1.303 harness and guidance keep the captured split and fill the memory d
   const rendered = renderOfficial303Guidance({ cwd: '/srv/app' })
   assert.match(rendered, /persistent file-based memory at `\/home\/kincli\/\.claude\/projects\/-srv-app\/memory\/`/)
   assert.doesNotMatch(rendered, /\{\{memory_dir\}\}/)
+  assert.doesNotMatch(rendered, /! <command>/)
+  const interactive = renderOfficial303Guidance({ cwd: '/srv/app', entrypoint: 'cli' })
+  assert.match(interactive, /! <command>/)
   assert.match(renderOfficial303Guidance(), /projects\/-home-kincli\/memory\//)
   assert.equal(renderOfficial303MainPrompt({ cwd: '/srv/app' }), `${OFFICIAL_303_HARNESS}${rendered}`)
+  assert.equal(
+    renderOfficial303MainPrompt({ cwd: '/srv/app', entrypoint: 'cli' }),
+    `${OFFICIAL_303_HARNESS}${interactive}`,
+  )
 })
 
 test('model line follows the 2.1.303 catalog; unknown models omit name and cutoff', () => {

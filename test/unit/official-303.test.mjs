@@ -87,8 +87,8 @@ function officialCaller(model = 'claude-opus-5-5') {
   }
 }
 
-function lean(body, { ttl = '5m', officialCallerFlag = true, compat = {}, oneM = false } = {}) {
-  const routing = { compatibility: { cache_ttl: ttl, ...compat } }
+function lean(body, { ttl = '5m', officialCallerFlag = true, compat = {}, oneM = false, entrypoint = 'sdk-cli' } = {}) {
+  const routing = { compatibility: { cache_ttl: ttl, cc_entrypoint: entrypoint, ...compat } }
   const prepared = prepareCliHopBody(body, { outboundShape: 'lean', routing, cacheTtl: ttl })
   return renderOfficial303Body(prepared, {
     callerSystem: body.system,
@@ -99,6 +99,7 @@ function lean(body, { ttl = '5m', officialCallerFlag = true, compat = {}, oneM =
     firstUserText: 'hello',
     sessionId: '11111111-2222-4333-8444-555555555555',
     oneM,
+    entrypoint,
   })
 }
 
@@ -124,13 +125,22 @@ test('official caller: system is billing, identity, harness, guidance; caller sy
   assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
   assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
   assert.equal(out.system[3].cache_control, undefined)
-  assert.equal(out.system[4].text, renderOfficial303Guidance({ cwd: '/srv/app' }))
+  assert.equal(out.system[4].text, renderOfficial303Guidance({ cwd: '/srv/app', entrypoint: 'sdk-cli' }))
+  assert.doesNotMatch(out.system[4].text, /! <command>/)
   assert.deepEqual(out.thinking, { type: 'adaptive', display: 'summarized' })
   const wire = JSON.stringify(out)
   assert.ok(!wire.includes('You are an interactive agent that helps users'), 'old 2.1.296 full prompt dropped')
   assert.ok(!wire.includes('/home/caller/.claude/projects'), 'caller main prompt dropped')
   assert.ok(!wire.includes('cc_version=2.1.296'), 'caller billing dropped')
   assert.equal(JSON.stringify(out.messages).includes('You are an agent working with the user'), false)
+})
+
+test('cli entrypoint keeps the interactive identity and guidance bullet', () => {
+  const out = lean(officialCaller(), { entrypoint: 'cli' })
+  assert.match(out.system[0].text, /cc_entrypoint=cli;/)
+  assert.equal(out.system[1].text, OFFICIAL_303_IDENTITY)
+  assert.match(out.system[4].text, /! <command>/)
+  assert.equal(out.system[4].text, renderOfficial303Guidance({ cwd: '/srv/app', entrypoint: 'cli' }))
 })
 
 test('official caller: only the role=system Environment section changes; other bytes stay', () => {
