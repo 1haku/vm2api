@@ -498,9 +498,12 @@ test('one routing read keeps billing, system identity and env on the same entryp
   const file = path.join(dir, 'routing.json')
   const body = { model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hello' }] }
   const render = (entrypoint) => {
-    fs.writeFileSync(file, JSON.stringify({
-      compatibility: { persona_preset: 'official_full', cc_entrypoint: entrypoint, persona_park: false },
-    }))
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        compatibility: { persona_preset: 'official_full', cc_entrypoint: entrypoint, persona_park: false },
+      }),
+    )
     return applyCrsUnofficialPersona(structuredClone(body), {
       forceConfigured: true,
       routingFile: file,
