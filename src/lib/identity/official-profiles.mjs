@@ -2,11 +2,11 @@
  * Official Claude Code outbound profiles: the reference every outbound shape is
  * compared against. Data plus small lookups only; no request mutation here.
  *
- * All presets use 2.1.303; prompt size is not a CLI version selector.
+ * Named official presets use 2.1.303. Empty and legacy presets retain 2.1.296.
  */
 import { createRequire } from 'node:module'
 import { OFFICIAL_SLOT_CWD, officialProjectSlug, sanitizeInboundCwd } from './official-cc-system-2.1.241.mjs'
-import { OFFICIAL_303_PRESET } from './persona-template.mjs'
+import { OFFICIAL_303_PRESET, normalizePersonaPreset } from './persona-template.mjs'
 
 const require = createRequire(import.meta.url)
 const FIXTURE_303 = require('./official-cc-system-2.1.303.json')
@@ -23,7 +23,6 @@ export const OFFICIAL_303_MAIN_PROMPT = `${OFFICIAL_303_HARNESS}${OFFICIAL_303_G
 export const OFFICIAL_303_ENV_INTRO = FIXTURE_303.environment_intro
 export const OFFICIAL_303_ENV_UNTRUSTED = FIXTURE_303.environment_untrusted
 export const OFFICIAL_303_ENV_INSTRUCTIONS = FIXTURE_303.environment_instructions
-
 export const OFFICIAL_PROFILES = Object.freeze({
   '2.1.303': Object.freeze({
     cliVersion: FIXTURE_303.meta.cli_version,
@@ -74,8 +73,20 @@ export const OFFICIAL_PROFILES = Object.freeze({
   }),
 })
 
-export function profileForPreset() {
-  return OFFICIAL_PROFILES['2.1.303']
+export function profileForPreset(preset) {
+  const raw = String(preset ?? '')
+    .trim()
+    .toLowerCase()
+  if (
+    raw === 'official' ||
+    raw === 'official_full' ||
+    raw === 'official_303' ||
+    raw === '303' ||
+    raw === 'official-303' ||
+    raw === 'zero'
+  )
+    return OFFICIAL_PROFILES['2.1.303']
+  return OFFICIAL_PROFILES['2.1.296']
 }
 
 /** Proxy prefixes (`test-pro/`), `[1m]` and date suffixes do not change the official model id. */
@@ -151,7 +162,7 @@ export function officialModelLine(model = '', { oneM = false } = {}) {
   return `You are powered by the model named ${name}${oneM ? ' (1M context)' : ''}. The exact model ID is ${exact}. Assistant knowledge cutoff is ${cutoff}.`
 }
 
-/** Memory and the working directory follow the caller cwd. No cwd, no invented path. */
+/** Memory lives under the slot user's home, bucketed by the working directory (official `~/.claude/projects/<slug>/memory/`). */
 const INTERACTIVE_GUIDANCE_BULLET =
   ' - If you need the user to run a shell command themselves (e.g., an interactive login like `gcloud auth login`), suggest they type `! <command>` in the prompt \u2014 the `!` prefix runs the command in this session so its output lands directly in the conversation.\n'
 
