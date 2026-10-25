@@ -2,11 +2,11 @@
  * Official Claude Code outbound profiles: the reference every outbound shape is
  * compared against. Data plus small lookups only; no request mutation here.
  *
- * Named official presets use 2.1.303. Empty and legacy presets retain 2.1.296.
+ * All presets use 2.1.303; prompt size is not a CLI version selector.
  */
 import { createRequire } from 'node:module'
 import { OFFICIAL_SLOT_CWD, officialProjectSlug, sanitizeInboundCwd } from './official-cc-system-2.1.241.mjs'
-import { OFFICIAL_303_PRESET, normalizePersonaPreset } from './persona-template.mjs'
+import { OFFICIAL_303_PRESET } from './persona-template.mjs'
 
 const require = createRequire(import.meta.url)
 const FIXTURE_303 = require('./official-cc-system-2.1.303.json')
@@ -22,6 +22,7 @@ export const OFFICIAL_303_GUIDANCE = FIXTURE_303.guidance
 export const OFFICIAL_303_MAIN_PROMPT = `${OFFICIAL_303_HARNESS}${OFFICIAL_303_GUIDANCE}`
 export const OFFICIAL_303_ENV_INTRO = FIXTURE_303.environment_intro
 export const OFFICIAL_303_ENV_UNTRUSTED = FIXTURE_303.environment_untrusted
+export const OFFICIAL_303_ENV_INSTRUCTIONS = FIXTURE_303.environment_instructions
 
 export const OFFICIAL_PROFILES = Object.freeze({
   '2.1.303': Object.freeze({
@@ -73,20 +74,8 @@ export const OFFICIAL_PROFILES = Object.freeze({
   }),
 })
 
-export function profileForPreset(preset) {
-  const raw = String(preset ?? '')
-    .trim()
-    .toLowerCase()
-  if (
-    raw === 'official' ||
-    raw === 'official_full' ||
-    raw === 'official_303' ||
-    raw === '303' ||
-    raw === 'official-303' ||
-    raw === 'zero'
-  )
-    return OFFICIAL_PROFILES['2.1.303']
-  return OFFICIAL_PROFILES['2.1.296']
+export function profileForPreset() {
+  return OFFICIAL_PROFILES['2.1.303']
 }
 
 /** Proxy prefixes (`test-pro/`), `[1m]` and date suffixes do not change the official model id. */
@@ -162,14 +151,17 @@ export function officialModelLine(model = '', { oneM = false } = {}) {
   return `You are powered by the model named ${name}${oneM ? ' (1M context)' : ''}. The exact model ID is ${exact}. Assistant knowledge cutoff is ${cutoff}.`
 }
 
-/** Memory lives under the slot user's home, bucketed by the working directory (official `~/.claude/projects/<slug>/memory/`). */
+/** Memory and the working directory follow the caller cwd. No cwd, no invented path. */
 const INTERACTIVE_GUIDANCE_BULLET =
   ' - If you need the user to run a shell command themselves (e.g., an interactive login like `gcloud auth login`), suggest they type `! <command>` in the prompt \u2014 the `!` prefix runs the command in this session so its output lands directly in the conversation.\n'
 
 /** `cli` keeps the interactive `!` bullet. `sdk-cli` is the --print capture and drops it. */
 export function renderOfficial303Guidance({ cwd = '', entrypoint = 'sdk-cli' } = {}) {
-  const slug = officialProjectSlug(sanitizeInboundCwd(cwd) || OFFICIAL_SLOT_CWD)
-  let text = OFFICIAL_303_GUIDANCE.replace('{{memory_dir}}', `${OFFICIAL_SLOT_CWD}/.claude/projects/${slug}/memory/`)
+  const home = sanitizeInboundCwd(cwd)
+  const slug = officialProjectSlug(home)
+  let text = OFFICIAL_303_GUIDANCE
+  if (home && slug) text = text.replace('{{memory_dir}}', `${home}/.claude/projects/${slug}/memory/`)
+  else text = text.replace(/\n# Memory\n[\s\S]*?(?=\n# Environment\n)/, '')
   if (entrypoint !== 'cli') text = text.replace(INTERACTIVE_GUIDANCE_BULLET, '')
   return text
 }
@@ -184,11 +176,12 @@ export function renderOfficial303MainPrompt({ cwd = '', entrypoint = 'sdk-cli' }
  * No timezone line: 2.1.303 does not write one.
  */
 export function buildOfficial303Environment(env = {}, { model = '', oneM = false } = {}) {
+  const cwd = sanitizeInboundCwd(env.cwd)
   const os = String(env.osVersion || '').trim() || (env.kernel ? `Linux ${env.kernel}` : '')
   const lines = [
     '# Environment',
     OFFICIAL_303_ENV_INTRO,
-    ` - Primary working directory: ${sanitizeInboundCwd(env.cwd) || OFFICIAL_SLOT_CWD}`,
+    ...(cwd ? [` - Primary working directory: ${cwd}`] : []),
     ` - Is a git repository: ${env.git === true ? 'true' : 'false'}`,
     ` - Platform: ${String(env.platform || '').trim() || 'linux'}`,
     ` - Shell: ${String(env.shell || '').trim() || 'bash'}`,
@@ -221,7 +214,7 @@ export function classifySystemText(text) {
   if (t.trimStart().startsWith('# Environment')) return 'env'
   if (t.includes('You are an agent working with the user toward their goals')) return 'harness'
   if (t.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') return 'boundary'
-  if (t.trimStart().startsWith('Write code that reads like the surrounding code')) return 'guidance'
+  if (t.includes('Write code that reads like the surrounding code')) return 'guidance'
   if (t.includes('You are an interactive agent that helps users')) return 'main_full'
   if (t.trimStart().startsWith('# Reporting outcomes')) return 'reporting'
   return 'other'

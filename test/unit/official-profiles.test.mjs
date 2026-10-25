@@ -135,12 +135,15 @@ test('2.1.303 harness and guidance keep the captured split and fill the memory d
   assert.equal(OFFICIAL_303_MAIN_PROMPT, `${OFFICIAL_303_HARNESS}${OFFICIAL_303_GUIDANCE}`)
   assert.equal(OFFICIAL_303_GUIDANCE.split('{{memory_dir}}').length, 2)
   const rendered = renderOfficial303Guidance({ cwd: '/srv/app' })
-  assert.match(rendered, /persistent file-based memory at `\/home\/kincli\/\.claude\/projects\/-srv-app\/memory\/`/)
+  assert.match(rendered, /persistent file-based memory at `\/srv\/app\/\.claude\/projects\/-srv-app\/memory\/`/)
   assert.doesNotMatch(rendered, /\{\{memory_dir\}\}/)
   assert.doesNotMatch(rendered, /! <command>/)
   const interactive = renderOfficial303Guidance({ cwd: '/srv/app', entrypoint: 'cli' })
   assert.match(interactive, /! <command>/)
-  assert.match(renderOfficial303Guidance(), /projects\/-home-kincli\/memory\//)
+  const omitted = renderOfficial303Guidance()
+  assert.equal(omitted.includes('# Memory'), false)
+  assert.equal(omitted.includes('/home/kincli'), false)
+  assert.match(omitted, /Write code that reads like the surrounding code/)
   assert.equal(renderOfficial303MainPrompt({ cwd: '/srv/app' }), `${OFFICIAL_303_HARNESS}${rendered}`)
   assert.equal(
     renderOfficial303MainPrompt({ cwd: '/srv/app', entrypoint: 'cli' }),
@@ -207,10 +210,10 @@ test('2.1.303 Environment section uses caller facts and the official field order
   assert.equal(lines[8], undefined)
   assert.doesNotMatch(text, /You are powered by the model/)
   assert.doesNotMatch(text, /Timezone/)
-  assert.match(
-    buildOfficial303Environment({}, { model: 'claude-opus-5-5' }),
-    /Primary working directory: \/home\/kincli\n/,
-  )
+  const bare = buildOfficial303Environment({}, { model: 'claude-opus-5-5' })
+  assert.match(bare, /^# Environment\n/)
+  assert.equal(bare.includes('Primary working directory'), false)
+  assert.equal(bare.includes('/home/kincli'), false)
 })
 
 test('system text classifier for the shape tool', () => {

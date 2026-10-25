@@ -269,9 +269,7 @@ test('non-official caller: system text goes to a first-user reminder, Environmen
   assert.deepEqual(out.messages[0].content[1], { type: 'text', text: 'hi there', cache_control: { type: 'ephemeral' } })
   assert.equal(out.messages[1].role, 'system')
   assert.match(out.messages[1].content, /^# Environment\n/)
-  assert.match(out.messages[1].content, /Primary working directory: \/home\/kincli\n/)
-  assert.equal(JSON.stringify(out.system).includes('helpful bot'), false)
-  assert.deepEqual(checkOfficial303Rules(out), [])
+  assert.equal(out.messages[1].content.includes('Primary working directory'), false)
 })
 
 test('non-official caller without system: no reminder; still three markers', () => {

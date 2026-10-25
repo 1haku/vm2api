@@ -16,10 +16,12 @@
 import { extractInboundEnvironmentSection, parseInboundEnvFacts } from './official-cc-system-2.1.241.mjs'
 import { officialSystemEnvFromIdentity, personaTemplateVars } from './crs-persona.mjs'
 import {
-  OFFICIAL_303_PRESET,
   agentStandingVar,
+  canonicalPersonaCompat,
+  presetFlagEnabled,
   renderPersonaTemplate,
   resolvePersonaTemplate,
+  selectedTemplateBlocks,
 } from './persona-template.mjs'
 import {
   OFFICIAL_PROFILES,
@@ -230,6 +232,9 @@ export function renderOfficial303Body(
   } = {},
 ) {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return body
+  compat = canonicalPersonaCompat(compat)
+  const preset = 'official_full'
+  const withEnv = presetFlagEnabled(compat, 'persona_env_presets', preset)
   const model = String(body.model || '')
   const marker = panelMarker(cacheTtl)
   // The reminder sits before both message markers; a live token counter there would move every turn.
@@ -238,34 +243,49 @@ export function renderOfficial303Body(
   const roleSystemTexts = body.messages.filter((message) => message?.role === 'system').flatMap(messageTexts)
   const facts = parseInboundEnvFacts([...systemTexts(callerSystem), ...roleSystemTexts])
   const env = environmentEnv(facts, { identity, model })
-  const requestEnvironment = buildOfficial303Environment(env, { model, oneM })
 
   const vars = personaTemplateVars({
     firstUserText,
     cliVersion: PROFILE.cliVersion,
     sessionId,
     env,
-    agentStanding: agentStandingVar(compat, OFFICIAL_303_PRESET),
-    withEnv: true,
+    agentStanding: agentStandingVar(compat, preset),
+    withEnv,
+    leftover,
     model,
     compat,
-    preset: OFFICIAL_303_PRESET,
+    preset,
     entrypoint,
   })
-  const template = resolvePersonaTemplate(OFFICIAL_303_PRESET, compat?.persona_templates)
+  const source = selectedTemplateBlocks(resolvePersonaTemplate(preset, compat?.persona_templates), compat, preset)
+  const envExtras = withEnv
+    ? renderPersonaTemplate(
+        source.filter((block) => block.id !== 'env'),
+        vars,
+        { role: 'system' },
+      )
+        .map((block) => block.text)
+        .join('\n\n')
+    : ''
+  const template = source.filter((block) => block?.id !== 'caller_system')
   let system = renderPersonaTemplate(template, vars)
-
+  const requestEnvironment = [buildOfficial303Environment(env, { model, oneM }), envExtras].filter(Boolean).join('\n\n')
   let messages = stripMessageMarkers(body.messages).map((message) =>
     message?.role === 'system' ? officialSystemContent(message) : message,
   )
-  if (modelSupportsMidConversationSystem(model)) {
+  if (withEnv && modelSupportsMidConversationSystem(model)) {
     let replaced = false
     messages = messages.map((message) => {
       if (message?.role !== 'system') return message
       const next = replaceEnvironmentInMessage(message, (section) => {
         // Each turn renders from its own facts so history bytes stay identical on later turns.
         const own = environmentEnv(parseInboundEnvFacts([section]), { identity, model })
-        return buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) })
+        return [
+          buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) }),
+          envExtras,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       })
       if (!next) return message
       replaced = true
@@ -275,7 +295,7 @@ export function renderOfficial303Body(
       const at = lastUserIndex(messages)
       if (at >= 0) messages.splice(at + 1, 0, { role: 'system', content: requestEnvironment })
     }
-  } else {
+  } else if (withEnv) {
     // Official merges the session sections into guidance when role=system is unavailable.
     const guidance = system.findLastIndex((block) => block?.cache_control && !isBillingText(block.text))
     if (guidance >= 0) {
