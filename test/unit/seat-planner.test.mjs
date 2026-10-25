@@ -379,6 +379,48 @@ test('two first sessions of one machine claim the same VM before sticky affinity
   assert.equal(sticky.resolve(deviceKey)?.vmId, a.vmId)
 })
 
+test('an expired or unbound machine affinity does not send the next session back to the old VM', async (t) => {
+  const root = project([
+    { id: 'vm-01', policy: { sessionSlots: 2 } },
+    { id: 'vm-02', policy: { sessionSlots: 2 } },
+  ])
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const sticky = new StickyRouter({ dataDir: root, config: { sticky: { enabled: true, ttl_seconds: 600 } } })
+  const pool = scheduler(root, { seat_grace_ms: 0 })
+  pool.stickyRouter = sticky
+  const deviceKey = sticky.canonicalDeviceKey('machine-1')
+  sticky.bindDeviceAffinity(deviceKey, { accountId: 'account-1', vmId: 'vm-01' }, { countHit: false })
+  sticky.repo.upsert(deviceKey, {
+    ...sticky.repo.get(deviceKey),
+    expires_at: Date.now() - 1,
+  })
+  assert.equal(pool.machineHome(deviceKey), '')
+  const next = await pool.selectAndReserve({
+    model: MODEL,
+    seatKey: 'seat:sess:after-expiry',
+    deviceKey,
+    allowWait: false,
+  })
+  assert.equal(next.ok, true)
+  assert.notEqual(next.selectionReason, 'device-affinity')
+  next.release()
+  pool.planner.free(pool.planner.seatOf(planned('after-expiry')))
+  sticky.bindDeviceAffinity(deviceKey, { accountId: 'account-2', vmId: 'vm-02' }, { countHit: false })
+  sticky.unbind(deviceKey)
+  assert.equal(pool.machineHome(deviceKey), '')
+  const moved = await pool.selectAndReserve({
+    model: MODEL,
+    seatKey: 'seat:sess:after-unbind',
+    deviceKey,
+    allowWait: false,
+  })
+  assert.equal(moved.ok, true)
+  assert.notEqual(moved.selectionReason, 'device-affinity')
+  assert.equal(sticky.resolve(deviceKey)?.vmId, moved.vmId)
+  moved.release()
+  pool.planner.free(pool.planner.seatOf(planned('after-unbind')))
+})
+
 test('budget gate: 5% headroom, 2% reserve, 2 open seats → no new seat, open seats still served', async (t) => {
   assert.equal(budgetAllows(0.05, 2, 0.02), false)
   assert.equal(budgetAllows(0.05, 1, 0.02), true)

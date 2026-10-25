@@ -384,32 +384,30 @@ export class PoolScheduler extends EventEmitter {
     this.unitCircuit = unitCircuit
     if (runtimeRepo) this.unitCircuit.bindRepo(runtimeRepo)
     this.restoreStickySeats()
-    /** device key → VM claimed by the first synchronous seat of that machine. */
-    this.machineHomes = new Map()
   }
 
   /**
-   * The VM a machine already owns. The sticky row is written after the
-   * request returns; two first sessions of one machine both read it as empty.
-   * The map is filled inside claimSeat, before that await, so the second
-   * session sees the VM the first one just took.
+   * Machine VM from the sticky row. Written inside claimSeat, before the
+   * caller awaits again, so a second first session of the same machine sees
+   * it. Expiry and unbind live in that row; there is no second copy.
    */
   machineHome(deviceKey) {
     const key = String(deviceKey || '').trim()
     if (!key) return ''
-    const live = this.stickyRouter?.resolve?.(key)?.vmId || ''
-    if (live) {
-      this.machineHomes.set(key, live)
-      return live
-    }
-    return this.machineHomes.get(key) || ''
+    return this.stickyRouter?.resolve?.(key)?.vmId || ''
   }
 
-  rememberMachine(deviceKey, vmId) {
+  rememberMachine(deviceKey, { vmId, accountId }) {
     const key = String(deviceKey || '').trim()
     const vm = String(vmId || '').trim()
-    if (!key || !vm || this.machineHomes.has(key)) return
-    this.machineHomes.set(key, vm)
+    const account = String(accountId || '').trim()
+    if (!key || !vm || !account || this.stickyRouter?.resolve?.(key)?.vmId) return
+    const payload = { accountId: account, vmId: vm }
+    if (this.stickyRouter?.bindDeviceAffinity) {
+      this.stickyRouter.bindDeviceAffinity(key, payload, { countHit: false })
+      return
+    }
+    this.stickyRouter?.bind?.(key, payload, { countHit: false })
   }
 
   /**
@@ -875,7 +873,7 @@ export class PoolScheduler extends EventEmitter {
     if (!current && !this.planner.canOpen(candidate.vmId, candidate.seatCap, candidate.headroom)) return null
     const reservation = this.reserve(candidate)
     if (!reservation) return null
-    this.rememberMachine(deviceKey, candidate.vmId)
+    this.rememberMachine(deviceKey, { vmId: candidate.vmId, accountId: candidate.accountId })
     const seat =
       current ||
       this.planner.open(seatKey, { vmId: candidate.vmId, accountId: candidate.accountId, cap: candidate.seatCap })
