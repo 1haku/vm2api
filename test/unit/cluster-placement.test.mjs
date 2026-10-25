@@ -475,7 +475,18 @@ test('cluster payload check skips a container already on the content-hashed imag
     fakeElf(path.join(root, 'share/wrap-cli/cli-node'), 2)
     const next = await inspectClusterPayloadChanges(root, [vm], { sessionFor: async () => ({ docker: {} }), inspect })
     assert.equal(next.changed_count, 1)
-    for (const [key, value] of saved) value === undefined ? delete process.env[key] : (process.env[key] = value)
+    const native = { id: 'vm-mac', node_id: 'node-mac', runtime: { payload_digest: 'old' } }
+    const nativeReport = await inspectClusterPayloadChanges(root, [native], {
+      nativeVm: () => true,
+      nativeDigestFor: () => 'new',
+    })
+    assert.equal(nativeReport.items[0].kernel_changed, true)
+    native.runtime.payload_digest = 'new'
+    const sameNative = await inspectClusterPayloadChanges(root, [native], {
+      nativeVm: () => true,
+      nativeDigestFor: () => 'new',
+    })
+    assert.equal(sameNative.changed_count, 0)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

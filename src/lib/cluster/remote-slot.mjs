@@ -59,7 +59,7 @@ import {
   removeNetwork,
   renameContainer,
 } from './docker-remote.mjs'
-import { refreshNativeSlotPayload } from './native-slot.mjs'
+import { refreshNativeSlotPayload, currentNativePayloadDigest } from './native-slot.mjs'
 import {
   awaitSlotImageBuild,
   clusterManager,
@@ -890,12 +890,31 @@ export async function refreshNodeSlotPayload(
 export async function inspectClusterPayloadChanges(
   projectRoot,
   vms,
-  { routing, sessionFor = nodeSession, inspect = inspectContainerOrNull } = {},
+  {
+    routing,
+    sessionFor = nodeSession,
+    inspect = inspectContainerOrNull,
+    nativeVm = isNativeNodeVm,
+    nativeDigestFor = currentNativePayloadDigest,
+  } = {},
 ) {
   const items = []
+  const nativeDigest = nativeDigestFor(projectRoot)
   for (const vm of vms || []) {
     if (isCodexVm(vm)) continue
     const nodeId = vmNodeId(vm)
+    if (nativeVm(vm)) {
+      items.push({
+        id: vm.id,
+        node_id: nodeId,
+        ok: nativeDigest != null,
+        baked: true,
+        native: true,
+        code: nativeDigest ? undefined : 'native_payload_missing',
+        kernel_changed: nativeDigest != null && vm.runtime?.payload_digest !== nativeDigest,
+      })
+      continue
+    }
     const kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
     const spec = slotImageSpec(projectRoot, kernel, { runtime: runtimeKind(vm) })
     const session = await sessionFor(nodeId)
