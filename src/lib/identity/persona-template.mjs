@@ -153,17 +153,10 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'guidance',
-      note: '2.1.303 完整提示词。断点 TTL 取面板缓存 TTL',
+      note: '2.1.303 guidance。断点 TTL 取面板缓存 TTL，不带 scope',
       type: 'text',
-      text: '{{agent_official}}',
+      text: '{{guidance_303}}',
       cache_control: Object.freeze({ type: 'ephemeral' }),
-    }),
-    Object.freeze({
-      id: 'env_official',
-      note: '2.1.303 Environment。按档开关',
-      drop_if_empty: true,
-      type: 'text',
-      text: '{{env_official}}',
     }),
     Object.freeze({
       id: 'env_extra',

@@ -183,7 +183,7 @@ export async function startRealChain({
       kernel.kill('SIGKILL')
       await kernelClosed
     })
-    for (let i = 0; i < 100 && !fs.existsSync(socketPath) && kernel.exitCode == null; i++)
+    for (let i = 0; i < 400 && !fs.existsSync(socketPath) && kernel.exitCode == null; i++)
       await new Promise((resolve) => setTimeout(resolve, 50))
     if (!fs.existsSync(socketPath)) throw new Error(`kernel socket missing\n${log.slice(-1200)}`)
     const health = JSON.parse(await unixRequest(socketPath, token, '/internal/health'))

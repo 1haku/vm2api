@@ -1,6 +1,7 @@
 # Changelog
 
 ## 未发布
+- 官方档和完整档的 system 对齐 2.1.303：billing、身份、harness（`1h` + `scope global`）、guidance（`1h`）。拆分边界只交给 cli-node，最终请求不出站。调用方 system 和第三方 harness 接在 guidance 后，不替换官方提示。
 
 - 本机 `share/wrap-cli/cli-node` 替换为隔离快照构建：源码 `ed9fd21`，外部依赖 `src/lib/protocol/claude-code-betas.mjs` SHA256 `0dd4d8d9…`，另补已提交代码所需的 `SYSTEM_PROMPT_REPORTING_OUTCOMES` 导出。plain 111237248 字节 `d6fd3a91…`；UPX 5.0.2 `--best --lzma` 后 27177428 字节，SHA256 `2c1b271df033e23830cc8cdc0181fab60d4de96ff8cf4cd406651aecd9b5ae9f`。`upx -t` 通过，`--version` 为 `2.1.303 (Claude Code)`。尚未更新 payload，未部署。
 - 面板默认 beta 对齐 cli-node 2.1.303 `--print` 的 14 项前缀。setup-token 仍用短列表。模型句补 Haiku 4、Sonnet 4、Opus 4 的知识截止。

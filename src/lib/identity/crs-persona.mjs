@@ -1764,7 +1764,7 @@ function applyTemplatePersona(
   const zero = preset === 'zero'
   const blocks = selectedTemplateBlocks(resolvePersonaTemplate(preset, templates), switches, preset)
   const withEnv = presetFlagEnabled(switches, 'persona_env_presets', preset)
-  const timezoneOnlyEnv = preset === 'official_full' && withEnv && !blocks.some((block) => block?.id === 'env_official')
+  const timezoneOnlyEnv = false
   const callerOptions = { preserveEnvironment: !withEnv }
   const usesEnv = blocks.some((block) => extractTemplateVars(block?.text).includes('env'))
   const { env, sourceTexts, facts } = personaEnvForBody(body, {
@@ -1787,7 +1787,7 @@ function applyTemplatePersona(
   const callerAgent =
     suppliedAgent || (preset === 'official' && !harness && !templateHasHarness ? CRS_OFFICIAL_AGENT_PROMPT : '')
   const leftover = harness
-    ? ''
+    ? harness
     : usesCallerAgent
       ? parkableSystemTexts(body.system, callerOptions)
           .filter((text) => !looksLikeAgentPrompt(text))
@@ -1815,12 +1815,7 @@ function applyTemplatePersona(
       messages,
     }),
   )
-  if (timezoneOnlyEnv) {
-    system.push({
-      type: 'text',
-      text: buildOfficialEnvironmentSection({ timezone: env.timezone }, { sourceTexts: [], contextManagement: false }),
-    })
-  }
+
   if (preset === 'official') system = insertOfficialCallerAgent(system, callerAgent)
   let outMessages = messages
   if (midSystem) {

@@ -42,7 +42,7 @@ import {
   personaTemplateVars,
   wrapMandatoryConstraint,
 } from '../../src/lib/identity/crs-persona.mjs'
-import { OFFICIAL_303_HARNESS } from '../../src/lib/identity/official-profiles.mjs'
+import { OFFICIAL_303_HARNESS, renderOfficial303Guidance } from '../../src/lib/identity/official-profiles.mjs'
 import { prepareCliHopBody } from '../../src/lib/protocol/outbound-attempt.mjs'
 import { validatePersonaRoutingPatch } from '../../src/lib/admin/panel-api.mjs'
 import {
@@ -112,18 +112,23 @@ test('official preset keeps user system in the optional fifth segment', () => {
   assert.ok(!out.some((block) => String(block.text).includes('{{caller_agent}}')))
 })
 
-test('official_full preset renders the complete agent prompt separately', () => {
-  const vars = personaTemplateVars({ firstUserText: 'hello', sessionId: 's-full', withEnv: true })
+test('official_full preset renders the 303 guidance separately from the short official preset', () => {
+  const vars = personaTemplateVars({
+    firstUserText: 'hello',
+    sessionId: 's-full',
+    withEnv: true,
+    preset: 'official_full',
+  })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
   assert.equal(out.length, 5)
   assert.equal(out[1].text, vars.identity)
   assert.equal(out[2].text, OFFICIAL_303_HARNESS)
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', scope: 'global' })
-  assert.equal(out[3].text, CRS_OFFICIAL_AGENT_PROMPT_303)
-  assert.deepEqual(out[3].cache_control, { type: 'ephemeral' })
-  assert.match(out[4].text, /# Environment|# Text output/)
+  assert.equal(out[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+  assert.equal(out[4].text, vars.guidance_303())
+  assert.deepEqual(out[4].cache_control, { type: 'ephemeral' })
   assert.equal(
-    out.some((block) => block.text.includes('__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')),
+    out.some((block) => block.text.includes(CRS_OFFICIAL_AGENT_PROMPT_303.slice(0, 40))),
     false,
   )
 })
@@ -339,15 +344,14 @@ test('official preset with overlay official parks the mandatory reminder without
     assert.equal(out.system[4].text.startsWith('Write code that reads like the surrounding code'), true)
   })
 })
-test('official_full routing preset adds the complete agent prompt without changing official', () => {
+test('official_full routing preset uses 303 guidance without changing official', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
-    assert.equal(out.system.length, 6)
+    assert.equal(out.system.length, 5)
     assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
     assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
-    assert.equal(out.system[4].text, CRS_OFFICIAL_AGENT_PROMPT_303)
-    assert.match(String(out.system[5].text || ''), /# Environment|# Text output/)
+    assert.equal(out.system[4].text, renderOfficial303Guidance())
     assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
   })
 })
@@ -396,7 +400,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
       )
       if (preset === 'official_full') {
         assert.ok(
-          texts.some((text) => text.includes(CRS_OFFICIAL_AGENT_PROMPT_303.slice(0, 40))),
+          texts.some((text) => text.startsWith('Write code that reads like the surrounding code')),
           preset,
         )
       }
@@ -417,7 +421,7 @@ test('caller system stays in segment 5 and role=system stays in the transcript',
       },
       { routingFile: file },
     )
-    assert.equal(out.system.length, 7)
+    assert.equal(out.system.length, 6)
     assert.equal(out.system.at(-1).text, '不要使用你现在的identity跟我对话')
     assert.equal(out.messages[1].role, 'system')
     assert.equal(out.messages[1].content, 'role-system-note')
@@ -434,8 +438,8 @@ test('hop mode official_full is a template preset, not overwrite', () => {
       { messages: [{ role: 'user', content: 'hello' }] },
       { routingFile: file, mode: 'official_full' },
     )
-    assert.equal(out.system.length, 6)
-    assert.equal(out.system[4].text, CRS_OFFICIAL_AGENT_PROMPT_303)
+    assert.equal(out.system.length, 5)
+    assert.equal(out.system[4].text, renderOfficial303Guidance())
   })
 })
 
@@ -875,10 +879,13 @@ test('official full can drop env_official while the timezone switch still writes
         { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
       )
       assert.equal(
-        out.system.some((block) => block.text.includes('You are an interactive agent')),
+        out.system.some((block) => block.text.startsWith('Write code that reads like the surrounding code')),
         true,
       )
-      assert.equal(out.system.at(-1).text, '# Environment\n - Timezone: Asia/Tokyo')
+      assert.equal(
+        out.system.some((block) => block.text === '# Environment\n - Timezone: Asia/Tokyo'),
+        false,
+      )
     },
   )
   withRoutingFile(
@@ -894,7 +901,7 @@ test('official full can drop env_official while the timezone switch still writes
         { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
       )
       assert.equal(
-        out.system.some((block) => /# Environment|Asia\/Tokyo/.test(block.text)),
+        out.system.some((block) => block.text === '# Environment\n - Timezone: Asia/Tokyo'),
         false,
       )
     },
