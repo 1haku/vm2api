@@ -528,13 +528,23 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
   const paths = workerPaths(projectRoot, vm.id)
   const uid = runtimeUidNum(vm)
   const gid = Number(GID)
-  fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o700 })
+  fs.mkdirSync(paths.runDir, { recursive: true, mode: 0o2777 })
+  fs.chmodSync(paths.runDir, 0o2777)
+  try {
+    fs.chownSync(paths.runDir, -1, process.getgid())
+  } catch {}
+  const shareRuntimeFile = (file) => {
+    try {
+      fs.chmodSync(file, 0o644)
+    } catch {}
+  }
   let token = ''
   try {
     token = fs.readFileSync(paths.token, 'utf8').trim()
   } catch {}
   if (!token) token = crypto.randomBytes(32).toString('hex')
   replaceSlotOwnedFile(paths.token, token + '\n', vm)
+  shareRuntimeFile(paths.token)
   const wantNet = String(slotNetworkForVm(vm) || '')
   const liveNet = String(inspectContainer(containerName(vm.id))?.networkMode || '')
   const onEgress =
@@ -572,6 +582,7 @@ export function writeWorkerFiles(vm, projectRoot, { transparent, routing } = {})
     if (oauthTokenUrl) workerConfig.oauth_token_url = oauthTokenUrl
   }
   replaceSlotOwnedFile(paths.config, JSON.stringify(workerConfig, null, 2) + '\n', vm)
+  shareRuntimeFile(paths.config)
   const allowed = assertCliHopAllowed(vm, resolvedRouting)
   if (!allowed.ok) throw new Error(allowed.error)
   const kernel = writeKernelConfig(projectRoot, vm, {
