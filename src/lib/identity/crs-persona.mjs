@@ -387,11 +387,17 @@ export function stampBillingPromptId(body, sessionId, firstUserText = '') {
   return changed ? { ...body, system } : body
 }
 const SUBAGENT_BILLING_RE = /\s*\bcc_is_subagent\s*=\s*true\s*;?/gi
+const BILLING_LINE_RE = /^\s*x-anthropic-billing-header:/i
 
-/** Official main requests omit cc_is_subagent. Native slots still mark themselves as subagents. */
+/** Official main requests omit cc_is_subagent. Only the first billing line is billing. */
 export function stripSubagentBilling(body) {
   if (!body || typeof body !== 'object') return body
-  const rewrite = (text) => String(text).replace(SUBAGENT_BILLING_RE, '')
+  let found = false
+  const rewrite = (text) => {
+    if (found || !BILLING_LINE_RE.test(text)) return text
+    found = true
+    return String(text).replace(SUBAGENT_BILLING_RE, '')
+  }
   if (typeof body.system === 'string') {
     const system = rewrite(body.system)
     return system === body.system ? body : { ...body, system }
@@ -399,16 +405,12 @@ export function stripSubagentBilling(body) {
   if (!Array.isArray(body.system)) return body
   let changed = false
   const system = body.system.map((block) => {
-    if (typeof block === 'string') {
-      const text = rewrite(block)
-      if (text === block) return block
-      changed = true
-      return text
-    }
-    if (!block || typeof block.text !== 'string' || !SUBAGENT_BILLING_RE.test(block.text)) return block
-    SUBAGENT_BILLING_RE.lastIndex = 0
+    const raw = typeof block === 'string' ? block : block?.text
+    if (typeof raw !== 'string') return block
+    const text = rewrite(raw)
+    if (text === raw) return block
     changed = true
-    return { ...block, text: rewrite(block.text) }
+    return typeof block === 'string' ? text : { ...block, text }
   })
   return changed ? { ...body, system } : body
 }

@@ -196,6 +196,16 @@ test('missing thinking stays omitted through the final payload; a repair does no
   })
   assert.equal(repaired.body.thinking, undefined)
 })
+test('a non-billing system literal keeps cc_is_subagent', () => {
+  const literal = 'Document the field cc_is_subagent=true; do not send it.'
+  const body = officialCaller()
+  body.system.push({ type: 'text', text: literal })
+  body.messages = [{ role: 'user', content: literal }]
+  const out = lean(body, { officialCallerFlag: false })
+  assert.equal(out.system.at(-1).text.includes(literal) || out.messages[0].content[0].text.includes(literal), true)
+  assert.equal(JSON.stringify(out.messages).includes('cc_is_subagent=true'), true)
+  assert.equal(out.system[0].text.includes('cc_is_subagent'), false)
+})
 
 test('top level follows the 2.1.303 order and adds no sampling or context_management', () => {
   const out = lean(officialCaller())
