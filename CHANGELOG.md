@@ -18,6 +18,8 @@
 
 - 代理探测：TCP 已连上但收不到 SOCKS5 方法选择回应（例如填了 HTTP 端口）不再显示「正常」。超时或对端直接关掉连接记为失败，错误为 `not_socks5：请填写 SOCKS5 端口`；收到非 SOCKS5 字节同样失败。合法方法 `0x00` / `0x02` / `0xff` 仍算探测成功。
 
+- API 内核：SSE 响应逐块 flush，修复小响应缓冲到结束才返回的问题，保留实际流式交付和首 Token 时序。
+
 ## 1.4.007 — 2026-10-26
 
 - #752：`deploy/payload.json` 的 `cli-node` 对齐线上哈希（size 27789508，sha256 f29bbfa45b68308367f4091699cbeb3a0baba860d327d349d6d55cc11408fb68）——已部署机升级须 `npm run fetch:payload` + `wrap-cli/sync`（restart:true）后重启 Node；仅更 Node 不够。
