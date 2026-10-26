@@ -62,6 +62,8 @@ describe('agent standing + system preview', () => {
     reporting: 'REPORTING',
     dynamic_boundary: 'BOUNDARY',
     agent_official: 'AGENT',
+    harness_303: 'HARNESS',
+    guidance_303: 'GUIDANCE',
     env_official: 'ENV',
     caller_agent: '',
     caller_system: '',
@@ -101,66 +103,47 @@ describe('agent standing + system preview', () => {
     }
   })
 
-  it('drops billing blocks and keeps a blank zero agent slot as zero-width', () => {
-    const zero = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
+  it('zero preview has no injected identity or empty agent block', () => {
+    expect(
+      previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
+        ...vars,
+        agent_standing: '',
+      })
+    ).toEqual([])
+    const official = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.official, {
       ...vars,
       agent_standing: '',
     })
-    expect(zero.map((block) => block.id)).toEqual([
-      'identity_slot',
-      'agent_slot',
+    expect(official.map((b) => b.id)).toEqual([
+      'identity',
+      'harness',
+      'dynamic_boundary',
+      'guidance',
     ])
-    expect(zero[1]?.text).toBe(EMPTY_BLOCK_TEXT)
-    expect(zero[1]?.placeholder).toBe(true)
-
-    const officialDefault = previewSystemBlocks(
-      DEFAULT_PERSONA_TEMPLATES.official,
-      {
-        ...vars,
-        agent_standing: agentStandingVar({}, 'official'),
-        env: '# Environment\n - Timezone: Asia/Tokyo',
-      }
+    expect(official.find((b) => b.id === 'harness')?.text).toBe('HARNESS')
+    const enabled = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.official, {
+      ...vars,
+      agent_standing: agentStandingVar(
+        { agent_standing_presets: { official: true } },
+        'official'
+      ),
+    })
+    expect(enabled.find((b) => b.id === 'harness')?.text).toBe(
+      `${DEFAULT_AGENT_STANDING}\nHARNESS`
     )
-    expect(officialDefault.map((block) => block.text)).toEqual([
-      'ID',
-      '# Environment\n - Timezone: Asia/Tokyo',
-    ])
-
-    const officialEnabled = previewSystemBlocks(
-      DEFAULT_PERSONA_TEMPLATES.official,
-      {
-        ...vars,
-        agent_standing: agentStandingVar(
-          { agent_standing_presets: { official: true } },
-          'official'
-        ),
-        env: '# Environment\n - Timezone: Asia/Tokyo',
-      }
-    )
-    expect(officialEnabled.map((block) => block.text)).toEqual([
-      'ID',
-      `${DEFAULT_AGENT_STANDING}\n`,
-      '# Environment\n - Timezone: Asia/Tokyo',
-    ])
   })
 
-  it('keeps a nonempty optional agent slot in the zero preset', () => {
+  it('explicit standing still renders in the zero preview', () => {
     const blocks = previewSystemBlocks(DEFAULT_PERSONA_TEMPLATES.zero, {
       ...vars,
       agent_standing: 'Stay terse.\n',
     })
-    expect(blocks.map((block) => block.id)).toEqual([
-      'identity_slot',
-      'agent_slot',
-    ])
-    expect(blocks[1]).toMatchObject({
+    expect(blocks.map((b) => b.id)).toEqual(['agent_standing'])
+    expect(blocks[0]).toMatchObject({
       text: 'Stay terse.\n',
       placeholder: false,
-      ttl: '1h',
-      hide: true,
     })
   })
-
   it('keeps required blank blocks as zero-width placeholders', () => {
     const blocks = previewSystemBlocks(
       [{ id: 'agent_slot', type: 'text', text: '{{agent_standing}}' }],
@@ -179,11 +162,11 @@ describe('agent standing + system preview', () => {
     expect(templateSlotState(full, 'agent_standing')).toBe('switch')
     expect(templateSlotState(full, 'env')).toBe('switch')
     expect(templateSlotState(DEFAULT_PERSONA_TEMPLATES.zero, 'env')).toBe(
-      'switch'
+      'absent'
     )
     expect(templateSlotState([], 'env')).toBe('absent')
     expect(templateSlotState(DEFAULT_PERSONA_TEMPLATES.official, 'env')).toBe(
-      'switch'
+      'absent'
     )
     expect(
       templateSlotState(
@@ -223,6 +206,22 @@ describe('agent standing + system preview', () => {
   })
 
   it('omits generated env when the per-preset switch is off', () => {
+    const envTemplate = [
+      { id: 'identity', type: 'text', text: '{{identity}}' },
+      {
+        id: 'agent_official',
+        type: 'text',
+        text: '{{agent_official}}',
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+      {
+        id: 'env_official',
+        type: 'text',
+        text: '{{env_official}}',
+        drop_if_empty: true,
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+    ]
     const isolated = {
       persona_env_presets: {
         official: true,
@@ -240,13 +239,10 @@ describe('agent standing + system preview', () => {
       )
     ).toEqual({ env_official: 'ENV', timezone: 'UTC' })
 
-    const fullOn = previewSystemBlocks(
-      DEFAULT_PERSONA_TEMPLATES.official_full,
-      {
-        ...vars,
-        env_official: 'ENV',
-      }
-    )
+    const fullOn = previewSystemBlocks(envTemplate, {
+      ...vars,
+      env_official: 'ENV',
+    })
     expect(fullOn.map((block) => block.id)).toEqual([
       'identity',
       'agent_official',
@@ -266,7 +262,7 @@ describe('agent standing + system preview', () => {
     })
 
     const fullOff = previewSystemBlocks(
-      DEFAULT_PERSONA_TEMPLATES.official_full,
+      envTemplate,
       applyPersonaEnvVars(
         { ...vars, env_official: 'ENV', timezone: 'Asia/Tokyo' },
         isolated,
@@ -286,9 +282,7 @@ describe('agent standing + system preview', () => {
 
     const selected = previewSystemBlocks(
       [
-        ...DEFAULT_PERSONA_TEMPLATES.official_full.filter(
-          (block) => block.id !== 'env_official'
-        ),
+        ...envTemplate.filter((block) => block.id !== 'env_official'),
         {
           id: 'env_timezone_only',
           type: 'text',
@@ -303,7 +297,7 @@ describe('agent standing + system preview', () => {
         DEFAULT_PERSONA_TEMPLATES.official,
         applyPersonaEnvVars({ ...vars, env: tokyo }, isolated, 'official')
       ).map((block) => block.text)
-    ).toEqual(['ID', tokyo])
+    ).toEqual(['ID', 'HARNESS', 'BOUNDARY', 'GUIDANCE'])
 
     expect(
       previewSystemBlocks(
@@ -314,7 +308,7 @@ describe('agent standing + system preview', () => {
           'zero'
         )
       ).map((block) => block.id)
-    ).toEqual(['identity_slot', 'agent_slot'])
+    ).toEqual([])
 
     const literal = previewSystemBlocks(
       [
@@ -412,7 +406,7 @@ describe('agent standing + system preview', () => {
     })
   })
 
-  it('preview keeps builtin 1h cache without scope and retains custom explicit scope', () => {
+  it('preview retains builtin harness scope and custom explicit scope', () => {
     const builtin = previewSystemBlocks(
       DEFAULT_PERSONA_TEMPLATES.official_full,
       {
@@ -420,12 +414,10 @@ describe('agent standing + system preview', () => {
         env_official: 'ENV',
       }
     )
-    expect(
-      builtin.find((block) => block.id === 'agent_official')
-    ).toMatchObject({
-      text: 'AGENT',
-      ttl: '1h',
-      scope: '',
+    expect(builtin.find((block) => block.id === 'harness')).toMatchObject({
+      text: 'HARNESS',
+      ttl: '',
+      scope: 'global',
     })
     const custom = previewSystemBlocks(
       [
@@ -511,7 +503,7 @@ describe('agent standing + system preview', () => {
   it('whole-preset mask: map beats legacy persona_hides beats template hide', () => {
     const zero = DEFAULT_PERSONA_TEMPLATES.zero
     const official = DEFAULT_PERSONA_TEMPLATES.official
-    expect(personaHideEnabled({}, 'zero', zero)).toBe(true)
+    expect(personaHideEnabled({}, 'zero', zero)).toBe(false)
     expect(personaHideEnabled({}, 'official', official)).toBe(false)
     expect(
       personaHideEnabled({ persona_hides: true }, 'official', official)
@@ -523,17 +515,17 @@ describe('agent standing + system preview', () => {
         official
       )
     ).toBe(false)
-    const off = setPersonaHide({}, 'zero', false, zero, {})
-    expect(off.persona_hide_presets).toEqual({ zero: false })
+    const off = setPersonaHide({}, 'zero', true, zero, {})
+    expect(off.persona_hide_presets).toEqual({ zero: true })
     expect(
-      'persona_hide_presets' in setPersonaHide(off, 'zero', true, zero, {})
+      'persona_hide_presets' in setPersonaHide(off, 'zero', false, zero, {})
     ).toBe(false)
   })
 })
 
 describe('legacy global cache scope', () => {
   const legacy = { type: 'ephemeral', ttl: '1h', scope: 'global' }
-  it('preview drops the old default scope from saved built-in agent blocks only', () => {
+  it('preview preserves the current harness global cache scope', () => {
     const saved = DEFAULT_PERSONA_TEMPLATES.official_full.map((block) =>
       block.id === 'agent_official'
         ? { ...block, cache_control: legacy }
@@ -543,10 +535,8 @@ describe('legacy global cache scope', () => {
       dropLegacyAutoScope('official_full', saved),
       { agent_official: 'AGENT', env_official: 'ENV' }
     )
-    expect(blocks.some((block) => block.scope)).toBe(false)
-    expect(blocks.find((block) => block.id === 'agent_official')?.ttl).toBe(
-      '1h'
-    )
+    expect(blocks.find((block) => block.id === 'harness')?.scope).toBe('global')
+    expect(blocks.find((block) => block.id === 'harness')?.ttl).toBe('')
   })
   it('keeps custom presets and other explicit scopes', () => {
     const custom = [

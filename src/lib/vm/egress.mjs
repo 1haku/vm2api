@@ -256,8 +256,11 @@ function listenerPid(port) {
   return match ? Number(match[1]) : 0
 }
 
-function ownsEgressProcess(pid, configPath) {
+function ownsEgressProcess(pid, configPath, { allowDeleted = false } = {}) {
   if (!pidAlive(pid)) return false
+  const executable = sh(pidNamespaceCommand(['readlink', `/proc/${Number(pid)}/exe`])).stdout.trim()
+  if (!path.basename(executable.replace(/ \(deleted\)$/, '')).startsWith('kin-egress')) return false
+  if (!allowDeleted && executable.endsWith(' (deleted)')) return false
   const args = processText(pid, 'cmdline').split('\0').filter(Boolean)
   const configIndex = args.indexOf('-config')
   if (configIndex < 0 || !args[configIndex + 1]) return false
@@ -519,7 +522,7 @@ export async function startEgressProcess({
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
   const spawned = await spawnDetachedEgress(bin, cfgPath)
   if (!spawned.ok) return spawned
-  const realPid = await waitForListenerPid(listenHost, tcpPort)
+  const realPid = await waitForListenerPid(listenHost, tcpPort, 8000, cfgPath)
   if (!realPid) return { ok: false, error: `kin-egress ${listenTcp} did not listen` }
   fs.writeFileSync(pidFile, String(realPid) + '\n', { mode: 0o600 })
   return { ok: true, pid: realPid, reused: false, configPath: cfgPath, listen_tcp: listenTcp }
@@ -666,12 +669,18 @@ export async function waitPortReleased(host, port, timeoutMs = 3000) {
   return { ok: false, error: 'egress_port_busy', port }
 }
 
-async function waitForListenerPid(host, port, timeoutMs = 8000) {
+async function waitForListenerPid(host, port, timeoutMs = 8000, configPath = null) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    const probe = sh(['ss', '-H', '-ltnp', `sport = :${Number(port)}`], { timeout: 2000 })
-    const match = probe.stdout.match(/pid=(\d+)/)
-    if (match) return Number(match[1])
+    // Port zero asks the OS for an ephemeral port; there is no listener on :0.
+    // Select its real listening process only when it owns this exact proxy config.
+    const probe = sh(['ss', '-H', '-ltnp', ...(Number(port) > 0 ? [`sport = :${Number(port)}`] : [])], {
+      timeout: 2000,
+    })
+    for (const match of probe.stdout.matchAll(/pid=(\d+)/g)) {
+      const pid = Number(match[1])
+      if (!configPath || ownsEgressProcess(pid, configPath)) return pid
+    }
     await delay(100)
   }
   return 0

@@ -102,7 +102,7 @@ test('unofficial outbound envelope matches official 2.1.281 capture keys', () =>
   assert.match(body.system[3].text, /# Environment/)
   assert.ok(!body.system[3].text.includes('Linux 7.0.0-14-generic'))
   assert.match(body.system[3].text, /Timezone: America\/Los_Angeles/)
-  assert.ok(!body.system[3].text.includes('Locale:'))
+  assert.match(body.system[3].text, /Locale: en_US.UTF-8/)
   assert.ok(!body.system[3].text.includes('Platform: linux'))
   assert.ok(!body.system[3].text.includes('OS Version:'))
   assert.equal(body.system[3].cache_control, undefined)

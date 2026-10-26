@@ -1447,6 +1447,7 @@ export function personaTemplateSettingsFromRouting(routing = {}) {
       persona_env_instructions_presets: compat.persona_env_instructions_presets,
       persona_timezone_presets: compat.persona_timezone_presets,
       persona_locale_presets: compat.persona_locale_presets,
+      persona_guidance_presets: compat.persona_guidance_presets,
     },
   }
 }

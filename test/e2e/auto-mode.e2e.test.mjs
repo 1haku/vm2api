@@ -411,7 +411,7 @@ for (const layout of ['zero', 'identity'])
         assert.equal(response.stop_sequence, stage === 'xml_s1' ? input.stop_sequences[0] : null)
         const wire = h.captured.at(-1)
         assert.deepEqual(wire.thinking, { type: 'disabled' })
-        assert.equal(wire.temperature, 0)
+        assert.equal(wire.temperature, input.temperature)
         assert.equal(wire.max_tokens, input.max_tokens)
         assert.deepEqual(wire.stop_sequences, input.stop_sequences)
         assert.equal(wire.output_config, undefined)
@@ -613,7 +613,7 @@ test('classifier terminal/error/cancel/concurrency boundaries through actual ELF
   assert.equal(ordinary.status, 200, ordinary.text)
   const wire = h.captured.at(-1)
   assert.equal(wire.max_tokens, 128)
-  assert.deepEqual(wire.thinking, { type: 'adaptive', display: 'summarized' })
+  assert.deepEqual(wire.thinking, { type: 'adaptive' })
   // v1.3.203+ uses the official identity + caller prompt shape. Environment
   // is no longer injected here. Still prove concurrent classifier traffic
   // cannot replace or leak into the ordinary caller's system instructions.

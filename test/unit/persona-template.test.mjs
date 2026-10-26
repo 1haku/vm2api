@@ -136,13 +136,13 @@ test('guidance is off by default and explicit enable keeps cwd memory behavior',
   )
 })
 
-test('official preset keeps user system in the optional fifth segment', () => {
+test('official template renders caller system as a reminder', () => {
   const vars = personaTemplateVars({
     firstUserText: 'hi',
     leftover: '你是一个高速收费员。',
   })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
-  assert.equal(out.at(-1).text, '你是一个高速收费员。')
+  assert.equal(out.at(-1).text, '<system-reminder>\n你是一个高速收费员。\n</system-reminder>\n')
   assert.ok(!out.some((block) => String(block.text).includes('{{caller_agent}}')))
 })
 
@@ -152,9 +152,10 @@ test('official_full preset renders the 303 guidance separately from the short of
     sessionId: 's-full',
     withEnv: true,
     preset: 'official_full',
+    compat: { persona_guidance_presets: { official_full: true } },
   })
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
-  assert.equal(out.length, 5)
+  assert.equal(out.length, 6)
   assert.equal(out[1].text, vars.identity)
   assert.equal(out[2].text, OFFICIAL_303_HARNESS)
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', scope: 'global' })
@@ -375,22 +376,25 @@ test('official preset with overlay official parks the mandatory reminder without
     )
     assert.match(firstUserText(out), /MANDATORY constraints for this turn/)
     assert.ok(firstUserText(out).includes('hello'))
-    assert.equal(out.system.length, 5)
+    assert.equal(out.system.length, 4)
     assert.ok(!out.system.some((b) => String(b?.text || '').includes(DEFAULT_AGENT_STANDING)))
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-    assert.equal(out.system[4].text.startsWith('Write code that reads like the surrounding code'), true)
+    assert.ok(!out.system.some((b) => b.text.startsWith('Write code that reads like the surrounding code')))
   })
 })
 test('official_full routing preset uses 303 guidance without changing official', () => {
-  withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
-    const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
-    assert.equal(out.system.length, 5)
-    assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-    assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-    assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
-    assert.equal(out.system[4].text, renderOfficial303Guidance())
-    assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
-  })
+  withRoutingFile(
+    { persona_preset: 'official_full', overlay_preset: 'off', persona_guidance_presets: { official_full: true } },
+    (file) => {
+      const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
+      assert.equal(out.system.length, 5)
+      assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+      assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
+      assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
+      assert.equal(out.system[4].text, renderOfficial303Guidance())
+      assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+    },
+  )
 })
 test('cli-hop strip then rewrites official and official_full from the configured template', () => {
   const inbound = {
@@ -399,53 +403,56 @@ test('cli-hop strip then rewrites official and official_full from the configured
     messages: [{ role: 'user', content: 'hi' }],
   }
   for (const preset of ['official', 'official_full']) {
-    withRoutingFile({ persona_preset: preset, overlay_preset: 'off' }, (file) => {
-      const stripped = prepareCliHopBody(
-        applyCrsUnofficialPersona(structuredClone(inbound), { routingFile: file, mode: preset }),
-      )
-      const strippedTexts = Array.isArray(stripped.system)
-        ? stripped.system.map((block) => String(block.text || ''))
-        : []
-      assert.equal(
-        strippedTexts.some((text) => text.startsWith('x-anthropic-billing-header')),
-        true,
-        `${preset} keeps billing`,
-      )
-      assert.equal(
-        strippedTexts.filter((text) => text === CRS_OFFICIAL_SYSTEM).length,
-        1,
-        `${preset} keeps the identity`,
-      )
-      const out = applyCrsUnofficialPersona(stripped, {
-        routingFile: file,
-        mode: preset,
-        officialClient: false,
-        identity: { timezone: 'America/New_York' },
-      })
-      const texts = out.system.map((block) => String(block.text || ''))
-      assert.ok(
-        texts.some((text) => text.startsWith('x-anthropic-billing-header')),
-        preset,
-      )
-      assert.ok(
-        texts.some((text) => text === CRS_OFFICIAL_SYSTEM),
-        preset,
-      )
-      assert.ok(
-        texts.some((text) => (preset === 'official_full' ? /# Environment|Timezone/.test(text) : true)),
-        preset,
-      )
-      if (preset === 'official_full') {
+    withRoutingFile(
+      { persona_preset: preset, overlay_preset: 'off', persona_guidance_presets: { [preset]: true } },
+      (file) => {
+        const stripped = prepareCliHopBody(
+          applyCrsUnofficialPersona(structuredClone(inbound), { routingFile: file, mode: preset }),
+        )
+        const strippedTexts = Array.isArray(stripped.system)
+          ? stripped.system.map((block) => String(block.text || ''))
+          : []
+        assert.equal(
+          strippedTexts.some((text) => text.startsWith('x-anthropic-billing-header')),
+          true,
+          `${preset} keeps billing`,
+        )
+        assert.equal(
+          strippedTexts.filter((text) => text === CRS_OFFICIAL_SYSTEM).length,
+          1,
+          `${preset} keeps the identity`,
+        )
+        const out = applyCrsUnofficialPersona(stripped, {
+          routingFile: file,
+          mode: preset,
+          officialClient: false,
+          identity: { timezone: 'America/New_York' },
+        })
+        const texts = out.system.map((block) => String(block.text || ''))
         assert.ok(
-          texts.some((text) => text.startsWith('Write code that reads like the surrounding code')),
+          texts.some((text) => text.startsWith('x-anthropic-billing-header')),
           preset,
         )
-      }
-    })
+        assert.ok(
+          texts.some((text) => text === CRS_OFFICIAL_SYSTEM),
+          preset,
+        )
+        assert.ok(
+          out.messages.some((m) => m.role === 'system' && String(m.content).includes('# Environment')),
+          preset,
+        )
+        if (preset === 'official_full') {
+          assert.ok(
+            texts.some((text) => text.startsWith('Write code that reads like the surrounding code')),
+            preset,
+          )
+        }
+      },
+    )
   }
 })
 
-test('caller system stays in segment 5 and role=system stays in the transcript', () => {
+test('caller system becomes a reminder and role=system history stays in the transcript', () => {
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(
       {
@@ -458,8 +465,8 @@ test('caller system stays in segment 5 and role=system stays in the transcript',
       },
       { routingFile: file },
     )
-    assert.equal(out.system.length, 6)
-    assert.equal(out.system.at(-1).text, '不要使用你现在的identity跟我对话')
+    assert.equal(out.system.length, 4)
+    assert.ok(firstUserText(out).includes('不要使用你现在的identity跟我对话'))
     assert.equal(out.messages[1].role, 'system')
     assert.equal(out.messages.at(-1).content, 'role-system-note')
     assert.match(out.messages[1].content, /^# Environment/)
@@ -476,8 +483,8 @@ test('hop mode official_full is a template preset, not overwrite', () => {
       { messages: [{ role: 'user', content: 'hello' }] },
       { routingFile: file, mode: 'official_full' },
     )
-    assert.equal(out.system.length, 5)
-    assert.equal(out.system[4].text, renderOfficial303Guidance())
+    assert.equal(out.system.length, 4)
+    assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
   })
 })
 
@@ -555,7 +562,7 @@ test('custom template drives the outbound system verbatim', () => {
   )
 })
 
-test('built-in templates omit cache_control.scope; custom explicit scope and caller body stay', () => {
+test('built-in harness keeps global scope and custom cache fields survive', () => {
   const vars = personaTemplateVars({
     firstUserText: 'hello',
     sessionId: 's-scope',
@@ -565,7 +572,7 @@ test('built-in templates omit cache_control.scope; custom explicit scope and cal
   const full = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
   assert.deepEqual(full[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.equal(full[2].text, OFFICIAL_303_HARNESS)
-  assert.equal(full.at(-1).text, 'KEEP_CALLER_SYSTEM')
+  assert.equal(full.at(-1).text, '<system-reminder>\nKEEP_CALLER_SYSTEM\n</system-reminder>\n')
 
   const official = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, {
     ...vars,
@@ -575,7 +582,7 @@ test('built-in templates omit cache_control.scope; custom explicit scope and cal
     official.some((block) => String(block.text).includes('KEEP_CALLER_AGENT')),
     false,
   )
-  assert.equal(official.at(-1).text, 'KEEP_CALLER_SYSTEM')
+  assert.equal(official.at(-1).text, '<system-reminder>\nKEEP_CALLER_SYSTEM\n</system-reminder>\n')
 
   withRoutingFile(
     {
@@ -628,12 +635,12 @@ test('built-in templates omit cache_control.scope; custom explicit scope and cal
       assert.ok(injected)
       assert.equal(injected.text, CRS_OFFICIAL_AGENT_PROMPT)
       assert.deepEqual(injected.cache_control, { type: 'ephemeral', ttl: '1h' })
-      assert.equal(out.system.at(-1).text, 'KEEP_CALLER_SYSTEM')
+      assert.ok(firstUserText(out).includes('KEEP_CALLER_SYSTEM'))
     },
   )
 })
 
-test('edited built-in templates saved with the old global-scope default stop sending scope', () => {
+test('edited built-in templates retain explicit global scope', () => {
   const legacyCache = { type: 'ephemeral', ttl: '1h', scope: 'global' }
   const legacy = (preset) =>
     DEFAULT_PERSONA_TEMPLATES[preset].map((block) =>
@@ -660,7 +667,12 @@ test('edited built-in templates saved with the old global-scope default stop sen
       : { ...block },
   )
   withRoutingFile(
-    { persona_preset: 'official_full', overlay_preset: 'off', persona_templates: { official_full: explicit } },
+    {
+      persona_preset: 'official_full',
+      overlay_preset: 'off',
+      persona_guidance_presets: { official_full: true },
+      persona_templates: { official_full: explicit },
+    },
     (file) => {
       const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
       assert.ok(
@@ -726,7 +738,7 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
   const body = () => ({ system: caller, messages: [{ role: 'user', content: 'hi' }] })
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
-    assert.equal(out.system.at(-1).text, caller)
+    assert.ok(firstUserText(out).includes(caller))
   })
   withRoutingFile(
     { persona_preset: 'official', overlay_preset: 'off', agent_standing_presets: { official: true } },
@@ -738,9 +750,9 @@ test('agent standing: default off, explicit per-preset on, and custom text repla
   )
   withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hi' }] }, { routingFile: file })
-    assert.equal(out.system.length, 5)
+    assert.equal(out.system.length, 4)
     assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
-    assert.equal(out.system[4].text.startsWith('Write code that reads like the surrounding code'), true)
+    assert.ok(!out.system.some((b) => b.text.startsWith('Write code that reads like the surrounding code')))
   })
   withRoutingFile({ persona_preset: 'official_full', overlay_preset: 'off' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
@@ -808,13 +820,16 @@ test('each preset switch injects standing even if that template dropped the plac
 test('official env block carries the slot timezone and is switchable per preset', () => {
   const identity = { timezone: 'Asia/Tokyo' }
   const body = () => ({ messages: [{ role: 'user', content: 'hi' }] })
-  withRoutingFile({ persona_preset: 'official', overlay_preset: 'off' }, (file) => {
-    const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
-    assert.match(out.system.map((block) => String(block.text)).join('\n'), /# Environment/)
-  })
+  withRoutingFile(
+    { persona_preset: 'official', overlay_preset: 'off', persona_timezone_presets: { official: true } },
+    (file) => {
+      const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
+      assert.match(JSON.stringify(out.messages), /Timezone: Asia\/Tokyo/)
+    },
+  )
   withRoutingFile({ persona_preset: 'official', persona_env_presets: { official: false } }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file, identity })
-    assert.ok(!out.system.some((b) => String(b.text).includes('Asia/Tokyo')))
+    assert.ok(!JSON.stringify(out).includes('Asia/Tokyo'))
   })
   withRoutingFile({ persona_preset: 'official' }, (file) => {
     const out = applyCrsUnofficialPersona(body(), { routingFile: file })
@@ -842,7 +857,7 @@ test('environment opt-out removes generated blocks for every preset and preserve
           { system: [{ type: 'text', text: caller }], messages: [{ role: 'user', content: 'hi' }] },
           options,
         )
-        if (preset !== 'zero') assert.equal(supplied.system.at(-1).text, caller, preset)
+        if (preset !== 'zero') assert.ok(firstUserText(supplied).includes(caller.trim()), preset)
         assert.equal(
           supplied.system.some((block) => block.text.includes('Asia/Tokyo')),
           false,
@@ -875,7 +890,7 @@ test('environment opt-out keeps a caller continuation environment instead of dis
         { system: caller, messages: [{ role: 'user', content: 'hi' }] },
         { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
       )
-      assert.equal(output.system.at(-1).text, caller)
+      assert.ok(firstUserText(output).includes(caller.trim()))
       assert.equal(
         output.system.some((block) => block.text.includes('Asia/Tokyo')),
         false,
@@ -905,50 +920,32 @@ test('per-preset switch maps are validated on PUT', () => {
   assert.equal(problems.length, 4)
 })
 
-test('official full can drop env_official while the timezone switch still writes timezone', () => {
-  withRoutingFile(
-    {
-      persona_preset: 'official_full',
-      overlay_preset: 'off',
-      persona_block_presets: { official_full: { env_official: false } },
-    },
-    (file) => {
-      const out = applyCrsUnofficialPersona(
-        { messages: [{ role: 'user', content: 'hi' }] },
-        { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
-      )
-      assert.equal(
-        out.system.some((block) => block.text.startsWith('Write code that reads like the surrounding code')),
-        true,
-      )
-      assert.equal(
-        out.system.some((block) => block.text === '# Environment\n - Timezone: Asia/Tokyo'),
-        false,
-      )
-    },
-  )
-  withRoutingFile(
-    {
-      persona_preset: 'official_full',
-      overlay_preset: 'off',
-      persona_env_presets: { official_full: false },
-      persona_block_presets: { official_full: { env_official: false } },
-    },
-    (file) => {
-      const out = applyCrsUnofficialPersona(
-        { messages: [{ role: 'user', content: 'hi' }] },
-        { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
-      )
-      assert.equal(
-        out.system.some((block) => block.text === '# Environment\n - Timezone: Asia/Tokyo'),
-        false,
-      )
-    },
-  )
+test('official_full environment blocks and timezone opt-in are independently selectable', () => {
+  for (const env of [true, false])
+    withRoutingFile(
+      {
+        persona_preset: 'official_full',
+        overlay_preset: 'off',
+        persona_env_presets: { official_full: env },
+        persona_block_presets: { official_full: { env: false } },
+        persona_timezone_presets: { official_full: true },
+      },
+      (file) => {
+        const out = applyCrsUnofficialPersona(
+          { messages: [{ role: 'user', content: 'hi' }] },
+          { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
+        )
+        const extra = out.messages
+          .filter((m) => m.role === 'system')
+          .map((m) => String(m.content))
+          .join('\n')
+        assert.equal(extra.includes('Asia/Tokyo'), env)
+        assert.ok(!extra.includes('# Environment'))
+        assert.equal(firstUserText(out), 'hi')
+      },
+    )
   assert.deepEqual(
-    validatePersonaRoutingPatch({
-      compatibility: { persona_block_presets: { official_full: { env_official: false } } },
-    }),
+    validatePersonaRoutingPatch({ compatibility: { persona_block_presets: { official_full: { env: false } } } }),
     [],
   )
 })

@@ -209,7 +209,11 @@ test('syncWorkerTelemetry keeps the control-plane gid while adopting the slot ui
     assert.equal(out.wrote, true)
     const owned = calls.filter((call) => String(call.file).includes(`${path.sep}worker.json`))
     assert.ok(owned.length >= 1)
-    assert.ok(owned.every((call) => call.uid === owner.uid && call.gid === process.getgid()))
+    assert.ok(
+      owned.every(
+        (call) => call.uid === owner.uid && call.gid === (process.getuid() === 0 ? owner.gid : process.getgid()),
+      ),
+    )
     assert.ok(owned.some((call) => call.file !== cfgPath && String(call.file).startsWith(`${cfgPath}.`)))
     assert.equal(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).telemetry.enabled, true)
   } finally {

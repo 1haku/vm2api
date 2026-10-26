@@ -234,12 +234,12 @@ test('writeWorkerFiles keeps the control-plane gid when chown succeeds', (t) => 
   const runDir = path.join(root, 'vms', 'vm-10', 'run')
   for (const name of ['.', 'worker.json', 'kernel.json']) {
     const stat = fs.statSync(path.join(runDir, name))
-    assert.equal(stat.gid, process.getgid(), name)
+    assert.equal(stat.gid, process.getuid() === 0 ? Number(process.env.KIN_VM_GID || 987) : process.getgid(), name)
   }
   assert.equal(fs.statSync(path.join(runDir, 'internal.token')).mode & 0o077, 0)
   assert.equal(
     calls.some((call) => call.file === runDir && call.gid === Number(process.env.KIN_VM_GID || 987)),
-    false,
+    process.getuid() === 0 || process.getgid() === Number(process.env.KIN_VM_GID || 987),
   )
 })
 

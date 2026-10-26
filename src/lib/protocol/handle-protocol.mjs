@@ -1407,7 +1407,14 @@ export function createHandleProtocol(deps) {
             const outboundProfile = profileForPreset(resolvedPersona)
             // Render once from caller input with the selected slot's identity, not the pre-selection environment.
             if (!requestContext && !officialTraffic) {
-              hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
+              // Re-render caller instructions without reintroducing another
+              // account's thinking signatures from the original request.
+              const ownedPersona = filterThinkingForAccount(
+                structuredClone(personaIn),
+                selected.accountId,
+                thinkingOwnerStore,
+              )
+              hopBody = applyCrsUnofficialPersona(ownedPersona.body, {
                 forceConfigured: true,
                 routingFile: routingConfigPath,
                 mode: resolvedPersona,

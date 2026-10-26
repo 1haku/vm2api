@@ -64,10 +64,10 @@ test('model shape follows official 2.1.303 he(model)', () => {
 })
 
 test('official presets bind 2.1.303 while legacy presets retain 2.1.296', () => {
-  for (const preset of ['official', 'official_full', 'official_303', '303', 'official-303']) {
+  for (const preset of ['official', 'official_full', 'official_303', '303', 'official-303', 'zero']) {
     assert.equal(profileForPreset(preset).cliVersion, '2.1.303', String(preset))
   }
-  for (const preset of ['zero', 'custom', '', undefined]) {
+  for (const preset of ['custom', '', undefined]) {
     assert.equal(profileForPreset(preset).cliVersion, '2.1.296', String(preset))
   }
   const profile = OFFICIAL_PROFILES['2.1.303']
@@ -86,11 +86,11 @@ test('official presets bind 2.1.303 while legacy presets retain 2.1.296', () => 
   assert.deepEqual(profile.autoFill, [])
 })
 
-test('official_303 is a selectable preset; the default stays official_full', () => {
-  assert.ok(PERSONA_PRESETS.includes('official_303'))
+test('official_303 is a read-only alias of official_full', () => {
+  assert.ok(!PERSONA_PRESETS.includes('official_303'))
   assert.equal(DEFAULT_PERSONA_PRESET, 'official_full')
   for (const raw of ['official_303', 'OFFICIAL_303', '303', 'official-303']) {
-    assert.equal(normalizePersonaPreset(raw), 'official_303')
+    assert.equal(normalizePersonaPreset(raw), 'official_full')
     assert.equal(normalizeSlotPersonaPreset(raw), 'official_303')
     assert.deepEqual(parseSlotPersonaPresetPatch(raw), {
       ok: true,
@@ -99,7 +99,7 @@ test('official_303 is a selectable preset; the default stays official_full', () 
   }
   assert.equal(templatePresetFor('official_303'), 'official_full')
   assert.equal(templatePresetFor('zero'), 'zero')
-  assert.equal(resolveSlotPersonaPreset({}, { compatibility: { persona_preset: 'official_303' } }), 'official_303')
+  assert.equal(resolveSlotPersonaPreset({}, { compatibility: { persona_preset: 'official_303' } }), 'official_full')
   assert.equal(
     resolveSlotPersonaPreset({ persona_preset: 'official_303' }, { compatibility: { persona_preset: 'zero' } }),
     'official_303',
@@ -118,7 +118,12 @@ test('built-in 303 template: billing, identity, harness, guidance and valid plac
       ['harness', '{{agent_standing}}{{harness_303}}', { type: 'ephemeral', scope: 'global' }],
       ['dynamic_boundary', '{{dynamic_boundary}}', null],
       ['guidance', '{{guidance_303}}', { type: 'ephemeral' }],
+      ['env', '{{env_303}}', null],
       ['env_extra', '{{model_sentence}}', null],
+      ['env_instructions', '{{env_instructions_303}}', null],
+      ['env_timezone', '{{env_timezone}}', null],
+      ['env_locale', '{{env_locale}}', null],
+      ['caller_system', '<system-reminder>\n{{caller_system}}\n</system-reminder>\n', null],
     ],
   )
   assert.deepEqual(validatePersonaTemplate(blocks), [])

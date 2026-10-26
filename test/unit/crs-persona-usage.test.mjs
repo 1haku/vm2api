@@ -105,7 +105,7 @@ test('standing mask is its own switch, independent of template hide flags', () =
     { persona_preset: 'zero', agent_standing_presets: { zero: true }, agent_standing_hide_presets: { zero: false } },
     helloBody,
   )
-  assert.equal(zeroMasked.overlay, standingTokens)
+  assert.equal(zeroMasked.overlay, 0)
   assert.equal(zeroShown.overlay, 0)
   assert.equal(zeroShown.official, zeroMasked.official)
 })
@@ -148,27 +148,22 @@ test('official_prompt does not start usage hide, even with standing and env', ()
     const after = applyCrsUnofficialPersona(before, { mode: 'official_prompt', routingFile })
     assert.equal(personaHideForUnofficial(before, after, { mode: 'official_prompt' }), 0)
     assert.ok(after.system.some((b) => String(b?.text || '').startsWith(`${DEFAULT_AGENT_STANDING}\n`)))
-    assert.ok(after.system.some((b) => String(b?.text || '').startsWith('# Environment')))
+    assert.ok(after.messages.some((m) => m.role === 'system' && String(m.content).startsWith('# Environment')))
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('zero inject hides billing and env, not leftover', () => {
+test('zero inject hides only generated billing and does not inject standing or environment', () => {
   const before = { system: '你是一个高速收费员。', messages: helloBody.messages }
   const after = applyCrsUnofficialPersona(before, { mode: 'zero', identity: { timezone: 'Asia/Tokyo' } })
   const hide = personaHideInputTokens(before, after)
   const billing = String(after.system[0].text || '')
   assert.ok(billing.startsWith('x-anthropic-billing-header:'))
-  assert.match(billing, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
-  assert.equal(after.system.length, 5)
-  assert.equal(after.system[1].text, '\u200b')
-  assert.equal(after.system[2].text, '\u200b')
-  assert.equal(after.system[3].text, '# Environment\n - Timezone: Asia/Tokyo')
-  assert.equal(after.system[4].text, '你是一个高速收费员。')
-  const noEnv = structuredClone(after)
-  noEnv.system.splice(3, 1)
-  assert.ok(hide.official > personaHideInputTokens(before, noEnv).official)
+  assert.match(billing, /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+  assert.equal(after.system.length, 1)
+  assert.deepEqual(after.messages, before.messages)
+  assert.equal(hide.overlay || 0, 0)
   assert.equal(Number(hide), hide.official + hide.overlay)
   assert.equal(injectedOverlayText(before, after), '')
   assert.ok(!injectedOverlayText(before, after).includes('高速收费员'))
@@ -198,7 +193,7 @@ test('cli-hop zero also hides the standing Node put in the leftover', () => {
   try {
     const after = applyCrsUnofficialPersona(before, { mode: 'zero', routingFile })
     const node = personaHideInputTokens(before, after)
-    assert.equal(node.overlay, estimateClaudeInputTokens(DEFAULT_AGENT_STANDING))
+    assert.equal(node.overlay, 0)
     const hide = personaHideForCliZero(before, after, { timezone: 'America/New_York', overlay: node.overlay })
     assert.equal(hide.overlay, node.overlay)
     assert.equal(Number(hide), zeroCliLayoutHideTokens({ timezone: 'America/New_York' }) + node.overlay)

@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   CRS_OFFICIAL_AGENT_PROMPT,
   CRS_OFFICIAL_CLI_SYSTEM,
+  CRS_OFFICIAL_SYSTEM,
   applyCrsUnofficialPersona,
 } from '../../src/lib/identity/crs-persona.mjs'
 import { toClaudeMessages } from '../../src/lib/protocol/convert.mjs'
@@ -35,23 +36,21 @@ function userText(body) {
 function assertOfficial(body, { caller = '' } = {}) {
   const blocks = texts(body)
   assert.match(blocks[0], /^x-anthropic-billing-header: /)
-  assert.equal(blocks[1], CRS_OFFICIAL_CLI_SYSTEM)
-  assert.ok(blocks[2].includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 48)))
-  assert.match(blocks[3], /^# Environment\n/)
-  if (caller) assert.equal(blocks.at(-1), caller)
-  else assert.equal(blocks.length, 4)
+  assert.equal(blocks[1], CRS_OFFICIAL_SYSTEM)
+  assert.ok(blocks[2].startsWith('\nYou are an agent working with the user'))
+  assert.equal(blocks[3], '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
+  assert.equal(blocks.length, 4)
+  if (caller) assert.ok(userText(body).includes(caller))
   assert.match(userText(body), new RegExp(HI))
 }
 
 function assertZero(body, { caller = '' } = {}) {
   const blocks = texts(body)
   assert.match(blocks[0], /x-anthropic-billing-header:/)
-  assert.match(blocks[0], /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
-  assert.equal(blocks[1], '\u200b')
-  assert.equal(blocks[2], '\u200b')
-  assert.match(blocks[3], /^# Environment\n/)
+  assert.match(blocks[0], /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+  assert.equal(blocks.length, 1)
   assert.ok(!blocks.some((text) => text.includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 48))))
-  if (caller) assert.equal(blocks.at(-1), caller)
+  if (caller) assert.ok(!blocks.some((text) => text.includes(caller)))
   assert.match(userText(body), new RegExp(HI))
 }
 

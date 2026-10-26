@@ -460,6 +460,7 @@ test('cluster payload check skips a container already on the content-hashed imag
       'share/wrap-cli/cli-node',
       'share/wrap-cli/cc-node',
       'bin/kin-kernel',
+      'bin/kin-codex-kernel',
       'bin/kin-worker',
       'bin/kin-egress',
     ])

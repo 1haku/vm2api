@@ -539,25 +539,18 @@ test('DNS upstream validation rejects unsafe or malformed URL boundaries', () =>
   }
 })
 
-test('egress config carries dns_upstream only when configured', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-dns-'))
-  const base = {
-    projectRoot: root,
-    proxyUrl: 'socks5h://127.0.0.1:1',
-    tcpPort: 20000,
-    dnsPort: 20001,
-    listenHost: '127.0.0.1',
-    bin: '/bin/true',
-  }
-  const a = await startEgressProcess({ ...base, proxyId: 'px-a', dnsUpstream: '' })
-  assert.equal(a.ok, true)
+test('egress config carries dns_upstream only when configured', async (t) => {
+  const fx = egressFixture(t)
+  const a = await fx.start({ proxyId: 'px-a', dnsUpstream: '' })
+  assert.equal(a.ok, true, a.error)
   assert.equal(JSON.parse(fs.readFileSync(a.configPath, 'utf8')).dns_upstream, undefined)
-  const b = await startEgressProcess({ ...base, proxyId: 'px-b', dnsUpstream: '8.8.8.8:53,1.1.1.1:53' })
+  const b = await fx.start({ proxyId: 'px-b', dnsUpstream: '8.8.8.8:53,1.1.1.1:53' })
+  assert.equal(b.ok, true, b.error)
   assert.equal(JSON.parse(fs.readFileSync(b.configPath, 'utf8')).dns_upstream, '8.8.8.8:53,1.1.1.1:53')
-  const c = await startEgressProcess({ ...base, proxyId: 'px-c', domainForward: true })
+  const c = await fx.start({ proxyId: 'px-c', domainForward: true })
+  assert.equal(c.ok, true, c.error)
   assert.equal(JSON.parse(fs.readFileSync(c.configPath, 'utf8')).domain_forward, true)
   assert.equal(JSON.parse(fs.readFileSync(a.configPath, 'utf8')).domain_forward, undefined)
-  fs.rmSync(root, { recursive: true, force: true })
 })
 
 test('egress readiness checks the exact listener without opening a connection', async (t) => {
