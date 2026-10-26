@@ -20,6 +20,8 @@
 
 - API 内核：SSE 响应逐块 flush，修复小响应缓冲到结束才返回的问题，保留实际流式交付和首 Token 时序。
 
+- 协议 token 口径：Claude 转 Chat / Responses 的输入总数包含缓存；OpenAI 规范化区分 inclusive / disjoint 输入并识别显式缓存写入别名，reasoning 保留为 output 子集，不重复累加。
+
 ## 1.4.007 — 2026-10-26
 
 - #752：`deploy/payload.json` 的 `cli-node` 对齐线上哈希（size 27789508，sha256 f29bbfa45b68308367f4091699cbeb3a0baba860d327d349d6d55cc11408fb68）——已部署机升级须 `npm run fetch:payload` + `wrap-cli/sync`（restart:true）后重启 Node；仅更 Node 不够。
