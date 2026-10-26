@@ -983,7 +983,8 @@ for (const cancellation of ['result', 'throw']) {
       if (turn === 50) assert.equal(result.body.error.code, 'client_cancelled')
       const bound = sticky.resolve(stickyKey)
       assert.equal(bound.sessionId, originalSession, `persisted session changed at turn ${turn}`)
-      assert.equal(bound.slotIndex, 3, `cancellation dropped the seat at turn ${turn}`)
+      assert.equal(bound.vmId, 'vm-01', `dialog forgot the VM at turn ${turn}`)
+      assert.equal(bound.slotIndex, null, `ended dialog kept the slot at turn ${turn}`)
     }
     assert.notEqual(originalSession, callerSession)
     assert.deepEqual(scheduler.releasedAccounts, [])
