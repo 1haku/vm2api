@@ -1,8 +1,12 @@
 # Changelog
 
-## 未发布
+## 1.4.04 — 2026-10-26
 
-- #717 / #715：GPT 额度刷新或面板「恢复状态」时，按窗口用量重算并清除过期的 `codex.extra.codex_limited_until`；手动恢复不再只清 Claude 冷却字段而留下 Codex 专用停用标记。
+- #743（Fixes #717 / #715）：GPT 额度刷新或面板「恢复状态」时，按窗口用量重算并清除过期的 `codex.extra.codex_limited_until`；手动恢复不再只清 Claude 冷却字段而留下 Codex 专用停用标记。
+- #716：出口代理把「域名转发」开关 `domain_forward` 透传到 kin-egress；已开该开关的代理需再点一次开关或触发出口修复/槽启动，旧 kin-egress 才会写出 domain_forward。
+- #713：删除槽位时清理其账号池成员（removeVm / reconcileVms prune），面板阻止同一槽位跨池勾选。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启一次 Node；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.4.03 — 2026-10-26
 
