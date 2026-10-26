@@ -434,7 +434,6 @@ export function PoolPane({
     Math.max(1, numOf(inference, 'session_slots', SEAT_CAP_MAX))
   )
   const queueMax = numOf(pool, 'queue_max', POOL_DEFAULTS.queue_max)
-  const grace = numOf(pool, 'seat_grace_ms', POOL_DEFAULTS.seat_grace_ms)
   const reservePct =
     Math.round(
       numOf(

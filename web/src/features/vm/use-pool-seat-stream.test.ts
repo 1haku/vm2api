@@ -99,7 +99,7 @@ describe('seat snapshot merge', () => {
       queue_depth: 3,
       conc_waiting: 2,
       inflight: 1,
-      sessions: seated.seat_sessions,
+      sessions: seated.seat_sessions ?? undefined,
     }
     const [next] = mergeSeatSnapshot([seated], snap({ 'vm-1': live }))
     expect(next).toBe(seated)
