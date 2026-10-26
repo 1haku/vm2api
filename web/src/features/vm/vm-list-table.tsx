@@ -50,6 +50,7 @@ import {
   useVmColumnOrder,
   type VmColumnKey,
 } from '@/features/vm/use-vm-column-order'
+import { ActiveVmBadge } from '@/features/vm/active-vm-badge'
 import { VmActionMenu } from '@/features/vm/vm-action-menu'
 import { useVmActions } from '@/features/vm/vm-actions-context'
 import { VmOwnerLine } from '@/features/vm/vm-owner-line'
@@ -355,6 +356,7 @@ function SlotCell({ vm }: { vm: Vm }) {
       <SlotIdentity vm={vm} compact className='text-sm font-medium' />
       <SlotSubscription vm={vm} />
       <div className='flex min-w-0 items-center gap-1.5'>
+        <ActiveVmBadge vm={vm} />
         <TierBadge vm={vm} />
         <RuntimeChip vm={vm} />
         <NodeChip nodeId={vm.node_id} />

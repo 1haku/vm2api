@@ -2,6 +2,9 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'schedule-state',
+  'schedule-state-registry',
+  'window-history',
   'official-303',
   'official-profiles',
   'outbound-profile',

@@ -1,13 +1,49 @@
 # Changelog
 
-## 未发布
+## 1.4.00 — 2026-10-26
 
+修复大量bug,全新版本.额度50%+,安全100%增加
+
+部署机需要 `wrap-cli/sync`（`restart:true`）：本版 payload 换成 `payload-2026.10.26-cli-node`，cli-node 为 `9a481c94`；同步后各 Claude 槽重启进程，容器不重建。
+
+- #727：system提示词页改版：出站预览为主窗口，提示词按块显示摘要、点详情编辑，环境注入（运行环境、模型附加句）单独成区并标明位于 system 末尾；去掉旧注入卡的长说明与重复入口，出站入口开关只留在设置 → 协议。本版只搬页面，出站行为不变：官方档仍按档选择、缺省 `sdk-cli`，不加 #727 的完整环境说明 / 时区 / 语言开关。
+- #703 与 #731 合并后，`reason: 'sticky'`（按 session 选中 VM 的选号依据）登记为不改槽态。
+- #733/#732：槽位列表（表格 / 机架）、详情页与列表弹窗展示 **Active** 徽标（`vm.active` / `vms/active.json`）；行菜单与运维页提供「设为活跃」，调用既有 `POST /api/panel/vms/:id/activate`。
+- #733/#732：删除仍占活跃指针的槽位时，若有其它可调度且凭证有效的候选，确认后先自动 `activate` 到推荐槽再 `DELETE`；无安全候选时禁用删除并提示先切换活跃。
+- VM 详情页额度栏在「本窗口 5H 已用」下加「上个 5H 已用」：结束时已用比例、起止、官方价花费与请求数。本窗口已用 < 5% 算不出总额度时，花费提示改用上个窗口的「花费 ÷ 结束时已用」推算余额，并注明「按上个窗口」。
+- 查看统计弹窗重排：顶部为「上个窗口」「当前窗口」（各含 5H 与 7D 的已用、起止或重置、花费、请求、token）和「预计剩余 5H 额度」；去掉「花费最高的一天」「请求最多的一天」。Key 统计弹窗不变。
+- 后端在额度写入时归档已结束的 5H / 7D 窗口（Claude 存 accounts `extra.window_history`，GPT 存 `vm.codex.window_history`），`/vms/:id` 新增 `billing.prev_window_5h` / `prev_window_7d` / `window_5h_projection`。不加迁移；上线后第一次窗口翻转前上个窗口显示「暂无记录」。
+- #730：面板模型目录固定模型 `auto`；三种目录模式在其启用时均列出，`worker_only` 也会追加已启用的 `auto`；停用后不列出。请求 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
+- #730：auto mode 分类器契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径 `max_tokens=8192`。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
+- #731：修复同一 client session 占到 VM 后被其它 session 抢走槽位：席位按 session 计，不再按 device 把同一客户端的多个会话挤在一个槽上。请求结束后槽位不释放，一直留给这个 session，直到粘性 TTL 到期，或 VM 不可调度 / 额度、凭证、暂停、换 VM 重试才释放。Node 重启后按未过期的粘性绑定把这些槽占回去，面板不会先显示空闲。面板席位格与悬浮说明列出这台 VM 上实际占着槽的 session。
+- #731：出站占位以 device id / machine id 为先：一个 machine 先占一台 VM，同一 machine 的后续 session 优先使用这台 VM 内的空槽，槽满才去别的 VM。每个 session 仍独占一个槽并保留到粘性 TTL。分配原因里 `device-affinity` 表示落到这台 machine 已占的 VM。
+- #731：修复同一 VM 上每轮重建出站 Session：family 亲和与会话已占席位不一致时，先判断席位是否继续保留，再处理粘性绑定；仍使用原席位时不再因 family 不同删除出站 Session。重启恢复席位继续复用原 Session，真实额度门禁 / VM 不可用触发换 VM 时仍换代。
+
+- cli-hop 每次请求从 routing 文件读一次 `cc_entrypoint`。system 身份、guidance 和补出的 billing 使用同一次结果；文件正在写入时退回内存快照。改 `sdk-cli` / `cli` 后这三处一起变。
+
+- 动态 profile 按出站入口分成两套。`cc_entrypoint=cli` 用交互身份句，并保留 guidance 里的 `! <command>` 提示。缺省 `sdk-cli` 用 Agent SDK 身份句，去掉这句，对齐 `--print` 抓包。billing、UA 和兜底头仍走原来的入口开关。
+
+- 设置 → 协议和 system提示词可切换出站入口 `sdk-cli` / `cli`。网关生成的 billing、出站 UA、cli-node 兜底 billing 使用同一个值。调用方自带的 billing 入口不改，CCH 密封只改 `cch`。保存后写入各 Claude 槽 `kernel.json` 的 `cc_entrypoint`，当前本机 cli-node 每次请求热读，不重启槽。缺省仍是 `sdk-cli`。plain ELF 已验证两个值同步切换，非法值回到 `sdk-cli`。
+
+
+- cli-node 对齐 2.1.303 计费行和 beta 选择器后重编。源码 `9a0f53da`，协议 `850b57aa`。plain ELF 五模型最终 beta 与 API key 路径的抓包顺序一致，haiku 的 `claude-code` 在第 6 位，auto 为 12 项。plain 117487744 字节 `56f068f0…`；UPX 5.0.2 `--best --lzma` 后 27794232 字节，SHA256 `d9f0ba21f2b12f2b00117e0f2fc8862ac8569477f5a4f5797324d9336c523e0b`。`upx -t` 与压缩后 cli-hop e2e 7/7 通过，`--version` 为 `2.1.303 (Claude Code)`。已替换本机 `share/wrap-cli/cli-node`。payload 未更新，未部署。
+- 官方档和完整档的 system 对齐 2.1.303：billing、身份、harness（`1h` + `scope global`）、guidance（`1h`）。拆分边界只交给 cli-node，最终请求不出站。调用方 system 和第三方 harness 接在 guidance 后，不替换官方提示。
+
+- 本机 `share/wrap-cli/cli-node` 替换为隔离快照构建：源码 `ed9fd21`，外部依赖 `src/lib/protocol/claude-code-betas.mjs` SHA256 `0dd4d8d9…`，另补已提交代码所需的 `SYSTEM_PROMPT_REPORTING_OUTCOMES` 导出。plain 111237248 字节 `d6fd3a91…`；UPX 5.0.2 `--best --lzma` 后 27177428 字节，SHA256 `2c1b271df033e23830cc8cdc0181fab60d4de96ff8cf4cd406651aecd9b5ae9f`。`upx -t` 通过，`--version` 为 `2.1.303 (Claude Code)`。尚未更新 payload，未部署。
+- 面板默认 beta 对齐 cli-node 2.1.303 `--print` 的 14 项前缀。setup-token 仍用短列表。模型句补 Haiku 4、Sonnet 4、Opus 4 的知识截止。
+- official_303 在 harness 与 guidance 之间保留 `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`，只交给 cli-node 拆分。cli-node 认出 303 的 billing、身份、harness 后保留该边界：harness 出站为 `1h + scope global`，guidance 为 `1h`，边界字符串本身不出站。HTTP 渲染仍丢弃它。旧 `share/wrap-cli/cli-node` 不认这个形状，临时验证二进制 SHA256 `62029a65…`，未替换交付二进制，未部署。
 - 模型附加句改为按档开关，默认关闭。关闭时 `{{model_sentence}}` 不渲染；打开后才取 `model_env_extra` 里当前模型的句子。清空模板块后也不追加。
 - 网关生成的 billing 与 cli-node 缺失 billing 时的兜底头改为 `cc_entrypoint=sdk-cli`，与 2.1.303 抓包一致；调用方自带的 billing 不改写。出站 UA 已是 `(external, sdk-cli)`，`cc_turn_origin` 仍为 `sdk`。所有档位的出站 billing 字节随之变化，各会话首轮重建一次缓存。
 - 请求日志的 `outbound_headers` 改为新 cli-node 在最终 fetch 前回传的脱敏请求头，新增采集来源；Node → worker 中间头另存 `worker_envelope_headers`。流式与非流式入站均支持，内部事件不发给客户端、不触发提交或上游 idle 计时；旧 CLI 未回传时明确显示未获取，旧日志不冒充最终值。需同时更新 Node、web 与新 cli-node；本轮尚未发布 payload 或部署。
 - cli-node 补齐 `Accept: application/json, text/event-stream` 与 `Accept-Encoding: gzip, br`，在 CCH 密封后按最终 UTF-8 请求体写 `Content-Length`；修复旧 SDK 把毫秒 timeout 写入 `x-stainless-timeout` 的问题（缺省 `600000` → `600` 秒）。对应构建尚未进 payload。
 - 缓存前缀兼容 oh-my-pi 的图片预算：omp 超出图片上限（未识别的 provider 未配 `imageCountBudget` 时为 5 张）后，每来一张新截图就丢弃最旧一张；最旧那张在长会话里位置很深，改动之后的历史全部失效，每张截图都整段重写。现在会话一旦观察到客户端丢图，网关按 omp 丢图后的同一形态（含 `(see attached image)` → `[image omitted: provider image limit]` 与报错结果的提升图说明）去掉水位以下的图片：超过 48 条消息的图片会把水位推到最近 24 条，客户端在水位以上丢图时跳过剩余图片的较旧一半，客户端此后的丢图都落在水位以下。客户端仍保留的图片中，最近 24 条消息内的与最新截图始终发出。水位按调用方会话（含 API key）记录，换号后仍然有效；水位以下的历史与上一轮不一致（压缩、回退、同长度替换）时清零。从不丢图的客户端出站不变。
 - 历史改动后的缓存断点：读断点放在改动前最近一个确实写过且仍在 TTL 内的缓存位（只认已确认成功的请求写下的位置；未写 `ttl` 的断点按上游的 5 分钟计；重启后退回改动前最后一条 user）；写断点放在改动之后最旧一张仍发送的图片前面，下一次去图从这里只重写这张图之后的部分；下一轮显式读这个位置。不超过 4 个断点，尾部断点的 TTL 保留。上游缓存模型下（预算 5，截图每 1/3/8/20 轮一张，240 轮，缓存写入按 2 倍、未缓存输入按 1 倍计），总费用约为理想值的 2.0–2.6 倍；不在图片前写入时为 4.5–15 倍，仅客户端丢图时为 6–45 倍。`[cache-prefix]` 日志附 `anchored messages[N]`、`checkpoint messages[N]` 与图片水位。
+
+- #703：调度状态统一为四态：调度开 / 调度关（仅操作员）/ 不可调度（确定性错误，只能人工开回）/ 受限（自动恢复）。调度、面板、日志共用一张归因表（`src/lib/pool/schedule-state.mjs`）。面板新增「不可调度」分组与原因，席位满、GPT 对话窗口满、临近闸线显示为「受限 · 仅新会话」。
+- #703：不可调度只由操作员开回：调度开、导入凭证、改绑代理、「恢复服务」成功。后台凭证刷新、worker 有票、代理探活不再自动开回（`no_credential` 在凭证落盘后仍自动解除）。操作员调度开之后再出现的凭证失效照常出池。
+- #703：组织禁用 OAuth（400/401/403 `organization disabled` / `OAuth authentication is currently not allowed`）：当前请求换号，该槽记为不可调度并保存上游原文，只能人工开回（并入 #664）。
+- #703：kernel 升级排空、worker 重载、代理探活失败改为系统暂停（受限），不再写成调度关；移除设置「手动开关优先」（`manual_schedule_wins`）。
+- #703：升级首次启动迁移 `vms/*.json` 到新字段，原文件备份到 `backups/schedule-migration-<ts>/`；旧字段保留可回滚。迁移前可用 `node scripts/replay-schedule-state.mjs --project <dir>` 预览。
 
 ## 1.3.226 — 2026-10-24
 

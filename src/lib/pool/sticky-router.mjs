@@ -4,6 +4,7 @@
  */
 
 import crypto from 'node:crypto'
+import { stickyTenantPrefix } from './sticky-seat-scope.mjs'
 import { ENVELOPE_NEEDLES, extractPrompt } from '../core/distill-detect.mjs'
 import { resolveStoreDb } from '../db/database.mjs'
 import { StickyRepo } from '../db/repos/sticky-repo.mjs'
@@ -363,22 +364,19 @@ export class StickyRouter {
   /** Canonical session identity — exact sticky, never scoped to an API key. */
   canonicalSessionKey(sessionId, req = null) {
     const id = String(sessionId || '').trim()
-    const tenant = req?.apiKeyRecord?.user_id
-    return id ? `${tenant ? `u${tenant}:` : ''}sess:${id}` : null
+    return id ? `${stickyTenantPrefix(req)}sess:${id}` : null
   }
 
   /** Canonical device identity — VM affinity, never scoped to an API key. */
   canonicalDeviceKey(deviceId, req = null) {
     const id = String(deviceId || '').trim()
-    const tenant = req?.apiKeyRecord?.user_id
-    return id ? `${tenant ? `u${tenant}:` : ''}dev2:${id}` : null
+    return id ? `${stickyTenantPrefix(req)}dev2:${id}` : null
   }
 
   /** Canonical family identity — parent/root session, never scoped to an API key. */
   canonicalFamilyKey(sessionId, req = null) {
     const id = String(sessionId || '').trim()
-    const tenant = req?.apiKeyRecord?.user_id
-    return id ? `${tenant ? `u${tenant}:` : ''}family2:${id}` : null
+    return id ? `${stickyTenantPrefix(req)}family2:${id}` : null
   }
 
   /**
@@ -450,7 +448,7 @@ export class StickyRouter {
   bind(
     key,
     { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {},
-    { countHit = true, ifGeneration = null, replaceSession = false, clearSlot = false } = {},
+    { countHit = true, ifGeneration = null, replaceSession = false, clearSlot = false, allowMove = false } = {},
   ) {
     if (!key || !this.config.enabled) return false
     const ttl = (this.config.ttl_seconds || 86400) * 1000
@@ -459,7 +457,7 @@ export class StickyRouter {
     if (ifGeneration != null && prevGeneration !== Number(ifGeneration)) return false
     const vmChanged = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
     const accountChanged = !!(prev.account_id && accountId && prev.account_id !== accountId)
-    const locked = vmChanged && accountChanged
+    const locked = vmChanged && accountChanged && !allowMove
     const nextAccount = locked ? prev.account_id : accountId
     const nextVm = locked ? prev.vm_id : vmId
     const nextSlot = locked

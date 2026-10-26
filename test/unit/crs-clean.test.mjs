@@ -224,7 +224,7 @@ test('normalizeAnthropicMessages is idempotent for legal turns', () => {
   ])
 })
 
-test('OpenAI chat unofficial rewrite is four default blocks plus caller --system append', () => {
+test('OpenAI chat unofficial rewrite preserves the caller in a first-user reminder', () => {
   const { claude } = toClaudeMessages('openai.chat', {
     model: 'claude-haiku-4-5-20251001',
     messages: [
@@ -236,10 +236,10 @@ test('OpenAI chat unofficial rewrite is four default blocks plus caller --system
   })
   assert.deepEqual(claude.stop_sequences, ['END'])
   const cleaned = applyCrsUnofficialPersona(claude, { officialClient: false })
-  assert.equal(cleaned.system.length, 5)
+  assert.equal(cleaned.system.length, 4)
   assert.equal(cleaned.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(cleaned.system[4].text, 'you are a linter')
-  assert.match(JSON.stringify(cleaned.messages[0].content), /MANDATORY constraints for this turn/)
+  assert.ok(JSON.stringify(cleaned.messages[0].content).includes('you are a linter'))
+  assert.ok(!cleaned.system.some((b) => b.text.includes('you are a linter')))
   assert.ok(JSON.stringify(cleaned.messages[0].content).includes('hi'))
 })
 
@@ -257,18 +257,19 @@ test('official Claude Code system is not replaced or appended', () => {
   assert.equal(out.system.length, 1)
 })
 
-test('Xcode unofficial system is appended after official 4 blocks', () => {
+test('Xcode unofficial system is preserved in a first-user reminder', () => {
   const body = {
     system: 'You are currently in Xcode. Help with Swift.',
     messages: [{ role: 'user', content: 'hi' }],
   }
   const out = applyCrsUnofficialPersona(body, { officialClient: false })
-  assert.equal(out.system.length, 5)
+  assert.equal(out.system.length, 4)
   assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
-  assert.equal(out.system[4].text, 'You are currently in Xcode. Help with Swift.')
-  assert.match(String(out.messages[0].content), /MANDATORY constraints for this turn/)
+  assert.ok(String(out.messages[0].content).includes('You are currently in Xcode. Help with Swift.'))
+  assert.ok(!out.system.some((b) => b.text.includes('You are currently in Xcode. Help with Swift.')))
   assert.ok(String(out.messages[0].content).includes('hi'))
-  assert.equal(out.messages.length, 1)
+  assert.equal(out.messages.length, 2)
+  assert.equal(out.messages[1].role, 'system')
 })
 
 test('legacy user_id: device becomes VM, unofficial session is minted, account from OAuth', () => {

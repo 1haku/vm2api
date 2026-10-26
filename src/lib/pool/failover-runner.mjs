@@ -449,6 +449,7 @@ export class FailoverRunner {
     onCredentialFailure = null,
     onFablePlanDenied = null,
     onFableSuccess = null,
+    onSchedulePause = null,
   } = {}) {
     this.scheduler = scheduler
     this.stickyRouter = stickyRouter
@@ -459,6 +460,7 @@ export class FailoverRunner {
     this.onCredentialFailure = onCredentialFailure
     this.onFablePlanDenied = onFablePlanDenied
     this.onFableSuccess = onFableSuccess
+    this.onSchedulePause = onSchedulePause
     this.sessionTails = new Map()
     this.searchRepairs = new Map()
   }
@@ -531,6 +533,16 @@ export class FailoverRunner {
     if (typeof this.onCredentialFailure === 'function') {
       try {
         this.onCredentialFailure({ selected, policy })
+      } catch {}
+    }
+  }
+
+  /** Upstream refused this seat outright: move its conversations off and park it for the operator. */
+  pauseUnit(selected, policy, result) {
+    this.scheduler.releaseAccountSessions?.({ accountId: selected?.accountId, vmId: selected?.vmId })
+    if (typeof this.onSchedulePause === 'function') {
+      try {
+        this.onSchedulePause({ selected, policy, result })
       } catch {}
     }
   }
@@ -647,12 +659,16 @@ export class FailoverRunner {
         for (const key of bindKeys) {
           if (pinMoved(key)) continue
           const prev = this.stickyRouter.resolve?.(key)
-          // A live pin on another account means this request only borrowed
-          // capacity. Rewriting it would move the whole session off its home.
-          if (prev?.accountId && prev.accountId !== account.accountId) continue
+          const ownMove =
+            !!outboundSessionAccountId &&
+            prev?.accountId === outboundSessionAccountId &&
+            prev.accountId !== account.accountId &&
+            opts?.borrowed !== true
+          if (prev?.accountId && prev.accountId !== account.accountId && !ownMove) continue
           let guard = opts
           if (prev) guard = { ...opts, ifGeneration: prev.generation || 0 }
           if (freshSlot || opts?.replaceSession) guard = { ...guard, replaceSession: true }
+          if (ownMove) guard = { ...guard, allowMove: true }
           this.stickyRouter.bind(key, payload, guard)
           pinBaseline.set(key, this.stickyRouter.resolve?.(key) || null)
         }
@@ -724,6 +740,7 @@ export class FailoverRunner {
           pinVmId,
           familyVmId,
           deviceVmId: currentDeviceVmId,
+          deviceKey,
           skipSessionSlot: skipSessionSeat,
           ownerScope,
           keyScope,
@@ -787,7 +804,10 @@ export class FailoverRunner {
       lastSelected = selected
       pinnedSlot = selected.slotIndex ?? null
       if (selected.seatMoved) seatMovedTo = selected.vmId
-      bindAll({ accountId: selected.accountId, vmId: selected.vmId, slotIndex: pinnedSlot }, { countHit: false })
+      bindAll(
+        { accountId: selected.accountId, vmId: selected.vmId, slotIndex: pinnedSlot },
+        { countHit: false, borrowed: lastPolicy?.reason === 'slot_busy' },
+      )
       const attemptStarted = Date.now()
       this.attemptsRepo?.begin?.({
         requestId,
@@ -901,6 +921,17 @@ export class FailoverRunner {
         lastResult = result
         lastPolicy = policy
         this.noteUnitHealth(selected, policy, result)
+        if (attemptMeta?.sessionId) {
+          bindAll(
+            { accountId: selected.accountId, vmId: selected.vmId, sessionId: outboundSessionId },
+            {
+              countHit: false,
+              borrowed: policy?.reason === 'slot_busy',
+              // Prebinding moved the VM already; replace the previous VM's session.
+              replaceSession: !!attemptStickyBound?.vmId && attemptStickyBound.vmId !== selected.vmId,
+            },
+          )
+        }
         notifyProxyFailure(this.onProxyFailure, selected, policy)
         if (policy.reason === 'fable_plan_denied' && typeof this.onFablePlanDenied === 'function') {
           try {
@@ -962,6 +993,7 @@ export class FailoverRunner {
           continue
         }
         applyCooldown(this.scheduler, selected, policy, model, { diagnosticPin: !!pinVmId })
+        if (policy.pauseSchedule) this.pauseUnit(selected, policy, result)
         if (!pinVmId && isCredentialDeath(policy)) {
           this.forgetCredential(selected, policy, { familyKey, sessionKeys: bindKeys })
           if (familyKey) {

@@ -8,7 +8,7 @@ import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs
 import { createDatabase } from '../../src/lib/db/database.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
-import { CRS_OFFICIAL_AGENT_PROMPT_303 } from '../../src/lib/identity/crs-persona.mjs'
+import { OFFICIAL_303_HARNESS } from '../../src/lib/identity/official-profiles.mjs'
 import { sessionIdFromOutboundBody } from '../../src/lib/identity/identity-rewrite.mjs'
 import { DEFAULT_AGENT_STANDING } from '../../src/lib/identity/persona-template.mjs'
 import {
@@ -191,9 +191,7 @@ test('API backend applies the global official_full persona setting', async () =>
     assert.ok(received)
     const outbound = JSON.parse(received.body)
     assert.equal(outbound.system.length, 4)
-    assert.ok(
-      outbound.system.some((block) => String(block.text || '').includes(CRS_OFFICIAL_AGENT_PROMPT_303.slice(0, 80))),
-    )
+    assert.ok(outbound.system.some((block) => String(block.text || '').includes(OFFICIAL_303_HARNESS.slice(0, 80))))
   } finally {
     await new Promise((resolve) => kernel.close(resolve))
     fs.rmSync(root, { recursive: true, force: true })
@@ -206,6 +204,7 @@ test('OAuth cli-hop applies the resolved Protocol custom persona template', asyn
   const compatibility = {
     persona_preset: 'custom',
     persona_inject: 'rewrite',
+    persona_timezone_presets: { custom: true },
     persona_templates: {
       custom: [{ id: 'custom', type: 'text', text: 'CUSTOM_PERSONA {{timezone}}' }],
     },
@@ -930,7 +929,7 @@ test('inbound session and device keys match across API keys at the protocol entr
   }
 })
 
-test('the protocol entry hands the device seat key to the pool, independent of the API key', async () => {
+test('the protocol entry seats each client session, even on the same device', async () => {
   const { dir, router } = realStickyRouter()
   try {
     const turn = {
@@ -947,8 +946,9 @@ test('the protocol entry hands the device seat key to the pool, independent of t
       apiKeyRecord: { id: 'key-b', group_id: 1 },
     })
     assert.equal(a.skipSessionSeat, false)
-    assert.equal(a.seatKey, 'seat:dev:dev-seat')
-    assert.equal(b.seatKey, a.seatKey)
+    assert.equal(a.seatKey, 'seat:sess:sess-seat')
+    assert.equal(b.seatKey, 'seat:sess:sess-other')
+    assert.notEqual(b.seatKey, a.seatKey)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
