@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- system提示词：默认身份句与 0注入 `prompt_version` 改为 `You are Claude Code, Anthropic's official CLI for Claude.`。页面摘要、预览和 cli-node 读取的 `{{identity}}` / `{{identity_cli}}` 都是这句；已保存的自定义模板不变。
+
 - 代理探测：TCP 已连上但收不到 SOCKS5 方法选择回应（例如填了 HTTP 端口）不再显示「正常」。超时或对端直接关掉连接记为失败，错误为 `not_socks5：请填写 SOCKS5 端口`；收到非 SOCKS5 字节同样失败。合法方法 `0x00` / `0x02` / `0xff` 仍算探测成功。
 
 ## 1.4.007 — 2026-10-26
