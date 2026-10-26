@@ -1,6 +1,8 @@
 # Changelog
 
 ## 未发布
+- #732：槽位列表（表格 / 机架）、详情页与列表弹窗展示 **Active** 徽标（`vm.active` / `vms/active.json`）；行菜单与运维页提供「设为活跃」，调用既有 `POST /api/panel/vms/:id/activate`。
+- #732：删除仍占活跃指针的槽位时，若有其它可调度且凭证有效的候选，确认后先自动 `activate` 到推荐槽再 `DELETE`；无安全候选时禁用删除并提示先切换活跃。
 - #730：面板模型目录固定模型 `auto`；三种目录模式在其启用时均列出，`worker_only` 也会追加已启用的 `auto`；停用后不列出。请求 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
 - #730：auto mode 分类器契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径 `max_tokens=8192`。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
 

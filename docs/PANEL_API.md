@@ -93,12 +93,12 @@
 | POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升 wrap 文件，不复制凭证/SOCKS。下次 sync 仍优先仓内最新 kernel |
 | POST | `/vms/:id/wrap-cli/repair` | 单槽重装 kernel。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
-| POST | `/vms/:id/activate` | 标 active |
+| POST | `/vms/:id/activate` | 写入 `vms/active.json` 与 DB `active_vm`；列表/详情 `vm.active === true` 表示当前指针。管理台表格、机架、详情与行菜单可切换 |
 | POST | `/vms/:id/reset` | 销毁容器与家目录，再按原槽位重建（保留 ID/代理/种子；凭证清空） |
 | POST | `/vms/:id/reset-fingerprint` | |
 | POST | `/vms/:id/allocate-proxy` | 从池分配 SOCKS5 |
 | POST | `/vms/:id/update-claude-code` | 410，`claude_cli_removed` |
-| DELETE | `/vms/:id` | 不能删 active；只解绑本槽代理 |
+| DELETE | `/vms/:id` | 多槽时不能删仍占 `active.json` 的槽（409 `switch active first`）；管理台删除确认可在有健康可调度候选时先 `activate` 再删。只解绑本槽代理 |
 | POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed`。Docker 槽可在 `machine` 里可选传 `docker_cpus`（见下） |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
