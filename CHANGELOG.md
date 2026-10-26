@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.03 — 2026-10-26
+
+- #712：重载 GPT（Codex）槽位时，先停掉并等待控制面里实际在跑的 Codex 内核再重新拉起，使其应用当前代理；停不掉（`untracked_kernel` / `recycle_timeout`）时返回 `codex_kernel_reload_failed`，不再复用旧内核的健康状态。（作者 venn0126，Fixes #711）
+
+已部署机升级：仅更新 Node 控制面后重启一次 Node；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.4.02 — 2026-10-26
 
 - 对话结束且没有排队的后续请求时，立即释放 `session_slots`。粘性 TTL 只记住用过的 VM、账号和出站 session，不占席位，到期时间不刷新。
