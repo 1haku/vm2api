@@ -35,6 +35,7 @@ import {
   slotUidGidFromHomeDir,
   chownSlotRuntimeFile,
   replaceSlotOwnedFile,
+  runtimeFileOwner,
 } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 
@@ -688,11 +689,10 @@ export function writeKernelConfig(
   fs.mkdirSync(runDir, { recursive: true, mode: dirMode })
   fs.chmodSync(runDir, dirMode)
   try {
-    fs.chownSync(
-      runDir,
-      privileged ? Number(process.env.KIN_VM_UID_BASE || 10000) + Number(String(vm.id).replace(/\D/g, '') || 1) : -1,
-      privileged ? Number(process.env.KIN_VM_GID || 987) : process.getgid(),
-    )
+    // Same owner as the files inside (runtimeFileOwner). Taking every digit of a named id
+    // (account2example -> 10002) disagreed with them, and the 0700 dir locked out the slot kernel (#740).
+    const owner = runtimeFileOwner(vm)
+    fs.chownSync(runDir, privileged ? owner.uid : -1, privileged ? owner.gid : process.getgid())
   } catch {}
   const socketPath = path.join(runDir, 'kernel.sock')
   const configPath = path.join(runDir, 'kernel.json')

@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- #749：`run/` 目录属主与目录内文件一致（Fixes #740）——`writeKernelConfig` 目录 chown 改用 `runtimeFileOwner`，避免命名槽 ID（如 account2example）目录/文件 uid 不一致导致 Permission denied。
+
 ## 1.4.005 — 2026-10-26
 
 - #746：修复 ARM64 预构建镜像安装：`.env` 的 `COMPOSE_FILE` 若含源码用的 `docker-compose.arm64.yml` 会错误走本地镜像名；**新版** `deploy/install.sh` 在镜像模式下只去掉该项（保留其它 overlay，去掉后为空才设为 `docker-compose.yml`），且不为空的 `COMPOSE_FILE` 写入默认值以免屏蔽 `docker-compose.override.yml`。**仅跑新版 install.sh 时生效**；面板一键更新不改 `.env`，用旧脚本升级的那一次仍是旧逻辑。面板升级 Compose 运行前忽略宿主 `DOCKER_DEFAULT_PLATFORM`（与 install.sh 一致）。见 `docs/ARM64.md`。
