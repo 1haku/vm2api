@@ -359,7 +359,10 @@ test('verified hop stores the outbound session on every sticky alias', async () 
   })
   assert.equal(result.ok, true)
   const stored = bindings.filter((b) => b.value.sessionId)
-  assert.deepEqual(stored.map((b) => b.key).sort(), ['ch:first', 'dev:aabbcc', 'ch:first', 'dev:aabbcc'].sort())
+  assert.deepEqual(
+    stored.map((b) => b.key).sort(),
+    ['ch:first', 'dev:aabbcc', 'ch:first', 'dev:aabbcc', 'ch:first', 'dev:aabbcc'].sort(),
+  )
   assert.ok(stored.every((b) => b.value.sessionId === '11111111-1111-4111-8111-111111111111'))
   assert.ok(stored.every((b) => b.value.accountId === 'account-1'))
 })
@@ -1066,6 +1069,65 @@ test('failed hops before a cross-account VM move persist that VM outbound sessio
   assert.equal(seen[3].sessionId, seen[2].sessionId)
   assert.notEqual(seen[2].sessionId, seen[1].sessionId)
 })
+
+for (const cancellation of ['result', 'throw']) {
+  test(`first cancelled turn via ${cancellation} keeps the sent outbound session`, async (t) => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-first-cancel-'))
+    const sticky = new StickyRouter({ dataDir, config: { sticky: { enabled: true } } })
+    t.after(() => {
+      sticky.db.close()
+      fs.rmSync(dataDir, { recursive: true, force: true })
+    })
+    const callerSession = `first-cancel-${cancellation}`
+    const stickyKey = sticky.canonicalSessionKey(callerSession)
+    const runner = new FailoverRunner({
+      scheduler: {
+        async selectAndReserve() {
+          return { ok: true, vmId: 'vm-home', accountId: 'home', release() {} }
+        },
+        markSuccess() {},
+      },
+      stickyRouter: sticky,
+    })
+    const seen = []
+    let clock = 1_000
+    const applyAttempt = (body, selected, extra) => {
+      const sessionId = resolveOutboundSessionId(callerSession, {
+        boundSessionId: extra.stickyBound?.sessionId,
+        boundVmId: extra.stickyBound?.vmId,
+        vmId: selected.vmId,
+        epoch: `${clock}:${selected.vmId}`,
+      })
+      clock += 10
+      seen.push(sessionId)
+      return { body, meta: { sessionId } }
+    }
+    const first = runner.run({
+      requestId: `req-first-${cancellation}`,
+      canonicalBody: { model: 'claude-opus-test' },
+      model: 'claude-opus-test',
+      stickyKey,
+      applyAttempt,
+      callAttempt: () => {
+        if (cancellation === 'throw') throw Object.assign(new Error('cancelled'), { code: 'request_cancelled' })
+        return { ok: false, status: 499, clientCancelled: true, terminalState: 'cancelled' }
+      },
+    })
+    assert.equal((await first).status, 499)
+    const second = await runner.run({
+      requestId: `req-second-${cancellation}`,
+      canonicalBody: { model: 'claude-opus-test' },
+      model: 'claude-opus-test',
+      stickyKey,
+      applyAttempt,
+      callAttempt: () => success(),
+    })
+    assert.equal(second.status, 200)
+    assert.equal(second.finalState, 'verified')
+    assert.equal(seen.length, 2)
+    assert.equal(seen[1], seen[0])
+  })
+}
 
 test('streamed plan limit writes the hard block and rotates to another account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])

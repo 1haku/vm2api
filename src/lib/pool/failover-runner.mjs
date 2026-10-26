@@ -842,6 +842,14 @@ export class FailoverRunner {
         if (attemptMeta?.sessionId) {
           outboundSessionId = String(attemptMeta.sessionId)
           outboundSessionAccountId = selected.accountId
+          bindAll(
+            { accountId: selected.accountId, vmId: selected.vmId, sessionId: outboundSessionId },
+            {
+              countHit: false,
+              // Prebinding moved the VM already; replace the previous VM's session.
+              replaceSession: !!attemptStickyBound?.vmId && attemptStickyBound.vmId !== selected.vmId,
+            },
+          )
         }
         result = await callAttempt({
           candidate: selected,
