@@ -14,6 +14,7 @@ import {
   healLeftoverAuthState,
   markVmAuthCooldown,
   clearVmAuthCooldown,
+  clearRecoverableVmCooldown,
   restoreScheduleAfterLiveCredential,
   readWorkerCredentialFile,
   readSlotCredentialIdentity,
@@ -577,4 +578,41 @@ test('official setup-token persist omits refresh and marks mode', () => {
   const cred = readWorkerCredentialFile(home)
   assert.equal(cred.type, 'official-setup-token')
   assert.equal(cred.refresh_token, '')
+})
+
+test('clearRecoverableVmCooldown drops stale Codex codex_limited_until', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-codex-'))
+  const until = new Date(Date.now() + 86_400_000).toISOString()
+  const vmPath = path.join(dir, 'vm-codex.json')
+  fs.writeFileSync(
+    vmPath,
+    JSON.stringify({
+      id: 'vm-codex',
+      platform: 'openai',
+      temp_unschedulable_reason: 'quota_5h_header',
+      codex: { extra: { codex_limited_until: until, codex_5h_used_percent: 0 } },
+    }),
+  )
+  clearRecoverableVmCooldown(vmPath)
+  const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+  assert.equal(vm.temp_unschedulable_reason, undefined)
+  assert.equal(vm.codex.extra.codex_limited_until, undefined)
+})
+
+test('clearRecoverableVmCooldown keeps Codex park when grant is dead', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-codex-dead-'))
+  const until = new Date(Date.now() + 86_400_000).toISOString()
+  const vmPath = path.join(dir, 'vm-codex.json')
+  fs.writeFileSync(
+    vmPath,
+    JSON.stringify({
+      id: 'vm-codex',
+      temp_unschedulable_reason: 'oauth_revoked',
+      codex: { extra: { codex_limited_until: until } },
+    }),
+  )
+  clearRecoverableVmCooldown(vmPath)
+  const vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
+  assert.equal(vm.temp_unschedulable_reason, 'oauth_revoked')
+  assert.equal(vm.codex.extra.codex_limited_until, until)
 })

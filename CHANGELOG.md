@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.4.007 — 2026-10-26
+
+- #752：`deploy/payload.json` 的 `cli-node` 对齐线上哈希（size 27789508，sha256 f29bbfa45b68308367f4091699cbeb3a0baba860d327d349d6d55cc11408fb68）——已部署机升级须 `npm run fetch:payload` + `wrap-cli/sync`（restart:true）后重启 Node；仅更 Node 不够。
+
+已部署机升级：须 `npm run fetch:payload` 拉取更新后的 payload 后执行 `wrap-cli/sync`（`restart:true`），再重启 Node 控制面；仅更新 Node 不够。不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.006 — 2026-10-26
+
+- #749：`run/` 目录属主与目录内文件一致（Fixes #740）——`writeKernelConfig` 目录 chown 改用 `runtimeFileOwner`，避免命名槽 ID（如 account2example）目录/文件 uid 不一致导致 Permission denied。
+
+已部署机升级：仅需更新 Node 控制面后重启；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.005 — 2026-10-26
+
+- #746：修复 ARM64 预构建镜像安装：`.env` 的 `COMPOSE_FILE` 若含源码用的 `docker-compose.arm64.yml` 会错误走本地镜像名；**新版** `deploy/install.sh` 在镜像模式下只去掉该项（保留其它 overlay，去掉后为空才设为 `docker-compose.yml`），且不为空的 `COMPOSE_FILE` 写入默认值以免屏蔽 `docker-compose.override.yml`。**仅跑新版 install.sh 时生效**；面板一键更新不改 `.env`，用旧脚本升级的那一次仍是旧逻辑。面板升级 Compose 运行前忽略宿主 `DOCKER_DEFAULT_PLATFORM`（与 install.sh 一致）。见 `docs/ARM64.md`。
+- #744（取代 #697，作者 VankaIn）：本机 SOCKS5 槽位不再随 Docker 守护进程抢先启动：使用 `restart=no`，由控制面的自动恢复流程先恢复代理规则再启动槽位；升级时原地迁移已有容器的重启策略。出口初始化先安装阻断规则，代理进程失败时保持断网。升级后须确认控制面启动成功，再重启 Docker；详见 `docs/DEPLOY.md`。
+
+已部署机升级：仅需更新 Node 控制面后重启；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。#744 为高风险：须先确认控制面启动成功（`restart=no` 迁移失败会阻止启动）再重启 Docker；远端节点 iptables 顺序同步变化；ARM64 预构建镜像用户需再跑一次新版 `install.sh`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.04 — 2026-10-26
+
+- #743（Fixes #717 / #715）：GPT 额度刷新或面板「恢复状态」时，按窗口用量重算并清除过期的 `codex.extra.codex_limited_until`；手动恢复不再只清 Claude 冷却字段而留下 Codex 专用停用标记。
+- #716：出口代理把「域名转发」开关 `domain_forward` 透传到 kin-egress；已开该开关的代理需再点一次开关或触发出口修复/槽启动，旧 kin-egress 才会写出 domain_forward。
+- #713：删除槽位时清理其账号池成员（removeVm / reconcileVms prune），面板阻止同一槽位跨池勾选。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启一次 Node；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.03 — 2026-10-26
+
+- #712：重载 GPT（Codex）槽位时，先停掉并等待控制面里实际在跑的 Codex 内核再重新拉起，使其应用当前代理；停不掉（`untracked_kernel` / `recycle_timeout`）时返回 `codex_kernel_reload_failed`，不再复用旧内核的健康状态。（作者 venn0126，Fixes #711）
+
+已部署机升级：仅更新 Node 控制面后重启一次 Node；不必 `fetch:payload`，不必 `wrap-cli/sync`，不必重建槽，无 DB 迁移。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.02 — 2026-10-26
+
+- 对话结束且没有排队的后续请求时，立即释放 `session_slots`。粘性 TTL 只记住用过的 VM、账号和出站 session，不占席位，到期时间不刷新。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启一次 Node。不必 `wrap-cli/sync`，不必重建槽。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.4.01 — 2026-10-26
 
 - catalog effort 缺省，修复 1.4.00 haiku effort 400。payload 钉住 `payload-2026.10.26-cli-effort`，cli-node `01740e54`。

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { openDatabase, closeDatabase, getDb } from '../../src/lib/db/database.mjs'
 import { VmsRepo } from '../../src/lib/db/repos/vms-repo.mjs'
 import { UsersRepo } from '../../src/lib/db/repos/users-repo.mjs'
+import { VmPoolsRepo } from '../../src/lib/db/repos/vm-pools-repo.mjs'
 import { encryptString, decryptString, isEncrypted } from '../../src/lib/db/secure.mjs'
 import { initVmDbSync, stopVmWatch, syncVmFile, removeVmFromDb, reconcileVms } from '../../src/lib/vm/vm-db-sync.mjs'
 import { setVmWriteHook, atomicWriteJson } from '../../src/lib/vm/vm-file.mjs'
@@ -192,6 +193,31 @@ test('reconcile rebuilds missing vm file from DB (restore pull-up)', () => {
   assert.equal(back.claude.has_access, true)
   assert.equal(back.claude.has_refresh, true)
   assert.equal(back.claude.email, vm.claude.email)
+})
+
+test('removing a slot drops it from every named pool', () => {
+  seedVmFile('vm-p5')
+  seedVmFile('vm-p6')
+  initVmDbSync(project, { watch: false })
+  const pools = new VmPoolsRepo(getDb())
+  const pool = pools.insert({ name: 'shared' })
+  pools.setMembers(pool.id, ['vm-p5', 'vm-p6'])
+  assert.equal(removeVmFromDb('vm-p5'), true)
+  assert.deepEqual(pools.get(pool.id).vm_ids, ['vm-p6'])
+})
+
+test('reconcile prunes pool members whose slot vanished outside the panel', () => {
+  seedVmFile('vm-p7')
+  initVmDbSync(project, { watch: false })
+  const pools = new VmPoolsRepo(getDb())
+  const pool = pools.insert({ name: 'ghosts' })
+  pools.setMembers(pool.id, ['vm-p7'])
+  getDb()
+    .prepare('INSERT INTO vm_pool_members (pool_id, vm_id, created_at) VALUES (?, ?, ?)')
+    .run(pool.id, 'niutopia2000', new Date().toISOString())
+  const res = reconcileVms(project)
+  assert.deepEqual(res.pruned_pool_members, ['niutopia2000'])
+  assert.deepEqual(pools.get(pool.id).vm_ids, ['vm-p7'])
 })
 
 test('removeVmFromDb drops the row', () => {
