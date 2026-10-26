@@ -498,12 +498,16 @@ function mergeKernelReports(local, cluster) {
   }
 }
 
-async function syncInstalledKernels({
-  project,
-  routingConfig,
-  body = {},
-  refreshCluster = refreshClusterSlotPayloads,
-}) {
+// The entrypoint auto-sync and the panel upgrade can both ask at once; a slot must not be recreated twice concurrently.
+let kernelSyncTail = Promise.resolve()
+
+function syncInstalledKernels(args) {
+  const run = kernelSyncTail.then(() => runKernelSync(args))
+  kernelSyncTail = run.catch(() => {})
+  return run
+}
+
+async function runKernelSync({ project, routingConfig, body = {}, refreshCluster = refreshClusterSlotPayloads }) {
   const all = listVms(project)
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
   const selected = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
