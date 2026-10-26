@@ -19,6 +19,7 @@ import { isCredentialRefreshFailed, isLeftoverQuotaScheduleOff } from '../pool/a
 import { manualScheduleLevelOf, parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { vmQuotaOverrideOf } from '../pool/vm-quota-override.mjs'
 import { activeHoursOf, parseActiveHoursInput } from '../pool/active-hours.mjs'
+import { rollWindowHistory } from '../pool/window-history.mjs'
 import { normalizeOwnerId, vmOriginOf, vmOwnerId, VM_ORIGIN } from '../admin/resource-owner.mjs'
 import { isCodexVm, normalizeVmKind } from './vm-kind.mjs'
 import { canClaudeResetCredits } from '../oauth/credential-mode.mjs'
@@ -242,6 +243,15 @@ export function persistCodexUsage(
   }
   vm.codex.extra = merged
   vm.codex.usage = buildCodexUsageView(extraToCodexSnapshot(merged))
+  const q = vm.codex.usage.quota || {}
+  vm.codex.window_history = rollWindowHistory(
+    vm.codex.window_history,
+    {
+      '5h': { utilization: q.utilization_5h, reset: q.reset_5h },
+      '7d': { utilization: q.utilization_7d, reset: q.reset_7d },
+    },
+    now,
+  )
   vm.updated_at = new Date(now).toISOString()
   atomicWriteJson(file, vm, { mode: 0o600 })
   syncCodexQuotaSchedule(projectRoot, vm, { now, policy })
