@@ -4,7 +4,7 @@
 
 修复大量bug,全新版本.额度50%+,安全100%增加
 
-部署机不需要 `wrap-cli/sync`：本版不改 `share/wrap-cli`、`bin/kin-*` 与 `deploy/payload.json`，只重启 Node，槽位不重启。
+部署机需要 `wrap-cli/sync`（`restart:true`）：本版 payload 换成 `payload-2026.10.26-cli-node`，cli-node 为 `9a481c94`；同步后各 Claude 槽重启进程，容器不重建。
 
 - #727：system提示词页改版：出站预览为主窗口，提示词按块显示摘要、点详情编辑，环境注入（运行环境、模型附加句）单独成区并标明位于 system 末尾；去掉旧注入卡的长说明与重复入口，出站入口开关只留在设置 → 协议。本版只搬页面，出站行为不变：官方档仍按档选择、缺省 `sdk-cli`，不加 #727 的完整环境说明 / 时区 / 语言开关。
 - #703 与 #731 合并后，`reason: 'sticky'`（按 session 选中 VM 的选号依据）登记为不改槽态。
