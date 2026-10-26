@@ -276,7 +276,7 @@ function egressProcessPids() {
   const probe = pidNamespaceCommand([
     'sh',
     '-c',
-    'for dir in /proc/[1-9]*; do tr "\\0" " " < "$dir/cmdline" 2>/dev/null | grep -q kin-egress && basename "$dir"; done',
+    'for dir in /proc/[1-9]*; do if tr "\\0" " " < "$dir/cmdline" 2>/dev/null | grep -q kin-egress; then basename "$dir"; fi; done',
   ])
   const result = sh(probe)
   if (!result.ok) return []
@@ -489,11 +489,17 @@ export async function startEgressProcess({
     } catch {}
   }
   const portOwner = listenerPid(tcpPort)
-  if (portOwner && !ownsEgressProcess(portOwner, cfgPath)) {
+  if (portOwner && !ownsEgressProcess(portOwner, cfgPath, { allowDeleted: true })) {
     return { ok: false, error: 'egress_port_busy', pid: portOwner }
   }
   const superseded = [
-    ...new Set([...(configMatches ? [existing] : []), ...staleEgressPids(cfgPath), portOwner].filter(Boolean)),
+    ...new Set(
+      [
+        ...(ownsEgressProcess(existing, cfgPath, { allowDeleted: true }) ? [existing] : []),
+        ...staleEgressPids(cfgPath),
+        portOwner,
+      ].filter(Boolean),
+    ),
   ]
   for (const pid of superseded) {
     const stopped = await stopOwnedEgress(pid)
@@ -537,7 +543,9 @@ export function stopEgressProcess(projectRoot, proxyId) {
   for (const pid of pids) {
     const signaled = sh(pidNamespaceCommand(['sh', '-c', `kill -TERM ${Number(pid)} 2>/dev/null`]))
     if (!signaled.ok && pidAlive(pid)) return { ok: false, error: 'egress_stop_failed' }
-    if (ownsEgressProcess(pid, cfgPath)) pending.push(pid)
+    // Ownership was verified before signaling. The executable may already be
+    // gone while the PID still needs reaping, including deleted-binary updates.
+    if (pidAlive(pid)) pending.push(pid)
   }
   if (pending.length) return { ok: true, pending }
   try {

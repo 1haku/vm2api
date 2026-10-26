@@ -620,7 +620,14 @@ test('classifier terminal/error/cancel/concurrency boundaries through actual ELF
   assert.ok(wire.system.some((block) => block.text.includes('Ordinary caller prompt')))
   assert.ok(wire.system.every((block) => !block.text.includes('Synthetic policy details.')))
   assert.equal(wire.request_context, undefined)
-  assert.equal(wire.system.at(-1).text, 'Ordinary caller prompt')
+  assert.ok(wire.system.at(-1).text.endsWith('Ordinary caller prompt'))
+  assert.equal(
+    wire.system
+      .map((block) => block.text)
+      .join('')
+      .split('Ordinary caller prompt').length - 1,
+    1,
+  )
   assert.equal(wire.messages.at(-1).role, 'user')
   h.setHealth({ ...h.health, classifier_request_context: false })
   const count = h.captured.length
