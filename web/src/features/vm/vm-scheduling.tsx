@@ -344,7 +344,7 @@ export function VmSchedulingBlock({
             <span className='text-muted-foreground'>席位</span>
             <span className='tabular-nums'>
               {seatsUsed}/{seatsMax}
-              {vm.seats_grace ? ` · 粘性 ${vm.seats_grace}` : ''}
+              {vm.seats_grace ? ` · 交接 ${vm.seats_grace}` : ''}
               {queued ? (
                 <span className='text-[color:var(--status-warn)]'>
                   {' '}
@@ -619,7 +619,7 @@ export function VmSchedulingEditor({ vm }: { vm: Vm }) {
               {codex ? null : (
                 <KnobRow
                   label='席位上限'
-                  desc='本 VM 同时能占住的 client session 数。请求结束后槽位留给原 session，直到粘性 TTL；同 session 的并发请求共用一个席位。'
+                  desc='本 VM 同时能占住的 client session 数。请求进行中占槽，对话结束即释放；粘性 TTL 只记住 VM，不占席位。同 session 的并发请求共用一个席位。'
                   inheritedText={String(inherited?.session_slots ?? '—')}
                   own={draft.seats.own}
                   onOwnChange={(own) =>

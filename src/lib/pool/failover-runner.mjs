@@ -690,6 +690,27 @@ export class FailoverRunner {
         }
       }
     }
+    // The dialog ended. Drop the persisted slot index so a restart does not
+    // put this session back into session_slots. VM / account memory and its
+    // original sticky expiry stay.
+    const releaseStickySlots = () => {
+      if (!this.stickyRouter?.bind) return
+      for (const key of bindKeys) {
+        if (pinMoved(key)) continue
+        const prev = this.stickyRouter.resolve?.(key)
+        if (!prev?.vmId || prev.slotIndex == null) continue
+        this.stickyRouter.bind(
+          key,
+          {
+            accountId: prev.accountId,
+            vmId: prev.vmId,
+            sessionId: prev.sessionId || outboundSessionId || '',
+          },
+          { countHit: false, ifGeneration: prev.generation || 0, clearSlot: true, keepExpiry: true },
+        )
+        pinBaseline.set(key, this.stickyRouter.resolve?.(key) || null)
+      }
+    }
     let lastResult = null
     let lastPolicy = null
     let repaired = false
@@ -886,6 +907,7 @@ export class FailoverRunner {
             terminalState: 'cancelled',
             latencyMs: Date.now() - attemptStarted,
           })
+          releaseStickySlots()
           return { ...clientCancelledResult(result), via: result?.via || 'pool-failover', ...attribution() }
         }
         policy = classifyAttempt(
@@ -956,6 +978,7 @@ export class FailoverRunner {
         if (policy.reason === 'content_filter_refusal' || policy.reason === 'usage_policy_refusal') {
           this.scheduler.markSuccess(selected, { workerStatus: result.workerStatus || null, countUsage })
           bindAll({ accountId: selected.accountId, vmId: selected.vmId })
+          releaseStickySlots()
           return {
             ...result,
             ...attribution(),
@@ -981,6 +1004,7 @@ export class FailoverRunner {
             } catch {}
           }
           bindAll({ accountId: selected.accountId, vmId: selected.vmId })
+          releaseStickySlots()
           return { ...result, ...attribution(), finalState: 'verified' }
         }
         if (policy.action === 'repair-and-retry' && !repaired && !result?.committed) {
@@ -997,10 +1021,12 @@ export class FailoverRunner {
         if (!pinVmId && isCredentialDeath(policy)) {
           this.forgetCredential(selected, policy, { familyKey, sessionKeys: bindKeys })
           if (familyKey) {
+            releaseStickySlots()
             return { ...result, ...attribution(), finalState: result?.terminalState || 'rejected', policy }
           }
         }
         if (!shouldContinue(policy)) {
+          releaseStickySlots()
           return { ...result, ...attribution(), finalState: result?.terminalState || 'rejected', policy }
         }
         policy = await this.recoverCredential(selected, policy)
@@ -1028,6 +1054,7 @@ export class FailoverRunner {
             terminalState: 'policy_block',
             latencyMs: Date.now() - attemptStarted,
           })
+          releaseStickySlots()
           return {
             ok: false,
             responseSent: true,
@@ -1048,6 +1075,7 @@ export class FailoverRunner {
             terminalState: 'invalid_request',
             latencyMs: Date.now() - attemptStarted,
           })
+          releaseStickySlots()
           return {
             ok: false,
             status: 400,
@@ -1066,6 +1094,7 @@ export class FailoverRunner {
             terminalState: 'cancelled',
             latencyMs: Date.now() - attemptStarted,
           })
+          releaseStickySlots()
           return { ...clientCancelledResult({ committed }), via: 'pool-failover', ...attribution() }
         }
         result = {
@@ -1108,12 +1137,14 @@ export class FailoverRunner {
           latencyMs: Date.now() - attemptStarted,
         })
         if (committed || !shouldContinue(policy)) {
+          releaseStickySlots()
           return { ...result, ...attribution(), finalState: result.terminalState, policy }
         }
         applyCooldown(this.scheduler, selected, policy, model, { diagnosticPin: !!pinVmId })
         if (!pinVmId && isCredentialDeath(policy)) {
           this.forgetCredential(selected, policy, { familyKey, sessionKeys: bindKeys })
           if (familyKey) {
+            releaseStickySlots()
             return { ...result, ...attribution(), finalState: result.terminalState, policy }
           }
         }

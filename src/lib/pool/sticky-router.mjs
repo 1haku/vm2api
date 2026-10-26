@@ -445,7 +445,14 @@ export class StickyRouter {
   bind(
     key,
     { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {},
-    { countHit = true, ifGeneration = null, replaceSession = false, clearSlot = false, allowMove = false } = {},
+    {
+      countHit = true,
+      ifGeneration = null,
+      replaceSession = false,
+      clearSlot = false,
+      allowMove = false,
+      keepExpiry = false,
+    } = {},
   ) {
     if (!key || !this.config.enabled) return false
     const ttl = (this.config.ttl_seconds || 86400) * 1000
@@ -466,6 +473,7 @@ export class StickyRouter {
           : Number(slotIndex)
     const changed = !!(
       prev.vm_id &&
+      !clearSlot &&
       (nextAccount !== prev.account_id || nextVm !== prev.vm_id || (slotIndex != null && nextSlot !== prev.slot_index))
     )
     const generation = prev.vm_id ? (changed ? prevGeneration + 1 : prevGeneration || 1) : 1
@@ -477,14 +485,14 @@ export class StickyRouter {
         : sameVm
           ? prev.session_id || sessionId || null
           : sessionId || prev.session_id || null
-    const device = String(deviceId || '').trim()
+    const device = deviceId == null ? prev.device_id || null : String(deviceId).trim() || null
     this.repo.upsert(key, {
       account_id: nextAccount,
       vm_id: nextVm,
       session_id: nextSessionId,
       device_id: device || null,
-      bound_at: Date.now(),
-      expires_at: Date.now() + ttl,
+      bound_at: keepExpiry && Number(prev.bound_at) ? Number(prev.bound_at) : Date.now(),
+      expires_at: keepExpiry && Number(prev.expires_at) > Date.now() ? Number(prev.expires_at) : Date.now() + ttl,
       hits: (prev.hits || 0) + (countHit ? 1 : 0),
       generation,
       slot_index: nextSlot,

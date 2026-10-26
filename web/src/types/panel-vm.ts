@@ -455,11 +455,11 @@ export type Vm = {
   sessions?: { active?: number; max?: number }
   session_active?: number
   session_max?: number
-  /** 预调度席位簿：正在占用槽位的 client session 数，含粘性 TTL 内未释放的（Codex 为 null）。 */
+  /** 预调度席位簿：正在占用槽位的 client session 数。对话结束即释放，粘性 TTL 不占槽（Codex 为 null）。 */
   seats_used?: number | null
   /** 席位上限（VM 覆盖 → 全局 `inference.session_slots`）。 */
   seats_max?: number | null
-  /** `seats_used` 中请求已结束、槽位仍留给原 session 直到粘性 TTL 的数量。 */
+  /** 重启交接短窗口里、请求已结束但槽位尚未交还的数量。正常结束后为 0。 */
   seats_grace?: number | null
   /** 这台 VM 上实际占着槽位的 session。缺省表示旧快照没有逐席明细。 */
   seat_sessions?: SeatOccupant[] | null

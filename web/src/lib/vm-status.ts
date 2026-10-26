@@ -262,14 +262,14 @@ export function vmCooldown(
   }
 }
 
-/** Claude 席位悬浮说明：粘性占用是 `seats_used` 里请求已结束、槽位仍留给原 session 的部分。 */
+/** Claude 席位悬浮说明：`seats_grace` 只在重启交接的短窗口里出现。 */
 export function seatTitle(vm: Vm): string {
   const used = Number(vm.seats_used) || 0
   const held = Number(vm.seats_grace) || 0
   const queued = Number(vm.queue_depth) || 0
   const conc = Number(vm.conc_waiting) || 0
   const parts = [`席位 ${used}/${Number(vm.seats_max) || 0}`]
-  if (held) parts.push(`粘性占用 ${held}`)
+  if (held) parts.push(`交接 ${held}`)
   const sessions = Array.isArray(vm.seat_sessions) ? vm.seat_sessions : []
   if (sessions.length) {
     const labels = sessions
@@ -282,7 +282,7 @@ export function seatTitle(vm: Vm): string {
           seat.state === 'active'
             ? '进行中'
             : seat.state === 'held'
-              ? '粘性'
+              ? '交接'
               : '占用'
         return `#${Number(seat.index)} ${short || '—'} ${state}`
       })
