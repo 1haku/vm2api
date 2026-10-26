@@ -570,7 +570,7 @@ export function PoolPane({
           icon={Layers}
           title='分配策略'
           value={strategy === 'fill' ? '填充' : '平衡'}
-          desc='Claude 新设备开席的优先顺序'
+          desc='Claude 新 session 开席的优先顺序'
           pending={pending}
           disabled={saving}
           buttonRef={(node) => {
@@ -582,7 +582,7 @@ export function PoolPane({
           icon={Armchair}
           title='席位容量'
           value={`${seatCap} 席 / VM`}
-          desc={`宽限 ${fmtDuration(grace)} · 预算预留 ${reservePct}%`}
+          desc={`粘性占用到 TTL · 预算预留 ${reservePct}%`}
           pending={pending}
           disabled={saving}
           buttonRef={(node) => {
@@ -720,7 +720,7 @@ export function PoolPane({
                 </div>
                 <SliderSetting
                   id='pool-seat-grace'
-                  label='席位宽限'
+                  label='旧席位宽限（不再释放槽位）'
                   value={numOf(
                     poolDraft,
                     'seat_grace_ms',

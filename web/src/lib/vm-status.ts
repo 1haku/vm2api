@@ -262,14 +262,32 @@ export function vmCooldown(
   }
 }
 
-/** Claude 席位悬浮说明：宽限与等并发都是 `seats_used` / `queue_depth` 的子集。 */
+/** Claude 席位悬浮说明：粘性占用是 `seats_used` 里请求已结束、槽位仍留给原 session 的部分。 */
 export function seatTitle(vm: Vm): string {
   const used = Number(vm.seats_used) || 0
-  const grace = Number(vm.seats_grace) || 0
+  const held = Number(vm.seats_grace) || 0
   const queued = Number(vm.queue_depth) || 0
   const conc = Number(vm.conc_waiting) || 0
   const parts = [`席位 ${used}/${Number(vm.seats_max) || 0}`]
-  if (grace) parts.push(`宽限保留 ${grace}`)
+  if (held) parts.push(`粘性占用 ${held}`)
+  const sessions = Array.isArray(vm.seat_sessions) ? vm.seat_sessions : []
+  if (sessions.length) {
+    const labels = sessions
+      .slice()
+      .sort((a, b) => Number(a.index) - Number(b.index))
+      .map((seat) => {
+        const id = String(seat.session_id || '')
+        const short = id.length > 13 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id
+        const state =
+          seat.state === 'active'
+            ? '进行中'
+            : seat.state === 'held'
+              ? '粘性'
+              : '占用'
+        return `#${Number(seat.index)} ${short || '—'} ${state}`
+      })
+    parts.push(labels.join(' · '))
+  }
   if (queued) parts.push(`排队 ${queued}${conc ? `（等并发 ${conc}）` : ''}`)
   return parts.join(' · ')
 }

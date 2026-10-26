@@ -188,6 +188,15 @@ export type VmPhysicalFeatures = {
   runtimes?: string | null
 }
 
+/** 单台 VM 上一个被 client session 占住的槽位。 */
+export type SeatOccupant = {
+  index: number
+  session_id: string
+  state: 'active' | 'held' | 'idle' | string
+  inflight: number
+  held_until?: number | null
+}
+
 export type Vm = {
   id: string
   name?: string
@@ -427,12 +436,14 @@ export type Vm = {
   sessions?: { active?: number; max?: number }
   session_active?: number
   session_max?: number
-  /** 预调度席位簿：已占用的不同席位数，含宽限中的（Codex 为 null）。 */
+  /** 预调度席位簿：正在占用槽位的 client session 数，含粘性 TTL 内未释放的（Codex 为 null）。 */
   seats_used?: number | null
   /** 席位上限（VM 覆盖 → 全局 `inference.session_slots`）。 */
   seats_max?: number | null
-  /** `seats_used` 中请求已结束、为原设备保留的宽限席位数。 */
+  /** `seats_used` 中请求已结束、槽位仍留给原 session 直到粘性 TTL 的数量。 */
   seats_grace?: number | null
+  /** 这台 VM 上实际占着槽位的 session。缺省表示旧快照没有逐席明细。 */
+  seat_sessions?: SeatOccupant[] | null
   /** 在该 VM 上排队的请求数（等席位、并发、冷却 / RPM）。 */
   queue_depth?: number | null
   /** `queue_depth` 中已有席位、只在等并发的请求数。 */
@@ -477,6 +488,8 @@ export type PoolSeatLive = {
   conc_waiting: number
   /** 正在这台 VM 上执行的请求数（含无席位探测与 pin）。 */
   inflight?: number
+  /** 占着槽位的 session；旧帧可能没有。 */
+  sessions?: SeatOccupant[]
 }
 
 /** `GET /api/panel/pool/stream` 的 `event: seats` 负载。 */

@@ -445,7 +445,7 @@ export class StickyRouter {
   bind(
     key,
     { accountId, vmId, sessionId = null, deviceId = null, slotIndex = null } = {},
-    { countHit = true, ifGeneration = null, replaceSession = false, clearSlot = false } = {},
+    { countHit = true, ifGeneration = null, replaceSession = false, clearSlot = false, allowMove = false } = {},
   ) {
     if (!key || !this.config.enabled) return false
     const ttl = (this.config.ttl_seconds || 86400) * 1000
@@ -454,7 +454,7 @@ export class StickyRouter {
     if (ifGeneration != null && prevGeneration !== Number(ifGeneration)) return false
     const vmChanged = !!(prev.vm_id && vmId && prev.vm_id !== vmId)
     const accountChanged = !!(prev.account_id && accountId && prev.account_id !== accountId)
-    const locked = vmChanged && accountChanged
+    const locked = vmChanged && accountChanged && !allowMove
     const nextAccount = locked ? prev.account_id : accountId
     const nextVm = locked ? prev.vm_id : vmId
     const nextSlot = locked

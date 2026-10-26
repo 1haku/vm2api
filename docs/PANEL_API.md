@@ -62,8 +62,8 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/dashboard` | 总览：健康、KPI、`proxy_pool`、`ops`（默认近 1h SLA/TTFT）、`billing` |
-| GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨；Claude 行 `seats_used` / `seats_max` / `seats_grace` / `queue_depth` / `conc_waiting` / `inflight`）；响应另带 `pool_queue: { global_queue_depth, queue_max }`。`availability.key` 取值 `ok` / `drain` / `quota` / `cool` / `rest` / `off` / `bad` / `none`，`drain` = 临近闸线（仍接单），`rest` = 工作时段外休息中 |
-| GET | `/pool/stream` | SSE。`event: seats`：`{ seats: { [vmId]: { seats_used, seats_max, seats_grace, queue_depth, conc_waiting, inflight } }, global_queue_depth, queue_max, ts }`，缺席的 VM 表示空闲；每次请求开始/结束都会推。`event: proxy`：`{ proxies: { [vmId]: { id, status, enabled, blocked_reason, latency_ms, last_error, last_probe_at } }, ts }`，每次探测或代理状态变化推送。两类帧都按 250ms 节流，租户只收到自己 VM 的条目 |
+| GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨；Claude 行 `seats_used` / `seats_max` / `seats_grace` / `seat_sessions` / `queue_depth` / `conc_waiting` / `inflight`）。`seats_used` 是正在占槽的 client session 数，含请求已结束但仍占到粘性 TTL 的；`seats_grace` 是其中请求已结束的数量；`seat_sessions` 是 `{ index, session_id, state, inflight, held_until }[]`，`state` 为 `active` 或 `held`。响应另带 `pool_queue: { global_queue_depth, queue_max }`。`availability.key` 取值 `ok` / `drain` / `quota` / `cool` / `rest` / `off` / `bad` / `none`，`drain` = 临近闸线（仍接单），`rest` = 工作时段外休息中 |
+| GET | `/pool/stream` | SSE。`event: seats`：`{ seats: { [vmId]: { seats_used, seats_max, seats_grace, queue_depth, conc_waiting, inflight, sessions } }, global_queue_depth, queue_max, ts }`，`sessions` 与列表的 `seat_sessions` 同形；缺席的 VM 表示空闲；每次请求开始/结束都会推。`event: proxy`：`{ proxies: { [vmId]: { id, status, enabled, blocked_reason, latency_ms, last_error, last_probe_at } }, ts }`，每次探测或代理状态变化推送。两类帧都按 250ms 节流，租户只收到自己 VM 的条目 |
 | GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/by_model/usage_stats`（`usage_stats` = 近 30 个上海自然日的按日用量 + 模型 / 入站路径排名，日界同 `billing.today`） + `account.runtime_window` |
 | PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level`、`weight`（Codex 选槽权重 1–100，`null` 回默认 1）、`active_hours` 或 `timezone`（不重启槽）。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
 | POST | `/vms/pool-policy` | 批量槽策略。`{ ids: [...] }` 或 `{ all: true }`，可带 `weight`(1–100) / `schedule_level`(1–10 或 `"auto"`) / `max_concurrency`(1–256) / `max_rpm`(0–1000000) / `max_sessions`(0–256)；`null`（或 `""`）取消钉住：weight 回默认 1、schedule_level 回 auto、上限回 tier / 全局默认，语义与逐槽 PATCH 一致。只写 `vms/*.json`、不重建槽详情，100+ 槽一次调用即可（逐个 `PATCH /vms/:id` 每槽约 4s，并发下发会压住控制面）。返回 `{ updated, missing, failed, items: [{ id, weight, schedule_level, max_concurrency, concurrency_override, max_rpm, max_sessions }] }` |
@@ -253,6 +253,8 @@ Analytics 按官方 [`codex_thread_initialized`](https://github.com/openai/codex
 `agent_standing_presets` 缺 map/key 默认关闭，只有显式 `true` 启用；`agent_standing` 内置文本保持不变。约束遮罩与 Environment 开关缺省仍为开启，整档遮罩仍回落既有模板/旧设置。保存显式开启的档位不改变其他缺省关闭的档位。
 
 `persona_env_presets[当前档]=false` 同时关闭生成的 `env`、`env_timezone_only`、`env_official` 和槽位 `timezone` 模板变量；官方完整档的 Environment 不再固定开启。空的生成环境块直接省略，不保留 cache / 零宽占位。调用方或自定义模板字面提供的环境和时区原样使用；关闭时 native 不剥掉调用方 Environment，HTTP 不按所选槽位改写其时区。控制台开关、预览和 Node 出站使用同一按档规则。
+
+所有提示词档统一为 2.1.303；`official_303` 不再是可选档，兼容读写时归一到 `official_full`。`persona_templates` 的块可指定 `role: "system"` 元数据：其文字装入 `messages[].role=system` 环境消息，不进入顶层 `system`。完整版新增 `env_instructions_303` 长环境说明宏；按档开关 `persona_env_instructions_presets`、`persona_timezone_presets`、`persona_locale_presets` 均默认关闭，分别加载长说明、时区、语言。环境总开关关闭时，这些选项及模型附加句均不生成；已有调用方环境不删除。预览区明确区分两个注入区域，并不等同于最终 CLI wire 抓包。
 
 ### OpenAI 全局额度
 

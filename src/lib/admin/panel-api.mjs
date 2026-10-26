@@ -83,6 +83,7 @@ import {
   PRESET_FLAG_FIELDS,
   OVERLAY_PRESETS,
   PERSONA_PRESETS,
+  canonicalPersonaCompat,
   parsePersonaHides,
   validatePersonaTemplate,
 } from '../identity/persona-template.mjs'
@@ -419,7 +420,7 @@ function releaseStaleHeaderBlock(unified) {
  * Bad templates must 400 rather than silently degrade at request time.
  */
 export function validatePersonaRoutingPatch(body = {}) {
-  const compat = body?.compatibility
+  const compat = canonicalPersonaCompat(body?.compatibility)
   if (!compat || typeof compat !== 'object') return []
   const problems = []
   if (compat.persona_preset != null && String(compat.persona_preset).trim() !== '') {
@@ -2068,9 +2069,11 @@ function enrichVm(v, accountQuota, active, extras = {}) {
         }
       : {}),
     // Live seat book from the seat planner (Claude only).
+    // seats_used counts sessions holding a slot, including ones kept until sticky TTL.
     seats_used: isCodex ? null : Number(seatRow?.seats_used) || 0,
     seats_max: isCodex ? null : resolveSessionSlots(v, extras.routingConfig || {}),
     seats_grace: isCodex ? null : Number(seatRow?.seats_grace) || 0,
+    seat_sessions: isCodex ? null : Array.isArray(seatRow?.sessions) ? seatRow.sessions : [],
     queue_depth: isCodex ? null : Number(seatRow?.queue_depth) || 0,
     conc_waiting: isCodex ? null : Number(seatRow?.conc_waiting) || 0,
     inflight: isCodex ? openAIRuntimeSignals(v.id).inFlight : Number(seatRow?.inflight ?? acc?.inflight ?? 0),
