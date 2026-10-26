@@ -188,22 +188,46 @@ test('account1 quota exhausted rotates to account2 and commits final sticky', as
   assert.equal(attempts.items[1].terminalState, 'verified')
 })
 
-test('slot_busy spill serves the turn elsewhere but keeps the session pinned', async () => {
-  const scheduler = new Scheduler([candidate(1), candidate(2)])
-  scheduler.releaseAccountSessions = () => assert.fail('capacity spill must not unbind')
-  const pins = new Map([['conversation-1', { accountId: 'account-1', vmId: 'vm-01' }]])
-  const runner = new FailoverRunner({
-    scheduler,
-    stickyRouter: {
-      resolve: (key) => pins.get(key) || null,
-      bind: (key, value) => pins.set(key, value),
-    },
+test('slot_busy spill serves the turn elsewhere but keeps the session pinned', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-slot-busy-'))
+  const sticky = new StickyRouter({ dataDir, config: { sticky: { enabled: true } } })
+  t.after(() => {
+    sticky.db.close()
+    fs.rmSync(dataDir, { recursive: true, force: true })
   })
+  const callerSession = 'slot-busy-caller'
+  const stickyKey = sticky.canonicalSessionKey(callerSession)
+  sticky.bind(stickyKey, { accountId: 'account-1', vmId: 'vm-01', sessionId: 'stored-home' }, { countHit: false })
+  const selections = [1, 2].map((n) => ({ ok: true, accountId: `account-${n}`, vmId: `vm-0${n}`, release() {} }))
+  let index = 0
+  const scheduler = {
+    async selectAndReserve() {
+      return selections[Math.min(index++, selections.length - 1)]
+    },
+    markSuccess() {},
+    markCooldown() {},
+    releaseAccountSessions() {
+      assert.fail('capacity spill must not unbind')
+    },
+  }
+  const runner = new FailoverRunner({ scheduler, stickyRouter: sticky, config: { same_account_retry_delay_ms: 0 } })
+  let clock = 1_000
   const result = await runner.run({
     requestId: 'req-spill',
     canonicalBody: { model: 'claude-opus-test' },
     model: 'claude-opus-test',
-    stickyKey: 'conversation-1',
+    stickyKey,
+    applyAttempt: (body, selected, extra) => ({
+      body,
+      meta: {
+        sessionId: resolveOutboundSessionId(callerSession, {
+          boundSessionId: extra.stickyBound?.sessionId,
+          boundVmId: extra.stickyBound?.vmId,
+          vmId: selected.vmId,
+          epoch: `${clock++}:${selected.vmId}`,
+        }),
+      },
+    }),
     callAttempt: ({ candidate: selected }) =>
       selected.accountId === 'account-1'
         ? {
@@ -216,7 +240,11 @@ test('slot_busy spill serves the turn elsewhere but keeps the session pinned', a
   })
   assert.equal(result.ok, true)
   assert.equal(result.accountId, 'account-2')
-  assert.deepEqual(pins.get('conversation-1'), { accountId: 'account-1', vmId: 'vm-01' })
+  assert.deepEqual((({ accountId, vmId, sessionId }) => ({ accountId, vmId, sessionId }))(sticky.resolve(stickyKey)), {
+    accountId: 'account-1',
+    vmId: 'vm-01',
+    sessionId: 'stored-home',
+  })
 })
 
 test('#A20: a late completion never writes back a pin another request released', async () => {
@@ -959,6 +987,85 @@ for (const cancellation of ['result', 'throw']) {
     assert.deepEqual(scheduler.cooldowns, [])
   })
 }
+
+test('failed hops before a cross-account VM move persist that VM outbound session', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-failed-move-'))
+  const sticky = new StickyRouter({ dataDir, config: { sticky: { enabled: true } } })
+  t.after(() => {
+    sticky.db.close()
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  })
+  const callerSession = 'failed-hop-caller'
+  const stickyKey = sticky.canonicalSessionKey(callerSession)
+  sticky.bind(stickyKey, { accountId: 'account-old', vmId: 'vm-old', sessionId: 'stored-old' }, { countHit: false })
+  const selections = [
+    { ok: true, vmId: 'vm-old', accountId: 'account-old', release() {} },
+    { ok: true, vmId: 'vm-mid', accountId: 'account-mid', release() {} },
+    { ok: true, vmId: 'vm-home', accountId: 'account-home', release() {} },
+  ]
+  let index = 0
+  const scheduler = {
+    async selectAndReserve() {
+      return selections[Math.min(index++, selections.length - 1)]
+    },
+    markSuccess() {},
+    markCooldown() {},
+    releaseAccountSessions() {},
+  }
+  const runner = new FailoverRunner({ scheduler, stickyRouter: sticky, config: { same_account_retry_delay_ms: 0 } })
+  const seen = []
+  let clock = 1_000
+  const applyAttempt = (body, selected, extra) => {
+    const bound = extra.stickyBound
+    const sessionId = resolveOutboundSessionId(callerSession, {
+      boundSessionId: bound?.sessionId,
+      boundVmId: bound?.vmId,
+      vmId: selected.vmId,
+      epoch: `${clock}:${selected.vmId}`,
+    })
+    clock += 10
+    seen.push({ vm: selected.vmId, sessionId })
+    return { body, meta: { sessionId } }
+  }
+  const responses = [
+    {
+      ok: false,
+      status: 503,
+      terminalState: 'rejected',
+      body: { type: 'error', error: { type: 'api_error', message: 'worker unavailable' } },
+    },
+    {
+      ok: false,
+      status: 401,
+      terminalState: 'error',
+      body: { type: 'error', error: { type: 'authentication_error', message: 'authentication_error' } },
+    },
+    success(),
+  ]
+  let responseIndex = 0
+  await runner.run({
+    requestId: 'req-move',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt,
+    callAttempt: () => responses[responseIndex++],
+  })
+  await runner.run({
+    requestId: 'req-home',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey,
+    applyAttempt,
+    callAttempt: () => success(),
+  })
+  const stored = sticky.resolve(stickyKey)
+  assert.equal(stored.vmId, 'vm-home')
+  assert.equal(stored.accountId, 'account-home')
+  assert.equal(stored.sessionId, seen[2].sessionId)
+  assert.equal(seen[3].sessionId, seen[2].sessionId)
+  assert.notEqual(seen[2].sessionId, seen[1].sessionId)
+})
 
 test('streamed plan limit writes the hard block and rotates to another account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
