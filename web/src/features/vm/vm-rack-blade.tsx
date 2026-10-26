@@ -33,6 +33,7 @@ import {
   VmQuotaActions,
   VmUsageWindows,
 } from '@/features/vm/usage-windows'
+import { ActiveVmBadge } from '@/features/vm/active-vm-badge'
 import { VmActionMenu } from '@/features/vm/vm-action-menu'
 import { useVmActions } from '@/features/vm/vm-actions-context'
 import { useVmPerms } from '@/features/vm/vm-perms'
@@ -438,7 +439,10 @@ export const VmBlade = memo(function VmBlade({
             </span>
           ) : null}
         </span>
-        <TierBadge vm={vm} />
+        <div className='flex items-center gap-1'>
+          <ActiveVmBadge vm={vm} />
+          <TierBadge vm={vm} />
+        </div>
         <span
           title={email || undefined}
           className={cn(
