@@ -1,6 +1,9 @@
 # Changelog
 
 ## 未发布
+- VM 详情页额度栏在「本窗口 5H 已用」下加「上个 5H 已用」：结束时已用比例、起止、官方价花费与请求数。本窗口已用 < 5% 算不出总额度时，花费提示改用上个窗口的「花费 ÷ 结束时已用」推算余额，并注明「按上个窗口」。
+- 查看统计弹窗重排：顶部为「上个窗口」「当前窗口」（各含 5H 与 7D 的已用、起止或重置、花费、请求、token）和「预计剩余 5H 额度」；去掉「花费最高的一天」「请求最多的一天」。Key 统计弹窗不变。
+- 后端在额度写入时归档已结束的 5H / 7D 窗口（Claude 存 accounts `extra.window_history`，GPT 存 `vm.codex.window_history`），`/vms/:id` 新增 `billing.prev_window_5h` / `prev_window_7d` / `window_5h_projection`。不加迁移；上线后第一次窗口翻转前上个窗口显示「暂无记录」。
 - #730：面板模型目录固定模型 `auto`；三种目录模式在其启用时均列出，`worker_only` 也会追加已启用的 `auto`；停用后不列出。请求 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
 - #730：auto mode 分类器契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径 `max_tokens=8192`。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
 
