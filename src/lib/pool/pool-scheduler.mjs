@@ -692,14 +692,6 @@ export class PoolScheduler extends EventEmitter {
         // A grant can land while eligibility was being re-read.
         if (ticket?.granted) return finish(ticket.granted)
         if (familyVm && !candidates.some((candidate) => candidate.vmId === familyVm)) familyGated = true
-        const sticky = this.reconcileSticky({
-          stickyKey,
-          stickyKeys,
-          eligible: candidates,
-          spilled,
-          familyVmId: familyGated ? null : familyVm,
-        })
-        if (sticky.cleared) stickyCleared = true
         const byVm = new Map(candidates.map((candidate) => [candidate.vmId, candidate]))
         if (ticket) ticket.candidates = byVm
         const now = Date.now()
@@ -724,6 +716,16 @@ export class PoolScheduler extends EventEmitter {
             return fail('all_accounts_busy')
           }
         }
+        // A surviving seat fixes this turn's VM; family affinity cannot move
+        // it, so releasing its outbound session here would only remint it.
+        const sticky = this.reconcileSticky({
+          stickyKey,
+          stickyKeys,
+          eligible: candidates,
+          spilled,
+          familyVmId: familyGated || seat ? null : familyVm,
+        })
+        if (sticky.cleared) stickyCleared = true
         if (seat) {
           if (!ticket) {
             if (!this.planner.hasConcWaiters(seat.vmId)) {
