@@ -19,7 +19,6 @@ import {
   formatCurrency,
   formatDuration,
   formatTokenAmount,
-  shouldHideOutputRate,
 } from '@/lib/usage-format'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -123,10 +122,8 @@ export function SummaryTab({
 }) {
   const audit = resolveModelAuditDisplay(row)
   const success = isSuccessStatus(row.statusCode)
-  const rate = calculateOutputRate(row.outputTokens, row.durationMs, row.ttftMs)
-  const showRate =
-    rate != null && !shouldHideOutputRate(rate, row.durationMs, row.ttftMs)
-  const totalTokens = row.inputTokens + row.outputTokens
+  const rate = calculateOutputRate(row.outputTokens, row.generationMs)
+  const totalTokens = row.totalTokens
   const breakdown = row.costBreakdown
   const tokenSplit = cacheWriteSplit({
     total: row.cacheCreationInputTokens,
@@ -206,7 +203,10 @@ export function SummaryTab({
         </div>
       </div>
 
-      {row.costUsd != null || totalTokens > 0 || row.durationMs != null ? (
+      {row.costUsd != null ||
+      totalTokens > 0 ||
+      row.durationMs != null ||
+      rate != null ? (
         <div className='space-y-2'>
           <h4 className='text-sm font-semibold text-muted-foreground'>
             关键指标
@@ -239,21 +239,30 @@ export function SummaryTab({
                 value={formatDuration(row.durationMs)}
               />
             ) : null}
-            {showRate ? (
-              <MetricCard
-                icon={Zap}
-                iconClass='text-amber-600'
-                bgClass='bg-amber-100 dark:bg-amber-900/30'
-                label='输出速率'
-                value={`${rate.toFixed(1)} tok/s`}
-              />
+            {rate != null ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <MetricCard
+                      icon={Zap}
+                      iconClass='text-amber-600'
+                      bgClass='bg-amber-100 dark:bg-amber-900/30'
+                      label='输出速率'
+                      value={`${rate.toFixed(1)} tok/s`}
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  输出 tokens / 上游输出窗口（含不可见推理）
+                </TooltipContent>
+              </Tooltip>
             ) : null}
           </div>
         </div>
       ) : null}
 
       {cacheRate != null &&
-      row.cacheReadInputTokens + row.cacheCreationInputTokens > 0 ? (
+      row.cacheReadInputTokens + (row.cacheCreationInputTokens ?? 0) > 0 ? (
         <div className='space-y-2'>
           <SectionTitle icon={DatabaseZap} color='text-cyan-600'>
             缓存表现

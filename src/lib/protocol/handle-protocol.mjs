@@ -1120,12 +1120,16 @@ export function createHandleProtocol(deps) {
       logBag.account_id = result?.accountId || null
       logBag.final_account_id = result?.accountId || null
       logBag.upstream_status = result?.status ?? null
-      logBag.usage = usageForLog(result?.body?.usage || result?.usage || null, { cacheTtl })
+      logBag.usage = usageForLog(result?.usage || result?.body?.usage || null, { cacheTtl })
       logBag.upstream_model = result?.model || null
-      // API transport still stamps the first data: line; subtract t0 for queue wait only.
+      // TTFT is generated content; the upstream window also includes hidden reasoning.
       logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
         ? Math.max(0, result.firstTokenAt - logCtx.t0)
         : (result?.ttftMs ?? null)
+      logBag.first_byte_ms = Number.isFinite(result?.firstByteAt)
+        ? Math.max(0, result.firstByteAt - logCtx.t0)
+        : (result?.firstByteMs ?? null)
+      logBag.generation_ms = result?.generationMs ?? null
       logBag.final_state = result?.terminalState || null
       attachPricing(logBag, {
         managedKey,
@@ -1653,7 +1657,7 @@ export function createHandleProtocol(deps) {
     logBag.attempt_count = result?.attemptCount ?? 0
     logBag.final_state = result?.finalState || result?.terminalState || null
     logBag.upstream_status = result?.status ?? null
-    logBag.usage = usageForLog(result?.body?.usage || result?.usage || null, {
+    logBag.usage = usageForLog(result?.usage || result?.body?.usage || null, {
       cacheTtl,
       requestedSpeed: wantsFastMode(ctx.body) ? 'fast' : null,
     })
@@ -1662,6 +1666,10 @@ export function createHandleProtocol(deps) {
     logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
       ? Math.max(0, result.firstTokenAt - logCtx.t0)
       : (result?.ttftMs ?? null)
+    logBag.first_byte_ms = Number.isFinite(result?.firstByteAt)
+      ? Math.max(0, result.firstByteAt - logCtx.t0)
+      : (result?.firstByteMs ?? null)
+    logBag.generation_ms = result?.generationMs ?? null
     logBag.stop_reason = result?.body?.stop_reason || result?.stopReason || null
     logBag.via = result?.via || 'go-worker-pool'
     if (result?.finalState === 'content_filter' || logBag.stop_reason === 'refusal') {

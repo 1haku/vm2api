@@ -15,6 +15,7 @@ import {
 import { ApiKeyStore } from '../../src/lib/admin/api-keys.mjs'
 import { GroupsRepo } from '../../src/lib/db/repos/groups-repo.mjs'
 import { gateVerdict } from '../../src/lib/protocol/intercept-stats.mjs'
+import { UsageLogsView } from '../../src/lib/db/repos/usage-logs-view.mjs'
 
 function tmpStore(mode = 'normal') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-rlog-'))
@@ -111,6 +112,33 @@ test('summary persists protocol usage detail (cache/model/ttft/stop_reason)', ()
   assert.equal(row.upstream_model, 'claude-sonnet-5')
   assert.equal(row.stop_reason, 'end_turn')
   assert.equal(row.total_cost, 0.0000926)
+})
+
+test('OpenAI log totals count cached input once and distinguish unknown from zero cache writes', (t) => {
+  const store = tmpStore('normal')
+  t.after(() => {
+    store.db.close()
+    fs.rmSync(store.dataDir, { recursive: true, force: true })
+  })
+  for (const cacheWrite of [undefined, 0, 20]) {
+    const ctx = store.start(
+      { method: 'POST', headers: {}, socket: {} },
+      { protocol: 'openai.responses', pathName: '/v1/responses' },
+    )
+    store.finish(ctx, {
+      status: 200,
+      model: 'gpt-5.4',
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 50,
+        input_tokens_details: { cached_tokens: 800, ...(cacheWrite == null ? {} : { cache_write_tokens: cacheWrite }) },
+      },
+    })
+    const row = new UsageLogsView(store.db).listBatch({ limit: 10 }).logs.find((r) => r.requestId === ctx.request_id)
+    assert.equal(row.inputTokens, 200 - (cacheWrite ?? 0))
+    assert.equal(row.totalTokens, 1050)
+    assert.equal(row.cacheCreationInputTokens, cacheWrite ?? null)
+  }
 })
 
 test('backfillMissingCosts restores actual cost with the stored group multiplier', () => {

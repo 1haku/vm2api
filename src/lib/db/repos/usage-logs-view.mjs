@@ -157,7 +157,7 @@ export function toUsageLogRow(row, names, chain = []) {
   const accountId = row.final_account_id || row.account_id || null
   const inputTokens = num(row.input_tokens)
   const outputTokens = num(row.output_tokens)
-  const cacheCreation = num(row.cache_creation_tokens)
+  const cacheCreation = nullableNum(row.cache_creation_tokens)
   const cacheRead = num(row.cache_read_tokens)
   const blocked = blockedBy(row)
   return {
@@ -198,6 +198,8 @@ export function toUsageLogRow(row, names, chain = []) {
     costBreakdown: costBreakdown(row),
     durationMs: nullableNum(row.duration_ms),
     ttftMs: nullableNum(row.first_token_ms),
+    firstByteMs: nullableNum(row.first_byte_ms),
+    generationMs: nullableNum(row.generation_ms),
     stopReason: row.stop_reason ?? null,
     attemptCount: nullableNum(row.attempt_count),
     finalState: row.final_state ?? null,
