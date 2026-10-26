@@ -721,6 +721,10 @@ export function clearRecoverableVmCooldown(vmPath) {
   delete vm.claude.temp_unschedulable_reason
   delete vm.temp_unschedulable_until
   delete vm.temp_unschedulable_reason
+  if (vm.codex?.extra?.codex_limited_until) {
+    vm.codex = { ...vm.codex, extra: { ...vm.codex.extra } }
+    delete vm.codex.extra.codex_limited_until
+  }
   vm.updated_at = new Date().toISOString()
   atomicWriteJson(vmPath, vm)
   return vm

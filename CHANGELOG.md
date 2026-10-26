@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- #717 / #715：GPT 额度刷新或面板「恢复状态」时，按窗口用量重算并清除过期的 `codex.extra.codex_limited_until`；手动恢复不再只清 Claude 冷却字段而留下 Codex 专用停用标记。
+
 ## 1.4.03 — 2026-10-26
 
 - #712：重载 GPT（Codex）槽位时，先停掉并等待控制面里实际在跑的 Codex 内核再重新拉起，使其应用当前代理；停不掉（`untracked_kernel` / `recycle_timeout`）时返回 `codex_kernel_reload_failed`，不再复用旧内核的健康状态。（作者 venn0126，Fixes #711）
