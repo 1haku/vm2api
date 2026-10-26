@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.01 — 2026-10-26
+
+- catalog effort 缺省，修复 1.4.00 haiku effort 400。payload 钉住 `payload-2026.10.26-cli-effort`，cli-node `01740e54`。
+
+已部署机升级：须 `npm run fetch:payload` 换上 `payload-2026.10.26-cli-effort` 后 `wrap-cli/sync`（`restart:true`），再重启 Node；仅更新 Node 不够。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.4.00 — 2026-10-26
 
 修复大量bug,全新版本.额度50%+,安全100%增加
