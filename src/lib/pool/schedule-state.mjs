@@ -88,6 +88,8 @@ const STATELESS = [
   /^(model_cooldown|fable_cooldown|fable_concurrency|fable_timeout|fable_plan_denied|fable_rate_limited|fable_requires_max|model_not_allowed|platform_mismatch|codex_vm)$/,
   /^(quota_guard_request_too_large|no_eligible_accounts|pool_overload_cooldown|pool_rate_limited|vm_unschedulable)$/,
   /^(wrap_connection_error|worker_transport_failure|worker_timeout|upstream_network_error|stream_interrupted|empty_response|incomplete_assistant|downstream_committed_or_incomplete|provider_timeout|client_cancelled|oauth_unconfirmed)$/,
+  // Seat placement labels (why this VM was picked), not a slot condition.
+  /^sticky$/,
 ]
 
 /**
