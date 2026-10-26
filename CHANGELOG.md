@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.02 — 2026-10-26
+
+- 对话结束且没有排队的后续请求时，立即释放 `session_slots`。粘性 TTL 只记住用过的 VM、账号和出站 session，不占席位，到期时间不刷新。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启一次 Node。不必 `wrap-cli/sync`，不必重建槽。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
 ## 1.4.01 — 2026-10-26
 
 - catalog effort 缺省，修复 1.4.00 haiku effort 400。payload 钉住 `payload-2026.10.26-cli-effort`，cli-node `01740e54`。
