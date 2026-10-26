@@ -44,6 +44,7 @@ import { applyVmQuotaConfig, applyVmQuotaPolicy, vmQuotaOverrideOf, vmQuotaView 
 import { GATE_OPEN, gatePolicyFields, gateZone, quotaGateOf } from '../pool/quota-gate.mjs'
 import { inferClaudeTier } from '../pool/claude-tier.mjs'
 import { listQuotaFromHeaders, isOfficialWindowLimited } from '../pool/quota-window.mjs'
+import { lastClosedWindow } from '../pool/window-history.mjs'
 import { hardBlockOf } from '../pool/rate-limit-service.mjs'
 import { unitCircuit } from '../pool/unit-circuit.mjs'
 import { accountIdOf, normalizePoolRouting } from '../pool/pool-scheduler.mjs'
@@ -76,7 +77,7 @@ import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
 import { publicNotifyConfig, summarizePoolAvailability } from './notify.mjs'
 import { cacheHitStats } from './cache-metrics.mjs'
-import { estimateWindow, usedRatioOf } from './window-estimate.mjs'
+import { estimateWindow, projectWindowRemaining, usedRatioOf } from './window-estimate.mjs'
 import { shanghaiDayStartIso } from './pricing.mjs'
 import {
   AGENT_STANDING_MAX,
@@ -860,6 +861,9 @@ export async function buildVmDetail({
     vmId: summary.id,
     accountId: acc?.account_id || summary.account_uuid,
     requestLog,
+    windowHistory: gpt ? vm.codex?.window_history : acc?.window_history,
+    estimate5h: summary.estimate_5h,
+    coveredSince: billing?.log_coverage_start,
   })
   const inferenceEngine = gpt ? null : summary.resolved_inference_engine || 'rust'
   let goHealth = null
@@ -2478,7 +2482,32 @@ function windowEstimates(quota, cost, coveredSince, codex) {
   }
 }
 
-function buildAccountBilling(cost, billing, { vmId, accountId, requestLog } = {}) {
+/** The last closed 5h / 7d window with its official spend, from the slot's window archive. */
+function closedWindowView(history, key, { vmId, accountId, requestLog }) {
+  const win = lastClosedWindow(history, key)
+  if (!win) return null
+  let row = null
+  try {
+    // `until` is inclusive in the log filter; stop 1 ms short so the boundary request counts once.
+    row = requestLog?.costBetween?.({ since: win.start, until: Date.parse(win.end) - 1, vmId, accountId }) || null
+  } catch {
+    row = null
+  }
+  return {
+    start: win.start,
+    end: win.end,
+    used_ratio: win.used_ratio,
+    ...(periodView(row) || periodView({})),
+    tokens: tokenTotal(row),
+    unpriced: Number(row?.unpriced || 0),
+  }
+}
+
+function buildAccountBilling(
+  cost,
+  billing,
+  { vmId, accountId, requestLog, windowHistory = null, estimate5h = null, coveredSince = null } = {},
+) {
   if (!cost && !vmId && !accountId) return null
   const today = periodView(cost?.today) || {
     requests: Number(cost?.today_requests || 0),
@@ -2533,6 +2562,9 @@ function buildAccountBilling(cost, billing, { vmId, accountId, requestLog } = {}
   } catch {
     usageStats = null
   }
+  const scope = { vmId, accountId, requestLog }
+  const prev5h = closedWindowView(windowHistory, '5h', scope)
+  const prev7d = closedWindowView(windowHistory, '7d', scope)
   return {
     source: billing?.source || 'anthropic-official',
     currency: billing?.currency || 'USD',
@@ -2542,6 +2574,14 @@ function buildAccountBilling(cost, billing, { vmId, accountId, requestLog } = {}
     today,
     window_5h: window5h,
     window_7d: window7d,
+    prev_window_5h: prev5h,
+    prev_window_7d: prev7d,
+    window_5h_projection: projectWindowRemaining({
+      live: estimate5h,
+      closed: prev5h,
+      spentUsd: window5h?.total_cost,
+      coveredSince,
+    }),
     total,
     by_model: byModel,
     usage_stats: usageStats,

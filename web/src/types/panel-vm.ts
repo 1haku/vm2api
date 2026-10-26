@@ -563,6 +563,34 @@ export type VmUsageStats = {
   endpoints: VmUsageStatsRank[]
 }
 
+/** `billing.window_5h` / `window_7d`：本窗口官方价汇总。 */
+export type VmBillingPeriod = {
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+  total_cost: number
+}
+
+/** `billing.prev_window_5h` / `prev_window_7d`：上一个已结束的额度窗口，花费按窗口起止从日志汇总。 */
+export type VmClosedWindow = VmBillingPeriod & {
+  start: string
+  end: string
+  /** 窗口结束前最后一次读到的已用比例（0–1）。 */
+  used_ratio: number
+  /** 含缓存的 token 合计。 */
+  tokens: number
+  unpriced: number
+}
+
+/** `billing.window_5h_projection`：本窗口预计剩余。`source` 是总额度按哪个窗口推算，null 为算不出。 */
+export type VmWindowProjection = {
+  source: 'current' | 'previous' | null
+  total_usd: number | null
+  remaining_usd: number | null
+}
+
 export type VmDetailPayload = {
   vm?: Vm
   kernel?: VmKernelSnapshot | null
@@ -572,6 +600,11 @@ export type VmDetailPayload = {
     | (Record<string, unknown> & {
         by_model?: VmBillingModelRow[]
         usage_stats?: VmUsageStats | null
+        window_5h?: VmBillingPeriod | null
+        window_7d?: VmBillingPeriod | null
+        prev_window_5h?: VmClosedWindow | null
+        prev_window_7d?: VmClosedWindow | null
+        window_5h_projection?: VmWindowProjection | null
       })
     | null
   [key: string]: unknown

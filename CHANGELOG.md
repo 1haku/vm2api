@@ -3,6 +3,9 @@
 ## 未发布
 - #733/#732：槽位列表（表格 / 机架）、详情页与列表弹窗展示 **Active** 徽标（`vm.active` / `vms/active.json`）；行菜单与运维页提供「设为活跃」，调用既有 `POST /api/panel/vms/:id/activate`。
 - #733/#732：删除仍占活跃指针的槽位时，若有其它可调度且凭证有效的候选，确认后先自动 `activate` 到推荐槽再 `DELETE`；无安全候选时禁用删除并提示先切换活跃。
+- VM 详情页额度栏在「本窗口 5H 已用」下加「上个 5H 已用」：结束时已用比例、起止、官方价花费与请求数。本窗口已用 < 5% 算不出总额度时，花费提示改用上个窗口的「花费 ÷ 结束时已用」推算余额，并注明「按上个窗口」。
+- 查看统计弹窗重排：顶部为「上个窗口」「当前窗口」（各含 5H 与 7D 的已用、起止或重置、花费、请求、token）和「预计剩余 5H 额度」；去掉「花费最高的一天」「请求最多的一天」。Key 统计弹窗不变。
+- 后端在额度写入时归档已结束的 5H / 7D 窗口（Claude 存 accounts `extra.window_history`，GPT 存 `vm.codex.window_history`），`/vms/:id` 新增 `billing.prev_window_5h` / `prev_window_7d` / `window_5h_projection`。不加迁移；上线后第一次窗口翻转前上个窗口显示「暂无记录」。
 - #730：面板模型目录固定模型 `auto`；三种目录模式在其启用时均列出，`worker_only` 也会追加已启用的 `auto`；停用后不列出。请求 `model: "auto"` 原样出站，不改写成具体 Claude 模型。
 - #730：auto mode 分类器契约对齐 cli-node 2.1.310：`temperature` 默认 1，stage 1 为 64/256，stage 2 与 tool 路径 `max_tokens=8192`。网关继续原样传递这些已有字段。`extra_body` 仍在官方字段清洗时丢弃；attribution 与 `auto-mode-classifier-2026-07-16` 的透传不由这次测试证明。
 - #731：修复同一 client session 占到 VM 后被其它 session 抢走槽位：席位按 session 计，不再按 device 把同一客户端的多个会话挤在一个槽上。请求结束后槽位不释放，一直留给这个 session，直到粘性 TTL 到期，或 VM 不可调度 / 额度、凭证、暂停、换 VM 重试才释放。Node 重启后按未过期的粘性绑定把这些槽占回去，面板不会先显示空闲。面板席位格与悬浮说明列出这台 VM 上实际占着槽的 session。
