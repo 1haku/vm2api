@@ -230,6 +230,8 @@ export function buildEventData(id = {}, opts = {}) {
   if (device) data.device_id = device
   if (Object.keys(auth).length) data.auth = auth
   if (eventName !== 'tengu_init') {
+    const model = str(opts.model).trim()
+    if (model) data.model = model
     data.process = encodeProcessB64(id.process || DEFAULT_PROCESS_RANGES, opts.uptime_secs || 0)
   }
   return data

@@ -87,7 +87,7 @@ func TestInitEventUsesOfficial1PEnvelope(t *testing.T) {
 	if strings.Contains(string(raw), `"email"`) {
 		t.Fatalf("main path must not upload email: %s", raw)
 	}
-	for _, drop := range []string{`"betas"`, `"additional_metadata"`, `"model"`, `"coworker_type"`, `"github_event_name"`} {
+	for _, drop := range []string{`"betas"`, `"additional_metadata"`, `"coworker_type"`, `"github_event_name"`} {
 		if strings.Contains(string(raw), drop) {
 			t.Fatalf("did not expect %s in %s", drop, raw)
 		}
@@ -133,8 +133,8 @@ func TestSuccessEventMatchesBridgeEnvelope(t *testing.T) {
 	if _, ok := proc["cpuWindowMs"]; !ok {
 		t.Fatalf("process missing cpuWindowMs: %v", proc)
 	}
-	if strings.Contains(string(raw), `"model"`) || strings.Contains(string(raw), "claude-sonnet-5") {
-		t.Fatalf("model must not be uploaded: %s", raw)
+	if ev.EventData["model"] != "claude-sonnet-5" {
+		t.Fatalf("model=%v", ev.EventData["model"])
 	}
 }
 

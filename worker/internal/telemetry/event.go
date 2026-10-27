@@ -44,7 +44,7 @@ func SuccessEvent(id Identity, now time.Time, uptimeSecs float64, model string) 
 	return namedEvent(id, eventTenguSuccess, now, uptimeSecs, model)
 }
 
-func namedEvent(id Identity, name string, now time.Time, uptimeSecs float64, _ string) Event {
+func namedEvent(id Identity, name string, now time.Time, uptimeSecs float64, model string) Event {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -63,6 +63,9 @@ func namedEvent(id Identity, name string, now time.Time, uptimeSecs float64, _ s
 	}
 	put(data, "device_id", telemetryDevice(id))
 	put(data, "session_id", id.SessionID)
+	if name != eventTenguInit {
+		put(data, "model", model)
+	}
 	if auth := authBlock(id); len(auth) > 0 {
 		data["auth"] = auth
 	}

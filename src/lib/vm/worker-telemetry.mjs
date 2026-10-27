@@ -64,33 +64,19 @@ export function telemetryTouchPath(projectRoot, vmId) {
 }
 
 /** `vm` given: the touch also reaches wherever that slot reads it (throttled for node slots). */
-export function touchTelemetrySession(projectRoot, vmId, vm = null) {
+export function touchTelemetrySession(projectRoot, vmId, vm = null, model = '') {
   if (!projectRoot || !vmId) return { wrote: false }
   const file = telemetryTouchPath(projectRoot, vmId)
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, `${new Date().toISOString()}\n`, { mode: 0o600 })
+    fs.writeFileSync(file, `${new Date().toISOString()} ${String(model || '').trim()}\n`, { mode: 0o600 })
   } catch {
     return { wrote: false }
   }
   slotHost(vm).touch(vm, path.join(projectRoot, 'vms', vmId))
   return { wrote: true }
 }
-function officialInstallTime(homeDir) {
-  if (!homeDir) return ''
-  let doc
-  try {
-    doc = JSON.parse(fs.readFileSync(path.join(homeDir, '.claude', 'kin-official-bootstrap.json'), 'utf8'))
-  } catch {
-    return ''
-  }
-  if (doc?.status !== 'ok' && doc?.hello_ok !== true) return ''
-  const raw = String(doc.finished_at || '').trim()
-  if (!raw) return ''
-  const ms = Date.parse(raw)
-  if (Number.isNaN(ms)) return raw
-  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
-}
+const OFFICIAL_BUILD_TIME = '2026-10-18T20:20:57Z'
 
 function telemetryHeaders(identity) {
   const fp = identity.fingerprint || {}
@@ -158,7 +144,7 @@ export function buildWorkerTelemetry(vm, projectRoot, routing = null) {
     package_managers: String((hw && hw.package_managers) || guest.package_managers || '').trim(),
     vcs: String(guest.vcs || '').trim(),
     runtimes: String((hw && hw.runtimes) || guest.runtimes || '').trim() || 'node',
-    build_time: officialInstallTime(homeDir),
+    build_time: OFFICIAL_BUILD_TIME,
     linux_distro_id: guest.os_id || '',
     linux_distro_version: distroVersionFromPretty(guest.os_pretty),
     linux_kernel: guest.kernel_release || '',
