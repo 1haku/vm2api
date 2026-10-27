@@ -8,6 +8,40 @@ import { VmsRepo } from '../../src/lib/db/repos/vms-repo.mjs'
 import { observeCodexWeekly } from '../../src/lib/protocol/codex-weekly-reset.mjs'
 import { startGateway, api } from '../harness.mjs'
 
+test('admin can enable official weekly reset for a token-only Claude Max slot', async () => {
+  const gw = await startGateway()
+  let db
+  try {
+    db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'))
+    db.exec('PRAGMA busy_timeout=5000')
+    const vm = { id: 'ClaudeMain', claude: { has_access: true, account_tier: 'max' } }
+    fs.writeFileSync(path.join(gw.project, 'vms', vm.id + '.json'), JSON.stringify(vm))
+    new VmsRepo(db).upsertFromVmJson(vm)
+    const end = new Date(Date.now() + 86400000).toISOString()
+    new AccountsRepo(db).insert({
+      account_id: vm.id,
+      vm_id: vm.id,
+      unified: { official: { '7d': { reset: end, utilization: 0.7 } } },
+    })
+    const created = await api(gw, 'POST', '/api/panel/subscription-plans', {
+      body: { name: 'Claude Max', platform: 'claude', vm_ids: [vm.id], weekly_limit_usd: 100 },
+    })
+    assert.equal(created.status, 200, created.text)
+    const id = created.json.data.id
+    const saved = await api(gw, 'PATCH', '/api/panel/subscription-plans/' + id, {
+      body: { weekly_reset_mode: 'slot', weekly_reset_vm_id: vm.id },
+    })
+    assert.equal(saved.status, 200, saved.text)
+    assert.equal(saved.json.data.weekly_source_account, vm.id)
+    assert.equal(saved.json.data.weekly_window_end, end)
+    assert.equal(saved.json.data.weekly_reset_mode, 'slot')
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger').get().n, 0)
+  } finally {
+    db?.close()
+    await gw.stop()
+  }
+})
+
 test('Codex plan follows a same-deadline early reset through real panel routes without exposing source identity', async () => {
   const gw = await startGateway()
   let db

@@ -14,7 +14,10 @@ export function readClaudeWeeklyReset(db, vmId, now = Date.now()) {
   const record = new VmsRepo(db).get(vmId)
   const vm = record?.vm
   if (!vm || vm.owner_user_id || isCodexVm(vm)) return null
-  const accountId = vm.claude?.account_uuid || vm.account_uuid
+  // Token-only imports can lack an account UUID. The scheduler and quota probe
+  // store their snapshot under the slot ID; never select an arbitrary old row
+  // by vm_id or fall back when an explicit current account UUID is present.
+  const accountId = vm.claude?.account_uuid || vm.account_uuid || vm.id
   if (!accountId) return null
   const account = new AccountsRepo(db).get(accountId)
   const unified = account?.vm_id === vmId ? account.unified : {}

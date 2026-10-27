@@ -269,3 +269,52 @@ test('source only uses current Claude account total weekly reset, accepts offici
   accounts.save(acc)
   assert.equal(readClaudeWeeklyReset(db, 'Claude').end, null)
 })
+
+test('token-only Claude Max follows the quota snapshot keyed by its slot ID', (t) => {
+  const { db, repo, plan, a, raw, time } = setup(t)
+  new VmsRepo(db).upsertFromVmJson({ id: 'Claude', claude: { has_access: true, account_tier: 'max' } })
+  const accounts = new AccountsRepo(db)
+  accounts.insert({
+    account_id: 'Claude',
+    vm_id: 'Claude',
+    unified: { official: { '7d': { reset: new Date(boundary).toISOString(), utilization: 0.7 } } },
+  })
+  assert.deepEqual(readClaudeWeeklyReset(db, 'Claude'), { accountId: 'Claude', end: boundary })
+  const saved = repo.savePlan({ weekly_reset_mode: 'slot', weekly_reset_vm_id: 'Claude' }, 'admin', plan.id)
+  assert.equal(saved.weekly_source_account, 'Claude')
+  assert.equal(saved.weekly_window_end, new Date(boundary).toISOString())
+  repo.settle('token-only-before-reset', a, 12)
+  assert.equal(repo.progress(raw(a)).weekly_used, 12)
+  time(boundary)
+  const acc = accounts.get('Claude')
+  acc.unified.official['7d'].reset = new Date(boundary + WEEK_MS).toISOString()
+  accounts.save(acc)
+  const progress = repo.progress(raw(a))
+  assert.equal(progress.weekly_sync_status, 'synced')
+  assert.equal(progress.weekly_reset_at, new Date(boundary + WEEK_MS).toISOString())
+  assert.equal(progress.weekly_used, 0)
+  assert.equal(progress.daily_used, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger').get().n, 1)
+})
+
+test('slot-ID fallback never uses a previous account or a snapshot bound to another slot', (t) => {
+  const { db } = setup(t)
+  const vms = new VmsRepo(db)
+  const accounts = new AccountsRepo(db)
+  vms.upsertFromVmJson({ id: 'Claude', claude: { has_access: true } })
+  // setup leaves a valid account-Claude snapshot associated with this vm_id.
+  assert.deepEqual(readClaudeWeeklyReset(db, 'Claude'), { accountId: 'Claude', end: null })
+  const acc = accounts.insert({
+    account_id: 'Claude',
+    vm_id: 'Other',
+    unified: { headers: { '7d': { reset: boundary / 1000 } } },
+  })
+  assert.equal(readClaudeWeeklyReset(db, 'Claude').end, null)
+  acc.vm_id = 'Claude'
+  accounts.save(acc)
+  assert.equal(readClaudeWeeklyReset(db, 'Claude').end, boundary)
+  vms.upsertFromVmJson({ id: 'Claude', claude: { account_uuid: 'replacement' } })
+  assert.deepEqual(readClaudeWeeklyReset(db, 'Claude'), { accountId: 'replacement', end: null })
+  vms.upsertFromVmJson({ id: 'Claude', owner_user_id: 'a', claude: { has_access: true } })
+  assert.equal(readClaudeWeeklyReset(db, 'Claude'), null)
+})
