@@ -103,7 +103,9 @@ describe('latency segments', () => {
       ['generation', 123],
       ['finalization', 0],
     ])
-    expect(segmentWidth(segments!.find(segment => segment.key === 'wait')!)).toBe(3)
+    expect(
+      segmentWidth(segments!.find((segment) => segment.key === 'wait')!)
+    ).toBe(3)
   })
 
   it('keeps trailing time as finalization instead of generation', () => {
