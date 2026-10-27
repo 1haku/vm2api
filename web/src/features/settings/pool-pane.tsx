@@ -580,7 +580,7 @@ export function PoolPane({
           icon={Armchair}
           title='席位容量'
           value={`${seatCap} 席 / VM`}
-          desc={`粘性占用到 TTL · 预算预留 ${reservePct}%`}
+          desc={`对话结束即释放 · 预算预留 ${reservePct}%`}
           pending={pending}
           disabled={saving}
           buttonRef={(node) => {

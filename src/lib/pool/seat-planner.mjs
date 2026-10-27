@@ -82,7 +82,7 @@ export class SeatPlanner {
     strategy = 'balanced',
     /** Read at use time: the scheduler owns `sticky_wait_timeout_ms` and hot-reloads it. */
     stickyWaitMs = () => 45_000,
-    /** Sticky bind TTL. Idle seats free when this elapses with no new request. */
+    /** Sticky VM-memory TTL. It does not keep an idle dialog's session slot. */
     stickyTtlMs = () => 86_400_000,
     onChange = null,
   } = {}) {
@@ -185,9 +185,10 @@ export class SeatPlanner {
     return seat
   }
   /**
-   * Put a persisted session back on its slot without treating it as a new
-   * open. `index` is kept when that cell is free; `heldUntil` is the sticky
-   * expiry already stored, not a fresh TTL.
+   * Put a persisted in-flight session back on its slot without treating it
+   * as a new open. `index` is kept when that cell is free. `heldUntil` is
+   * only a restart race: the dialog already ended, so the slot frees unless
+   * that session queues again before the timer. It is not sticky TTL.
    */
   restore(seatKey, { vmId, accountId = null, index = null, heldUntil = null, cap = 0 } = {}) {
     const key = String(seatKey || '')
@@ -232,37 +233,53 @@ export class SeatPlanner {
   }
 
   /**
-   * One request of this seat finished. The last one keeps the slot until
-   * sticky TTL. A session that still has a ticket queued on this VM keeps
-   * the seat; the TTL clock starts again once that queue has drained.
+   * One request of this seat finished. The last one frees the slot unless
+   * another request of this session is already waiting. Sticky VM memory
+   * stays in the router until its own TTL.
    */
   release(seat) {
     if (!seat) return
+    const followUp = this.followUpWaiting(seat)
     seat.inflight = Math.max(0, seat.inflight - 1)
     if (!seat.live) {
       this.pump(seat.vmId)
       return
     }
-    if (seat.inflight === 0) this.armHold(seat)
+    if (seat.inflight === 0 && !followUp) this.finishDialog(seat)
     this.pump(seat.vmId)
   }
 
-  /** Tickets queued on this seat's VM. Global waiters do not keep the seat. */
-  queuedOn(seat) {
-    return (this.vmQueues.get(seat.vmId) || []).some((ticket) => ticket.seatKey === seat.seatKey)
+  /** A later request is queued, or already granted and not yet taken by its caller. */
+  followUpWaiting(seat) {
+    const mine = (ticket) => ticket.seatKey === seat.seatKey
+    for (const queue of this.vmQueues.values()) {
+      if (queue.some(mine)) return true
+    }
+    if (this.globalQueue.some(mine)) return true
+    for (const ticket of this.granted || []) {
+      if (mine(ticket)) return true
+    }
+    return false
+  }
+
+  noteGranted(ticket) {
+    if (!this.granted) this.granted = new Set()
+    this.granted.add(ticket)
+  }
+
+  forgetGranted(ticket) {
+    this.granted?.delete(ticket)
   }
 
   /**
-   * Keep the slot until sticky TTL. A restored seat already carries its
-   * stored expiry; that deadline is kept instead of starting a new TTL.
-   * Failover calls `free` and never comes here.
+   * Dialog ended. A follow-up already waiting keeps the slot; otherwise the
+   * slot is free now. `heldUntil` is a restart handoff only.
    */
-  armHold(seat) {
+  finishDialog(seat) {
     if (!seat?.live || seat.inflight !== 0 || seat.timer) return
-    if (this.queuedOn(seat)) return
+    if (this.followUpWaiting(seat)) return
     const stored = Number(seat.heldUntil)
-    const ttl = Number(this.stickyTtlMs?.() ?? this.stickyTtlMs) || 0
-    const until = stored > Date.now() ? stored : Date.now() + ttl
+    const until = stored > Date.now() ? stored : 0
     const wait = until - Date.now()
     if (!(wait > 0)) {
       this.free(seat)
@@ -273,7 +290,7 @@ export class SeatPlanner {
     seat.timer = setTimeout(() => {
       seat.timer = null
       if (!seat.live || seat.inflight !== 0) return
-      if (this.queuedOn(seat)) {
+      if (this.followUpWaiting(seat)) {
         seat.heldUntil = null
         seat.graceUntil = null
         this.changed()
@@ -285,9 +302,14 @@ export class SeatPlanner {
     this.changed()
   }
 
-  /** @deprecated alias of armHold; grace no longer frees a live session seat. */
+  /** @deprecated restart handoff only; a finished dialog does not keep its slot. */
+  armHold(seat) {
+    this.finishDialog(seat)
+  }
+
+  /** @deprecated alias of finishDialog. */
   armGrace(seat) {
-    this.armHold(seat)
+    this.finishDialog(seat)
   }
 
   /** Drop the seat now. Requests still running on it finish; their release only counts down. */
@@ -441,6 +463,7 @@ export class SeatPlanner {
     }
     if (!granted) return false
     if (ticket.queued) this.unlink(ticket)
+    this.noteGranted(ticket)
     this.changed()
     ticket.wake?.()
     return true

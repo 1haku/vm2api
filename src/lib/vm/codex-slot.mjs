@@ -5,7 +5,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { atomicWriteJson, readJsonCached } from './vm-file.mjs'
 import { isCodexVm } from '../protocol/codex-route.mjs'
-import { buildCodexUsageView, extraToCodexSnapshot, hasSpendableCodexCredits } from '../protocol/codex-usage.mjs'
+import {
+  buildCodexUsageView,
+  codexQuotaPark,
+  extraToCodexSnapshot,
+  hasSpendableCodexCredits,
+} from '../protocol/codex-usage.mjs'
 import { observeCodexWeekly } from '../protocol/codex-weekly-reset.mjs'
 import { openaiClaimsFromIdToken, openaiIdentityFromOauthTokens } from '../oauth/openai-jwt.mjs'
 
@@ -300,6 +305,17 @@ export function upsertCodexAccount(projectRoot, vmId, patch = {}, { replaceCrede
   return cur
 }
 
+/** Drop stale manual parks when window caps no longer apply; same contract as persistCodexUsage. */
+function reconcileCodexLimitedUntil(vm, now = Date.now()) {
+  if (!vm.codex?.extra || typeof vm.codex.extra !== 'object') return
+  const parked = codexQuotaPark({ ...vm.codex.extra, codex_limited_until: null }, now, {
+    waiveWindowCaps: hasSpendableCodexCredits(vm, now),
+  })
+  vm.codex.extra = { ...vm.codex.extra }
+  if (parked.limited) vm.codex.extra.codex_limited_until = new Date(parked.until).toISOString()
+  else delete vm.codex.extra.codex_limited_until
+}
+
 export function persistCodexQuotaSnapshot(
   projectRoot,
   vmId,
@@ -323,13 +339,12 @@ export function persistCodexQuotaSnapshot(
     vm.codex.extra = { ...(vm.codex.extra || {}), ...extra }
     vm.codex.usage = buildCodexUsageView(extraToCodexSnapshot(vm.codex.extra))
   }
-  if (credits) {
-    vm.codex.credits = credits
-    // A fresh read that credits are spendable supersedes an older park; the next 429 parks again.
-    if (hasSpendableCodexCredits(vm) && vm.codex.extra?.codex_limited_until) {
-      vm.codex.extra = { ...vm.codex.extra }
-      delete vm.codex.extra.codex_limited_until
-    }
+  if (credits) vm.codex.credits = credits
+  if (extra && typeof extra === 'object') {
+    reconcileCodexLimitedUntil(vm)
+  } else if (credits && hasSpendableCodexCredits(vm) && vm.codex.extra?.codex_limited_until) {
+    vm.codex.extra = { ...vm.codex.extra }
+    delete vm.codex.extra.codex_limited_until
   }
   const plan = String(planType || '').trim()
   if (plan) vm.codex.plan_type = plan

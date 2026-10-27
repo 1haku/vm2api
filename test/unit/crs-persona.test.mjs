@@ -108,7 +108,7 @@ test('forceConfigured rewrites official system while retaining its nonofficial i
   const before = structuredClone(body)
   const out = currentPersona(body, { forceConfigured: true })
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(out.system[2].text.startsWith('\nYou are an agent working with the user'))
   assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.ok(firstUserContent(out).includes(OMP_ROLE))
@@ -146,7 +146,7 @@ test('empty unofficial system gets harness with guidance and standing disabled b
   assert.equal(out.system.length, 4)
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
   assert.equal(out.system[0].cache_control, undefined)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(out.system[2].text.startsWith('\nYou are an agent working with the user'))
   assert.equal(out.system[3].text, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
   assert.equal(firstUserContent(out), 'ping')
@@ -484,10 +484,16 @@ test('one routing read keeps billing, system identity and env on the same entryp
     const cli = render('cli')
     assert.match(cli.system[0].text, /cc_entrypoint=cli;/)
     assert.equal(cli.system[1].text, "You are Claude Code, Anthropic's official CLI for Claude.")
-    assert.match(cli.system.map((block) => block.text).join('\n'), /! <command>/)
+    assert.equal(
+      cli.system
+        .map((block) => block.text)
+        .join('\n')
+        .includes('! <command>'),
+      true,
+    )
     const sdk = render('sdk-cli')
     assert.match(sdk.system[0].text, /cc_entrypoint=sdk-cli;/)
-    assert.equal(sdk.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
+    assert.equal(sdk.system[1].text, "You are Claude Code, Anthropic's official CLI for Claude.")
     assert.doesNotMatch(sdk.system.map((block) => block.text).join('\n'), /! <command>/)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -741,7 +747,7 @@ test('official preset keeps billing and harness with an explicit reminder overla
     { preset: 'official', compat: { overlay_preset: 'official' } },
   )
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.ok(!out.system.some((b) => b.text.includes(DEFAULT_AGENT_STANDING)))
   assertParkedStanding(out, 'hello official prompt')
@@ -817,7 +823,7 @@ test('official_full keeps pi and omp instructions in the first-user reminder', (
     messages: [{ role: 'user', content: 'fix the failing test' }],
   }
   const out = currentPersona(body)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(out.system[2].text.startsWith('\nYou are an agent working with the user'))
   assert.equal(firstUserContent(out).split('Oh My Pi coding harness').length - 1, 1)
   assert.match(firstUserContent(out), /<workstation>/)
@@ -1298,7 +1304,7 @@ test('zero inject emits only SDK billing and leaves user messages unchanged', ()
   )
   assert.equal(out.system.length, 1)
   assert.match(out.system[0].text, /^x-anthropic-billing-header:/)
-  assert.match(out.system[0].text, /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+  assert.match(out.system[0].text, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
   assert.equal(out.system[0].cache_control, undefined)
   assert.deepEqual(out.messages, messages)
 })

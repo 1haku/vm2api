@@ -23,6 +23,7 @@ import {
 import { vmTotalCost, vmTotalTokens } from '@/lib/vm-usage'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
+import { ActiveVmBadge } from '@/features/vm/active-vm-badge'
 import { runtimeTypeLabel, runtimeTypeOf } from '@/features/vm/machine-spec'
 import {
   SchedulableSwitch,
@@ -33,7 +34,6 @@ import {
   VmQuotaActions,
   VmUsageWindows,
 } from '@/features/vm/usage-windows'
-import { ActiveVmBadge } from '@/features/vm/active-vm-badge'
 import { VmActionMenu } from '@/features/vm/vm-action-menu'
 import { useVmActions } from '@/features/vm/vm-actions-context'
 import { useVmPerms } from '@/features/vm/vm-perms'
@@ -127,7 +127,7 @@ export function BladeControls({
 
 /**
  * 席位容量：一条按「已用 / 设置上限」缩放的定宽条。
- * 已用含粘性占用：请求结束后槽位仍留给原 session，直到粘性 TTL。
+ * 已用只含正在跑的请求，以及已排在这台 VM 上的后续请求。对话结束即释放。
  * 悬浮列出实际占着槽的 session。上限可设到 20，容量条宽度与上限无关。
  */
 export function VmSeats({

@@ -160,7 +160,7 @@ test('zero inject hides only generated billing and does not inject standing or e
   const hide = personaHideInputTokens(before, after)
   const billing = String(after.system[0].text || '')
   assert.ok(billing.startsWith('x-anthropic-billing-header:'))
-  assert.match(billing, /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+  assert.match(billing, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
   assert.equal(after.system.length, 1)
   assert.deepEqual(after.messages, before.messages)
   assert.equal(hide.overlay || 0, 0)

@@ -36,7 +36,7 @@ function userText(body) {
 function assertOfficial(body, { caller = '' } = {}) {
   const blocks = texts(body)
   assert.match(blocks[0], /^x-anthropic-billing-header: /)
-  assert.equal(blocks[1], CRS_OFFICIAL_SYSTEM)
+  assert.equal(blocks[1], CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(blocks[2].startsWith('\nYou are an agent working with the user'))
   assert.equal(blocks[3], '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
   assert.equal(blocks.length, 4)
@@ -47,7 +47,7 @@ function assertOfficial(body, { caller = '' } = {}) {
 function assertZero(body, { caller = '' } = {}) {
   const blocks = texts(body)
   assert.match(blocks[0], /x-anthropic-billing-header:/)
-  assert.match(blocks[0], /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+  assert.match(blocks[0], /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
   assert.equal(blocks.length, 1)
   assert.ok(!blocks.some((text) => text.includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 48))))
   if (caller) assert.ok(!blocks.some((text) => text.includes(caller)))

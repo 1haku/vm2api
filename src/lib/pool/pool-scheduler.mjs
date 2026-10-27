@@ -411,12 +411,11 @@ export class PoolScheduler extends EventEmitter {
   }
 
   /**
-   * The seat book is memory. Sticky rows survive a restart, so a new process
-   * must occupy those slots again before any new session can take them.
-   * Only canonical `sess:` rows that actually held a slot (`slot_index` set)
-   * count. Seatless probes keep a sticky pin with a null slot and must not
-   * become a seat here. Device affinity and family pins do not either.
-   * The owner scope is the VM's owner, matching scopedSeatKey.
+   * The seat book is live capacity. A sticky row remembers the VM until its
+   * TTL, but an ended dialog must not occupy a session slot after restart.
+   * Only a canonical `sess:` row whose slot handoff (`held_until`) is still in
+   * the future is restored, and that hold frees unless the session queues
+   * again. Device affinity and family pins never become seats.
    */
   restoreStickySeats(now = Date.now()) {
     const rows = this.stickyRouter?.repo?.all?.()
@@ -427,7 +426,8 @@ export class PoolScheduler extends EventEmitter {
       const sessionId = parsed?.sessionId
       if (!sessionId || !ent?.vm_id || !ent?.account_id) continue
       if (ent.slot_index == null || !Number.isInteger(Number(ent.slot_index))) continue
-      if (!ent.expires_at || now >= Number(ent.expires_at)) continue
+      const heldUntil = Number(ent.held_until)
+      if (!Number.isFinite(heldUntil) || now >= heldUntil) continue
       let vm = null
       try {
         vm = this.projectRoot ? getVm(this.projectRoot, ent.vm_id) : null
@@ -443,7 +443,7 @@ export class PoolScheduler extends EventEmitter {
         vmId: ent.vm_id,
         accountId: ent.account_id,
         index: Number(ent.slot_index),
-        heldUntil: Number(ent.expires_at),
+        heldUntil,
         cap: vm ? seatCapOf(vm, this.config.default_session_slots) : 0,
       })
       if (seat) restored += 1
@@ -455,8 +455,10 @@ export class PoolScheduler extends EventEmitter {
    * `seatKey` is the client-session seat identity (resolveSeatIdentity).
    * Requests with one go through the seat planner; pinned diagnostics,
    * seatless probes and keyless callers keep the direct pick-and-wait path.
-   * A granted seat stays on its VM until sticky TTL, or until the home is
-   * unschedulable / an error frees it. Request end does not free the slot.
+   * A granted seat occupies its slot only while this dialog has a request in
+   * flight or queued on the VM. Request end frees the slot. Sticky VM memory
+   * stays until sticky TTL, or until the home is unschedulable / an error
+   * clears it.
    */
   async selectAndReserve(args = {}) {
     const pinned = !!String(args.pinVmId || '').trim()
@@ -720,13 +722,14 @@ export class PoolScheduler extends EventEmitter {
           }
         }
         // A surviving seat fixes this turn's VM; family affinity cannot move
-        // it, so releasing its outbound session here would only remint it.
+        // it. An ended dialog has no seat, and its sticky VM memory stays
+        // until TTL even when the family home is a different VM.
         const sticky = this.reconcileSticky({
           stickyKey,
           stickyKeys,
           eligible: candidates,
           spilled,
-          familyVmId: familyGated || seat ? null : familyVm,
+          familyVmId: null,
         })
         if (sticky.cleared) stickyCleared = true
         if (seat) {
@@ -810,6 +813,7 @@ export class PoolScheduler extends EventEmitter {
         if (after >= ticket.deadline) return fail('pool_queue_timeout')
       }
     } finally {
+      this.planner.forgetGranted(ticket)
       this.planner.remove(ticket)
       // Granted while the caller went away: hand the seat and the slot back.
       if (ticket?.granted && !consumed) ticket.granted.reservation.release()

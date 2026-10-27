@@ -116,7 +116,7 @@ test('settings hot-read legacy modes and current official/zero behavior without 
       }
       if (mode === 'official_prompt') {
         assert.equal(out.system.length, 4)
-        assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+        assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
         assert.ok(out.system[2].text.startsWith('\nYou are an agent working with the user'))
         assert.match(firstUser(out), /MANDATORY constraints/)
       }
@@ -126,7 +126,7 @@ test('settings hot-read legacy modes and current official/zero behavior without 
       }
       if (mode === 'zero') {
         assert.equal(out.system.length, 1)
-        assert.match(out.system[0].text, /prompt_version=<You are a Claude agent/)
+        assert.match(out.system[0].text, /prompt_version=<You are Claude Code/)
         assert.equal(firstUser(out), UNOFFICIAL.messages[0].content)
       }
       if (mode === 'none') {

@@ -31,6 +31,7 @@ import {
   CRS_OFFICIAL_AGENT_PROMPT,
   CRS_OFFICIAL_AGENT_PROMPT_303,
   CRS_OFFICIAL_SYSTEM,
+  CRS_OFFICIAL_CLI_SYSTEM,
   CRS_STANDING_CONSTRAINT,
   DEFAULT_CLI_VERSION,
   applyCrsUnofficialPersona,
@@ -186,7 +187,8 @@ test('agent standing preset flags default off and isolate per preset', () => {
 
 test('zero prompt_version uses the interactive CLI identity', () => {
   const billing = buildZeroBillingText('ping', '2.1.241', 's-2')
-  assert.ok(billing.includes(`prompt_version=<${CRS_OFFICIAL_SYSTEM}>`))
+  assert.ok(billing.includes(`prompt_version=<${CRS_OFFICIAL_CLI_SYSTEM}>`))
+  assert.ok(!billing.includes(CRS_OFFICIAL_SYSTEM))
   assert.ok(!billing.includes(CRS_COMPACT_IDENTITY))
 })
 
@@ -354,7 +356,7 @@ test('zero preset ignores a stored overlay_preset and never parks', () => {
     assert.equal(out.messages, messages)
     assert.ok(!firstUserText(out).includes('MANDATORY'))
     assert.equal(out.system.length, 1)
-    assert.match(out.system[0].text, /prompt_version=<You are a Claude agent, built on Anthropic's Claude Agent SDK\.>/)
+    assert.match(out.system[0].text, /prompt_version=<You are Claude Code, Anthropic's official CLI for Claude\.>/)
     assert.equal(
       out.system.some((block) => block.text === '\u200b'),
       false,
@@ -388,7 +390,7 @@ test('official_full routing preset uses 303 guidance without changing official',
     (file) => {
       const out = applyCrsUnofficialPersona({ messages: [{ role: 'user', content: 'hello' }] }, { routingFile: file })
       assert.equal(out.system.length, 5)
-      assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+      assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
       assert.equal(out.system[2].text, OFFICIAL_303_HARNESS)
       assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
       assert.equal(out.system[4].text, renderOfficial303Guidance())
@@ -418,7 +420,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
           `${preset} keeps billing`,
         )
         assert.equal(
-          strippedTexts.filter((text) => text === CRS_OFFICIAL_SYSTEM).length,
+          strippedTexts.filter((text) => text === CRS_OFFICIAL_CLI_SYSTEM).length,
           1,
           `${preset} keeps the identity`,
         )
@@ -434,7 +436,7 @@ test('cli-hop strip then rewrites official and official_full from the configured
           preset,
         )
         assert.ok(
-          texts.some((text) => text === CRS_OFFICIAL_SYSTEM),
+          texts.some((text) => text === CRS_OFFICIAL_CLI_SYSTEM),
           preset,
         )
         assert.ok(
@@ -557,7 +559,7 @@ test('custom template drives the outbound system verbatim', () => {
         { routingFile: file, identity: { timezone: 'Asia/Tokyo' } },
       )
       assert.equal(out.system.length, 1)
-      assert.equal(out.system[0].text, `You are ${CRS_OFFICIAL_SYSTEM} at Asia/Tokyo`)
+      assert.equal(out.system[0].text, `You are ${CRS_OFFICIAL_CLI_SYSTEM} at Asia/Tokyo`)
     },
   )
 })
@@ -719,7 +721,7 @@ test('template edits are hot-read without a restart', () => {
       },
       { routingFile: file },
     )
-    assert.equal(before.system[1].text, CRS_OFFICIAL_SYSTEM)
+    assert.equal(before.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
     write({ persona_preset: 'zero', overlay_preset: 'off' })
     const after = applyCrsUnofficialPersona(
       {

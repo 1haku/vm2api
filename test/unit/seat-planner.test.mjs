@@ -169,12 +169,11 @@ test('shared subscription seats isolate users and plans without splitting keys i
     assert.equal(pool.planner.openCount('vm-01'), 2, 'another plan must not free existing seats')
     assert.equal(pool.planner.openCount('vm-02'), 1)
     held[2].release()
-    assert.equal(pool.planner.openCount('vm-01'), 2, 'request end retains both session seats until sticky TTL')
+    assert.equal(pool.planner.openCount('vm-01'), 1, 'Bob request end releases only Bob seat')
     const aliceSeat = pool.planner.seatOf('subscription:["alice",3]|seat:sess:same-device')
     const bobSeat = pool.planner.seatOf('subscription:["bob",3]|seat:sess:same-device')
     assert.equal(aliceSeat.inflight, 2, 'Bob cannot release Alice requests')
-    assert.equal(bobSeat.inflight, 0)
-    pool.planner.free(bobSeat)
+    assert.ok(!bobSeat)
     assert.equal(pool.planner.openCount('vm-01'), 1, 'expiring Bob cannot free Alice seat')
   } finally {
     for (const hold of held) hold.release?.()
@@ -219,35 +218,28 @@ test('seat cap comes from the VM override, else inference.session_slots, clamped
   assert.equal(clamped.find((c) => c.vmId === 'vm-02').seatCap, 20)
 })
 
-test('after the request ends the session keeps the slot until sticky TTL; another session cannot take it', async (t) => {
+test('after the request ends the session frees the slot; sticky TTL does not keep it', async (t) => {
   const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }], { seat_grace_ms: 0 })
-  pool.planner.stickyTtlMs = () => 200
+  pool.planner.stickyTtlMs = () => 86_400_000
   const owner = await seat(pool, '01a17519-60b0-7218-9d67-d31c47ceedbc')
   assert.equal(owner.ok, true)
   assert.equal(owner.vmId, 'vm-01')
   owner.release()
-  const snap = pool.seatSnapshot().seats['vm-01']
-  assert.equal(snap.seats_used, 1)
-  assert.equal(snap.seats_grace, 1)
-  assert.equal(snap.sessions[0].session_id, '01a17519-60b0-7218-9d67-d31c47ceedbc')
-  assert.equal(snap.sessions[0].state, 'held')
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  assert.equal(pool.seatSnapshot().seats['vm-01'], undefined)
   const again = await seat(pool, '01a17519-60b0-7218-9d67-d31c47ceedbc', { allowWait: false })
   assert.equal(again.ok, true)
   assert.equal(again.vmId, 'vm-01')
-  assert.equal(again.selectionReason, 'seat-held')
   again.release()
   const other = await seat(pool, 'other-session', { allowWait: false })
-  assert.equal(other.ok, false)
+  assert.equal(other.ok, true)
+  assert.equal(other.vmId, 'vm-01')
   assert.equal(pool.planner.openCount('vm-01'), 1)
-  await new Promise((resolve) => setTimeout(resolve, 230))
-  const later = await seat(pool, 'other-session', { allowWait: false })
-  assert.equal(later.ok, true)
-  assert.equal(later.vmId, 'vm-01')
-  later.release()
-  pool.planner.free(pool.planner.seatOf(planned('other-session')))
+  other.release()
+  assert.equal(pool.planner.openCount('vm-01'), 0)
 })
 
-test('a restarted scheduler restores unexpired session seats, so another session still cannot take the VM', async (t) => {
+test('a restarted scheduler does not restore an ended session seat from sticky VM memory', async (t) => {
   const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 1 } }])
   const sessionA = '01a17519-60b0-7218-9d67-d31c47ceedbc'
   const held = await seat(pool, sessionA)
@@ -270,29 +262,37 @@ test('a restarted scheduler restores unexpired session seats, so another session
     runtimeRepo: new RuntimeRepo(),
     accountQuota: { canAccept: () => ({ ok: true }) },
     workerHealth: async () => ({ ok: true, credential: { generation: 1, has_access: true } }),
-    stickyRouter: { config: { ttl_seconds: 86400 }, repo: { all: () => rows } },
+    stickyRouter: {
+      config: { ttl_seconds: 86400 },
+      repo: { all: () => rows },
+      resolve: (key) => {
+        const ent = rows[key]
+        if (!ent || Date.now() > ent.expires_at) return null
+        return { accountId: ent.account_id, vmId: ent.vm_id }
+      },
+    },
     config: { seat_grace_ms: 0 },
   })
-  t.after(() => restarted.planner.free(restarted.planner.seatOf(planned(sessionA))))
-  const snap = restarted.seatSnapshot().seats['vm-01']
-  assert.equal(snap.seats_used, 1)
-  assert.equal(snap.sessions.length, 1)
-  assert.equal(snap.sessions[0].session_id, sessionA)
-  assert.equal(snap.sessions[0].state, 'held')
-  assert.equal(snap.sessions[0].index, held.slotIndex)
-  assert.equal(snap.sessions[0].held_until, expiresAt)
-  const again = await restarted.selectAndReserve({ model: MODEL, seatKey: `seat:sess:${sessionA}`, allowWait: false })
+  assert.equal(restarted.planner.openCount('vm-01'), 0)
+  assert.equal(restarted.seatSnapshot().seats['vm-01'], undefined)
+  const other = await restarted.selectAndReserve({ model: MODEL, seatKey: 'seat:sess:other-session', allowWait: false })
+  assert.equal(other.ok, true)
+  assert.equal(other.vmId, 'vm-01')
+  other.release()
+  const again = await restarted.selectAndReserve({
+    model: MODEL,
+    seatKey: `seat:sess:${sessionA}`,
+    stickyKey: `sess:${sessionA}`,
+    allowWait: false,
+  })
   assert.equal(again.ok, true)
   assert.equal(again.vmId, 'vm-01')
-  assert.equal(again.selectionReason, 'seat-held')
+  assert.equal(again.selectionReason, 'sticky')
   again.release()
-  const other = await restarted.selectAndReserve({ model: MODEL, seatKey: 'seat:sess:other-session', allowWait: false })
-  assert.equal(other.ok, false)
-  assert.equal(restarted.planner.openCount('vm-01'), 1)
-  assert.equal(restarted.seatSnapshot().seats['vm-01'].sessions[0].session_id, sessionA)
+  assert.equal(restarted.planner.openCount('vm-01'), 0)
 })
 
-test('subscription seats restore per user and plan after restart and reuse the same key-independent session', async (t) => {
+test('subscription handoff seats restore per user and plan but release after each dialog ends', async (t) => {
   const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 3 } }])
   const rows = {}
   const scopes = [
@@ -309,6 +309,7 @@ test('subscription seats restore per user and plan after restart and reuse the s
       account_id: 'account-1',
       slot_index: index,
       expires_at: Date.now() + 60_000,
+      held_until: Date.now() + 60_000,
     }
   }
   // Ambiguous old shared-slot rows must not become platform or guessed-plan seats.
@@ -317,6 +318,7 @@ test('subscription seats restore per user and plan after restart and reuse the s
     account_id: 'account-1',
     slot_index: 3,
     expires_at: Date.now() + 60_000,
+    held_until: Date.now() + 60_000,
   }
   const restarted = new PoolScheduler({
     projectRoot: pool.projectRoot,
@@ -326,7 +328,7 @@ test('subscription seats restore per user and plan after restart and reuse the s
     stickyRouter: { config: { ttl_seconds: 86400 }, repo: { all: () => rows } },
   })
   assert.equal(restarted.planner.openCount('vm-01'), 3)
-  for (const [user, groupId] of scopes) {
+  for (const [index, [user, groupId]] of scopes.entries()) {
     const key = `subscription:${JSON.stringify([user, groupId])}|seat:sess:shared-client-session`
     t.after(() => restarted.planner.free(restarted.planner.seatOf(key)))
     const held = await seat(restarted, 'shared-client-session', {
@@ -336,7 +338,7 @@ test('subscription seats restore per user and plan after restart and reuse the s
     assert.equal(held.ok, true)
     assert.equal(held.selectionReason, 'seat-held')
     held.release()
-    assert.equal(restarted.planner.openCount('vm-01'), 3)
+    assert.equal(restarted.planner.openCount('vm-01'), 2 - index)
   }
 })
 
@@ -389,7 +391,6 @@ test('a machine keeps one VM; its next session takes a free slot there and a for
   assert.equal(first.ok, true)
   assert.equal(first.vmId, 'vm-01')
   assert.equal(first.selectionReason, 'device-affinity')
-  first.release()
   const sibling = await seat(pool, 'sess-b', { deviceVmId: 'vm-01' })
   assert.equal(sibling.ok, true)
   assert.equal(sibling.vmId, 'vm-01')
@@ -410,11 +411,12 @@ test('a machine keeps one VM; its next session takes a free slot there and a for
   assert.equal(got.ok, true)
   assert.equal(got.vmId, 'vm-02')
   assert.notEqual(got.selectionReason, 'device-affinity')
+  first.release()
   sibling.release()
   foreign.release()
   got.release()
-
-  for (const id of ['sess-a', 'sess-b', 'sess-other', 'sess-c']) pool.planner.free(pool.planner.seatOf(planned(id)))
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  assert.equal(pool.planner.openCount('vm-02'), 0)
 })
 
 test('two first sessions of one machine claim the same VM before sticky affinity is written', async (t) => {
@@ -458,7 +460,7 @@ test('two first sessions of one machine claim the same VM before sticky affinity
   const [a, b] = await Promise.all([run('sess-a'), run('sess-b')])
   assert.equal(a.ok && b.ok, true)
   assert.equal(a.vmId, b.vmId)
-  assert.equal(pool.planner.openCount(a.vmId), 2)
+  assert.equal(pool.planner.openCount(a.vmId), 0)
   assert.equal(pool.planner.openCount(a.vmId === 'vm-01' ? 'vm-02' : 'vm-01'), 0)
   assert.equal(sticky.resolve(deviceKey)?.vmId, a.vmId)
 })
@@ -640,17 +642,18 @@ test('failover off a VM frees the old seat at once and opens one on the new VM',
     { seat_grace_ms: 30000 },
   )
   const first = await seat(pool, 'dev')
+  const home = first.vmId
   first.release()
-  assert.equal(pool.planner.openCount(first.vmId), 1)
-  const other = first.vmId === 'vm-01' ? 'vm-02' : 'vm-01'
+  assert.equal(pool.planner.openCount(home), 0)
+  const other = home === 'vm-01' ? 'vm-02' : 'vm-01'
   const moved = await seat(pool, 'dev', { excluded: new Set([first.accountId]), allowWait: false })
   assert.equal(moved.ok, true)
   assert.equal(moved.vmId, other)
-  assert.equal(moved.seatMoved, true)
-  assert.equal(pool.planner.openCount(first.vmId), 0)
+  assert.equal(moved.seatMoved, false)
+  assert.equal(pool.planner.openCount(home), 0)
   assert.equal(pool.planner.seatOf(planned('dev')).vmId, other)
   moved.release()
-  pool.planner.free(pool.planner.seatOf(planned('dev')))
+  assert.equal(pool.planner.openCount(other), 0)
 })
 
 test('a rehomed concurrency wait starts at the move and stays on that VM', async (t) => {
@@ -692,44 +695,36 @@ test('a rehomed concurrency wait starts at the move and stays on that VM', async
   pool.planner.free(pool.planner.seatOf(planned('c')))
 })
 
-test('sticky hold keeps the seat while that session still queues on the VM', async (t) => {
+test('a follow-up already queued on the VM keeps the slot after the current request ends', async (t) => {
   const pool = setup(t, [{ id: 'vm-01', policy: { sessionSlots: 2, maxConcurrency: 1 } }], {
     sticky: 5000,
     fallback: 5000,
   })
-  pool.planner.stickyTtlMs = () => 80
   const heldA = await seat(pool, 'a')
-  heldA.release()
   const heldB = await seat(pool, 'b')
   const waitingC = seat(pool, 'c')
   await waitFor(() => pool.planner.globalQueue.length === 1)
   const againA = seat(pool, 'a')
   await waitFor(() => (pool.planner.vmQueues.get('vm-01') || []).some((ticket) => ticket.seatKey === planned('a')))
-  await waitFor(() => {
-    const owned = pool.planner.seatOf(planned('a'))
-    return !!owned && owned.inflight === 0 && owned.heldUntil == null
-  })
-  assert.equal(pool.planner.openCount('vm-01'), 2)
-  assert.deepEqual(
-    pool.planner.globalQueue.map((ticket) => ticket.seatKey),
-    [planned('c')],
-  )
-  heldB.release()
+  heldA.release()
   const gotA = await againA
   assert.equal(gotA.ok, true)
   assert.equal(gotA.vmId, 'vm-01')
   assert.equal(gotA.selectionReason, 'queued')
+  assert.equal(pool.planner.seatOf(planned('a'))?.live, true)
   assert.deepEqual(
     pool.planner.globalQueue.map((ticket) => ticket.seatKey),
     [planned('c')],
   )
+  // B's request ended while A was waiting for concurrency, so its slot is already gone.
+  assert.equal(heldB.ok, false)
   gotA.release()
+  assert.equal(pool.planner.seatOf(planned('a')), null)
   const gotC = await waitingC
   assert.equal(gotC.ok, true)
   assert.equal(gotC.vmId, 'vm-01')
   gotC.release()
-  pool.planner.free(pool.planner.seatOf(planned('a')))
-  pool.planner.free(pool.planner.seatOf(planned('c')))
+  assert.equal(pool.planner.openCount('vm-01'), 0)
 })
 
 test('a sticky seat wait leaves a home VM that stopped being eligible', async (t) => {
@@ -841,14 +836,16 @@ test('near the gate a seated device waits on its home, one call at a time, and n
   const got = await second
   assert.equal(got.ok, true)
   assert.equal(got.vmId, 'vm-01')
-  assert.equal(got.seatMoved, false)
-  // Past the line but inside the overshoot, the seated device still runs here.
   got.release()
+  assert.equal(pool.planner.openCount('vm-01'), 0)
+  // The dialog ended, so the next turn opens a seat again. Inside the overshoot
+  // the old home is draining and an open VM is preferred.
   setUtil5h(quota, first.accountId, 0.83)
-  const third = await seat(pool, 'dev', { allowWait: false })
-  assert.equal(third.vmId, 'vm-01')
+  const third = await seat(pool, 'dev', { deviceVmId: 'vm-01', allowWait: false })
+  assert.equal(third.vmId, 'vm-02')
   assert.equal(third.seatMoved, false)
   third.release()
+  assert.equal(pool.planner.openCount('vm-02'), 0)
 })
 
 test('at line plus overshoot a seated device leaves and its old seat frees at once', async (t) => {
@@ -862,9 +859,10 @@ test('at line plus overshoot a seated device leaves and its old seat frees at on
   const moved = await seat(pool, 'dev', { allowWait: false })
   assert.equal(moved.ok, true)
   assert.equal(moved.vmId, 'vm-02')
-  assert.equal(moved.seatMoved, true)
+  assert.equal(moved.seatMoved, false)
   assert.equal(pool.planner.openCount('vm-01'), 0)
   moved.release()
+  assert.equal(pool.planner.openCount('vm-02'), 0)
 })
 
 test('a new device takes an open VM before a draining one, and a draining one when nothing else is open', async (t) => {

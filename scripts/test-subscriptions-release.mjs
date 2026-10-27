@@ -2,6 +2,10 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'codex-slot-reload',
+  'fleet-services',
+  'panel-upgrade-script',
+  'slot-restart-policy',
   'schedule-state',
   'schedule-state-registry',
   'window-history',

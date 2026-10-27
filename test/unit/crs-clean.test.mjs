@@ -237,7 +237,7 @@ test('OpenAI chat unofficial rewrite preserves the caller in a first-user remind
   assert.deepEqual(claude.stop_sequences, ['END'])
   const cleaned = applyCrsUnofficialPersona(claude, { officialClient: false })
   assert.equal(cleaned.system.length, 4)
-  assert.equal(cleaned.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(cleaned.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(JSON.stringify(cleaned.messages[0].content).includes('you are a linter'))
   assert.ok(!cleaned.system.some((b) => b.text.includes('you are a linter')))
   assert.ok(JSON.stringify(cleaned.messages[0].content).includes('hi'))
@@ -246,7 +246,7 @@ test('OpenAI chat unofficial rewrite preserves the caller in a first-user remind
 test('empty unofficial system without tools still writes official 4 blocks', () => {
   const out = applyCrsUnofficialPersona({ messages: [] }, { officialClient: false })
   assert.equal(out.system.length, 4)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.equal(out.messages.length, 0)
 })
 
@@ -264,7 +264,7 @@ test('Xcode unofficial system is preserved in a first-user reminder', () => {
   }
   const out = applyCrsUnofficialPersona(body, { officialClient: false })
   assert.equal(out.system.length, 4)
-  assert.equal(out.system[1].text, CRS_OFFICIAL_SYSTEM)
+  assert.equal(out.system[1].text, CRS_OFFICIAL_CLI_SYSTEM)
   assert.ok(String(out.messages[0].content).includes('You are currently in Xcode. Help with Swift.'))
   assert.ok(!out.system.some((b) => b.text.includes('You are currently in Xcode. Help with Swift.')))
   assert.ok(String(out.messages[0].content).includes('hi'))
