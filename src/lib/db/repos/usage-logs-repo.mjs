@@ -96,6 +96,8 @@ const SUMMARY_COLUMNS = [
   'upstream_model',
   'model_mismatch',
   'first_token_ms',
+  'first_byte_ms',
+  'generation_ms',
   'stop_reason',
   'attempt_count',
   'final_state',
@@ -136,6 +138,7 @@ function toRow(rec) {
     if (c === 'ip_address') return rec.ip_address ?? rec.ip ?? null
     if (c === 'stream') return rec.stream ? 1 : 0
     if (c === 'has_tools') return rec.has_tools == null ? null : rec.has_tools ? 1 : 0
+    if (c === 'cache_creation_tokens' && rec[c] == null) return null
     if (
       c === 'input_tokens' ||
       c === 'output_tokens' ||

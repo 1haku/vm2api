@@ -367,6 +367,19 @@ Claude `routing.quota` 的 5h/7d 闸分三段（`critical_band` 默认 0.05，`g
 
 attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终态。`normal` 摘要；`debug` 另存入站原文及脱敏出站数据。`outbound_body` 仍为最后一次真正 POST 给 worker 的 envelope body，Node → worker 的头为 `worker_envelope_headers`。`outbound_headers_source=cli_final` 表示 `outbound_headers` 来自 cli-node 完成组装、CCH 和长度处理后的最终 fetch 调用边界；不包含底层补的 Host / HTTP/2 伪头，凭证及未知自定义头值已在 CLI 脱敏。每次重试覆盖，最后一次尝试未回传则 source=`unavailable`、headers=null，绝不以 envelope 代替。旧记录没有 source，原值不能视作最终值。最终 HTTP body 字节仍不在日志里。该功能需升级 Node、web 与 cli-node，旧 CLI 不支持回传。`X-Request-ID` 回写。`X-Kin-Debug` / `X-Kin-Log` 可单请求覆盖，但出站数据仅按管理员配置的 debug 采样保存。
 
+日志性能（`GET /usage-logs` 为 camelCase，`/request-logs` 与导出为 snake_case）：
+
+| 字段 | 定义 |
+|------|------|
+| `ttftMs` / `first_token_ms` | 请求入口到首个实际生成内容/进度；text、thinking、工具名称/参数均可触发，不把 `message_start`、空块或生命周期元数据当 token。 |
+| `firstByteMs` / `first_byte_ms` | 请求入口到首个上游协议事件的接收时间；独立于 TTFT。内部诊断帧不计。 |
+| `generationMs` / `generation_ms` | 首个上游协议事件到终止生成事件的实测窗口：Claude `message_delta.stop_reason`（缺失时 `message_stop`）、OpenAI `response.completed` / `response.done` / `response.incomplete`；不含随后 HTTP EOF、trailer 与收尾。 |
+| 输出速率 | `outputTokens × 1000 / generationMs`。输出 token 包含推理，窗口也包含不可见推理；不是 `output / (总耗时 − TTFT)`。 |
+| `cacheCreationInputTokens` / `cache_creation_tokens` | 上游明确报告的缓存写入量；未报告时 `null`，明确 0 保留 0。不从未缓存输入、缓存未命中或 `input − cached` 推算。 |
+
+以上是网关观测的流式时序，不是上游模型内部逐 token 的计算时间。迁移 043 之前的记录没有实测输出窗口；同一接收批次内完成、未收到生成内容/进度或流未正常终结时，速率不可测，页面不显示估算 tok/s。详情「总令牌数」=`inputTokens + outputTokens + cacheReadInputTokens + (cacheCreationInputTokens ?? 0)`，输入为不含缓存的互斥口径。OpenAI `reasoning_tokens` 已在 output 内，不能再累加。升级需同时更新 Node / web 和重新构建的 API 内核（SSE flush），无需更新 native CLI payload；历史写入 0 不自动改写为未知。
+
+
 ### 账号池
 
 | 方法 | 路径 |
