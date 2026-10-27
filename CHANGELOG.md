@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.4.021 — 2026-10-28
+
 - #795：池调度候选阶段一次联合查询复用账号与运行状态快照，健康写回与过期清理移出请求热路径；迁移 046 拆分 `queue_wait_ms` 与 `scheduling_ms`，`wait_ms` 总调度口径不变，历史行 NULL。
 
 已部署机升级：更新 Node 控制面与 `web/dist` 后重启；启动应用迁移 046。cli-node 哈希未变，不必 `fetch:payload` / `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
