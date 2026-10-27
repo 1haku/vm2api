@@ -3,7 +3,7 @@
  * Anthropic cache: 5m = 1.25× input, 1h = 2× input unless a published read/write differs.
  * OpenAI cache_5m = published cache_write (0 if none); cache_1h = cache_5m.
  */
-export const BUILTIN_SOURCE = 'builtin-2026-10-14'
+export const BUILTIN_SOURCE = 'builtin-2026-10-27'
 
 const WEB_SEARCH = 0.01
 const OPENAI_LONG = 272_000
@@ -120,6 +120,18 @@ const OPENAI = {
       long_standard: [4, 15, 0.2],
       long_flex: [2, 7.5, 0.1],
       long_fast: [8, 30, 0.4],
+    },
+  ),
+  // https://developers.openai.com/api/docs/models/gpt-6.1-terra (verified 2026-10-27).
+  // Cache-write fields retain this catalog's existing OpenAI short-retention mapping.
+  'gpt-6.1-terra': openaiFrom(
+    { input: 1, output: 5, cache_read: 0.05, cache_write: 1.25 },
+    {
+      flex: [0.5, 2.5, 0.025],
+      fast: [2, 10, 0.1],
+      long_standard: [2, 7.5, 0.1],
+      long_flex: [1, 3.75, 0.05],
+      long_fast: [4, 15, 0.2],
     },
   ),
   'gpt-6-sol': openaiFrom(

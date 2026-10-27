@@ -74,6 +74,34 @@ test.afterEach(() => {
   setPriceCatalogTestHooks(null)
 })
 
+test('GPT-6.1 Terra synced standard prices retain builtin Flex/Fast coverage without an override', async () => {
+  await syncModelsDev({
+    fetchImpl: async () =>
+      jsonResponse({
+        openai: {
+          models: {
+            'gpt-6.1-terra': {
+              name: 'GPT-6.1 Terra',
+              limit: { context: 1_050_000 },
+              cost: { input: 1, output: 5, cache_read: 0.05, cache_write: 1.25 },
+            },
+          },
+        },
+      }),
+  })
+  const resolved = resolvePrice('gpt-6.1-terra')
+  assert.equal(resolved.source, 'models.dev')
+  assert.equal(resolved.price.input, 1)
+  assert.equal(resolved.price.tiers[0].output, 7.5)
+  assert.equal(resolved.price.modes.flex.input, 0.5)
+  assert.equal(resolved.price.modes.priority.input, 2)
+  assert.equal(resolved.price.modes.priority.tiers[0].output, 15)
+  assert.deepEqual(resolved.mode_sources, { flex: 'builtin', priority: 'builtin' })
+  const entry = listPriceCatalog().find((row) => row.id === 'gpt-6.1-terra')
+  assert.equal(entry.context, 1_050_000)
+  assert.equal(entry.override, null)
+})
+
 test('layer precedence: override provider/model > provider/* > */model > models.dev > builtin', async () => {
   const id = 'claude-sonnet-5-5'
   const builtin = resolvePrice(id)

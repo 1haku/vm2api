@@ -205,7 +205,7 @@ test('GPT-5.5 official standard: $5 / $30 per MTok', () => {
   const c = calculateCost({ input_tokens: 200_000, output_tokens: 200_000 }, 'gpt-5.5')
   assert.equal(c.known, true)
   assert.equal(c.price_source, 'builtin')
-  assert.equal(c.price_version, 'builtin-2026-10-14')
+  assert.equal(c.price_version, 'builtin-2026-10-27')
   assert.equal(c.input_cost, 1)
   assert.equal(c.output_cost, 6)
   assert.equal(c.total_cost, 7)
@@ -353,6 +353,58 @@ test('GPT-6.1 Sol above 272K uses 2x input and cache and 1.5x output', () => {
   assert.equal(fast.long_context, true)
   assert.equal(fast.service_tier, 'fast')
   assert.equal(fast.total_cost, 32.4)
+})
+
+test('GPT-6.1 Terra bills disjoint input, cache read/write, and output at official rates', () => {
+  const cost = calculateCost(
+    {
+      input_tokens: 250_000,
+      output_tokens: 100_000,
+      input_tokens_details: { cached_tokens: 100_000, cache_write_tokens: 50_000 },
+    },
+    'gpt-6.1-terra',
+  )
+  assert.equal(cost.known, true)
+  assert.equal(cost.pricing_key, 'gpt-6.1-terra')
+  assert.equal(cost.long_context, false)
+  assert.equal(cost.input_cost, 0.1)
+  assert.equal(cost.cache_read_cost, 0.005)
+  assert.equal(cost.cache_creation_cost, 0.0625)
+  assert.equal(cost.output_cost, 0.5)
+  assert.equal(cost.total_cost, 0.6675)
+})
+
+test('GPT-6.1 Terra applies the 272K boundary and Flex/Fast long-context bands', () => {
+  const boundary = calculateCost({ input_tokens: 272_000, output_tokens: 0 }, 'gpt-6.1-terra')
+  assert.equal(boundary.long_context, false)
+  assert.equal(boundary.total_cost, 0.272)
+  const over = calculateCost({ input_tokens: 272_001, output_tokens: 0 }, 'gpt-6.1-terra')
+  assert.equal(over.long_context, true)
+  assert.equal(over.total_cost, 0.544002)
+  for (const [service_tier, shortCost, longCost] of [
+    ['standard', 0.6, 1.35],
+    ['flex', 0.3, 0.675],
+    ['priority', 1.2, 2.7],
+  ]) {
+    for (const [input_tokens, expected] of [
+      [100_000, shortCost],
+      [300_000, longCost],
+    ]) {
+      const cost = calculateCost({ input_tokens, output_tokens: 100_000, service_tier }, 'gpt-6.1-terra')
+      assert.equal(cost.known, true)
+      assert.equal(cost.long_context, input_tokens > 272_000)
+      assert.equal(cost.total_cost, expected)
+    }
+  }
+  const cachedLong = calculateCost(
+    {
+      input_tokens: 900_000,
+      output_tokens: 100_000,
+      input_tokens_details: { cached_tokens: 300_000, cache_write_tokens: 300_000 },
+    },
+    'gpt-6.1-terra',
+  )
+  assert.equal(cachedLong.total_cost, 2.13)
 })
 
 test('gpt-reserve has no published price and stays unbilled', () => {
