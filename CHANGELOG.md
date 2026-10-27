@@ -7,6 +7,8 @@
 - 官方 Claude Code 入站带 `x-claude-code-agent-id` 或 `x-claude-code-parent-agent-id` 时，出站原样保留；没有则不添加，也不写入槽位头文件。非官方入站不转发。cli-node 不生成这两个头。Go worker 与 kernel hop 放行同名头。
 - kernel hop 放行已有的 `x-claude-code-agent-id` / `x-claude-code-parent-agent-id`。新 ELF SHA256 `8a61aaa3cba06567a4c3b0039d357b341975e2495ec7fc7e8b5c3425cc53ec16`（12947192 字节），payload `payload-2026.10.28-kernel-agent-id`。`bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 是同一份。其余 payload 附件哈希不变。
 - #777：Codex 用量的 `service_tier` 与费用改按网关实际发出的档位（`fast` 已改写为 `priority`），与 codex-proxy-rs 一致；上游 `response.service_tier` 回显另存到新列 `upstream_service_tier`（迁移 047），不再覆盖计费档。发出 `priority`、上游回显其他档位时，日志「特殊设置」显示「Fast 未生效：priority → default」。未发档位的请求不再拿上游回显当计费档。网关发出的请求体与 `x-codex-routing-hint` 不变；上游回 `default` 是账号或上游决定，网关不能强制 Fast。
+- #797：官方 / 完整官方提示词已组装动态边界后，恢复对话历史的消息缓存断点：没有调用方消息断点时，按剩余四断点预算补最后及上一条 user（预算只剩一个时优先最后一条）。保留 system 文本和调用方消息断点；沿用官方档工具断点清理行为，在清理后计算消息断点预算。lean / preserveSystem / requestContext 路径不启用消息补点。
+- #797：默认缓存写入 TTL 同时用于网关生成的官方模板断点和新增消息断点。模板标记未声明 TTL 时在生成阶段补齐，使用请求覆盖及会话固定后的值；已有明确 TTL 和调用方消息标记保持不变，并约束新增 TTL 避免 5m 后出现 1h。不会仅凭调用方 system 的动态边界标记认定其为网关生成的模板。
 
 已部署机升级：更新 Node 控制面与 `web/dist` 后重启；启动应用迁移 047。kernel payload 更新，须 `npm run fetch:payload` 后 `wrap-cli/sync`（`restart:true`）。cli-node 哈希未变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 

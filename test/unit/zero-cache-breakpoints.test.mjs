@@ -96,10 +96,12 @@ for (const options of [
   })
 }
 
-test('shaped template continues to own its breakpoints', () => {
+test('shaped template receives message fallback while keeping its system layout', () => {
   const input = fixture()
   input.system.push({ type: 'text', text: '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__' })
-  assert.equal(markers(prepareCliHopBody(input)).length, 0)
+  const out = prepareCliHopBody(input)
+  assert.deepEqual(out.system, input.system)
+  assert.equal(markers(out).length, 2)
 })
 
 test('configured zero persona reaches cli-hop with cacheable messages for streaming and JSON requests', () => {

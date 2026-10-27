@@ -38,6 +38,7 @@ import { CCH_PLACEHOLDER } from './cch.mjs'
 import { CLAUDE_CLI_UA_RE, isOfficialClaudeUa } from './official-claude-ua.mjs'
 import { modelSupportsMidConversationSystem } from '../protocol/anthropic-policy.mjs'
 import { validTimezone } from '../core/timezone.mjs'
+import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import {
   AGENT_EXPANSION_CACHE_CONTROL,
   CRS_AGENT_EXPANSION,
@@ -1273,11 +1274,11 @@ export function collectCallerSystemAppend(body, options = {}) {
 const OFFICIAL_CALLER_AGENT_CACHE = Object.freeze({ type: 'ephemeral', ttl: '1h' })
 
 /** Stored official templates that predate {{caller_agent}} still get the prompt back, before env. */
-function insertOfficialCallerAgent(system, callerAgent) {
+function insertOfficialCallerAgent(system, callerAgent, cacheControl = OFFICIAL_CALLER_AGENT_CACHE) {
   const text = String(callerAgent || '').trim()
   if (!text || !Array.isArray(system)) return system
   if (system.some((block) => String(block?.text || '').includes(text))) return system
-  const block = { type: 'text', text, cache_control: { ...OFFICIAL_CALLER_AGENT_CACHE } }
+  const block = { type: 'text', text, cache_control: { ...cacheControl } }
   const identityAt = system.findIndex((item) => isStandaloneOfficialLine(item?.text || ''))
   const at = identityAt >= 0 ? identityAt + 1 : Math.min(system.length, 2)
   return [...system.slice(0, at), block, ...system.slice(at)]
@@ -1798,6 +1799,27 @@ function collectOverlayParts(routingFile) {
   return { standing: standingConstraintFromRoutingFile(routingFile) }
 }
 
+/** Fill only gateway-rendered system markers; explicit template and caller TTLs stay intact. */
+function fillTemplateSystemCacheTtl(system, messages, cacheTtl) {
+  const target = normalizeCacheTtl(cacheTtl)
+  const messageBlocks = messages.flatMap((message) => (Array.isArray(message?.content) ? message.content : []))
+  const lastHour = [...system, ...messageBlocks].findLastIndex((block) => block?.cache_control?.ttl === '1h')
+  let short = false
+  return system.map((block, index) => {
+    const control = block?.cache_control
+    if (!control || control.type !== 'ephemeral') return block
+    if (control.ttl != null) {
+      if (control.ttl !== '1h') short = true
+      return block
+    }
+    // Earlier explicit 5m bounds later markers; a later explicit 1h requires
+    // preceding template markers to stay 1h even when the default is 5m.
+    const ttl = short ? '5m' : index < lastHour ? '1h' : target
+    if (ttl === '5m') short = true
+    return { ...block, cache_control: { ...control, ttl } }
+  })
+}
+
 /**
  * Template-driven persona. `zero` forces the overlay off, matching the legacy
  * zero-inject contract; every other preset honours overlay_preset.
@@ -1817,6 +1839,7 @@ function applyTemplatePersona(
     model,
     callerAgent: rawCallerAgent = '',
     entrypoint = 'cli',
+    cacheTtl = null,
   } = {},
 ) {
   const messages = Array.isArray(body.messages) ? body.messages : []
@@ -1876,7 +1899,14 @@ function applyTemplatePersona(
   const officialBlocks = blocks.filter((block) => block?.id !== 'caller_system')
   let system = renderPersonaTemplate(officialBlocks, vars)
 
-  if (preset === 'official') system = insertOfficialCallerAgent(system, callerAgent)
+  if (preset === 'official') {
+    system = insertOfficialCallerAgent(system, callerAgent, cacheTtl == null ? undefined : { type: 'ephemeral' })
+  }
+  // This boundary knows the system was rendered by us. Do not infer ownership
+  // from a billing string or dynamic-boundary sentinel on caller-supplied input.
+  if (cacheTtl != null && ['official', 'official_full'].includes(preset)) {
+    system = fillTemplateSystemCacheTtl(system, messages, cacheTtl)
+  }
   let outMessages = messages
   if (withEnv) {
     const environment = renderPersonaTemplate(officialBlocks, vars, { role: 'system' })
@@ -1929,6 +1959,7 @@ export function applyCrsUnofficialPersona(
     identity,
     model,
     entrypoint,
+    cacheTtl = null,
   } = {},
 ) {
   if (!body || typeof body !== 'object') return body
@@ -1977,6 +2008,7 @@ export function applyCrsUnofficialPersona(
       model,
       callerAgent: rawCallerAgent,
       entrypoint: resolvedEntrypoint,
+      cacheTtl,
     })
   }
   const doPark =

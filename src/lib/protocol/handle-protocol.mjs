@@ -1055,6 +1055,7 @@ export function createHandleProtocol(deps) {
       ctx.body = applyCrsUnofficialPersona(ctx.body, {
         officialClient: officialTraffic,
         routingFile: routingConfigPath,
+        cacheTtl: requestedCacheTtl,
         headers: req.headers,
         sessionId: outboundSessionId,
         model: ctx.body?.model,
@@ -1079,6 +1080,7 @@ export function createHandleProtocol(deps) {
         officialClient: false,
         forceConfigured: true,
         routingFile: routingConfigPath,
+        cacheTtl: requestedCacheTtl,
         headers: req.headers,
         sessionId: outboundSessionId,
         model: ctx.body?.model,
@@ -1411,6 +1413,7 @@ export function createHandleProtocol(deps) {
               hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
                 forceConfigured: true,
                 routingFile: routingConfigPath,
+                cacheTtl: requestedCacheTtl,
                 mode: resolvedPersona,
                 sessionId: attemptSessionId,
                 model: hopBody?.model,
@@ -1491,6 +1494,7 @@ export function createHandleProtocol(deps) {
               officialClient: false,
               forceConfigured: true,
               routingFile: routingConfigPath,
+              cacheTtl: requestedCacheTtl,
               mode: configuredMode,
               sessionId: attemptSessionId,
               model: personaIn?.model,

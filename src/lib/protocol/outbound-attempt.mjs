@@ -47,6 +47,7 @@ import {
   DEFAULT_CACHE_TTL,
   enforceCacheTtlOrder,
   normalizeCacheTtl,
+  listCacheMarkers,
   removeCacheControlFields,
   stripIllegalCacheControlFields,
   validateCacheBreakpoints,
@@ -187,13 +188,13 @@ export function officialSystemTemplate(system, ttl = DEFAULT_CACHE_TTL) {
 }
 
 /**
- * Two markers, stamped with the session TTL: the last text of the current tail
+ * Up to two markers, within the supplied budget and TTL: the last text of the current tail
  * and of the user turn before it (4+ messages). The second one sits on the
  * previous request's write, so a turn that grows past the 20-block lookback
  * still reads it instead of falling back to the system prefix.
  */
-function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL) {
-  if (!Array.isArray(messages) || messages.length === 0) return messages
+function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL, limit = 2) {
+  if (!Array.isArray(messages) || messages.length === 0 || limit <= 0) return messages
   const next = messages.map((message) => {
     if (!message || typeof message !== 'object') return message
     if (typeof message.content === 'string') {
@@ -221,7 +222,7 @@ function officialMessageMarker(messages, ttl = DEFAULT_CACHE_TTL) {
   }
   if (users.length === 0) return next
   stampMessageTail(next, users[0], ttl)
-  if (users.length > 1 && next.length >= 4) stampMessageTail(next, users[1], ttl)
+  if (limit > 1 && users.length > 1 && next.length >= 4) stampMessageTail(next, users[1], ttl)
   return next
 }
 
@@ -363,8 +364,23 @@ export function prepareCliHopBody(
           body.messages.some((message) => Array.isArray(message?.content) && message.content.some(hasMarker)))
       if (!hasCallerMarkers) body.messages = officialMessageMarker(body.messages, cacheTtl)
     }
+    // Keep official tool-marker cleanup before counting available slots. A
+    // caller's 5m tool marker must not precede a template-owned 1h system marker.
     if (Array.isArray(body.tools)) {
       body = { ...body, tools: stripEagerInputStreaming(body.tools, { preserveCacheControl: zeroFallback }) }
+    }
+    // Assembled official templates own their system markers, not the growing
+    // conversation. Fill missing message anchors without moving caller markers.
+    const shapedFallback = shaped && !lean && !preserveSystem
+    if (shapedFallback) {
+      const markers = listCacheMarkers(body)
+      if (!markers.some((marker) => marker.section === 'messages')) {
+        const available = Math.max(0, 4 - markers.length)
+        // A missing TTL means 5m. A later 1h marker would be rejected; keep
+        // existing prefix TTLs intact and only shorten our new message markers.
+        const ttl = markers.some((marker) => marker.ttl !== '1h') ? '5m' : cacheTtl
+        body.messages = officialMessageMarker(body.messages, ttl, Math.min(2, available))
+      }
     }
   }
   return body
