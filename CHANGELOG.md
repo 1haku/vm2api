@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 官方 Claude Code 入站带 `x-claude-code-agent-id` 或 `x-claude-code-parent-agent-id` 时，出站原样保留；没有则不添加，也不写入槽位头文件。非官方入站不转发。cli-node 不生成这两个头。Go worker 与 kernel hop 放行同名头。
+
 ## 1.4.021 — 2026-10-28
 
 - #795：池调度候选阶段一次联合查询复用账号与运行状态快照，健康写回与过期清理移出请求热路径；迁移 046 拆分 `queue_wait_ms` 与 `scheduling_ms`，`wait_ms` 总调度口径不变，历史行 NULL。
