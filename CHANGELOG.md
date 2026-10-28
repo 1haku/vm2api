@@ -3,6 +3,7 @@
 ## Unreleased
 
 - 官方 Claude Code 入站带 `x-claude-code-agent-id` 或 `x-claude-code-parent-agent-id` 时，出站原样保留；没有则不添加，也不写入槽位头文件。非官方入站不转发。cli-node 不生成这两个头。Go worker 与 kernel hop 放行同名头。
+- kernel hop 放行已有的 `x-claude-code-agent-id` / `x-claude-code-parent-agent-id`。新 ELF SHA256 `8a61aaa3cba06567a4c3b0039d357b341975e2495ec7fc7e8b5c3425cc53ec16`（12947192 字节），payload `payload-2026.10.28-kernel-agent-id`。`bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 是同一份。其余 payload 附件哈希不变。
 
 ## 1.4.021 — 2026-10-28
 
