@@ -66,6 +66,9 @@ function harness({ mode = 'rebuild', capacity = 2, agentId = '' } = {}) {
             busy: false,
           },
         ]
+  // Reserve re-reads the VM record, proxy and worker health (#795); that is discovery too.
+  // Concurrency, seats and quota below stay real.
+  pool.admissionSnapshot = () => ({ account: null })
   const runner = new FailoverRunner({
     scheduler: pool,
     stickyRouter: sticky,
