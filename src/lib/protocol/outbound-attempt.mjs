@@ -269,6 +269,41 @@ function stripEagerInputStreaming(tools, { preserveCacheControl = false } = {}) 
   return changed ? next : tools
 }
 
+/** Clean official CLI-owned controls before rendering and budgeting template markers. */
+export function prepareCliPersonaInput(body, preset) {
+  if (preset === 'zero') return body
+  const { cache_control: _automatic, ...out } = body
+  if (Array.isArray(out.tools)) out.tools = stripEagerInputStreaming(out.tools)
+  return out
+}
+
+/** CLI needs a block marker: project automatic caching onto the current message tail. */
+function materializeAutomaticCache(body) {
+  validateCacheBreakpoints(body)
+  const { cache_control: control, ...out } = body
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (!message || typeof message !== 'object') continue
+    // Supported mid-conversation system turns are also in the cache prefix.
+    // Skipping them could put this 5m marker before their explicit 1h marker.
+    const content = typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content
+    if (!Array.isArray(content)) continue
+    for (let j = content.length - 1; j >= 0; j--) {
+      const block = content[j]
+      if (!block || ['thinking', 'redacted_thinking'].includes(block.type)) continue
+      // An explicit tail policy already caches the entire eligible prefix.
+      if (block.cache_control != null) return out
+      const next = content.slice()
+      next[j] = { ...block, cache_control: { ...control } }
+      out.messages = messages.slice()
+      out.messages[i] = { ...message, content: next }
+      return out
+    }
+  }
+  return out
+}
+
 /**
  * Caller fields plus Node-owned message breakpoints.
  * CLI owns persona layout and system/tools markers; kernel only forwards.
@@ -294,6 +329,7 @@ export function prepareCliHopBody(
     autoCompactWindow = null,
     routing = null,
     outboundShape = null,
+    personaPreset = null,
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
@@ -306,19 +342,25 @@ export function prepareCliHopBody(
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-  // Official family keeps the inbound system and its markers. Rewriting them
-  // into the persona template (billing / reporting / 1h) is what diverges from
-  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
-  const assembledTemplate = (system) => {
-    const blocks = Array.isArray(system) ? system : []
-    const texts = blocks.map(textOf)
-    return (
-      texts.some((text) => text.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') ||
-      texts.some((text) => /^x-anthropic-billing-header/i.test(text) && /prompt_version=</.test(text))
-    )
-  }
+  // Rendered presets may disable or edit billing and the dynamic boundary.
+  // The handler passes its resolved preset only after rendering; text detection
+  // is a compatibility fallback for callers without that assembly state.
+  const preparedZero =
+    personaPreset === 'zero' ||
+    (personaPreset == null &&
+      Array.isArray(body.system) &&
+      body.system.some(
+        (block) => /^x-anthropic-billing-header/i.test(textOf(block)) && /prompt_version=</.test(textOf(block)),
+      ))
+  // Zero may forward a caller's boundary literal; it must keep zero's fallback
+  // policy rather than trigger the official template/tool-marker policy.
+  const shaped =
+    !preparedZero &&
+    (personaPreset != null ||
+      (Array.isArray(body.system) &&
+        body.system.some((block) => textOf(block).trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')))
   if (!preserveSystem) {
-    if (!lean && !assembledTemplate(body.system)) {
+    if (!lean && !shaped && !preparedZero) {
       const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
       if (leftover == null) delete body.system
       else body.system = leftover
@@ -337,16 +379,12 @@ export function prepareCliHopBody(
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
   body = ensureOutputConfigSchema(body)
 
-  if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) delete body.cache_control
+  if (preparedZero && !lean && !preserveSystem && !requestContext && body.cache_control != null) {
+    body = materializeAutomaticCache(body)
+  } else if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) {
+    delete body.cache_control
+  }
   if (!requestContext) {
-    const preparedZero =
-      Array.isArray(body.system) &&
-      body.system.some(
-        (block) => /^x-anthropic-billing-header/i.test(textOf(block)) && /prompt_version=</.test(textOf(block)),
-      )
-    const shaped =
-      Array.isArray(body.system) &&
-      body.system.some((block) => textOf(block).trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
     if (!lean && !shaped && !preparedZero) {
       body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
       body.messages = officialMessageMarker(body.messages, cacheTtl)
@@ -358,7 +396,7 @@ export function prepareCliHopBody(
     if (zeroFallback) {
       const hasMarker = (node) => node?.cache_control != null
       const hasCallerMarkers =
-        body.system.some(hasMarker) ||
+        (Array.isArray(body.system) && body.system.some(hasMarker)) ||
         (Array.isArray(body.tools) && body.tools.some(hasMarker)) ||
         (Array.isArray(body.messages) &&
           body.messages.some((message) => Array.isArray(message?.content) && message.content.some(hasMarker)))

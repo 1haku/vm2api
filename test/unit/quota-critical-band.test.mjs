@@ -403,6 +403,36 @@ test('output ceiling does not make a short prompt large in the critical band', (
   )
 })
 
+test('quota prediction respects caller cache ownership when switching away from image optimization', () => {
+  clearCachePrefixSessions()
+  const history = {
+    messages: Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      content: [
+        { type: 'text', text: `shot ${i}` },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: `image-${i}` } },
+      ],
+    })),
+  }
+  prepareCachePrefix('images:s', history, 0)
+  const dropped = structuredClone(history)
+  dropped.messages[0].content.pop()
+  assert.ok(prepareCachePrefix('images:s', dropped, 1).image_floor > 0)
+  confirmCachePrefix('images:s', 1)
+  dropped.messages.at(-1).content.at(-1).cache_control = { type: 'ephemeral', ttl: '1h' }
+  assert.equal(estimateRequestRisk(dropped, { accountId: 'images', sessionId: 's', now: 2 }).cold, false)
+  // Caller policy sends all remaining images, so the old trimmed prefix is cold.
+  const risk = estimateRequestRisk(dropped, {
+    accountId: 'images',
+    sessionId: 's',
+    now: 2,
+    quotaRequest: { preserveMessageCache: true },
+  })
+  const actual = prepareCachePrefix('images:s', dropped, 2, { preserveMessageCache: true })
+  assert.equal(risk.coldReason, 'prefix_break')
+  assert.equal(risk.cold, !!actual.break)
+})
+
 test('stale band still blocks a warm turn whose new user text is itself large', () => {
   clearCachePrefixSessions()
   const base = {

@@ -132,7 +132,11 @@ for (const options of [
   { preserveSystem: true },
   { requestContext: { purpose: 'auto_mode_classifier' } },
 ]) {
-  test(`shaped fallback excludes ${JSON.stringify(options)}`, () => {
-    assert.equal(messageMarkers(prepareCliHopBody(shaped(), options)).length, 0)
-  })
+  for (const personaPreset of [null, 'official', 'official_full']) {
+    test(`shaped ${personaPreset ?? 'legacy'} fallback excludes ${JSON.stringify(options)}`, () => {
+      const input = shaped()
+      if (personaPreset) input.system.pop()
+      assert.equal(messageMarkers(prepareCliHopBody(input, { ...options, personaPreset })).length, 0)
+    })
+  }
 }

@@ -74,7 +74,13 @@ for (const ttl of [undefined, '5m', '1h']) {
     ]
     const before = structuredClone(input)
     const { out } = render(t, { input, ttl: '1h' })
-    assert.deepEqual(out.messages[0], input.messages[0])
+    assert.deepEqual(out.messages[0], {
+      ...input.messages[0],
+      content: [
+        { type: 'text', text: `<system-reminder>\n${input.system}\n</system-reminder>\n` },
+        ...input.messages[0].content,
+      ],
+    })
     assert.deepEqual(input, before)
     const messages = listCacheMarkers(out).filter((m) => m.section === 'messages')
     assert.equal(messages.length, 1)
@@ -116,7 +122,13 @@ test('caller 1h message anchor is not invalidated by a default 5m template fill'
   const input = fixture()
   input.messages[0].content = [{ type: 'text', text: 'anchor', cache_control: control('1h') }]
   const { out } = render(t, { input, headers: { 'x-kin-cache-ttl': '5m' } })
-  assert.deepEqual(out.messages[0], input.messages[0])
+  assert.deepEqual(out.messages[0], {
+    ...input.messages[0],
+    content: [
+      { type: 'text', text: `<system-reminder>\n${input.system}\n</system-reminder>\n` },
+      ...input.messages[0].content,
+    ],
+  })
   assert.ok(listCacheMarkers(out).every((m) => m.ttl === '1h'))
   validateCacheBreakpoints(out)
 })
