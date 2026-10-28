@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 1.4.022 — 2026-10-28
+
+- 官方 Claude Code 入站带 `x-claude-code-agent-id` 或 `x-claude-code-parent-agent-id` 时，出站原样保留；没有则不添加，也不写入槽位头文件。非官方入站不转发。cli-node 不生成这两个头。Go worker 与 kernel hop 放行同名头。
+- kernel hop 放行已有的 `x-claude-code-agent-id` / `x-claude-code-parent-agent-id`。新 ELF SHA256 `8a61aaa3cba06567a4c3b0039d357b341975e2495ec7fc7e8b5c3425cc53ec16`（12947192 字节），payload `payload-2026.10.28-kernel-agent-id`。`bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin` 是同一份。其余 payload 附件哈希不变。
+- #777：Codex 用量的 `service_tier` 与费用改按网关实际发出的档位（`fast` 已改写为 `priority`），与 codex-proxy-rs 一致；上游 `response.service_tier` 回显另存到新列 `upstream_service_tier`（迁移 047），不再覆盖计费档。发出 `priority`、上游回显其他档位时，日志「特殊设置」显示「Fast 未生效：priority → default」。未发档位的请求不再拿上游回显当计费档。网关发出的请求体与 `x-codex-routing-hint` 不变；上游回 `default` 是账号或上游决定，网关不能强制 Fast。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启；启动应用迁移 047。kernel payload 更新，须 `npm run fetch:payload` 后 `wrap-cli/sync`（`restart:true`）。cli-node 哈希未变。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.021 — 2026-10-28
+
+- #795：池调度候选阶段一次联合查询复用账号与运行状态快照，健康写回与过期清理移出请求热路径；迁移 046 拆分 `queue_wait_ms` 与 `scheduling_ms`，`wait_ms` 总调度口径不变，历史行 NULL。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启；启动应用迁移 046。cli-node 哈希未变，不必 `fetch:payload` / `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.020 — 2026-10-28
+
+- #726（作者 eshao731，Closes #722 / #723 / #724 / #725）：Codex HTTP 省略 `stream` 且无 `Accept: text/event-stream` 时返回 JSON，非流式 Chat/Completions 返回对应格式而不是 Responses 对象；首事件等待用 `KIN_UPSTREAM_TIMEOUT`，之后按流空闲超时检查，不再在内核回头后无限等待；未输出时内核 `503 no_capacity` 在候选范围内换槽；按实际 envelope 检查槽内限额，内核纯文本 413 报 `413 body_too_large` 而非 `worker_invalid_json`。**行为变化**：未设 `failover.max_request_mib` 时入口请求体上限由进程天花板（默认 128 MiB）改为与槽内 kernel 一致的 32 MiB，32–128 MiB 请求现在在入口直接 413。
+- Fixes #768 / #789 / #793：槽终端交互式启动 `claude` 时 cli-node 在 REPL 渲染阶段报 `SandboxManager.isSupportedPlatform is not a function` 退出。构建用的 `@anthropic-ai/sandbox-runtime` 桩只有 `start/stop`，适配层转发的静态方法全为 undefined；补齐后平台报不支持沙箱，`isSandboxingEnabled` 为 false，Bash 不进沙箱。`CLAUDE_CODE_HOST_REFRESH` 下读写宿主 `credentials.json`，logout 不 unlink 宿主文件。源码 `cleanup/local-src` `cb65c855`（含 `8917b95a`）。payload 钉到 `payload-2026.10.28-cli-host-cred`，cli-node `4975763790088a0eba226f20152b3c45261a0654b8bbc038701757b7699ab4e1`（27789668）。
+- 遥测主路径对齐 Claude Code 2.1.303。`env` 始终带 `node_version`（`v26.3.0`）、`is_running_with_bun`（`true`）和构建时间 `2026-10-18T20:20:57Z`，不再用槽位安装时间；版本回退为 `2.1.303`。空的 distro、git、GitHub Actions 字段不再上传，`coworker_type` 不再出现。进程指标补上 `cpuWindowMs`。`tengu_api_success` 带本次请求的模型，`tengu_init` 不带。主路径和 GrowthBook 不再带邮箱。旧 `worker.json` 里残留的硬件和密钥字段仍会在发送前丢掉。
+
+已部署机升级：须 `npm run fetch:payload` 后 `wrap-cli/sync`（`restart:true`），并更新 `kin-worker`，再重启 Node；仅更新 Node 不够。需要 >32 MiB 请求体的部署须在设置里显式调大「请求体上限」。本机槽需重启遥测旁路后才按新字段上传；集群槽在下次槽位启动、重载或出口重建时推送新的 `kin-worker`。只读根文件系统的集群槽需按现有流程换镜像。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.019 — 2026-10-28
+
 - Fixes #738 / #763：GPT/Codex 请求（`/v1/responses`、Chat/Completions、`/v1/messages` 转 Codex、`/v1/alpha/search`、`/v1/images/*`）补上托管 API Key 的 acquire/release 与扣费：成功请求按与 `usage_logs` 同一官方价（含生图）× 分组倍率累计 `requests` / tokens / `quota_used` / 5h·1d·7d 窗口与 `last_used_at`；USD 额度、请求数额度、窗口限额、RPM 与 Key 并发对 GPT 流量生效，额度用尽返回 `429 api_key_quota_exhausted`。此前 GPT 路径直接跳过，Key 计数恒为 0。
 
 已部署机升级：仅更新 Node 控制面后重启。历史 GPT 用量不回填到 Key 计数（`usage_logs` 不变）。cli-node 哈希未变，不必 `fetch:payload` / `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。

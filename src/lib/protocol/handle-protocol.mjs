@@ -799,6 +799,7 @@ export function createHandleProtocol(deps) {
     if (platform.platform === 'openai') {
       const routing = getRouting() || {}
       const codexSticky = {
+        cfg,
         requestStartedAt: logCtx.t0,
         stickyRouter,
         sessions: accountQuota?.sessions || null,
@@ -1364,7 +1365,7 @@ export function createHandleProtocol(deps) {
             }
           }
           try {
-            touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm)
+            touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm, body?.model)
           } catch {}
           const identity = loadVmIdentity(selected.exec)
           const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
