@@ -164,7 +164,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 
 `POST /v1/responses`：`input` 或 `messages` 必填。回包 `usage.input_tokens_details` 带缓存明细。`stop_reason=refusal` 同样映射 content_filter。
 
-Codex HTTP 入口省略 `stream` 且没有 `Accept: text/event-stream` 时返回 JSON；显式 `stream: false` 优先于 Accept。内部 kernel 仍使用 SSE，网关聚合后按入口返回 Responses 或 Chat/Completions JSON。入站 WebSocket 的事件格式不变。
+Codex HTTP 入口省略 `stream` 时，只有 `Accept` 对 `text/event-stream` 的偏好高于 `application/json`（按 q 值，同值算 JSON）才返回 SSE，否则返回 JSON；显式 `stream` 优先于 Accept。内部 kernel 仍使用 SSE，网关聚合后按入口返回 Responses 或 Chat/Completions JSON。入站 WebSocket 的事件格式不变。
 
 Codex 首事件等待使用 `KIN_UPSTREAM_TIMEOUT`（默认 600 秒），收到事件后按 `failover.stream_idle_timeout_ms` / `KIN_STREAM_IDLE_TIMEOUT` 检查空闲时间；持续传输的长流不按总时长截断。内核返回 `503 no_capacity` 且尚未输出时可在现有候选范围与尝试次数限制内换槽；请求体超限不换槽。
 
