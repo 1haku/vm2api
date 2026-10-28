@@ -104,6 +104,7 @@ test('API classifier backend preserves contract, rejects model substitution and 
   assert.equal(ok.body.stop_reason, 'max_tokens')
   assert.equal(wire.max_tokens, 64)
   assert.deepEqual(wire.thinking, { type: 'disabled' })
+  // 226f82b3: the 2.1.310 classifier body carries its own temperature; the gateway forwards it unchanged.
   assert.equal(wire.temperature, input.temperature)
   assert.deepEqual(wire.system, input.system)
   for (const [kind, status, code] of [

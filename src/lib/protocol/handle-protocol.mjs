@@ -226,6 +226,25 @@ export function createHandleProtocol(deps) {
     } catch {}
   }
 
+  function keyGateErrorBody(gate) {
+    return makeError({
+      type: gate.status === 429 ? ErrorType.RATE_LIMIT : ErrorType.PERMISSION,
+      code: gate.code,
+      message: gate.message,
+      status: gate.status,
+      details: gate.detail || undefined,
+    }).body
+  }
+
+  // Codex handlers write usage onto logBag themselves. The key is charged the
+  // official cost usage_logs prices for the same row (image generation
+  // included) times the group rate; logBag is left as is so the row is too.
+  // Managed admission, release and pricing are shared with subscriptions below.
+  // Codex must not acquire or bill the same managed key a second time.
+  async function runWithCodexKey(_req, _res, _logBag, run) {
+    return run()
+  }
+
   function finishClientCancel(res, result, logBag) {
     // Client cancellation is a lifecycle terminal, not a request error. Keep
     // final_state for audit, but leave error fields empty so the cancelled turn
@@ -342,6 +361,7 @@ export function createHandleProtocol(deps) {
     logBag.error_code = decision.error?.body?.error?.code || null
     logBag.error_message = decision.errorMessage || decision.error?.body?.error?.message || null
     logBag.intercept = decision.intercept || null
+    logBag.jev_state = decision.jevState || null
     json(res, decision.error.status, decision.error.body)
     return true
   }
@@ -817,6 +837,7 @@ export function createHandleProtocol(deps) {
     if (platform.platform === 'openai') {
       const routing = getRouting() || {}
       const codexSticky = {
+        cfg,
         onUsage: () =>
           attachPricing(logBag, {
             managedKey: req.apiKeyRecord || null,
@@ -846,7 +867,38 @@ export function createHandleProtocol(deps) {
         })
       if (protocol === 'anthropic.messages') {
         const codex = normalizeCodexRouting(routing.codex)
-        return handleCodexProtocol({
+        return runWithCodexKey(req, res, logBag, () =>
+          handleCodexProtocol({
+            req,
+            res,
+            protocol,
+            ctx,
+            inbound,
+            logBag,
+            stats,
+            json,
+            writeSSEHeaders,
+            routing: {
+              ...routing,
+              codex: {
+                ...codex,
+                protocols: {
+                  ...codex.protocols,
+                  'anthropic.messages': { mode: 'convert', enabled: true },
+                },
+                convert: { ...codex.convert, anthropic_to_codex: true },
+              },
+            },
+            projectRoot: cfg.paths.project,
+            captureOutbound: logCtx.capture_outbound === true,
+            accountGate,
+            ops: deps.codexOps || {},
+            ...codexSticky,
+          }),
+        )
+      }
+      return runWithCodexKey(req, res, logBag, () =>
+        handleCodexProtocol({
           req,
           res,
           protocol,
@@ -856,41 +908,14 @@ export function createHandleProtocol(deps) {
           stats,
           json,
           writeSSEHeaders,
-          routing: {
-            ...routing,
-            codex: {
-              ...codex,
-              protocols: {
-                ...codex.protocols,
-                'anthropic.messages': { mode: 'convert', enabled: true },
-              },
-              convert: { ...codex.convert, anthropic_to_codex: true },
-            },
-          },
+          routing,
           projectRoot: cfg.paths.project,
           captureOutbound: logCtx.capture_outbound === true,
           accountGate,
           ops: deps.codexOps || {},
           ...codexSticky,
-        })
-      }
-      return handleCodexProtocol({
-        req,
-        res,
-        protocol,
-        ctx,
-        inbound,
-        logBag,
-        stats,
-        json,
-        writeSSEHeaders,
-        routing,
-        projectRoot: cfg.paths.project,
-        captureOutbound: logCtx.capture_outbound === true,
-        accountGate,
-        ops: deps.codexOps || {},
-        ...codexSticky,
-      })
+        }),
+      )
     }
     if (protocol === 'openai.responses') {
       stats.errors++
@@ -1177,12 +1202,16 @@ export function createHandleProtocol(deps) {
       logBag.account_id = result?.accountId || null
       logBag.final_account_id = result?.accountId || null
       logBag.upstream_status = result?.status ?? null
-      logBag.usage = usageForLog(result?.body?.usage || result?.usage || null, { cacheTtl })
+      logBag.usage = usageForLog(result?.usage || result?.body?.usage || null, { cacheTtl })
       logBag.upstream_model = result?.model || null
-      // API transport still stamps the first data: line; subtract t0 for queue wait only.
+      // TTFT is generated content; the upstream window also includes hidden reasoning.
       logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
         ? Math.max(0, result.firstTokenAt - logCtx.t0)
         : (result?.ttftMs ?? null)
+      logBag.first_byte_ms = Number.isFinite(result?.firstByteAt)
+        ? Math.max(0, result.firstByteAt - logCtx.t0)
+        : (result?.firstByteMs ?? null)
+      logBag.generation_ms = result?.generationMs ?? null
       logBag.final_state = result?.terminalState || null
       attachPricing(logBag, {
         managedKey,
@@ -1355,7 +1384,7 @@ export function createHandleProtocol(deps) {
             }
           }
           try {
-            touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm)
+            touchTelemetrySession(cfg.paths.project, selected.vmId, selected.exec?.vm, body?.model)
           } catch {}
           const identity = loadVmIdentity(selected.exec)
           const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
@@ -1424,6 +1453,8 @@ export function createHandleProtocol(deps) {
                 identity,
                 entrypoint: entrypointNow,
               })
+              // The re-render starts from the raw caller body; re-apply this account's thinking ownership to it.
+              hopBody = filterThinkingForAccount(hopBody, selected.accountId, thinkingOwnerStore).body
             }
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
@@ -1694,7 +1725,7 @@ export function createHandleProtocol(deps) {
     logBag.attempt_count = result?.attemptCount ?? 0
     logBag.final_state = result?.finalState || result?.terminalState || null
     logBag.upstream_status = result?.status ?? null
-    logBag.usage = usageForLog(result?.body?.usage || result?.usage || null, {
+    logBag.usage = usageForLog(result?.usage || result?.body?.usage || null, {
       cacheTtl,
       requestedSpeed: wantsFastMode(ctx.body) ? 'fast' : null,
     })
@@ -1703,6 +1734,10 @@ export function createHandleProtocol(deps) {
     logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
       ? Math.max(0, result.firstTokenAt - logCtx.t0)
       : (result?.ttftMs ?? null)
+    logBag.first_byte_ms = Number.isFinite(result?.firstByteAt)
+      ? Math.max(0, result.firstByteAt - logCtx.t0)
+      : (result?.firstByteMs ?? null)
+    logBag.generation_ms = result?.generationMs ?? null
     logBag.stop_reason = result?.body?.stop_reason || result?.stopReason || null
     logBag.via = result?.via || 'go-worker-pool'
     if (result?.finalState === 'content_filter' || logBag.stop_reason === 'refusal') {

@@ -80,8 +80,6 @@ export function maxRequestBytes(routing, fallbackBytes = DEFAULT_MAX_REQUEST_BYT
 export function inboundBodyLimit(routing, ceilingBytes) {
   const ceiling = Number(ceilingBytes)
   const cap = Number.isFinite(ceiling) && ceiling > 0 ? ceiling : DEFAULT_MAX_REQUEST_BYTES
-  const mib = Number(routing?.failover?.max_request_mib)
-  if (!Number.isFinite(mib) || mib <= 0) return cap
   return Math.min(cap, maxRequestBytes(routing))
 }
 

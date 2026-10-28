@@ -2,6 +2,14 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'scheduler-fastpath',
+  'handle-codex-reliability',
+  'stream-timing',
+  'jev-usage',
+  'jev-usage-classifier',
+  'jev-usage-panel',
+  'kvm-machine',
+  'zero-cache-breakpoints',
   'codex-slot-reload',
   'fleet-services',
   'panel-upgrade-script',

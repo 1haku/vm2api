@@ -54,6 +54,11 @@ export function subscriptionSnapshot(db) {
             image_input_tokens: row.image_input_tokens ?? 0,
             image_output_tokens: row.image_output_tokens ?? 0,
             image_cost: row.image_cost ?? null,
+            // Upstream 043/044 add measured timing and audit context; historical
+            // rows stay unknown. Non-null changes must still fail the hash check.
+            first_byte_ms: row.first_byte_ms ?? null,
+            generation_ms: row.generation_ms ?? null,
+            jev_state: row.jev_state ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
             web_search_requests: row.web_search_requests ?? 0,
@@ -103,6 +108,7 @@ export function subscriptionSnapshot(db) {
     'api_endpoint_models',
     'cluster_nodes',
     'cluster_node_direct_links',
+    'request_attempts',
   ]) {
     const rows = exists(db, table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
     const normalized =
@@ -110,9 +116,15 @@ export function subscriptionSnapshot(db) {
         ? rows.map((row) => ({ ...row, signature: row.signature ?? null }))
         : table === 'api_endpoint_keys'
           ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
-          : table === 'cluster_nodes'
-            ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
-            : rows
+          : table === 'request_attempts'
+            ? rows.map((row) => ({
+                ...row,
+                queue_wait_ms: row.queue_wait_ms ?? null,
+                scheduling_ms: row.scheduling_ms ?? null,
+              }))
+            : table === 'cluster_nodes'
+              ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
+              : rows
     state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [

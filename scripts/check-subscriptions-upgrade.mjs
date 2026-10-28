@@ -29,6 +29,7 @@ try {
         'usage and keys',
         '037 historical input normalization only; costs and ownership unchanged',
         '040/041 Linux node default and nullable inbound device only; existing data unchanged',
+        '043/044/046 nullable timing and audit fields only; historical values stay unknown',
       ],
       tables: before,
     }),

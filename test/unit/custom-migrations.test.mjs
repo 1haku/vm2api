@@ -256,6 +256,16 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
   verifySubscriptionSchema(db)
   assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
   assert.equal(db.prepare("SELECT group_type FROM api_keys WHERE id='key'").get().group_type, 'all')
+  for (const [field, changed] of [
+    ['first_byte_ms', 123],
+    ['generation_ms', 456],
+    ['jev_state', 'changed'],
+  ]) {
+    assert.equal(db.prepare(`SELECT ${field} value FROM usage_logs WHERE id='history'`).get().value, null)
+    db.prepare(`UPDATE usage_logs SET ${field}=? WHERE id='history'`).run(changed)
+    assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
+    db.prepare(`UPDATE usage_logs SET ${field}=NULL WHERE id='history'`).run()
+  }
   db.prepare("UPDATE api_keys SET group_type='openai',allowed_vms='[\"slot\"]' WHERE id='key'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
   db.prepare("UPDATE api_keys SET group_type='all',allowed_vms='[]' WHERE id='key'").run()

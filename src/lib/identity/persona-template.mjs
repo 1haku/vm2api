@@ -146,7 +146,7 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'caller_system',
-      note: '第三方 system 包成 system-reminder 放在第一条 user 最前面',
+      note: '第三方 system。不进顶层 system，包成 <system-reminder> 放在第一条 user 最前面',
       drop_if_empty: true,
       type: 'text',
       text: '<system-reminder>\n{{caller_system}}\n</system-reminder>\n',

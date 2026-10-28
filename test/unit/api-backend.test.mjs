@@ -4,10 +4,11 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { createDatabase } from '../../src/lib/db/database.mjs'
+import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
+import { CRS_OFFICIAL_AGENT_PROMPT, CRS_OFFICIAL_CLI_SYSTEM } from '../../src/lib/identity/crs-persona.mjs'
 import { OFFICIAL_303_HARNESS } from '../../src/lib/identity/official-profiles.mjs'
 import { sessionIdFromOutboundBody } from '../../src/lib/identity/identity-rewrite.mjs'
 import { DEFAULT_AGENT_STANDING } from '../../src/lib/identity/persona-template.mjs'
@@ -190,8 +191,29 @@ test('API backend applies the global official_full persona setting', async () =>
     assert.equal(response.status, 200)
     assert.ok(received)
     const outbound = JSON.parse(received.body)
-    assert.equal(outbound.system.length, 4)
-    assert.ok(outbound.system.some((block) => String(block.text || '').includes(OFFICIAL_303_HARNESS.slice(0, 80))))
+    const texts = outbound.system.map((block) => String(block.text || ''))
+    const shape = JSON.stringify({
+      system: texts.map((t) => t.slice(0, 60)),
+      roles: outbound.messages.map((m) => m.role),
+    })
+    assert.match(texts[0], /^x-anthropic-billing-header: /, shape)
+    assert.equal(texts[1], CRS_OFFICIAL_CLI_SYSTEM, shape)
+    assert.ok(texts[2].startsWith(`${DEFAULT_AGENT_STANDING}\n${OFFICIAL_303_HARNESS}`), shape)
+    assert.equal(
+      texts.some((text) => text.includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 80))),
+      false,
+      shape,
+    )
+    // claude-haiku-4-5 rejects mid-conversation role=system: the Environment must not reach the wire as a message.
+    assert.equal(
+      outbound.messages.some((message) => message.role === 'system'),
+      false,
+      shape,
+    )
+    assert.ok(
+      texts.some((text) => text.includes('# Environment')),
+      shape,
+    )
   } finally {
     await new Promise((resolve) => kernel.close(resolve))
     fs.rmSync(root, { recursive: true, force: true })
@@ -204,6 +226,7 @@ test('OAuth cli-hop applies the resolved Protocol custom persona template', asyn
   const compatibility = {
     persona_preset: 'custom',
     persona_inject: 'rewrite',
+    // e358143c: {{timezone}} renders only when the per-preset timezone switch is on.
     persona_timezone_presets: { custom: true },
     persona_templates: {
       custom: [{ id: 'custom', type: 'text', text: 'CUSTOM_PERSONA {{timezone}}' }],
@@ -278,10 +301,7 @@ test('OAuth cli-hop applies the resolved Protocol custom persona template', asyn
     await handler.handleProtocol(req, response, 'anthropic.messages', '/v1/messages')
     assert.equal(response.status, 503)
     assert.ok(prepared?.body)
-    const billing = prepared.body.system.filter((block) => /^x-anthropic-billing-header:/.test(block.text || ''))
-    assert.equal(billing.length, 1, 'cli-hop includes exactly one billing attribution block')
-    assert.match(billing[0].text, /cc_version=.*; cc_entrypoint=sdk-cli;/)
-    assert.equal(prepared.body.system.filter((block) => !billing.includes(block)).length, 2)
+    assert.equal(prepared.body.system.length, 3)
     assert.ok(prepared.body.system.some((block) => String(block.text || '').includes('CUSTOM_PERSONA UTC')))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })

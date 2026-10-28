@@ -2,6 +2,8 @@
  * Codex hop from handle-protocol. Claude convert/pool/CRS never runs here.
  */
 import path from 'node:path'
+import { resolveStreamIdleTimeoutMs } from '../core/config.mjs'
+import { isClientStream, fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions } from './convert.mjs'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
 import { isCodexProtocolAllowed, isCodexVm, normalizeCodexRouting } from './codex-route.mjs'
@@ -25,7 +27,7 @@ import {
   codexQuotaPark,
   CODEX_DEFAULT_PARK_MS,
 } from './codex-usage.mjs'
-import { extractOpenaiUsage, openaiAnthropicUsageFromExtract, disjointOpenaiUsage } from './openai-usage.mjs'
+import { disjointOpenaiUsage, mergeUsage, preferUsage } from './openai-usage.mjs'
 import { streamCodexKernel } from '../transport/codex-kernel-client.mjs'
 import {
   codexKernelRequestOptions,
@@ -404,19 +406,14 @@ function disabledImageTool(body, logBag) {
 }
 
 function usageTokens(usage) {
-  const extracted = extractOpenaiUsage(usage)
-  if (!extracted) return 0
+  const normalized = disjointOpenaiUsage(usage)
+  if (!normalized) return 0
   return (
-    (extracted.input_tokens || 0) +
-    (extracted.output_tokens || 0) +
-    (extracted.cached_tokens || 0) +
-    (extracted.cache_write_tokens || 0)
+    (normalized.input_tokens || 0) +
+    (normalized.output_tokens || 0) +
+    (normalized.cache_read_input_tokens || normalized.cache_read_tokens || 0) +
+    (normalized.cache_creation_input_tokens || normalized.cache_creation_tokens || 0)
   )
-}
-
-function preferUsage(left, right) {
-  if (usageTokens(right) > usageTokens(left)) return right
-  return left || right || null
 }
 
 const WAIT_TIMEOUT_MIN_MS = 1000
@@ -569,6 +566,7 @@ export async function handleCodexProtocol({
   accountGate = null,
   onUsage = null,
   ownerScope = null,
+  cfg = null,
 }) {
   const codex = normalizeCodexRouting(routing.codex)
   const allowed = isCodexProtocolAllowed(protocol, { codex })
@@ -636,7 +634,8 @@ export async function handleCodexProtocol({
       },
     })
   }
-  const stream = inbound?.stream !== false && ctx.body?.stream !== false
+  // Upstream Codex always streams; the caller still chooses JSON versus SSE.
+  const stream = isClientStream(inbound || ctx.body, req.headers) && ctx.body?.stream !== false
   const inboundSession = sessionFrom(req, converted.body)
   const sessionMode = outboundSessionMode(routing)
   const callerSession = extractCallerSession({
@@ -828,6 +827,9 @@ export async function handleCodexProtocol({
             args: {
               exec: execFor(projectRoot, vm),
               signal: gone.signal,
+              timeoutMs: cfg?.limits?.upstream_timeout_ms ?? 600_000,
+              idleTimeoutMs: resolveStreamIdleTimeoutMs(routing, cfg),
+              routing,
               body: outboundBody,
               reqHeaders: req.headers,
               envelope: {
@@ -860,7 +862,7 @@ export async function handleCodexProtocol({
               const tier = serviceTierFromSseLine(line)
               if (tier) responseServiceTier = tier
               const seen = usageFromSseLine(line)
-              if (seen) streamedUsage = preferUsage(streamedUsage, seen)
+              if (seen) streamedUsage = mergeUsage(streamedUsage, seen)
               const imageGen = imageGenUsageFromSseLine(line)
               if (imageGen) streamedImageUsage = imageGen
               if (!stream) {
@@ -917,6 +919,10 @@ export async function handleCodexProtocol({
         logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
           ? Math.max(0, result.firstTokenAt - requestStartedAt)
           : (result?.ttftMs ?? null)
+        logBag.first_byte_ms = Number.isFinite(result?.firstByteAt)
+          ? Math.max(0, result.firstByteAt - requestStartedAt)
+          : (result?.firstByteMs ?? null)
+        logBag.generation_ms = result?.generationMs ?? null
         if (conversionError) {
           result.ok = false
           result.status = 502
@@ -944,35 +950,24 @@ export async function handleCodexProtocol({
         }
         last = result
         const hopUsage = result.usage || result.body?.usage || result.body?.response?.usage || null
-        const usage = preferUsage(hopUsage, streamedUsage)
+        const preferredUsage = preferUsage(hopUsage, streamedUsage)
+        const usage = mergeUsage(preferredUsage === hopUsage ? streamedUsage : hopUsage, preferredUsage)
         // Responses SSE is not a Claude assistant message, so the stream client
         // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
         const delivered = !conversionError && (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
         if (delivered) {
           attemptKind = 'succeeded'
           bindSticky(outboundSessionId)
-          const extracted = extractOpenaiUsage(usage)
           const serviceTier = responseServiceTier || converted.body?.service_tier || usage?.service_tier || null
-          const disjoint = extracted ? openaiAnthropicUsageFromExtract(extracted) : null
           const logged = disjointOpenaiUsage(usage && serviceTier ? { ...usage, service_tier: serviceTier } : usage)
           logBag.usage = logged
           const imageUsage =
             result.body?.tool_usage?.image_gen || result.body?.response?.tool_usage?.image_gen || streamedImageUsage
           if (imageUsage) logBag.image_usage = imageUsage
-          logBag.input_tokens = disjoint?.input_tokens ?? usage?.input_tokens ?? usage?.prompt_tokens ?? null
-          logBag.output_tokens = disjoint?.output_tokens ?? usage?.output_tokens ?? usage?.completion_tokens ?? null
-          logBag.cache_read_tokens =
-            disjoint?.cache_read_input_tokens ??
-            extracted?.cached_tokens ??
-            usage?.input_tokens_details?.cached_tokens ??
-            usage?.cache_read_tokens ??
-            null
-          logBag.cache_creation_tokens =
-            disjoint?.cache_creation_input_tokens ??
-            extracted?.cache_write_tokens ??
-            usage?.input_tokens_details?.cache_write_tokens ??
-            usage?.cache_creation_tokens ??
-            null
+          logBag.input_tokens = logged?.input_tokens ?? null
+          logBag.output_tokens = logged?.output_tokens ?? null
+          logBag.cache_read_tokens = logged?.cache_read_input_tokens ?? logged?.cache_read_tokens ?? null
+          logBag.cache_creation_tokens = logged?.cache_creation_input_tokens ?? logged?.cache_creation_tokens ?? null
           reportOpenAIAttempt(vm.id, 'succeeded', result.ttftMs ?? null)
           logBag.final_state = result?.ok ? result.terminalState || 'verified' : 'verified'
           logBag.upstream_model = converted.body.model
@@ -982,10 +977,16 @@ export async function handleCodexProtocol({
             let body
             try {
               const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
-              body =
-                protocol === 'anthropic.messages'
-                  ? codexBodyToAnthropicMessage(assembled, converted.body.model)
-                  : assembled
+              body = assembled
+              if (protocol !== 'openai.responses') {
+                const message = codexBodyToAnthropicMessage(assembled, converted.body.model)
+                body =
+                  protocol === 'openai.chat'
+                    ? fromClaudeToOpenAIChat(message, converted.body.model)
+                    : protocol === 'openai.completions'
+                      ? fromClaudeToOpenAICompletions(message, converted.body.model)
+                      : message
+              }
             } catch (error) {
               if (!isToolArgumentsError(error)) throw error
               stats.errors++

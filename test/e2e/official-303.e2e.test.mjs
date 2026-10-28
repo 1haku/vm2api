@@ -117,7 +117,7 @@ test('official caller retains request fields with current headers, logs and CCH'
   assert.deepEqual(wire.body.output_config, { effort: 'high' })
   assert.deepEqual(wire.body.thinking, { type: 'adaptive', display: 'summarized' })
   assert.equal(wire.body.kin_outbound_shape, undefined)
-  assert.equal(wire.headers['user-agent'], 'claude-cli/2.1.303 (external, sdk-cli)')
+  assert.equal(wire.headers['user-agent'], 'claude-cli/2.1.303 (external, cli)')
   assert.equal(wire.headers.accept, 'application/json, text/event-stream')
   assert.equal(wire.headers['accept-encoding'], 'gzip, br')
   assert.equal(wire.headers['x-stainless-timeout'], '600')
@@ -132,11 +132,34 @@ test('official caller retains request fields with current headers, logs and CCH'
   for (const key of ['accept', 'accept-encoding', 'content-length', 'user-agent', 'anthropic-beta']) {
     assert.equal(logged.outbound_headers[key], wire.headers[key], key)
   }
-  assert.match(billingOf(wire), /cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=sdk-cli;/)
+  // Published CLI payloads may reorder attribution fields; validate each
+  // required value without imposing a serialization order after entrypoint.
+  assert.match(billingOf(wire), /^x-anthropic-billing-header: cc_version=2\.1\.303\.[0-9a-f]{3}; cc_entrypoint=cli;/)
+  assert.match(billingOf(wire), /; cch=[0-9a-f]{5}(?:;|$)/)
+  assert.match(billingOf(wire), /; cc_prompt_id=[0-9a-f-]{36}(?:;|$)/)
+  assert.ok(wire.body.system.some((block) => block.text.includes(OFFICIAL_303_IDENTITY)))
   const environment = wire.body.messages[1].content
   const environmentText = typeof environment === 'string' ? environment : environment.map((b) => b.text || '').join('')
-  assert.ok(environmentText.endsWith(AFTER_ENV))
-  assert.ok(wire.body.system.some((b) => b.text.includes(OFFICIAL_303_IDENTITY)))
+  assert.equal(environmentText.endsWith(AFTER_ENV), true)
+  const cacheControls = wire.body.system.map((block) => block.cache_control)
+  assert.ok(cacheControls.some((cache) => cache?.type === 'ephemeral' && cache.ttl === '1h'))
+  if (baseCli && fs.existsSync(baseCli)) {
+    // The published CLI preserves the caller's memory path and may fold the
+    // official prompt into fewer blocks. Compare the actual deployed baseline,
+    // rather than requiring an unpublished four-block serialization.
+    const baseline = await harness(t, { cacheTtl: '1h', cli: baseCli })
+    const previous = await baseline.send(officialRequest(), OFFICIAL_UA)
+    assert.equal(wire.raw.includes('/home/caller/'), previous.raw.includes('/home/caller/'))
+    assert.deepEqual(
+      cacheControls,
+      previous.body.system.map((block) => block.cache_control),
+    )
+    assert.deepEqual(
+      wire.body.messages.map((m) => m.role),
+      previous.body.messages.map((m) => m.role),
+    )
+    assertCch(previous)
+  }
   assertCch(wire)
   assert.equal(h.logs.at(-1).outbound_profile.cli_version, '2.1.303')
 })
@@ -265,8 +288,8 @@ test('default official templates send the 2.1.303 CLI identity on the real chain
 }, async (t) => {
   for (const preset of ['official', 'official_full']) {
     for (const [entry, routingBase] of [
-      ['sdk-cli', null],
-      ['cli', { compatibility: { cc_entrypoint: 'cli' } }],
+      ['cli', null],
+      ['sdk-cli', { compatibility: { cc_entrypoint: 'sdk-cli' } }],
     ]) {
       const chain = await startRealChain({
         kernelBin,
@@ -308,8 +331,8 @@ test('default official templates put a third-party prompt in one first-user remi
   ]
   for (const preset of ['official', 'official_full']) {
     for (const [entry, routingBase] of [
-      ['sdk-cli', null],
-      ['cli', { compatibility: { cc_entrypoint: 'cli' } }],
+      ['cli', null],
+      ['sdk-cli', { compatibility: { cc_entrypoint: 'sdk-cli' } }],
     ]) {
       const chain = await startRealChain({
         kernelBin,

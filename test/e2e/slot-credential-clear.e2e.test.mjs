@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { api, startGateway } from '../harness.mjs'
+import { hasAccessPresence } from '../../src/lib/oauth/oauth-credentials.mjs'
 
 test('credential/clear drops the account and keeps the slot（清凭证留槽位）', async () => {
   const gw = await startGateway()
@@ -18,7 +19,9 @@ test('credential/clear drops the account and keeps the slot（清凭证留槽位
       fs.writeFileSync(file, JSON.stringify({ access_token: 'stale-seed-token' }))
     }
     const before = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-    assert.equal(before.claude.access_token, 'sk-ant-oat01-FAKE-SEED')
+    // The slot record mirrors presence; the worker-owned file holds the secret.
+    assert.equal(hasAccessPresence(before.claude), true)
+    assert.equal(JSON.parse(fs.readFileSync(seeded[1], 'utf8')).access_token, 'stale-seed-token')
     assert.equal(before.schedulable, true)
 
     const res = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/credential/clear', { body: {} })
