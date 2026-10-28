@@ -30,6 +30,7 @@ try {
         '037 historical input normalization only; costs and ownership unchanged',
         '040/041 Linux node default and nullable inbound device only; existing data unchanged',
         '043/044/046 nullable timing and audit fields only; historical values stay unknown',
+        '047 upstream service tier is nullable; historical prices and sent tiers are preserved',
       ],
       tables: before,
     }),

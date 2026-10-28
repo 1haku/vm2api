@@ -2,6 +2,18 @@
 import { spawnSync } from 'node:child_process'
 
 const unit = [
+  'agent-summary',
+  'agent-summary-routing',
+  'official-cache-breakpoints',
+  'official-template-cache-ttl',
+  'persona-outbound-contract',
+  'persona-system-cleanup',
+  'pool-reservation-release-race',
+  'system-message-cache',
+  'zero-caller-system',
+  'zero-retry-contract',
+  'zero-template-compatibility',
+  'zero-usage-contract',
   'scheduler-fastpath',
   'handle-codex-reliability',
   'stream-timing',

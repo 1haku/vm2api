@@ -59,6 +59,7 @@ export function subscriptionSnapshot(db) {
             first_byte_ms: row.first_byte_ms ?? null,
             generation_ms: row.generation_ms ?? null,
             jev_state: row.jev_state ?? null,
+            upstream_service_tier: row.upstream_service_tier ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
             web_search_requests: row.web_search_requests ?? 0,

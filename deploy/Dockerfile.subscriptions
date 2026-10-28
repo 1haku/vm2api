@@ -6,6 +6,8 @@ WORKDIR /build/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# Contract tests compare the browser template migration with the backend catalog.
+COPY src/ /build/src/
 RUN pnpm test && pnpm build
 
 # Closed-source slot payloads are pinned and SHA256-verified before entering the image.

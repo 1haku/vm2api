@@ -60,6 +60,7 @@ import {
 } from '../admin/health-probe.mjs'
 import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.mjs'
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
+import { agentSummarySession } from './agent-summary.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
 import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
@@ -88,7 +89,8 @@ import {
 } from '../core/errors.mjs'
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
-import { prepareOutboundEnvelope, prepareCliHopBody } from './outbound-attempt.mjs'
+import { prepareOutboundEnvelope, prepareCliHopBody, prepareCliPersonaInput } from './outbound-attempt.mjs'
+import { repairAnthropicRequest } from '../pool/upstream-error-policy.mjs'
 import { profileForPreset } from '../identity/official-profiles.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { touchTelemetrySession } from '../vm/worker-telemetry.mjs'
@@ -995,6 +997,8 @@ export function createHandleProtocol(deps) {
     }
     const officialClient = isOfficialClaudeClient(fp.client_class)
     const callerSession = extractCallerSession({ inbound, body: ctx.body, headers: req.headers })
+    const summarySession = agentSummarySession(inbound, { officialTraffic })
+    const executionSession = summarySession || callerSession
     const firstUserText = extractFirstUserText(ctx.body?.messages) || extractFirstUserText(inbound?.messages)
     // Seed identity skips a leading <system-reminder>; firstUserText stays billing-only.
     const firstUserIdentity =
@@ -1040,17 +1044,23 @@ export function createHandleProtocol(deps) {
     // Seat = this client session. Same device, other session = other slot.
     const seatKey = seatless
       ? null
-      : resolveSeatIdentity({ inbound, body: ctx.body, headers: req.headers, clientIp: clientIp(req) }).key
-    const sessionKeys = stickyRouter?.sessionPoolKeys
-      ? stickyRouter.sessionPoolKeys(req, inbound, {
-          sessionId: inboundIdentity.sessionId,
-          deviceId: stickyDeviceId,
-          migrate: !isProbe,
-        })
-      : {
-          stickyKey: stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null,
-          stickyKeys: stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || [],
-        }
+      : summarySession
+        ? `seat:sess:${summarySession}`
+        : resolveSeatIdentity({ inbound, body: ctx.body, headers: req.headers, clientIp: clientIp(req) }).key
+    // Summary forks retain parent affinity, but must not migrate/bind its
+    // aliases or join its serialization queue while the parent is streaming.
+    const sessionKeys = summarySession
+      ? { stickyKey: null, stickyKeys: [] }
+      : stickyRouter?.sessionPoolKeys
+        ? stickyRouter.sessionPoolKeys(req, inbound, {
+            sessionId: inboundIdentity.sessionId,
+            deviceId: stickyDeviceId,
+            migrate: !isProbe,
+          })
+        : {
+            stickyKey: stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null,
+            stickyKeys: stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || [],
+          }
     const stickyKey = sessionKeys.stickyKey || null
     const stickyKeys = sessionKeys.stickyKeys || []
     const deviceKey = stickyDeviceId ? stickyRouter?.canonicalDeviceKey?.(stickyDeviceId, req) || null : null
@@ -1066,7 +1076,7 @@ export function createHandleProtocol(deps) {
     const familyVmId = familyKey ? stickyRouter?.resolve?.(familyKey)?.vmId || null : null
     const stickyBound =
       stickyKey && typeof stickyRouter?.resolve === 'function' ? stickyRouter.resolve(stickyKey) : null
-    const outboundSessionId = resolveOutboundSessionId(callerSession, {
+    const outboundSessionId = resolveOutboundSessionId(executionSession, {
       ...sessionContext,
       accountId: stickyBound?.accountId || '',
       boundSessionId: stickyBound?.sessionId || '',
@@ -1099,10 +1109,22 @@ export function createHandleProtocol(deps) {
     // leftover OpenAI-shaped tools are still marked (rewrite / mixed inbound).
     ctx.body = applyEagerToolStreaming(ctx.body, getRouting())
     const personaIn = ctx.body
+    // Capture ownership before rendering supplies gateway markers or projects
+    // the caller's automatic cache policy onto a CLI message block.
+    const preserveMessageCache =
+      personaIn.cache_control != null ||
+      // A zero template can interpolate cached caller system blocks into a
+      // message. Those boundaries must remain caller-owned after rendering.
+      (Array.isArray(personaIn.system) && personaIn.system.some((block) => block?.cache_control != null)) ||
+      (Array.isArray(personaIn.messages) &&
+        personaIn.messages.some(
+          (message) => Array.isArray(message?.content) && message.content.some((block) => block?.cache_control != null),
+        ))
     if (!requestContext)
       ctx.body = applyCrsUnofficialPersona(ctx.body, {
         officialClient: officialTraffic,
         routingFile: routingConfigPath,
+        cacheTtl: requestedCacheTtl,
         headers: req.headers,
         sessionId: outboundSessionId,
         model: ctx.body?.model,
@@ -1127,6 +1149,7 @@ export function createHandleProtocol(deps) {
         officialClient: false,
         forceConfigured: true,
         routingFile: routingConfigPath,
+        cacheTtl: requestedCacheTtl,
         headers: req.headers,
         sessionId: outboundSessionId,
         model: ctx.body?.model,
@@ -1163,6 +1186,9 @@ export function createHandleProtocol(deps) {
       // stream:false only changes the client response shape (assembled JSON).
       const deliveryMode = requestedDelivery === 'verified' ? 'verified' : 'realtime'
       logBag.via = 'api-kernel'
+      // This backend forwards caller cache controls unchanged. Billing must
+      // use the upstream 5m/1h split, not the TTL requested for template fills.
+      cacheTtl = null
       let result
       try {
         result = await runApiInference({
@@ -1299,7 +1325,10 @@ export function createHandleProtocol(deps) {
     const noteCachePrefix = (selected, sessionId, body) => {
       if (!sessionId) return body
       const key = `${selected.accountId}:${sessionId}`
-      const { body: prepared, ...prefix } = prepareCachePrefix(key, body, Date.now(), { imageKey }) || { body }
+      const { body: prepared, ...prefix } = prepareCachePrefix(key, body, Date.now(), {
+        imageKey,
+        preserveMessageCache,
+      }) || { body }
       logBag.cache_prefix = prefix
       logBag.cache_prefix_key = key
       if (prefix.image_floor_moved) {
@@ -1340,7 +1369,7 @@ export function createHandleProtocol(deps) {
         stickyDeviceId,
         deviceKey,
         skipSessionSeat: seatless,
-        familyKey,
+        familyKey: summarySession ? null : familyKey,
         seatKey,
         familyVmId,
         pinVmId,
@@ -1350,6 +1379,7 @@ export function createHandleProtocol(deps) {
         quotaRequest: {
           body: canonicalBody,
           sessionId: outboundSessionId || callerSession || stickyKey,
+          preserveMessageCache,
         },
         stream: upstreamStream,
         deliveryMode,
@@ -1393,7 +1423,7 @@ export function createHandleProtocol(deps) {
           const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
           const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
           const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
-          const attemptSessionId = resolveOutboundSessionId(callerSession, {
+          const attemptSessionId = resolveOutboundSessionId(executionSession, {
             ...sessionContext,
             accountId: selected.accountId,
             boundSessionId: keptSession,
@@ -1436,16 +1466,10 @@ export function createHandleProtocol(deps) {
             const outboundProfile = profileForPreset(resolvedPersona)
             // Render once from caller input with the selected slot's identity, not the pre-selection environment.
             if (!requestContext && !officialTraffic) {
-              // Re-render caller instructions without reintroducing another
-              // account's thinking signatures from the original request.
-              const ownedPersona = filterThinkingForAccount(
-                structuredClone(personaIn),
-                selected.accountId,
-                thinkingOwnerStore,
-              )
-              hopBody = applyCrsUnofficialPersona(ownedPersona.body, {
+              hopBody = applyCrsUnofficialPersona(prepareCliPersonaInput(structuredClone(personaIn), resolvedPersona), {
                 forceConfigured: true,
                 routingFile: routingConfigPath,
+                cacheTtl: requestedCacheTtl,
                 mode: resolvedPersona,
                 sessionId: attemptSessionId,
                 model: hopBody?.model,
@@ -1455,8 +1479,9 @@ export function createHandleProtocol(deps) {
               })
               // The re-render starts from the raw caller body; re-apply this account's thinking ownership to it.
               hopBody = filterThinkingForAccount(hopBody, selected.accountId, thinkingOwnerStore).body
+              for (const policy of extra.repairs || []) hopBody = repairAnthropicRequest(hopBody, policy)
             }
-            hopBody = prepareCliHopBody(repaired ? body : hopBody, {
+            hopBody = prepareCliHopBody(hopBody, {
               stream: upstreamStream,
               repaired,
               cacheTtl: requestedCacheTtl,
@@ -1466,6 +1491,7 @@ export function createHandleProtocol(deps) {
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
               routing: routingNow,
+              personaPreset: !requestContext && !officialTraffic ? resolvedPersona : null,
             })
             if (!requestContext) {
               hopBody = ensureBillingAttribution(hopBody, {
@@ -1526,6 +1552,7 @@ export function createHandleProtocol(deps) {
               officialClient: false,
               forceConfigured: true,
               routingFile: routingConfigPath,
+              cacheTtl: requestedCacheTtl,
               mode: configuredMode,
               sessionId: attemptSessionId,
               model: personaIn?.model,
@@ -1533,6 +1560,7 @@ export function createHandleProtocol(deps) {
               identity,
             })
             hopBody = officialMessagesBody(rewritten)
+            for (const policy of extra.repairs || []) hopBody = repairAnthropicRequest(hopBody, policy)
             personaHideTokens = personaHideForUnofficial(personaIn, rewritten, {
               officialClient: false,
               mode: configuredMode,

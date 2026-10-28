@@ -260,6 +260,7 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
     ['first_byte_ms', 123],
     ['generation_ms', 456],
     ['jev_state', 'changed'],
+    ['upstream_service_tier', 'priority'],
   ]) {
     assert.equal(db.prepare(`SELECT ${field} value FROM usage_logs WHERE id='history'`).get().value, null)
     db.prepare(`UPDATE usage_logs SET ${field}=? WHERE id='history'`).run(changed)
