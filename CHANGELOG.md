@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Linux VM 遥测迁入同一 Rust 内核管理的常驻 cli-node，移除 Go 遥测服务及自愈/回退；仅使用目标 VM 身份、凭据、settings 与动态出口，缺有效 profile scope 或新鲜 geo 时暂停，401 不降级匿名发送。必要原生 1P 事件默认每 600 秒合批，队列按 1 小时 / 1000 条 / 1 MiB 有界落盘；关闭立即清队列，普通重启保留有效记录。
-- Linux 初登、重新授权工具进入目标 Docker/KVM guest，保留原 helper 和唯一 Go refresh 写者；实际换票阶段经受鉴权的 native 私有入口确认，缓存命中不制造事件。单 VM / 批量开关、间隔、状态和计数日志统一原生通路，远端必须确认 kernel 与 seed 均已发布；macOS 遥测明确不支持。需要配套 Node / Go OAuth worker / kernel / cli-node 新产物，尚未发布或部署，真实 KVM 验收仍需可访问的测试环境。
+- Linux 初登、重新授权工具进入目标 Docker/KVM guest，保留原 helper 和唯一 Go refresh 写者；实际换票阶段经受鉴权的 native 私有入口确认，缓存命中不制造事件。单 VM / 批量开关、间隔、状态和计数日志统一原生通路，远端必须确认 kernel 与 seed 均已发布；macOS 遥测明确不支持。升级须配套 Node / Go OAuth worker / kernel / cli-node 新产物，真实 KVM 验收仍需可访问的测试环境。
+- 已在另行授权的私有 `1.4.026` Docker 部署中完成五个本机、四个远端 Claude 槽原地升级，容器身份及原调度语义保持；10 条 Claude 遥测关闭策略保持，九槽 native ready / disabled / pending=0，11 个旧 Go 发送者退役。版本、认证、公网页面、容器身份及真实 `200 pong` 验收通过。未公开发布 payload/Release，未开启生产遥测；这不构成 KVM 或生产 1P 上传认证。
 - #804：准入钩子期间释放后按实时 inflight 递增，避免占位复活。
 
 ## 1.4.023 — 2026-10-28
