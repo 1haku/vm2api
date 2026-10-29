@@ -473,6 +473,12 @@ test('native interval publication reports an unreachable remote VM as failed, no
     assert.deepEqual(changed.telemetry_sync, { updated: 1, queued: 0, skipped: 0, failed: ['vm-node'] })
     assert.equal(JSON.parse(fs.readFileSync(routingFile, 'utf8')).telemetry.upload_interval_seconds, 3600)
     assert.equal(kernel('vm-claude').upload_interval_seconds, 3600)
+    const localSeed = JSON.parse(
+      fs.readFileSync(path.join(vms, 'vm-claude', 'cli-home', '.claude', 'kin-seed.json'), 'utf8'),
+    )
+    assert.equal(localSeed.seed_policy.telemetry_disabled, false)
+    assert.equal(fs.existsSync(path.join(vms, 'vm-claude', 'cli-home', '.claude', 'settings.json')), true)
+    assert.equal(fs.existsSync(path.join(vms, 'vm-claude', 'cli-home', '.claude', 'claude.setting')), true)
     assert.equal(fs.existsSync(path.join(vms, 'vm-codex', 'run', 'kernel.json')), false)
     assert.equal(
       (await runtime.persistRoutingPatch({ telemetry: { upload_interval_seconds: 3600 } })).telemetry_sync,

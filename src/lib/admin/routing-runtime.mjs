@@ -50,10 +50,8 @@ import { isCodexVm } from '../vm/vm-kind.mjs'
 import { syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { wakeOpenAIWaiter } from '../pool/openai-account-runtime.mjs'
 import { normalizeVmConfig } from '../vm/machine-spec.mjs'
-import { syncNativeTelemetry } from '../vm/vm-runtime.mjs'
-import { slotHost } from '../vm/slot-host.mjs'
+import { applyNativeTelemetry } from '../vm/fleet-update.mjs'
 import { telemetryUploadInterval } from '../vm/native-telemetry.mjs'
-import { retireLegacyTelemetry } from '../vm/slot-process-status.mjs'
 
 export function createRoutingRuntime(ctx) {
   const getRouting = () => (typeof ctx.getRoutingConfig === 'function' ? ctx.getRoutingConfig() : ctx.routingConfig)
@@ -416,16 +414,15 @@ export function createRoutingRuntime(ctx) {
       const vm = getVm(project, id)
       if (!vm || isCodexVm(vm)) continue
       try {
-        const retired = await retireLegacyTelemetry({ projectRoot: project, vm })
-        if (!retired.ok) {
-          applied.failed.push(vm.id)
-          continue
-        }
-        if (!syncNativeTelemetry(vm, project, routingConfig).wrote) {
+        const result = await applyNativeTelemetry({ projectRoot: project, vm, routing: routingConfig })
+        if (result.supported === false) {
           applied.skipped += 1
           continue
         }
-        await slotHost(vm).syncTelemetry(vm, path.join(project, 'vms', vm.id))
+        if (!result.ok || !result.published) {
+          applied.failed.push(vm.id)
+          continue
+        }
         applied.updated += 1
       } catch {
         applied.failed.push(vm.id)
