@@ -57,6 +57,8 @@
 
 只记上游真正拒过的正文。硬正则和决策模型自己打回的拦截不进这张缓存，下次仍重新过闸。
 
+内核把 Usage Policy 拒答报成 HTTP 400 `upstream_invalid_request` 时，日志仍按拒答归类，风险审计的「上游拒答」能看到这条 400。指纹列表显示当时的用户原文，不显示 `<system-reminder>`。近似比较去掉提醒、`# Environment` 和工具回传后的用户正文；短于 512 字没有近似签名，只拦完全一致的提示词。
+
 三种命中都是不可自动重试的 400 `policy_blocked`，`code` 仍是 `refusal_guard`，避免 Claude Code 误提示 `/login`。原文后面追加原因，`details.reason` 为：
 
 - `exact`：当前提示词与曾被拒答的内容完全一致

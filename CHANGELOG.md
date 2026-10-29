@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- 上游 Usage Policy 的 400（内核常记成 `upstream_invalid_request`）归入拒答，风险审计能看到。拒答指纹显示用户原文，不显示 `<system-reminder>`。近似只比较去掉提醒、环境和工具回传后的用户正文；短于 512 字只做精确指纹，不靠共享提醒误伤。
 
 - Linux VM 遥测迁入同一 Rust 内核管理的常驻 cli-node，移除 Go 遥测服务及自愈/回退；仅使用目标 VM 身份、凭据、settings 与动态出口，缺有效 profile scope 或新鲜 geo 时暂停，401 不降级匿名发送。必要原生 1P 事件默认每 600 秒合批，队列按 1 小时 / 1000 条 / 1 MiB 有界落盘；关闭立即清队列，普通重启保留有效记录。
 - Linux 初登、重新授权工具进入目标 Docker/KVM guest，保留原 helper 和唯一 Go refresh 写者；实际换票阶段经受鉴权的 native 私有入口确认，缓存命中不制造事件。单 VM / 批量开关、间隔、状态和计数日志统一原生通路，远端必须确认 kernel 与 seed 均已发布；macOS 遥测明确不支持。升级须配套 Node / Go OAuth worker / kernel / cli-node 新产物，真实 KVM 验收仍需可访问的测试环境。
