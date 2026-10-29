@@ -1,6 +1,6 @@
 {
   "repo": "dofastted/vm2api",
-  "release": "payload-2026.10.29-telemetry-direct",
+  "release": "payload-2026.10.29-telemetry-upx",
   "files": [
     {
       "path": "bin/kin-kernel",
@@ -47,8 +47,8 @@
     {
       "path": "share/wrap-cli/cli-node",
       "asset": "cli-node",
-      "size": 118306944,
-      "sha256": "435b1500c286d072715e9e3569edbdb3d00d267896b21bd39cf0debbcf18c040"
+      "size": 27933000,
+      "sha256": "0e64c401d657d51356011ff4dfd19085f1de41194f0da6173e18bdd41557d740"
     },
     {
       "path": "share/wrap-cli/cc-node",
