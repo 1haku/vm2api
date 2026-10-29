@@ -59,6 +59,7 @@ import { resolveInferenceBackend, runApiInference } from '../pool/api-protocol.m
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
 import { agentSummarySession } from './agent-summary.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
+import { loggedReasoningEffort } from './thinking.mjs'
 import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import { keyScopeFromRequest, vmPoolDenial } from '../admin/key-scope.mjs'
@@ -1328,6 +1329,7 @@ export function createHandleProtocol(deps) {
     // Clear each attempt so a failed retry cannot retain the previous hop's snapshot.
     const noteOutboundEnvelope = (envelope) => {
       if (logCtx.capture_outbound) logBag.outbound_body = envelope?.body ?? null
+      if (envelope?.body) logBag.reasoning_effort = loggedReasoningEffort(envelope.body)
       logBag.worker_envelope_headers = envelope?.headers ? redactHeaders(envelope.headers) : null
       logBag.outbound_headers = null
       logBag.outbound_headers_source = 'unavailable'
