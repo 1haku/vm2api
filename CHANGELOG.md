@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- `payload-2026.10.29-telemetry-kernel` 的 cli-node 仍是单次 slot 开始发送端 `8484c4c58f4b`；`kin-kernel` / `kin-kernel.bin` 换成带 `vm_telemetry`、`telemetry_ready`、`telemetry` 的 `f57d4e71081b`（13228472 字节）。`v1.4.026` 镜像是按旧内核烘焙的，一键安装仍缺这三个字段，直到新版本镜像发出。升级已部署机须 `fetch:payload` 且 `wrap-cli/sync`。
+## 1.4.027 — 2026-10-29
+
+- `kin-kernel` / `kin-kernel.bin` 换成会在健康检查里报 `vm_telemetry`、`telemetry_ready`、`telemetry` 的 `f57d4e71081b`（13228472 字节）。cli-node 仍是单次 slot 开始发送端 `8484c4c58f4b`（27933052 字节），槽内不拨代理。`payload-2026.10.29-telemetry-kernel`。`v1.4.026` 镜像烘焙时还是旧内核 `8a61aaa3cba0`，新装要这一版才会带上这三个字段。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启；须 `npm run fetch:payload` 后 `wrap-cli/sync`（`restart:true`）。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 
 ## 1.4.026 — 2026-10-29
 
