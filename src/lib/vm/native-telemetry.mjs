@@ -8,7 +8,6 @@ import { readRoutingConfigFile } from '../core/config.mjs'
 import { isDbOpen } from '../db/database.mjs'
 import { ProxiesRepo } from '../db/repos/proxies-repo.mjs'
 import { runtimeFileOwner } from '../oauth/oauth-credentials.mjs'
-import { boundProxyUrl, isLocalEgressProxy } from './egress.mjs'
 
 export const TELEMETRY_UPLOAD_INTERVAL_DEFAULT = 600
 export const TELEMETRY_UPLOAD_INTERVAL_MIN = 60
@@ -43,16 +42,13 @@ function routingFor(projectRoot, routing) {
   }
 }
 
-/** Keep the real bound route even when inference uses transparent egress. */
+/** Identity only. The slot network's egress forwarder is the only proxy. */
 export function buildNativeTelemetry(vm, projectRoot, routing = null) {
-  const local = isLocalEgressProxy(vm?.proxy)
-  const proxyUrl = local ? '' : boundProxyUrl(vm?.proxy) || ''
   return {
     upload_interval_seconds: telemetryUploadInterval(routingFor(projectRoot, routing)),
     proxy_id: String(vm?.proxy?.id || '').trim() || null,
-    proxy_url: proxyUrl,
-    // Only an explicitly bound local exit permits direct telemetry.
-    proxy_required: !local,
+    proxy_url: '',
+    proxy_required: false,
   }
 }
 
