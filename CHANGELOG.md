@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- #815：取消 Opus/Sonnet 5.5 将强制 `tool_choice` 静默改写为 `auto` 并强加 `strict:true` 的行为；入口 `validateToolChoice`，不兼容请求明确 400（`tool_choice_incompatible` / `invalid_tool_choice`），兼容模型保留调用方 `tool_choice` 与 `strict`。**行为破坏**：原先静默降级为 auto 的强制工具请求，现返回 400。
+
 ## 1.4.028 — 2026-10-30
 
 - #818：缓存前缀快照过期即删，不再等到 1 万条。查询判定不变。
