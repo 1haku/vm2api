@@ -278,13 +278,29 @@ function withUpstreamStream(claude) {
  * Anthropic / OpenAI default: omitted `stream` is JSON. NewAPI health probes
  * omit the field (Go omitempty) and then json.Unmarshal the body — SSE
  * (`event:…`) becomes `invalid character 'e' looking for beginning of value`.
- * Official Claude Code that omits `stream` still streams via Accept.
+ * An omitted `stream` streams only when Accept prefers SSE over JSON. Claude
+ * Code 2.1.311+ sends `Accept: application/json, text/event-stream` on its
+ * non-streaming auto-mode classifier and still parses the reply as JSON.
  */
 export function isClientStream(body, headers = {}) {
   if (body?.stream === false || body?.stream === 0 || body?.stream === 'false') return false
   if (body?.stream === true || body?.stream === 1 || body?.stream === 'true') return true
-  const accept = String(headers?.accept || headers?.Accept || '').toLowerCase()
-  return accept.includes('text/event-stream')
+  const accept = String(headers?.accept || headers?.Accept || '')
+  const sse = acceptQuality(accept, 'text/event-stream')
+  return sse > 0 && sse > acceptQuality(accept, 'application/json')
+}
+
+/** Highest q-value an Accept header gives `type` (exact media range only); -1 when absent. */
+function acceptQuality(accept, type) {
+  let best = -1
+  for (const part of accept.toLowerCase().split(',')) {
+    const [range, ...params] = part.split(';').map((s) => s.trim())
+    if (range !== type) continue
+    const q = params.find((p) => p.startsWith('q='))
+    const value = q ? Number(q.slice(2)) : 1
+    if (Number.isFinite(value) && value > best) best = value
+  }
+  return best
 }
 
 /** Lift OpenAI function tools onto Anthropic Messages without treating the hop as official CC. */

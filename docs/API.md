@@ -164,7 +164,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 
 `POST /v1/responses`：`input` 或 `messages` 必填。回包 `usage.input_tokens_details` 带缓存明细。`stop_reason=refusal` 同样映射 content_filter。
 
-Codex HTTP 入口省略 `stream` 且没有 `Accept: text/event-stream` 时返回 JSON；显式 `stream: false` 优先于 Accept。内部 kernel 仍使用 SSE，网关聚合后按入口返回 Responses 或 Chat/Completions JSON。入站 WebSocket 的事件格式不变。
+Codex HTTP 入口省略 `stream` 时，只有 `Accept` 对 `text/event-stream` 的偏好高于 `application/json`（按 q 值，同值算 JSON）才返回 SSE，否则返回 JSON；显式 `stream` 优先于 Accept。内部 kernel 仍使用 SSE，网关聚合后按入口返回 Responses 或 Chat/Completions JSON。入站 WebSocket 的事件格式不变。
 
 Codex 首事件等待使用 `KIN_UPSTREAM_TIMEOUT`（默认 600 秒），收到事件后按 `failover.stream_idle_timeout_ms` / `KIN_STREAM_IDLE_TIMEOUT` 检查空闲时间；持续传输的长流不按总时长截断。内核返回 `503 no_capacity` 且尚未输出时可在现有候选范围与尝试次数限制内换槽；请求体超限不换槽。
 
@@ -307,6 +307,10 @@ curl -sS http://127.0.0.1:8787/health
 3. 探活失败、进程退出、stdin 断管 / 写入超过 10 秒、全部 slot 关闭或至少半数关闭且无在途任务：内核只重启 CLI 子进程，10 分钟内最多 3 次，等待 10 / 30 / 60 秒。
 4. 内核不可达或 CLI 恢复已耗尽：Node watchdog 才重启容器，1 小时内最多 3 次，每次先等待 1 / 5 / 15 分钟。
 5. 容器恢复仍失败：停止自动重启，排除该 VM（粘性与诊断 pin 都不能绕过），经配置的通知渠道告警。观察到内核恢复健康后解除故障；运行中的 cc-node/crag 保留原有不重启例外。
+
+VM / 节点下线通知由「设置 → 通知」的 `notify.events.vm_down` 控制，默认开启，并遵循通知总开关及各通道开关。通知监控按 `notify.interval_sec`（默认 60 秒）读取调度器使用的节点 SSH 连通状态、watchdog 终止故障及 VM 运行状态；节点失联、内核恢复预算耗尽，或运行中的 VM 变为 stopped/dead/error 时，经已配置的 Telegram、企业微信群机器人及邮件通道发送 VM ID、节点 ID 和原因。它不额外发起模型推理探测。
+
+同一次下线只通知一次，不同 VM 不共享告警冷却；发送失败在后续检查中仅重试失败通道，VM 恢复、删除、进入人工停调或维护状态后取消待发告警。投递状态保存在内存中；控制面重启后重新建立基线，已失联的节点和内核终止故障会重新告警，原已停止的 VM 不补发。此事件独立于按凭证可用性判断的 `account_down`；额度冷却、人工停调、维护及未知运行状态不直接触发下线通知。
 
 内部 `/internal/health` 暴露 `healthy`、`unhealthy_reason`、`recovering`、`closed_slots`、`cli_restarts`、`ready_slots`、`cli_pid`。`ready_slots=0` 且 CLI 存活是忙，`recovering=true` 是内核自身恢复；二者都不是容器重启理由。旧字段 `wedged_slots` 已移除。
 

@@ -1,0 +1,11 @@
+# Build CONTROL_IMAGE from this fork with deploy/Dockerfile.arm64-control first.
+# Keeping that build separate lets upstream native-CLI changes flow through.
+ARG CONTROL_IMAGE
+FROM ${CONTROL_IMAGE}
+ARG CUSTOM_REVISION
+WORKDIR /opt/vm2api
+COPY deploy/payload.json deploy/arm64-cli.json ./deploy/
+COPY docker/kin-kvm ./docker/kin-kvm
+RUN node scripts/subscriptions-manifest.mjs "$CUSTOM_REVISION"
+ENV VM2API_CUSTOM_BUILD=subscriptions-v8
+LABEL org.vm2api.variant="shared-subscriptions-v8" org.opencontainers.image.revision=$CUSTOM_REVISION

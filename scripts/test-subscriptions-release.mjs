@@ -1,7 +1,15 @@
 // Run inside the candidate release image, without production data or Docker socket mounts.
 import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+
+const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
+const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'subscription-catalog-transfer',
+  'native-cli',
+  'vm-offline-notify',
+  'convert-stream',
   'agent-summary',
   'agent-summary-routing',
   'official-cache-breakpoints',
@@ -304,8 +312,11 @@ const result = spawnSync(
       ...process.env,
       // Unit fixtures choose their own generator; the real payload is checked separately.
       KIN_COMPUTER_BIN: '',
+      // Synthetic slot fixtures use their own payloads; the real native overlay
+      // is validated separately by the ARM64 image and native CLI smoke tests.
+      KIN_NATIVE_CLI_ROOT: '',
       KIN_AUTOMODE_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
-      KIN_AUTOMODE_CLI: '/opt/vm2api/image-wrap-cli/cli-node',
+      KIN_AUTOMODE_CLI: testCli,
       KIN_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
       KIN_EGRESS_BIN: '/opt/vm2api/image-bin/kin-egress',
     },

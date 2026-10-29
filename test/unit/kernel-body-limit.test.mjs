@@ -9,6 +9,8 @@ import { once } from 'node:events'
 import { DEFAULT_MAX_REQUEST_BYTES } from '../../src/lib/core/request-size.mjs'
 
 const MiB = 1024 * 1024
+const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
+const cliBin = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 // Native parser tests use no credentials and an invalid JSON body: no inference or upstream call.
 for (const vendor of ['claude', 'codex']) {
   test(`${vendor} native kernel accepts 33 MiB at the 128 MiB budget and rejects over-budget bodies`, {
@@ -39,7 +41,7 @@ for (const vendor of ['claude', 'codex']) {
             proxy_required: true,
             provider: 'local_cli',
             test_endpoints: true,
-            claude_bin: '/opt/vm2api/image-wrap-cli/cli-node',
+            claude_bin: cliBin,
             max_request_bytes: limit,
             anthropic_base_url: 'http://127.0.0.1:9',
           }),

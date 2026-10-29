@@ -1,0 +1,29 @@
+# Install as docker-compose.yml in a dedicated deployment directory.
+services:
+  vm2api:
+    image: ${VM2API_SUBSCRIPTIONS_IMAGE:?Set the tested custom ARM64 image}
+    platform: linux/arm64
+    container_name: vm2api
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    env_file:
+      - .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: ${PORT:-8788}
+      VM2API_CONTAINER_NAME: vm2api
+      VM2API_HOST_ROOT: ${VM2API_HOST_ROOT:?Set the deployment directory}
+      KIN_PROJECT_ROOT: /opt/vm2api
+      KIN_DATA_DIR: /opt/vm2api/data
+      KIN_AUTO_SYNC_WRAP: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./vms:/opt/vm2api/vms
+      - ./data:/opt/vm2api/data
+      - ./bin:/opt/vm2api/bin
+      - ./share:/opt/vm2api/share
+      - ./config:/opt/vm2api/src/config

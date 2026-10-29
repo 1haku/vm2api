@@ -12,7 +12,9 @@ import { FULL_OAUTH_SCOPE } from '../../src/lib/oauth/oauth-contract.mjs'
 import { sessionKeyToOAuth } from '../../src/lib/oauth/cookie-auth.mjs'
 
 test('OAuth binary exchanges provider state with session PKCE and preserves cookie authorization', {
-  timeout: 30000,
+  // This helper remains amd64 on ARM hosts. The full test starts it for three
+  // exchanges and a cookie flow; QEMU cold starts need a larger total budget.
+  timeout: process.arch === 'arm64' ? 90000 : 30000,
 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-authorize-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
