@@ -29,7 +29,7 @@ class FakeDocker:
         return self.images[ref]
 
     def managed_images(self):
-        return [{'ref': ref, 'id': meta['id']} for ref, meta in self.images.items() if ref.startswith('vm2api-subscriptions:')]
+        return [{'ref': ref, 'id': meta['id']} for ref, meta in self.images.items() if ref.rsplit(':', 1)[0] in retention.MANAGED]
 
     def managed_build_images(self):
         return []
@@ -95,6 +95,21 @@ class RetentionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             self.plan()
         self.assertTrue((self.root / 'backups/20261001T000000Z').exists())
+
+    def test_arm64_release_family_preserves_backup_dependencies(self):
+        replace = lambda ref: ref.replace('vm2api-subscriptions:', 'vm2api-subscriptions-arm64:')
+        self.docker.images = {replace(ref): meta for ref, meta in self.docker.images.items()}
+        for container in self.docker.active:
+            container['image_ref'] = replace(container['image_ref'])
+        for file in (self.root / 'backups').glob('*/previous-image.txt'):
+            file.write_text(replace(file.read_text()))
+        plan = retention.build_plan(self.root, self.docker,
+                                    str(self.root / 'releases/subscriptions-6'), 'vm2api-subscriptions-arm64:release-6')
+        self.assertEqual(len(plan['keep_backups']), 3)
+        self.assertNotIn('vm2api-subscriptions-arm64:release-6', plan['delete_images'])
+        self.assertNotIn('other-service:old', plan['delete_images'])
+        self.assertTrue(all('arm64:' in image for image in plan['delete_images']))
+        self.assertEqual(len(plan['delete_images']), 3)
 
     def test_missing_rollback_image_or_source_blocks_all_cleanup(self):
         self.docker.images.pop('vm2api-subscriptions:release-5')

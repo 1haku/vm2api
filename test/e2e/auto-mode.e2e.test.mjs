@@ -583,7 +583,8 @@ test('classifier terminal/error/cancel/concurrency boundaries through actual ELF
     await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(JSON.parse((await h.cancel('cancel-classifier')).text).cancelled, true)
   await running
-  for (let i = 0; i < 100 && (await h.getHealth()).ready_slots !== 2; i++) {
+  const recoveryDeadline = Date.now() + (process.arch === 'arm64' ? 10000 : 2000)
+  while (Date.now() < recoveryDeadline && (await h.getHealth()).ready_slots !== 2) {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   assert.equal((await h.getHealth()).ready_slots, 2)

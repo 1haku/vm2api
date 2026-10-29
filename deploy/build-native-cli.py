@@ -14,6 +14,7 @@ import zipfile
 
 RUNTIME_FILES = ('bun', 'cli.js', 'ld-linux-aarch64.so.1', 'libc.so.6',
                  'libpthread.so.0', 'libdl.so.2', 'libm.so.6')
+MISSING_RUNNING_STATE_SOURCE = 'ced77bcd9639314e6f277c23d91c98f5e178add7eb1eb93538d51ad1cb500830'
 WRAPPER = '''#!/bin/sh
 # native-cli bundle: {digest}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -67,6 +68,28 @@ def archive_member(data, name, kind):
         return archive.extractfile(info).read()
 
 
+def repair_native_job_state(source, pinned_source_hash):
+    """Repair the one reviewed 1.4.026 source, after its upstream hash is checked.
+
+    Its telemetry insertion dropped phase=running. cancelJob only aborts running
+    jobs, leaving requests with an unresponsive upstream permanently occupied.
+    Other source revisions remain untouched and must pass the same real-chain tests.
+    """
+    if pinned_source_hash != MISSING_RUNNING_STATE_SOURCE:
+        return source, []
+    start_marker = b'function startJob(slots, slotIdArg, jobId, request3, hostOptions, requestContext) {'
+    end_marker = b'async function cancelJob(slots, slotIdArg, jobId) {'
+    if source.count(start_marker) != 1 or source.count(end_marker) != 1:
+        raise ValueError('reviewed native job-state layout changed')
+    start, end = source.index(start_marker), source.index(end_marker)
+    block = source[start:end]
+    assignment = b'  slot.jobId = jobId;'
+    if block.count(assignment) != 1 or b'slot.phase = "running"' in block or b'if (slot.phase !== "idle")' not in block:
+        raise ValueError('reviewed native job-state assignment changed')
+    fixed = block.replace(assignment, b'  slot.phase = "running";\n' + assignment, 1)
+    return source[:start] + fixed + source[end:], ['restore-native-job-running-state']
+
+
 def download(tool, cache):
     target = cache / tool['sha256']
     if target.exists():
@@ -102,6 +125,7 @@ def build(payload, output, manifest, lib_dir, cache):
         subprocess.run([str(upx), '-d', '-o', str(unpacked), str(source_elf)],
                        check=True, timeout=120, stdout=subprocess.DEVNULL)
         source = extract_source(unpacked.read_bytes(), manifest['source_sha256'])
+        source, repairs = repair_native_job_state(source, manifest['source_sha256'])
         bundle = work / 'overlay'
         runtime = bundle / 'glibc239' / 'arm64'
         runtime.mkdir(parents=True)
@@ -121,7 +145,8 @@ def build(payload, output, manifest, lib_dir, cache):
         (bundle / 'cli-node').write_text(WRAPPER.format(digest=bundle_id))
         hashes['cli-node'] = digest((bundle / 'cli-node').read_bytes())
         meta = {'schema': 1, 'source_sha256': manifest['cli_sha256'],
-                'bun_version': manifest['bun_version'], 'files': hashes}
+                'bun_version': manifest['bun_version'], 'files': hashes,
+                'upstream_js_sha256': manifest['source_sha256'], 'source_patches': repairs}
         (bundle / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\n')
         for file in bundle.rglob('*'):
             if file.is_file():

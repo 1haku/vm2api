@@ -6,6 +6,7 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'native-telemetry-egress',
   'subscription-catalog-transfer',
   'native-cli',
   'vm-offline-notify',
@@ -51,7 +52,6 @@ const unit = [
   'image-tool-models',
   'outbound-log-envelope',
   'docker-inspect-outcome',
-  'fleet-telemetry-inspect',
   'slot-shell-kvm',
   'panel-tenant-guards',
   'cluster-native-node',
@@ -194,7 +194,6 @@ const unit = [
   'pricing',
   'platform-detect',
   'vm-identity',
-  'worker-telemetry',
   'outbound-official-capture',
   'auto-mode-api',
   'crs-persona',
@@ -317,7 +316,8 @@ const result = spawnSync(
       KIN_NATIVE_CLI_ROOT: '',
       KIN_AUTOMODE_KERNEL: '/opt/vm2api/image-wrap-cli/kin-kernel',
       KIN_AUTOMODE_CLI: testCli,
-      KIN_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
+      KIN_OAUTH_AUTH_BIN: '',
+      KIN_TEST_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
       KIN_EGRESS_BIN: '/opt/vm2api/image-bin/kin-egress',
     },
   },

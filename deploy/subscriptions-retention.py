@@ -25,7 +25,7 @@ KEEP = 3
 STAMP = re.compile(r"\d{8}T\d{6}Z")
 BACKUP = re.compile(r"(?:before-turnstile-)?\d{8}T\d{6}Z")
 REVISION = re.compile(r"[0-9a-f]{40}")
-MANAGED = {"vm2api-subscriptions", "ghcr.io/dofastted/vm2api"}
+MANAGED = {"vm2api-subscriptions", "vm2api-subscriptions-arm64", "ghcr.io/dofastted/vm2api"}
 ARCHIVE = re.compile(r"(?:subscriptions-[\w.-]+|custom-main-[\w.-]+|go-preflight-[\w.-]+|merge-[\w.-]+-tests)\.(?:bundle|tar\.gz)(?:\.revision)?")
 BUILD_MARKERS = {'/build/web': '/build/web/package.json',
                  '/build/worker': '/build/worker/go.mod',
@@ -226,7 +226,7 @@ class Docker:
     def verify(self, revision):
         run('docker', 'exec', 'vm2api', 'node', 'scripts/verify-subscriptions-release.mjs', revision)
         run('docker', 'exec', 'vm2api', 'node', '--input-type=module', '-e',
-            'const r=await fetch("http://127.0.0.1:8787/health",{signal:AbortSignal.timeout(3000)});if(!r.ok)process.exit(1)')
+            'const r=await fetch("http://127.0.0.1:"+(process.env.PORT||8787)+"/health",{signal:AbortSignal.timeout(3000)});if(!r.ok)process.exit(1)')
 
     def remove_image(self, ref):
         # No force: Docker itself also rejects images required by containers.

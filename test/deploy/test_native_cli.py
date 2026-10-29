@@ -14,6 +14,18 @@ spec.loader.exec_module(builder)
 
 
 class NativeCliBuilderTests(unittest.TestCase):
+    def test_reviewed_job_state_repair_preserves_other_source(self):
+        source = (b'prefix\nfunction startJob(slots, slotIdArg, jobId, request3, hostOptions, requestContext) {\n'
+                  b'  if (slot.phase !== "idle") return;\n  slot.jobId = jobId;\n}\n'
+                  b'async function cancelJob(slots, slotIdArg, jobId) {\n'
+                  b'  if (slot.phase === "running") slot.abort.abort();\n}\nsuffix')
+        fixed, repairs = builder.repair_native_job_state(source, builder.MISSING_RUNNING_STATE_SOURCE)
+        self.assertEqual(fixed.replace(b'  slot.phase = "running";\n', b'', 1), source)
+        self.assertEqual(repairs, ['restore-native-job-running-state'])
+        self.assertEqual(builder.repair_native_job_state(source, '0' * 64), (source, []))
+        with self.assertRaises(ValueError):
+            builder.repair_native_job_state(source.replace(b'  slot.jobId = jobId;', b''), builder.MISSING_RUNNING_STATE_SOURCE)
+
     def test_source_is_unique_bounded_and_hash_pinned(self):
         source = b'// @bun\nasync function runNativeMessagesLoop(_ctx) {}\nmain2();\n'
         elf = b'prefix\0' + source + b'\0suffix'
