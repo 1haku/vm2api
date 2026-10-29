@@ -308,9 +308,17 @@ export function createHandleProtocol(deps) {
       mapUpstreamError(result?.status || 503, result?.body, result?.headers || {}),
       result?.body,
     )
-    const summary = formatPoolSelectionSummary(details)
-    logBag.error_code = originalCode || mapped.body?.error?.code
-    logBag.error_message = summary || originalMessage || mapped.body?.error?.message || null
+    const mappedCode = mapped.body?.error?.code
+    if (mappedCode === ErrorCode.REFUSAL_GUARD) {
+      // The kernel often names an AUP refusal upstream_invalid_request. Keep
+      // the refusal code so the audit feed can see it, and the upstream sentence
+      // so the row still shows what was refused.
+      logBag.error_code = mappedCode
+      logBag.error_message = originalMessage || mapped.body?.error?.message || null
+    } else {
+      logBag.error_code = originalCode || mappedCode
+      logBag.error_message = summary || originalMessage || mapped.body?.error?.message || null
+    }
     if (logBag.classifier) {
       logBag.classifier.error = {
         status: result?.status || null,
