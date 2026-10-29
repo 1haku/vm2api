@@ -3,6 +3,7 @@
 ## Unreleased
 
 - #819：`/v1/messages` 转 Codex 时保留数组形式的 `system`（含 `cache_control`），不再只接受字符串。
+- #807：调度不再读取无人写入的 `accounts.schedulable`。面板「参与调度」仍只看槽位开关；`account.status !== 'active'` 不变。
 
 ## 1.4.027 — 2026-10-29
 
