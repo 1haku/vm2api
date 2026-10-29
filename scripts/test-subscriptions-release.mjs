@@ -7,6 +7,7 @@ const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli
 
 const unit = [
   'native-telemetry-egress',
+  'forced-tool-choice',
   'subscription-catalog-transfer',
   'native-cli',
   'vm-offline-notify',
