@@ -91,8 +91,8 @@ export function readVmProxyGeo(vm, lookup = null) {
 }
 
 /**
- * Snapshot the native sender will load. checked_at is this sync, so a stored
- * proxy location replaces a failed stub and is fresh for one observation window.
+ * Snapshot the native sender loads. Location comes from the proxy feature's
+ * saved geo. checked_at records this publication, not a sender probe.
  */
 export function telemetryEgressSnapshot(vm, geo, now = Date.now()) {
   if (!vm?.id || !geo || geo.error || !net.isIP(String(geo.ip || ''))) return null
