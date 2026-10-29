@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- #819：`/v1/messages` 转 Codex 时保留数组形式的 `system`（含 `cache_control`），不再只接受字符串。
+
 ## 1.4.027 — 2026-10-29
 
 - `kin-kernel` / `kin-kernel.bin` 换成会在健康检查里报 `vm_telemetry`、`telemetry_ready`、`telemetry` 的 `f57d4e71081b`（13228472 字节）。cli-node 仍是单次 slot 开始发送端 `8484c4c58f4b`（27933052 字节），槽内不拨代理。`payload-2026.10.29-telemetry-kernel`。`v1.4.026` 镜像烘焙时还是旧内核 `8a61aaa3cba0`，新装要这一版才会带上这三个字段。
