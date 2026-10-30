@@ -319,6 +319,79 @@ test('telegram send uses bot API and never echoes the token', async () => {
   )
 })
 
+test('telegram transport errors redact URLs containing the bot token', async () => {
+  const cfg = normalizeNotifyConfig({ telegram: { bot_token: '999:secret-token', chat_id: '42' } })
+  await assert.rejects(
+    sendTelegramNotify(
+      cfg,
+      { text: 'test' },
+      {
+        fetch: async (url) => {
+          throw new Error(`request to ${url} failed`)
+        },
+      },
+    ),
+    (error) => !error.message.includes('secret-token') && error.message.includes('***'),
+  )
+})
+
+test('telegram timeout covers response reading and cannot report partial delivery as success', async () => {
+  const cfg = normalizeNotifyConfig({ telegram: { bot_token: '999:secret-token', chat_id: '42' } })
+  const keepAlive = setTimeout(() => {}, 1000)
+  try {
+    await assert.rejects(
+      sendTelegramNotify(
+        cfg,
+        { text: 'test' },
+        {
+          timeoutMs: 30,
+          fetch: async (_url, { signal }) => ({
+            ok: true,
+            status: 200,
+            text: () =>
+              new Promise((_resolve, reject) => {
+                if (signal.aborted) reject(signal.reason)
+                else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+              }),
+          }),
+        },
+      ),
+      /telegram_timeout/,
+    )
+  } finally {
+    clearTimeout(keepAlive)
+  }
+  for (const raw of ['', 'null', '{}', 'not-json']) {
+    await assert.rejects(
+      sendTelegramNotify(
+        cfg,
+        { text: 'test' },
+        {
+          fetch: async () => ({ ok: true, status: 200, text: async () => raw }),
+        },
+      ),
+    )
+  }
+})
+
+test('telegram keeps caller cancellation independent of its longer request timeout', async () => {
+  const cfg = normalizeNotifyConfig({ telegram: { bot_token: '999:secret-token', chat_id: '42' } })
+  const caller = new AbortController()
+  const pending = sendTelegramNotify(
+    cfg,
+    { text: 'test' },
+    {
+      signal: caller.signal,
+      fetch: async (_url, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+    },
+  )
+  caller.abort(new Error('caller cancelled'))
+  await assert.rejects(pending, /caller cancelled/)
+})
+
 test('monitor fires recover once and respects cooldown', async () => {
   const snaps = [
     summarizePoolAvailability([{ id: 'vm-01', has_token: true, cred_status: { key: 'bad', text: '不可用' } }]),

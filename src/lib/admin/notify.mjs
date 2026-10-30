@@ -6,7 +6,17 @@
  */
 import net from 'node:net'
 import tls from 'node:tls'
+import https from 'node:https'
+import nodeFetch from 'node-fetch'
 import { CREDENTIAL_REFRESH_FAIL } from '../pool/availability.mjs'
+
+// Intercontinental connections can exceed Node's 250ms address-attempt window.
+// Give each address time to connect while retaining IPv4/IPv6 fallback.
+const telegramAgent = new https.Agent({
+  keepAlive: true,
+  autoSelectFamily: true,
+  autoSelectFamilyAttemptTimeout: 3000,
+})
 
 export const SECRET_KEEP = '__KEEP__'
 export const DEFAULT_NOTIFY = Object.freeze({
@@ -714,29 +724,38 @@ export async function sendTelegramNotify(cfg, message, opts = {}) {
   const tg = cfg?.telegram || {}
   if (!telegramCredentialsReady(cfg)) throw new Error('telegram_not_configured')
   const url = `https://api.telegram.org/bot${tg.bot_token}/sendMessage`
-  const fetchFn = opts.fetch || globalThis.fetch
+  const fetchFn = opts.fetch || nodeFetch
   if (typeof fetchFn !== 'function') throw new Error('telegram_fetch_missing')
-  const res = await fetchFn(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: tg.chat_id,
-      text: String(message.text || message.title || 'KIN'),
-      disable_web_page_preview: true,
-    }),
-    signal: opts.signal,
-  })
-  const raw = await res.text().catch(() => '')
-  let data = {}
+  const timeoutMs = clampInt(opts.timeoutMs, 1, 120000, 60000)
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeoutSignal]) : timeoutSignal
   try {
-    data = raw ? JSON.parse(raw) : {}
-  } catch {
-    data = { description: raw }
+    const res = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: tg.chat_id,
+        text: String(message.text || message.title || 'KIN'),
+        disable_web_page_preview: true,
+      }),
+      agent: telegramAgent,
+      signal,
+    })
+    const raw = await res.text()
+    let data = {}
+    try {
+      data = raw ? JSON.parse(raw) : {}
+    } catch {
+      data = { description: raw }
+    }
+    if (!res.ok || data?.ok !== true) {
+      throw new Error(data?.description || `telegram_http_${res.status}_invalid_response`)
+    }
+    return { ok: true, channel: 'telegram', chat_id: tg.chat_id }
+  } catch (err) {
+    if (timeoutSignal.aborted) throw new Error(`telegram_timeout: request exceeded ${timeoutMs}ms`)
+    throw new Error(redactTelegramError(err?.message || err, tg.bot_token))
   }
-  if (!res.ok || data.ok === false) {
-    throw new Error(redactTelegramError(data.description || `telegram_http_${res.status}`, tg.bot_token))
-  }
-  return { ok: true, channel: 'telegram', chat_id: tg.chat_id }
 }
 
 // Accepts the full robot URL copied from WeCom or just its key.
