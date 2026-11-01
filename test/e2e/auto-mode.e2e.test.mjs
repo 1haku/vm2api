@@ -288,7 +288,14 @@ async function harness(t, layout = 'zero', cliPath = cli) {
   const exec = { vmId: vm.id, vm, homeDir, oauth: {}, timezone: 'UTC' }
   const routing = {
     inference: { engine: 'rust', health_ttl_ms: 60000 },
-    compatibility: { persona_preset: 'official_full', min_max_tokens: 128, detect_proxied_official_cc: true },
+    // These wire-shape checks exercise official traffic with caller system
+    // preservation. Since #843, recognition alone no longer enables passthrough.
+    compatibility: {
+      persona_preset: 'official_full',
+      min_max_tokens: 128,
+      detect_proxied_official_cc: true,
+      official_cc_passthrough: true,
+    },
     failover: { stream_keepalive_ms: 0 },
   }
   const routingPath = path.join(temp, 'routing.json')
