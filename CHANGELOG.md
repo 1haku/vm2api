@@ -2,8 +2,29 @@
 
 ## Unreleased
 
-- #832：对齐 #814/#807：官方 cache 断点单测保留 CLI `eager_input_streaming`；调度 admission 单测不再依赖 `accounts.schedulable`。
+## 1.4.031 — 2026-11-01
+
+- #841：设置 → 配额直接显示并管理「请求体上限」（`failover.max_request_mib`，8–128 MiB）。账号池「重试与切号」不再包含这项。保存后的生效方式不变：各槽 kernel 在没有请求时重启。
+- #843：官方 Claude Code 家族不再仅凭识别放行。协议页「官方 Claude Code 家族透传」（`official_cc_passthrough`）关闭时，直连、中转、子跳以及任何看起来像官方的 Messages 都走 persona 清洗；只有该开关打开才保留入站 system。cli-hop 与 HTTP 同一条门。
+- #842：上游 HTTP 400/503「Third-party apps now draw from your extra usage…」和「no third-party apps allowed」不再当无效请求、过载或额度错误。不换号、不修复重试，客户端收到 400 `refusal_guard`，该 prompt 永久写入拒答缓存，近似正文按已有阈值拦截。这是计费限制，不封 device。内容策略错误码（含只写在 `upstream_code` 的）同样永久入库并带相似度签名。
+
+已部署机升级：须更新 Node 控制面与 `web/dist` 后重启；无迁移、不必 `fetch:payload` / `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.030 — 2026-10-31
+
+- #837：`prepareSlotOAuth` 正确读取 `startSlotReady` 嵌套的 kernel health（`boot.rust.rust.health`），兼容扁平 mock；修复非 native 槽 OAuth 上号必抛 `oauth_runtime_not_ready`。
+- #838：HTTP server `keepAliveTimeout=120000`、`headersTimeout=125000`、`timeout=0`，避免反向代理长连接被过早掐断。
+- auto mode 提示词对齐 Claude Code 2.1.310：cli-node 只在进入 auto mode 时发一次完整提醒，不再每几轮插入 `Auto mode still active…`。网关把 `Auto mode still active (reported by harness).`、旧的 sparse/六点全文折叠成这一次官方提醒；模型回声整段删掉。官方原文（Bias toward working…）不改。
+- 本机 `share/wrap-cli/cli-node` 换成 auto mode 提醒对齐后的构建。源码 `bbadf5d4`。plain 118306944 字节，SHA256 `724a94390a3cfa0a57bc590ac0c7bd4448979b6c6843753806bd32aa52426286`。UPX 5.0.2 `--best --lzma` 后 27932800 字节，SHA256 `ae120fa09a61d6ba7afa3bb57e8e389a0183c4d2026957607143d9b39562c421`。`upx -t` 通过，`--version` 为 `2.1.303 (Claude Code)`。payload 未更新，线上槽位未部署。
+
+已部署机升级：更新 Node 控制面后重启（本版不必更新 web/dist）。不要覆盖 routing.json、vms/、data/、.env。
+
+## 1.4.029 — 2026-10-30
+
 - #815：取消 Opus/Sonnet 5.5 将强制 `tool_choice` 静默改写为 `auto` 并强加 `strict:true` 的行为；入口 `validateToolChoice`，不兼容请求明确 400（`tool_choice_incompatible` / `invalid_tool_choice`），兼容模型保留调用方 `tool_choice` 与 `strict`。**行为破坏**：原先静默降级为 auto 的强制工具请求，现返回 400。
+- #832：对齐 #814/#807：官方 cache 断点单测保留 CLI `eager_input_streaming`；调度 admission 单测不再依赖 `accounts.schedulable`。
+
+已部署机升级：更新 Node 控制面后重启（本版不必更新 web/dist）。不要覆盖 routing.json、vms/、data/、.env。
 
 ## 1.4.028 — 2026-10-30
 
