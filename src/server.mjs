@@ -854,8 +854,9 @@ function requireAdminMetadata(req, res) {
   return false
 }
 
-function fetchWorkerModels(opts) {
-  return gatewayModelCatalog(opts)
+function fetchWorkerModels(opts = {}) {
+  const mappingKeys = Object.keys(routingConfig?.codex?.model_mappings || {})
+  return gatewayModelCatalog({ ...opts, mappingKeys })
 }
 
 const importCommit = createImportCommit({

@@ -6,6 +6,7 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'slot-model-gate',
   'auto-mode-reminder',
   'persona-settings-switch',
   'native-telemetry-egress',
