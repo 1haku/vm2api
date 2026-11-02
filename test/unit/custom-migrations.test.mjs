@@ -376,7 +376,12 @@ test('deployed v1 stamp is adopted without replaying SQL or losing subscriptions
     db.prepare("SELECT name FROM schema_migrations WHERE version='027'").get().name,
     '027_usage_logs_session_effort.sql',
   )
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 7)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_schema_migrations').get().n, 8)
+  assert.equal(
+    db.prepare("SELECT name FROM custom_schema_migrations WHERE version='008'").get().name,
+    '008_weekly_quota_notify.sql',
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_weekly_quota_notify').get().n, 0)
   assert.equal(db.prepare('SELECT action FROM custom_subscription_events').get().action, 'sentinel')
 })
 
