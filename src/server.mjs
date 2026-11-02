@@ -542,7 +542,15 @@ usageProbeMonitor = createUsageProbeMonitor({
       poolScheduler.syncQuotaSchedule(vm, account)
     } catch {}
   },
-  probeOne: (vm) => panel.buildProbeOne({ cfg, accountQuota, id: vm.id, routingConfig }),
+  probeOne: (vm, reason) =>
+    panel.buildProbeOne({
+      cfg,
+      accountQuota,
+      id: vm.id,
+      routingConfig,
+      usageOnly: reason === 'weekly_quota',
+      force: reason === 'weekly_quota',
+    }),
 })
 catalogMonitor = createCatalogMonitor({
   projectRoot: cfg.paths.project,
@@ -567,7 +575,13 @@ notifyMonitor = createNotifyMonitor({
 weeklyQuotaNotify = createWeeklyQuotaNotify({
   getConfig: () => routingConfig.notify,
   store: weeklyNotifyStore(getDb),
-  source: createWeeklyQuotaSource({ projectRoot: cfg.paths.project, accountQuota, getRouting: () => routingConfig }),
+  source: createWeeklyQuotaSource({
+    projectRoot: cfg.paths.project,
+    accountQuota,
+    getRouting: () => routingConfig,
+    store: weeklyNotifyStore(getDb),
+    refreshQuota: (id) => usageProbeMonitor.probeNow(id, 'weekly_quota'),
+  }),
 })
 
 // --- Local backup service (auto schedule default ON; no S3 by design) ---

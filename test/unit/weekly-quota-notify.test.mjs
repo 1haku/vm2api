@@ -253,6 +253,49 @@ test('different slots of the same account share deduplication', async (t) => {
   await f.m.runOnce()
   assert.equal(f.messages().length, 1)
 })
+
+test('repeated cached zero samples preserve but cannot confirm early reset evidence', async (t) => {
+  const f = fixture(t)
+  await f.m.runOnce()
+  f.setUsed(0)
+  f.advance(10000)
+  const zeroAt = f.now()
+  const zero = await f.source.sample()
+  f.setSample(() => zero)
+  await f.m.runOnce()
+  const cycle = f.store.get('account:account-1').cycle
+  f.advance(30000)
+  await f.m.runOnce()
+  assert.equal(f.store.get('account:account-1').cycle, cycle)
+  assert.equal(f.store.get('account:account-1').zeroAt, zeroAt)
+  f.setSample(() => ({ ...zero, at: f.now() }))
+  await f.m.runOnce()
+  assert.notEqual(f.store.get('account:account-1').cycle, cycle)
+})
+
+test('only a newly crossed threshold prepares cards; callback requests forced fresh validation', async (t) => {
+  const f = fixture(t)
+  let prepared = 0
+  f.source.prepareNotification = async (s) => {
+    prepared++
+    return s
+  }
+  await f.m.runOnce()
+  for (let i = 0; i < 5; i++) {
+    f.advance(15000)
+    await f.m.runOnce()
+  }
+  assert.equal(prepared, 1)
+  const original = f.source.sample,
+    options = []
+  f.source.sample = (id, opts) => {
+    options.push(opts)
+    return original(id, opts)
+  }
+  await f.m.handleCallback(f.query())
+  assert.deepEqual(options[0], { force: true, credits: true })
+  assert.deepEqual(options[1], { force: true })
+})
 test('failed sends can retry; unknown or stale snapshots never become zero/exhausted alerts', async (t) => {
   const f = fixture(t)
   f.failSend(true)

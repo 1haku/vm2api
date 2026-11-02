@@ -385,11 +385,11 @@ export function NotifyPane({
             />
           </SettingRow>
           <SettingRow
-            label='官方额度检查间隔'
-            desc='秒，默认 300；只查询官方用量，不发送模型请求。机器人须未被其他程序占用回调。'
+            label='官方快照最大缓存时间'
+            desc='秒，默认 300。每 15 秒检查已有快照；缺失、过期或跨过重置时间才补查官方用量。准备提醒或兑换时核验重置卡，不发送模型请求。'
           >
             <NumberField
-              ariaLabel='官方额度检查间隔'
+              ariaLabel='官方快照最大缓存时间'
               value={config.weekly_quota_interval_sec ?? 300}
               min={60}
               max={3600}

@@ -130,6 +130,22 @@ test('no header samples reports unavailable and persists the attempt without fak
   assert.equal(detail.vm.usage_has_fable, null)
 })
 
+test('usage-only fallback never runs setup-token entitlement inference, even with force', async (t) => {
+  const f = fixture(t)
+  let calls = 0
+  const result = await buildProbeOne({
+    ...f.args,
+    accountQuota: f.quota,
+    usageOnly: true,
+    fableProbe: async () => {
+      calls++
+      return {}
+    },
+  })
+  assert.equal(calls, 0)
+  assert.equal(result.data.fable_probed, false)
+})
+
 test('Setup Token Fable hop does not classify the plan without complete official usage', async (t) => {
   const f = fixture(t)
   f.quota.setAccountTier('account-test', 'pro')

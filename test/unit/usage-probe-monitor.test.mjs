@@ -14,6 +14,31 @@ const live = {
   proxy: { host: '127.0.0.1', port: 1080, url: 'socks5h://127.0.0.1:1080' },
 }
 
+test('weekly fallback carries its usage-only reason and shares an in-flight probe', async () => {
+  let release,
+    calls = 0,
+    reason
+  const monitor = createUsageProbeMonitor({
+    listTargets: () => [live],
+    probeOne: async (_vm, why) => {
+      calls++
+      reason = why
+      await new Promise((resolve) => {
+        release = resolve
+      })
+      return { ok: true }
+    },
+  })
+  const one = monitor.probeNow(live.id, 'weekly_quota')
+  await Promise.resolve()
+  const two = monitor.probeNow(live.id, 'other_refresh')
+  assert.equal(calls, 1)
+  assert.equal(reason, 'weekly_quota')
+  release()
+  await Promise.all([one, two])
+  monitor.stop()
+})
+
 test('normalize fills usage-probe defaults', () => {
   const n = normalizeUsageProbeConfig({ interval_sec: 3, concurrency: 99, stale_sec: 10 })
   assert.equal(n.enabled, false)
@@ -124,10 +149,10 @@ test('expired Fable windows refresh without expiring the total weekly window, wi
       target['7d_oi'] = { utilization: 1, status: 'rejected', reset }
       assert.deepEqual(isUsageProbeDue({ unified }, { now }), { due: true, reason: 'extra_window_elapsed' })
       assert.deepEqual(unified.headers['7d'], weekly)
-      assert.deepEqual(
-        isUsageProbeDue({ unified, last_probe: { at: new Date(now - 10000).toISOString() } }, { now }),
-        { due: false, reason: 'probed_recently' },
-      )
+      assert.deepEqual(isUsageProbeDue({ unified, last_probe: { at: new Date(now - 10000).toISOString() } }, { now }), {
+        due: false,
+        reason: 'probed_recently',
+      })
       target['7d_oi'].reset = new Date(now + 60000).toISOString()
       assert.deepEqual(isUsageProbeDue({ unified }, { now }), { due: false, reason: 'list_passive_only' })
     }

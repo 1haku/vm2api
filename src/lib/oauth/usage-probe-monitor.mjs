@@ -238,7 +238,7 @@ export function createUsageProbeMonitor(opts = {}) {
     const run = worker
       .then(async () => {
         try {
-          const result = await withTimeout(Promise.resolve(opts.probeOne(vm)), config.timeout_ms)
+          const result = await withTimeout(Promise.resolve(opts.probeOne(vm, reason)), config.timeout_ms)
           const ok = result?.ok !== false
           if (ok) backoff.delete(id)
           else {

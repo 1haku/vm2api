@@ -3,6 +3,7 @@ import { normalizeNotifyConfig, telegramRequest } from './notify.mjs'
 
 const DAY = 86400000
 export const WEEKLY_THRESHOLDS = [10, 5, 3, 1, 0]
+export const WEEKLY_LOCAL_CHECK_MS = 15000
 const hash = (v) => crypto.createHash('sha256').update(String(v)).digest('hex')
 const recipientKey = (c) => hash(JSON.stringify([c.telegram.bot_token, c.telegram.chat_id]))
 const enabled = (c) =>
@@ -73,6 +74,9 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
   const status = () => ({
     enabled: !!enabled(config()),
     interval_sec: config().weekly_quota_interval_sec,
+    local_check_interval_sec: WEEKLY_LOCAL_CHECK_MS / 1000,
+    snapshot_max_age_sec: config().weekly_quota_interval_sec,
+    source: source.getStatus?.() || null,
     thresholds: WEEKLY_THRESHOLDS,
     last_run_at: lastRun,
     last_error: lastError,
@@ -111,6 +115,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
       resetAt: s.resetAt || 0,
     }
     if (s.at < record.at) return null
+    if (old && s.at === record.at) return record
     const freshZero = old && s.at > record.at && s.used === 0 && (record.used > 0 || record.zeroAt)
     const early =
       old && ((s.resetAt && s.resetAt > record.resetAt) || (freshZero && record.zeroAt && s.at - record.zeroAt >= 5000))
@@ -142,12 +147,12 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
     for (const id of source.list()) {
       if (controller.signal.aborted || !enabled(config()) || recipientKey(config()) !== recipientKey(c)) break
       try {
-        const s = await source.sample(id)
+        let s = await source.sample(id)
         if (
           !s ||
           !s.account ||
           !Number.isFinite(s.at) ||
-          s.at < now() - 120000 ||
+          s.at < now() - c.weekly_quota_interval_sec * 1000 ||
           s.at > now() + 60000 ||
           s.end <= now()
         ) {
@@ -162,9 +167,24 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
         })
         if (seen.has(s.account)) continue
         seen.add(s.account)
-        const state = observe(s),
+        let state = observe(s),
           threshold = weeklyThreshold(s.used)
         if (!state || threshold == null || threshold >= state.sent) continue
+        // Card lookups happen only for a new alert, never on every cache scan.
+        if (source.prepareNotification) {
+          const prepared = await source.prepareNotification(s)
+          if (
+            !prepared ||
+            prepared.account !== s.account ||
+            prepared.end <= now() ||
+            prepared.at < now() - c.weekly_quota_interval_sec * 1000
+          )
+            continue
+          s = prepared
+          state = observe(s)
+          threshold = weeklyThreshold(s.used)
+          if (!state || threshold == null || threshold >= state.sent) continue
+        }
         if (!enabled(config()) || recipientKey(config()) !== recipientKey(c) || controller.signal.aborted) break
         const token = crypto.randomBytes(18).toString('base64url'),
           actionKey = `action:${hash(token)}`
@@ -253,7 +273,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
     let text = '未执行：官方额度或重置卡无法确认，请在控制台检查。'
     let claimed = false
     try {
-      const fresh = await source.sample(action.id, { credits: true })
+      const fresh = await source.sample(action.id, { force: true, credits: true })
       if (
         !fresh ||
         fresh.account !== action.account ||
@@ -281,7 +301,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
           : '官方未确认周额度重置完成；不会自动再次消耗重置卡，请在控制台核查。'
         store.set(fenceKey, { status: result.confirmed ? 'done' : 'uncertain', at: now() }, now() + 30 * DAY)
         if (result.confirmed) {
-          const after = await source.sample(action.id)
+          const after = await source.sample(action.id, { force: true })
           if (after?.account === action.account) {
             const next = {
               cycle: crypto.randomUUID(),
@@ -349,7 +369,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
       } catch {
         lastError = '额度检查失败'
       } finally {
-        if (running) timer = setTimeout(tick, config().weekly_quota_interval_sec * 1000).unref()
+        if (running) timer = setTimeout(tick, WEEKLY_LOCAL_CHECK_MS).unref()
       }
     }
     const pollTick = async () => {
