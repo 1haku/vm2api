@@ -244,7 +244,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
     }
     const state = store.get(`account:${action.account}`),
       fenceKey = `fence:${action.account}:${action.cycle}`
-    if (state?.cycle !== action.cycle || store.get(fenceKey) || source.identity(action.id) !== action.account) {
+    if (state?.cycle !== action.cycle || store.get(fenceKey) || (await source.identity(action.id)) !== action.account) {
       await answer('账号或周期已改变，或已有一次重置正在处理')
       return
     }
@@ -265,7 +265,7 @@ export function createWeeklyQuotaNotify({ getConfig, store, source, request = te
         recipientKey(config()) !== action.recipient ||
         !enabled(config()) ||
         controller.signal.aborted ||
-        source.identity(action.id) !== action.account ||
+        (await source.identity(action.id)) !== action.account ||
         store.get(`account:${action.account}`)?.cycle !== action.cycle ||
         store.get(fenceKey)
       ) {

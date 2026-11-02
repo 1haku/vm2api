@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   createWeeklyQuotaNotify,
@@ -8,7 +10,7 @@ import {
   weeklyThreshold,
   weeklyMessage,
 } from '../../src/lib/admin/weekly-quota-notify.mjs'
-import { weeklyCreditView } from '../../src/lib/admin/weekly-quota-source.mjs'
+import { weeklyCreditView, createWeeklyQuotaSource } from '../../src/lib/admin/weekly-quota-source.mjs'
 import {
   normalizeNotifyConfig,
   mergeNotifyConfig,
@@ -138,6 +140,66 @@ test('remaining thresholds use official percentages, including exact boundaries 
     null,
     null,
   ])
+})
+
+test('Claude imports without metadata use official identity; refresh keeps identity and account replacement invalidates cache', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weekly-identity-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const home = path.join(root, 'vms', 'Claude', 'cli-home', '.claude')
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'vms', 'Claude.json'),
+    JSON.stringify({ id: 'Claude', platform: 'anthropic', claude: { mode: 'oauth', has_access: true } }),
+  )
+  const file = path.join(home, 'credentials.json')
+  fs.writeFileSync(file, 'first-credential')
+  let account = 'official-account-1',
+    calls = 0
+  const source = createWeeklyQuotaSource({
+    projectRoot: root,
+    identityTransport: async () => {
+      calls++
+      return { ok: true, status: 200, body: { account: { uuid: account }, organization: { uuid: 'org-1' } } }
+    },
+  })
+  const first = await source.identity('Claude')
+  assert.match(first, /^[a-f0-9]{64}$/)
+  assert.equal(await source.identity('Claude'), first)
+  assert.equal(calls, 1)
+  fs.writeFileSync(file, 'refreshed-credential')
+  assert.equal(await source.identity('Claude'), first)
+  assert.equal(calls, 2)
+  fs.writeFileSync(file, 'replacement-credential')
+  account = 'official-account-2'
+  assert.notEqual(await source.identity('Claude'), first)
+  assert.equal(calls, 3)
+  assert.equal(await source.identity('deleted-slot'), null)
+})
+
+test('an incomplete profile or credentials replaced during identity lookup fail closed', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weekly-profile-race-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const home = path.join(root, 'vms', 'Claude', 'cli-home', '.claude')
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'vms', 'Claude.json'),
+    JSON.stringify({ id: 'Claude', platform: 'anthropic', claude: { mode: 'oauth' } }),
+  )
+  const file = path.join(home, 'credentials.json')
+  fs.writeFileSync(file, 'first')
+  const incomplete = createWeeklyQuotaSource({
+    projectRoot: root,
+    identityTransport: async () => ({ ok: true, status: 200, body: { account: { uuid: 'a' } } }),
+  })
+  assert.equal(await incomplete.identity('Claude'), null)
+  const raced = createWeeklyQuotaSource({
+    projectRoot: root,
+    identityTransport: async () => {
+      fs.writeFileSync(file, 'replacement')
+      return { ok: true, status: 200, body: { account: { uuid: 'a' }, organization: { uuid: 'org' } } }
+    },
+  })
+  assert.equal(await raced.identity('Claude'), null)
 })
 test('all five thresholds notify once; retries, restarts and jitter do not replay prior alerts', async (t) => {
   const f = fixture(t)
