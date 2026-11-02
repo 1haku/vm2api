@@ -8,6 +8,7 @@ import { createDatabase } from '../../src/lib/db/database.mjs'
 import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs'
 import { UsageLogsRepo } from '../../src/lib/db/repos/usage-logs-repo.mjs'
 import { RequestLogStore } from '../../src/lib/admin/request-log.mjs'
+import { armWriteBehind, flushWrites } from '../../src/lib/db/write-behind.mjs'
 import { usageRecords } from '../../src/lib/admin/panel-subscriptions.mjs'
 import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../../src/lib/admin/resource-owner.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
@@ -696,6 +697,35 @@ test('log off still records subscription usage and settles reservation exactly o
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger').get().n, 1)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_reservations').get().n, 0)
   assert.ok(repo.progress(sub).daily_used > 0)
+})
+
+test('upstream deferred logging cannot delay subscription billing or release an unsettled reservation', (t) => {
+  const { db, dir, repo, a } = setup(t)
+  const log = new RequestLogStore({ db, dataDir: dir, mode: 'debug' })
+  armWriteBehind(db)
+  try {
+    const ctx = log.start({ headers: {}, method: 'POST', url: '/v1/messages' })
+    const sub = repo.reserve(a, ctx.request_id, body)
+    log.finish(ctx, {
+      user_id: 'a',
+      subscription_id: sub.id,
+      group_id: a.group_id,
+      status: 200,
+      model: body.model,
+      usage: { input_tokens: 1000, output_tokens: 100 },
+      rate_multiplier: 1,
+    })
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_reservations').get().n, 0)
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger').get().n, 1)
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM usage_logs').get().n, 1)
+    const before = repo.progress(sub).daily_used
+    assert.ok(before > 0)
+    flushWrites()
+    assert.equal(repo.progress(sub).daily_used, before)
+  } finally {
+    flushWrites()
+    armWriteBehind(null)
+  }
 })
 
 test('shared client session identifiers remain isolated by user', (t) => {

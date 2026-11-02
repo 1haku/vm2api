@@ -85,6 +85,25 @@ test.beforeEach(() => {
   resetClaudeResetLeasesForTest()
 })
 
+test('weekly-only redemption refuses a newly changed short-window grant before consuming it', async (t) => {
+  const root = rootDir()
+  writeVm(root)
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const status = structuredClone(REDEEMABLE)
+  status.cedar_ember.grants[1].clears = ['five_hour']
+  const script = scripted({ status })
+  const out = await redeemClaudeResetCredit({
+    projectRoot: root,
+    vmId: 'vm-1',
+    idempotencyKey: 'weekly-click',
+    requiredWindow: 'seven_day',
+    transport: script.transport,
+    now: () => NOW,
+  })
+  assert.equal(out.error, 'CLAUDE_RESET_WINDOW_MISMATCH')
+  assert.equal(script.posts.length, 0)
+})
+
 test('query projects the next grant and hides grant ids', async () => {
   const root = rootDir()
   writeVm(root)

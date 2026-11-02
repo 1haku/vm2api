@@ -25,6 +25,8 @@ export const DEFAULT_NOTIFY = Object.freeze({
   cooldown_sec: 300,
   min_available: 1,
   run_on_start: true,
+  weekly_quota_enabled: false,
+  weekly_quota_interval_sec: 300,
   // Empty means the link uses this backend's own base_url.
   console_url: '',
   digest_sec: 21600,
@@ -124,6 +126,8 @@ export function normalizeNotifyConfig(raw = {}) {
     digest_sec: clampInt(src.digest_sec, 300, 86400, DEFAULT_NOTIFY.digest_sec),
     min_available: clampInt(src.min_available, 1, 1000, DEFAULT_NOTIFY.min_available),
     run_on_start: asBool(src.run_on_start, true),
+    weekly_quota_enabled: asBool(src.weekly_quota_enabled, false),
+    weekly_quota_interval_sec: clampInt(src.weekly_quota_interval_sec, 60, 3600, 300),
     console_url:
       String(src.console_url || DEFAULT_NOTIFY.console_url)
         .trim()
@@ -720,10 +724,10 @@ function redactTelegramError(text, token) {
     .slice(0, 180)
 }
 
-export async function sendTelegramNotify(cfg, message, opts = {}) {
+export async function telegramRequest(cfg, method, body, opts = {}) {
   const tg = cfg?.telegram || {}
   if (!telegramCredentialsReady(cfg)) throw new Error('telegram_not_configured')
-  const url = `https://api.telegram.org/bot${tg.bot_token}/sendMessage`
+  const url = `https://api.telegram.org/bot${tg.bot_token}/${method}`
   const fetchFn = opts.fetch || nodeFetch
   if (typeof fetchFn !== 'function') throw new Error('telegram_fetch_missing')
   const timeoutMs = clampInt(opts.timeoutMs, 1, 120000, 60000)
@@ -733,11 +737,7 @@ export async function sendTelegramNotify(cfg, message, opts = {}) {
     const res = await fetchFn(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: tg.chat_id,
-        text: String(message.text || message.title || 'KIN'),
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(body),
       agent: telegramAgent,
       signal,
     })
@@ -751,11 +751,25 @@ export async function sendTelegramNotify(cfg, message, opts = {}) {
     if (!res.ok || data?.ok !== true) {
       throw new Error(data?.description || `telegram_http_${res.status}_invalid_response`)
     }
-    return { ok: true, channel: 'telegram', chat_id: tg.chat_id }
+    return data.result
   } catch (err) {
     if (timeoutSignal.aborted) throw new Error(`telegram_timeout: request exceeded ${timeoutMs}ms`)
     throw new Error(redactTelegramError(err?.message || err, tg.bot_token))
   }
+}
+
+export async function sendTelegramNotify(cfg, message, opts = {}) {
+  await telegramRequest(
+    cfg,
+    'sendMessage',
+    {
+      chat_id: cfg.telegram.chat_id,
+      text: String(message.text || message.title || 'KIN'),
+      disable_web_page_preview: true,
+    },
+    opts,
+  )
+  return { ok: true, channel: 'telegram', chat_id: cfg.telegram.chat_id }
 }
 
 // Accepts the full robot URL copied from WeCom or just its key.

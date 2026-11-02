@@ -37,6 +37,8 @@ import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs
 import { invalidateLiveCredentialCache } from './lib/admin/panel-live-credentials.mjs'
 import { normalizeHealthProbeConfig, createHealthProbeMonitor, HEALTH_REAL_HEADER } from './lib/admin/health-probe.mjs'
 import { normalizeNotifyConfig, createNotifyMonitor } from './lib/admin/notify.mjs'
+import { createWeeklyQuotaNotify, weeklyNotifyStore } from './lib/admin/weekly-quota-notify.mjs'
+import { createWeeklyQuotaSource } from './lib/admin/weekly-quota-source.mjs'
 import { snapshotVmConnectivity } from './lib/admin/vm-connectivity.mjs'
 import { runVmTestChat } from './lib/admin/vm-test-chat.mjs'
 import { VmTestScheduleRunner } from './lib/admin/vm-test-schedule.mjs'
@@ -71,7 +73,8 @@ import { ensureProxyEgress, proxyEgressReady } from './lib/vm/egress.mjs'
 import { syncIpv6ProxyEgress } from './lib/vm/proxy-policy-runtime.mjs'
 import { GATEWAY_CAPABILITIES } from './lib/vm/execution-context.mjs'
 import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/telemetry-rewrite.mjs'
-import { openDatabase, closeDatabase } from './lib/db/database.mjs'
+import { openDatabase, closeDatabase, getDb } from './lib/db/database.mjs'
+import { armWriteBehind } from './lib/db/write-behind.mjs'
 import { JevUsageRepo } from './lib/db/repos/jev-usage-repo.mjs'
 import { installJevUsageRecorder } from './lib/protocol/jev-usage.mjs'
 import { runLegacyImport } from './lib/db/legacy-import.mjs'
@@ -144,7 +147,8 @@ const allowRate = createRateLimiter({
 
 // --- Persistent store (SQLite, sub2api-inspired) ---
 const dataDir = cfg.paths.data || path.join(cfg.paths.root, 'data')
-openDatabase({ dataDir })
+openDatabase({ dataDir, pooled: true })
+armWriteBehind(getDb())
 const jevUsageRepo = new JevUsageRepo()
 installJevUsageRecorder((event) => jevUsageRepo.record(event))
 try {
@@ -179,6 +183,7 @@ let cliNodeGuard = null
 let usageProbeMonitor = null
 let catalogMonitor = null
 let notifyMonitor = null
+let weeklyQuotaNotify = null
 
 let routingConfig = {}
 
@@ -238,6 +243,9 @@ const routingRt = createRoutingRuntime({
 
   get notifyMonitor() {
     return notifyMonitor
+  },
+  get weeklyQuotaNotify() {
+    return weeklyQuotaNotify
   },
   get failoverRunner() {
     return failoverRunner
@@ -554,6 +562,12 @@ notifyMonitor = createNotifyMonitor({
       proxyPool,
       requestLog,
     }),
+})
+
+weeklyQuotaNotify = createWeeklyQuotaNotify({
+  getConfig: () => routingConfig.notify,
+  store: weeklyNotifyStore(getDb),
+  source: createWeeklyQuotaSource({ projectRoot: cfg.paths.project, accountQuota, getRouting: () => routingConfig }),
 })
 
 // --- Local backup service (auto schedule default ON; no S3 by design) ---
@@ -1020,6 +1034,9 @@ const handlePanel = createPanelHandler({
   get notifyMonitor() {
     return notifyMonitor
   },
+  get weeklyQuotaNotify() {
+    return weeklyQuotaNotify
+  },
   get kernelWatchdog() {
     return kernelWatchdog
   },
@@ -1299,11 +1316,14 @@ process.on('unhandledRejection', (e) => console.error('[unhandled]', e))
 
 // Graceful shutdown: stop schedulers/watchers, close the DB (WAL checkpoint).
 let _shuttingDown = false
-function shutdown(signal) {
+async function shutdown(signal) {
   if (_shuttingDown) return
   _shuttingDown = true
   installJevUsageRecorder(null)
   console.log(`[shutdown] ${signal} — closing`)
+  try {
+    await weeklyQuotaNotify?.stop()
+  } catch {}
   try {
     vmTestSchedule.stop()
   } catch {}
@@ -1410,6 +1430,7 @@ server.listen(cfg.port, cfg.host, () => {
   }
   try {
     notifyMonitor?.start?.({ immediate: true })
+    weeklyQuotaNotify?.start()
   } catch (e) {
     console.warn('[notify] start failed', e?.message || e)
   }

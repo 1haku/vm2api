@@ -231,6 +231,8 @@ export type NotifyWecomConfig = {
 /** `GET /routing -> notify` 与 `GET /notify -> config` 的脱敏通知配置。 */
 export type NotifyConfig = {
   enabled: boolean
+  weekly_quota_enabled?: boolean
+  weekly_quota_interval_sec?: number
   interval_sec: number
   cooldown_sec: number
   digest_sec: number
@@ -245,6 +247,13 @@ export type NotifyConfig = {
 
 export type NotifyStatus = {
   config: NotifyConfig
+  weekly_quota?: {
+    enabled: boolean
+    callbacks_ready: boolean
+    last_run_at: string | null
+    last_error: string | null
+    callback_error: string | null
+  }
   snapshot?: Record<string, unknown> | null
   last_events?: { type?: string; title?: string }[]
   last_error?: string | null

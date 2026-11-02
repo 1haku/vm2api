@@ -372,6 +372,48 @@ export function NotifyPane({
               }
             />
           </SettingRow>
+          <SettingRow
+            label='官方周额度提醒'
+            desc='所有 Claude / Codex 槽位剩余 10%、5%、3%、1% 和耗尽时提醒，每个官方周期去重。消息包含下次重置时间及可用重置卡；绑定的私聊可点击兑换。'
+          >
+            <Switch
+              checked={config.weekly_quota_enabled ?? false}
+              aria-label='官方周额度提醒'
+              onCheckedChange={(weekly_quota_enabled) =>
+                onChange({ ...config, weekly_quota_enabled })
+              }
+            />
+          </SettingRow>
+          <SettingRow
+            label='官方额度检查间隔'
+            desc='秒，默认 300；只查询官方用量，不发送模型请求。机器人须未被其他程序占用回调。'
+          >
+            <NumberField
+              ariaLabel='官方额度检查间隔'
+              value={config.weekly_quota_interval_sec ?? 300}
+              min={60}
+              max={3600}
+              onChange={(weekly_quota_interval_sec) =>
+                onChange({ ...config, weekly_quota_interval_sec })
+              }
+            />
+          </SettingRow>
+          {status.data?.weekly_quota?.last_run_at && (
+            <p className='text-sm text-muted-foreground'>
+              最近额度检查：{fmtExpiresAt(status.data.weekly_quota.last_run_at)}
+              {' · '}
+              {status.data.weekly_quota.callbacks_ready
+                ? '重置按钮回调已就绪'
+                : '重置按钮回调未就绪'}
+            </p>
+          )}
+          {(status.data?.weekly_quota?.last_error ||
+            status.data?.weekly_quota?.callback_error) && (
+            <p role='status' className='text-sm text-amber-600'>
+              {status.data.weekly_quota.last_error ||
+                status.data.weekly_quota.callback_error}
+            </p>
+          )}
         </CardContent>
       </Card>
 

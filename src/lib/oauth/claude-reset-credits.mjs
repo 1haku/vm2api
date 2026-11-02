@@ -485,6 +485,7 @@ export async function redeemClaudeResetCredit({
   projectRoot,
   vmId,
   idempotencyKey,
+  requiredWindow = null,
   transport = defaultTransport,
   now = () => Date.now(),
 } = {}) {
@@ -503,6 +504,7 @@ export async function redeemClaudeResetCredit({
       projectRoot,
       vmId,
       operation,
+      requiredWindow,
       exec: account.exec,
       transport,
       now,
@@ -523,7 +525,7 @@ export async function redeemClaudeResetCredit({
   })
 }
 
-async function redeemOnce({ projectRoot, vmId, operation, exec, transport, now }) {
+async function redeemOnce({ projectRoot, vmId, operation, requiredWindow, exec, transport, now }) {
   const orgResult = await fetchOrg(transport, exec)
   if (!orgResult.ok) return orgResult
   const orgKey = claudeResetOrgId(orgResult.org)
@@ -554,6 +556,8 @@ async function redeemOnce({ projectRoot, vmId, operation, exec, transport, now }
     if (!status.ok) return status
     const grant = pickGrant(status.block, now())
     if (!grant) return fail('CLAUDE_RESET_NOT_AVAILABLE', '当前没有可兑换的限额重置', 409)
+    if (requiredWindow && !grant.clears?.includes(requiredWindow))
+      return fail('CLAUDE_RESET_WINDOW_MISMATCH', '当前重置卡不包含指定的额度窗口', 409)
     const marked = await writeFence(projectRoot, orgKey, {
       operation,
       outcome: 'unknown',
