@@ -29,7 +29,12 @@ test('image permission is admin-managed, user-wide, covers Images and Responses,
       ['/v1/images/edits', { model: 'gpt-image-2-2026-04-21', prompt: 'x' }],
       ['/v1/responses', { model: 'gpt-6.1-sol', input: 'x', tools: [{ type: 'image_generation' }] }],
       ['/v1/responses', { model: 'gpt-image-2', input: 'x' }],
-      ['/v1/responses', { model: 'gpt-6.1-sol', input: 'x', tools: [{ type: 'image_generation', model: 'gpt-image-2' }] }],
+      ['/v1/chat/completions', { model: 'gpt-image-2', messages: [{ role: 'user', content: 'x' }] }],
+      ['/v1/chat/completions', { model: 'gpt-image-2.5-flare', messages: [{ role: 'user', content: 'x' }] }],
+      [
+        '/v1/responses',
+        { model: 'gpt-6.1-sol', input: 'x', tools: [{ type: 'image_generation', model: 'gpt-image-2' }] },
+      ],
     ]
     const call = (key, [path, body]) => api(gw, 'POST', path, { headers: { authorization: 'Bearer ' + key }, body })
     for (const key of keys)
@@ -67,8 +72,7 @@ test('image permission is admin-managed, user-wide, covers Images and Responses,
     })
     assert.equal(revoked.status, 200)
     for (const key of keys.slice(0, 2))
-      for (const route of routes)
-        assert.equal((await call(key, route)).json.error.code, 'image_generation_disabled')
+      for (const route of routes) assert.equal((await call(key, route)).json.error.code, 'image_generation_disabled')
   } finally {
     await gw.stop()
   }
