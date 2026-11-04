@@ -7,7 +7,8 @@ import { withTransaction } from '../db/database.mjs'
 import { applyIntercept } from '../core/intercept.mjs'
 import { resolveStreamIdleTimeoutMs, inboundBodyLimit, queueKeepaliveDelayMs } from '../core/config.mjs'
 import { applyEagerToolStreaming } from './eager-tool-streaming.mjs'
-import { validateToolChoice } from './model-policy.mjs'
+import { validateBetweenToolsThinking, validateToolChoice, getCapabilities } from './model-policy.mjs'
+import { ToolResultPruneCache, dshPruneScope } from './tool-result-prune-cache.mjs'
 import {
   inboundRefusalDeviceId,
   isRefusalGuardEnabled,
@@ -198,6 +199,7 @@ export function createHandleProtocol(deps) {
   const apiScheduler = deps.apiScheduler
   const apiEndpointStore = deps.apiEndpointStore
   const stats = deps.stats
+  const toolPruneCache = new ToolResultPruneCache()
   const routingConfigPath = deps.routingConfigPath
   const getRouting = () => (typeof deps.getRoutingConfig === 'function' ? deps.getRoutingConfig() : deps.routingConfig)
   const getHealthMonitor = () =>
@@ -635,6 +637,26 @@ export function createHandleProtocol(deps) {
       outbound_session_id: null,
     }
     trackUsage(req, res, logCtx, logBag)
+    let toolPruneAttempt = null
+    let toolPruneClosed = false
+    const discardToolPrune = () => {
+      toolPruneClosed = true
+      toolPruneAttempt?.rollback()
+    }
+    res.once('close', discardToolPrune)
+    req.once('aborted', discardToolPrune)
+    res.on('finish', () => {
+      const usage = logBag.usage || {}
+      toolPruneAttempt?.commit({
+        verified: res.statusCode === 200 && logBag.final_state === 'verified',
+        attemptCount: logBag.attempt_count,
+        inputTokens:
+          Number(usage.input_tokens || 0) +
+          Number(usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? 0) +
+          Number(usage.cache_creation_tokens ?? usage.cache_creation_input_tokens ?? 0),
+        outputTokens: Number(usage.output_tokens || 0),
+      })
+    })
     if (!requireAuth(req, res)) {
       logBag.error_code = req.authError?.code || ErrorCode.INVALID_API_KEY
       logBag.error_message = req.authError?.message || 'Invalid credentials'
@@ -1018,6 +1040,7 @@ export function createHandleProtocol(deps) {
       inboundToolReverse = standard.reverse
     }
     try {
+      validateBetweenToolsThinking(ctx.body)
       validateToolChoice(ctx.body)
     } catch (error) {
       if (!error.body?.error) throw error
@@ -1038,6 +1061,29 @@ export function createHandleProtocol(deps) {
       }
     }
 
+    if (
+      !toolPruneClosed &&
+      !req.aborted &&
+      !responseClosed(res) &&
+      !requestContext &&
+      inferenceBackend !== 'api' &&
+      getRouting()?.compatibility?.preserve_pruned_tool_results === true
+    ) {
+      const scope = dshPruneScope({ headers: req.headers, apiKey: req.presentedApiKey })
+      if (scope) {
+        toolPruneAttempt = toolPruneCache.prepare({
+          scope,
+          body: ctx.body,
+          contextWindow: Number(getCapabilities(ctx.body.model)?.context_window),
+          maxBodyBytes: inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes),
+        })
+        ctx.body = toolPruneAttempt.body
+        logBag.hop_meta = {
+          ...logBag.hop_meta,
+          tool_result_prune: { restored: toolPruneAttempt.restored, reason: toolPruneAttempt.reason },
+        }
+      }
+    }
     if (await applyProtocolIntercept({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res })) {
       return
     }
