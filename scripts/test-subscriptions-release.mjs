@@ -6,6 +6,19 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'api-channel-routing',
+  'api-endpoints',
+  'crag-license',
+  'graceful-shutdown',
+  'kernel-catalog',
+  'kernel-install',
+  'kernel-install-sandbox',
+  'kernel-install-writer-locks',
+  'panel-kernels',
+  'min-max-tokens',
+  'slot-engine',
+  'slot-degraded-recovery',
+  'slot-migration',
   'between-tools',
   'between-tools-ingress',
   'between-tools-outbound',
@@ -294,6 +307,7 @@ const unit = [
   'official-cc-bootstrap',
 ]
 const e2e = [
+  'api-channel',
   'image-permissions',
   'responses-ws-subscriptions',
   'vm-test-schedule',

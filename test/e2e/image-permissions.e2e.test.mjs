@@ -23,6 +23,14 @@ test('image permission is admin-managed, user-wide, covers Images and Responses,
       keys.push(r.json.item.key)
     }
     const routes = [
+      ['/v1/images/generations', { model: 'gpt-image-2.6-flare', prompt: 'x' }],
+      ['/v1/images/edits', { model: 'gpt-image-2.6-sunburst', prompt: 'x' }],
+      ['/v1/responses', { model: 'gpt-image-2.6-sunburst', input: 'x' }],
+      ['/v1/chat/completions', { model: 'gpt-image-2.6-flare', messages: [{ role: 'user', content: 'x' }] }],
+      [
+        '/v1/responses',
+        { model: 'gpt-6.1-sol', input: 'x', tools: [{ type: 'image_generation', model: 'gpt-image-2.6-flare' }] },
+      ],
       ['/v1/images/generations', { model: 'gpt-image-2.5-flare', prompt: 'x' }],
       ['/v1/images/edits', { model: 'gpt-image-2.5-flare', prompt: 'x' }],
       ['/v1/images/generations', { model: 'gpt-image-2', prompt: 'x' }],

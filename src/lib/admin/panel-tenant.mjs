@@ -64,12 +64,18 @@ export function denyIfUserCannotDeleteVm(req, res, vm, json) {
   return true
 }
 
+/** Administrators manage shared-subscription keys; tenants must match a nonempty owner. */
+export function panelOwnsKey(req, rec) {
+  if (!rec) return false
+  if (panelIdentity(req).role === 'admin') return true
+  const owner = normalizeOwnerId(rec.user_id)
+  const userId = normalizeOwnerId(req.panelUserId)
+  return userId !== null && owner === userId
+}
+
 export function denyIfUserMissesKey(req, res, { apiKeyStore, json, keyId }) {
-  const ident = panelIdentity(req)
-  if (ident.role !== 'user') return false
   const rec = apiKeyStore?.repo?.getById?.(keyId) || null
-  const owner = normalizeOwnerId(rec?.user_id)
-  if (!rec || owner !== normalizeOwnerId(req.panelUserId)) {
+  if (!panelOwnsKey(req, rec)) {
     json(res, 404, { ok: false, error: { message: 'api key not found' } })
     return true
   }

@@ -35,6 +35,7 @@ export const Route = createFileRoute('/_authenticated')({
 function Authenticated() {
   const navigate = useNavigate()
   const location = useLocation()
+  const onKernelPage = location.pathname === '/wrap'
   const meQuery = useQuery(meQueryOptions())
   const setMe = useAuthStore((s) => s.setMe)
   const signOut = useAuthStore((s) => s.signOut)
@@ -65,7 +66,7 @@ function Authenticated() {
   return (
     <AuthenticatedLayout
       headerActions={
-        meQuery.data?.role === 'admin' ? <FleetActions /> : undefined
+        meQuery.data?.role === 'admin' && !onKernelPage ? <FleetActions /> : null
       }
     />
   )
