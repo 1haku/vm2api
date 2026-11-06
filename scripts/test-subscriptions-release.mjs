@@ -6,6 +6,9 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'redaction-policy',
+  'redaction-runtime',
+  'api-scheduler',
   'api-channel-routing',
   'api-endpoints',
   'crag-license',
@@ -350,6 +353,7 @@ const result = spawnSync(
       KIN_AUTOMODE_CLI: testCli,
       KIN_OAUTH_AUTH_BIN: '',
       KIN_TEST_OAUTH_AUTH_BIN: '/opt/vm2api/image-bin/kin-oauth-auth',
+      KIN_TEST_REDACT_BIN: '/opt/vm2api/image-bin/kin-redact',
       KIN_EGRESS_BIN: '/opt/vm2api/image-bin/kin-egress',
     },
   },

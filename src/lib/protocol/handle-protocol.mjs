@@ -501,6 +501,8 @@ export function createHandleProtocol(deps) {
     noGoFallback = false,
     onEnvelope = null,
     onOutboundHeaders = null,
+    redactionPrincipal = '',
+    redactionSession = '',
   }) {
     const assembler = createClaudeMessageAssembler()
     const workerResult = await dispatchStreamInference({
@@ -521,6 +523,8 @@ export function createHandleProtocol(deps) {
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
+      redactionPrincipal,
+      redactionSession,
       onEnvelope,
       onOutboundHeaders,
       onEvent: async (line) => {
@@ -870,7 +874,11 @@ export function createHandleProtocol(deps) {
     // API endpoint protocols own routing; apply model overrides before choosing the channel.
     if (inferenceBackend === 'api') ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', ctx)
     const apiInbound = inferenceBackend === 'api' ? ctx.body : null
-    const apiPicked = inferenceBackend === 'api' ? apiScheduler.pick(ctx.body?.model) : null
+    const apiKeyScope = inferenceBackend === 'api' ? keyScopeFromRequest(req) : null
+    const apiPicked =
+      inferenceBackend === 'api'
+        ? apiScheduler.pick(ctx.body?.model, Date.now(), { groupType: apiKeyScope?.group_type })
+        : null
     if (apiPicked && !apiPicked.ok) {
       stats.errors++
       logBag.error_code = apiPicked.code
@@ -1374,6 +1382,9 @@ export function createHandleProtocol(deps) {
           cacheTtl,
           requestContext,
           passthrough: officialPassthrough,
+          routing: getRouting(),
+          redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+          redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
           converters: {
             createClaudeMessageAssembler,
             applyClaudeSSELineToMessage,
@@ -1831,6 +1842,8 @@ export function createHandleProtocol(deps) {
               noGoFallback: !!pinVmId,
               onEnvelope: noteOutboundEnvelope,
               onOutboundHeaders: noteOutboundHeaders,
+              redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+              redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
             })
           }
           let state
@@ -1878,6 +1891,8 @@ export function createHandleProtocol(deps) {
               slotWaitMs: candidate.slotWaitMs,
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
+              redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+              redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
               onEnvelope: noteOutboundEnvelope,
               onOutboundHeaders: noteOutboundHeaders,
               onCommit: () => {

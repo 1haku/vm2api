@@ -12,6 +12,32 @@
 - CRAG V2 发布协议切换到原生 ELF（`runtime: native`、`entrypoint: crag-v2`）：验证实际架构、完整 SHA 成员与安全路径，原子物化并直接执行，不再复制 Node 或写出 `node_bin` / `crag_v2_root`。保留 legacy 版本选择和 Linux Docker 放置限制；真实 CLI 版本由 native worker 探测。
 - native V2 生命周期探测、停止、切换回收和 idle reload 识别新进程名；动态 runnable 上限不再被误算为占用任务。配置写入本身不触发额外热重载，沿用显式空闲重启流程。
 
+## 1.4.050 — 2026-11-06
+
+- 设置新增「脱敏」页（`/settings/redaction`）。协议页不再放这组开关。可配凭据、个人信息类别、自定义词及是否忽略大小写、前缀或 RE2 规则、放行名单。默认关闭。
+- 没有安装 `kin-redact` 时不能保存为开启，请求不会回落明文。本机 `bin/kin-redact` 存在时直接使用，不必另设环境变量。保留密钥格式、本地模型和按类型拦截仍不启用。
+
+已部署机升级：更新 Node 控制面与 `web/dist`，并放入 `bin/kin-redact` 后重启。不必 `wrap-cli/sync`，不必换 payload。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.049 — 2026-11-06
+
+- 协议页新增内容脱敏，默认关闭。开启后，出站正文在内容变换之后、CCH 密封之前替换秘密、个人信息与自定义词，响应在回到客户端前还原。helper 缺失、规则无法编译，或签名 thinking 命中时拒绝发送，不回落明文。同一 block 同一字段上被拆开的标签可以还原。
+- 控制面镜像带上 `kin-redact`，只监听本机 Unix socket。不更换 kernel、CLI 或 payload。
+
+已部署机升级：拉取新的控制面镜像后重启。不必 `wrap-cli/sync`，不必换 payload。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## 1.4.048 — 2026-11-06
+
+- #909：API 直连推理出站前剥离内部 persona 模板的非法缓存控制字段（如 scope），防止 Anthropic 官方上游返回 400（Extra inputs are not permitted）。
+- #908：官方 API 端点自动接入完整官方协议模型目录，并在调度时动态匹配协议模型，无需手动逐一录入。
+- #907：修复 API 直连密钥模型目录与协议调度绑定：
+  - 生成/编辑 API 直连密钥（`category: 'api'`）时，分组选择 `anthropic` 或 `openai` 不再强制校验 VM，移除前端阻塞与后端 `key_vms_required` 限制；
+  - `/v1/models` 与 `/models` 按密钥协议作用域过滤 API 端点模型，`anthropic` 密钥仅返回 Anthropic 端点模型，`openai` 密钥仅返回 OpenAI 端点模型；
+  - `ApiScheduler.pick` 按请求密钥协议过滤候选端点，避免跨协议错误调度；
+  - API 配置页保留已有端点模型状态，端点更新时同步携带最新模型。
+- #904：graceful-shutdown drain 超时定时器去掉 `unref`，修复孤立单测在 event loop 提前结束时被误杀的 CI flake（#376/#904）。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启。不必 `wrap-cli/sync`，不必换 payload。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
 ## 1.4.047 — 2026-11-06
 
 - #905：追加 OpenAI 最新图像模型 `gpt-image-2.6-flare`（上游默认）与 `gpt-image-2.6-sunburst`，接入 `/v1/models`、`/v1/images/*`、Responses `image_generation` 工具及 Chat/Responses 图像桥接，内置单价与用量计费同步更新。

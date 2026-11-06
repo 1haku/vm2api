@@ -145,9 +145,11 @@ export function KeyLimitsDialog({
 
   const quotaOpts = mode === 'edit' ? QUOTA_EDIT : QUOTA_CREATE
   const rpmOpts = mode === 'edit' ? RPM_EDIT : RPM_CREATE
+  const isApi = draft.category === 'api'
   const listed = vmsInGroup(vms || [], draft.group_type)
-  const scopeBlocked =
-    draft.group_type === 'pool'
+  const scopeBlocked = isApi
+    ? false
+    : draft.group_type === 'pool'
       ? !draft.vm_pool_id
       : draft.group_type !== 'all' && draft.allowed_vms.length === 0
 
@@ -213,6 +215,12 @@ export function KeyLimitsDialog({
                 setDraft((d) => ({
                   ...d,
                   category: v === 'api' ? 'api' : 'oauth',
+                  group_type:
+                    v === 'api' && d.group_type === 'pool'
+                      ? 'all'
+                      : d.group_type,
+                  allowed_vms: v === 'api' ? [] : d.allowed_vms,
+                  vm_pool_id: v === 'api' ? '' : d.vm_pool_id,
                 }))
               }
             >
@@ -276,7 +284,7 @@ export function KeyLimitsDialog({
           ) : null}
           {user?.role === 'admin' && (
             <>
-              <Field label='调用范围'>
+              <Field label={isApi ? 'API 协议' : '调用范围'}>
                 <Select
                   value={draft.group_type}
                   onValueChange={(v) => {
@@ -288,13 +296,15 @@ export function KeyLimitsDialog({
                       ...d,
                       group_type: group,
                       allowed_vms:
-                        group === 'all' || group === 'pool'
+                        isApi || group === 'all' || group === 'pool'
                           ? []
                           : d.allowed_vms.filter((id) => keep.has(id)),
                       ...(pools
                         ? {
                             vm_pool_id:
-                              group === 'pool' ? d.vm_pool_id || '' : '',
+                              !isApi && group === 'pool'
+                                ? d.vm_pool_id || ''
+                                : '',
                           }
                         : {}),
                     }))
@@ -304,8 +314,10 @@ export function KeyLimitsDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='all'>按账户 / 订阅授权范围</SelectItem>
-                    {pools ? (
+                    <SelectItem value='all'>
+                      {isApi ? '全部协议' : '按账户 / 订阅授权范围'}
+                    </SelectItem>
+                    {pools && !isApi ? (
                       <SelectItem value='pool'>账号池</SelectItem>
                     ) : null}
                     <SelectItem value='anthropic'>anthropic</SelectItem>
@@ -313,7 +325,11 @@ export function KeyLimitsDialog({
                   </SelectContent>
                 </Select>
               </Field>
-              {draft.group_type === 'pool' ? (
+              {isApi ? (
+                <p className='text-xs text-muted-foreground sm:col-span-2'>
+                  使用所选协议的 API 端点，无需选择槽位。
+                </p>
+              ) : draft.group_type === 'pool' ? (
                 <Field label='账号池'>
                   <Select
                     value={draft.vm_pool_id || ''}

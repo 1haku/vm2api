@@ -83,9 +83,9 @@ export function createGracefulShutdown({
         logger.log(`[shutdown] waiting up to ${drainTimeoutMs}ms for ${activeRequests.size} request(s) to drain...`)
         let timer
         const timeoutPromise = new Promise((resolve) => {
+          // Keep the timer referenced so await Promise.race(...) stays alive in
+          // isolated unit tests and bare event loops until drain or timeout.
           timer = setTimeout(resolve, drainTimeoutMs)
-          // Keep the bounded drain alive after listeners and pollers close so
-          // teardown and usage flushing still run when no other handles remain.
         })
         const drainPromise = new Promise((resolve) => {
           drainResolve = resolve

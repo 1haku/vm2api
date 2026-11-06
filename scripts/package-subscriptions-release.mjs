@@ -16,6 +16,7 @@ execFileSync('git', [
   'scripts',
   'worker',
   'api-kernel',
+  'redact',
   'Dockerfile',
   'test',
   'share/wrap-cli',
