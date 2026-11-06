@@ -6,6 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { ApiScheduler } from '../../src/lib/pool/api-scheduler.mjs'
+import { createDatabase } from '../../src/lib/db/database.mjs'
+import { ImagePermissionsRepo } from '../../src/lib/db/repos/image-permissions-repo.mjs'
 
 for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
   ['anthropic.messages', 'relay/sonnet', 'anthropic'],
@@ -48,6 +50,16 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
 ]) {
   test(`API key routes ${protocol} ${model}, review=${review.enabled ?? 'default'}, risky=${!!review.risky}, decision=${!!review.model}, block=${!!review.block}, input=${JSON.stringify(review.unsafe || review.stateless || null)}`, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'api-channel-'))
+    const db = createDatabase({ dataDir: root })
+    db.prepare('INSERT INTO users(id,email,username,password_hash,role,status) VALUES(?,?,?,?,?,?)').run(
+      'api-admin',
+      'api-admin@example.test',
+      'api-admin',
+      'unused',
+      'admin',
+      'active',
+    )
+    new ImagePermissionsRepo(db).save('api-admin', true)
     fs.mkdirSync(path.join(root, 'run'))
     const routingFile = path.join(root, 'routing.json')
     fs.writeFileSync(routingFile, JSON.stringify({ compatibility: { persona_preset: 'official_full' } }))
@@ -183,12 +195,16 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
       stickyRouter: {},
       accountQuota: {},
       apiKeyStore: {
+        repo: { db },
+        users: { db, getById: () => ({ role: 'admin' }) },
         acquire: () => {
           acquired++
-          return { ok: true }
-        },
-        release: () => {
-          released++
+          return {
+            ok: true,
+            release: () => {
+              released++
+            },
+          }
         },
       },
       apiScheduler: scheduler,
@@ -223,7 +239,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
       url: '/v1/messages',
       headers: { 'user-agent': 'api-test' },
       apiKeyKind: 'managed',
-      apiKeyRecord: { category: 'api' },
+      apiKeyRecord: { id: 'api-key', category: 'api', user_id: 'api-admin', group_id: 1 },
       once() {},
       off() {},
     }
@@ -240,7 +256,10 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
               : 'tool_choice_incompatible',
         )
         assert.equal(captured.length, 0, 'invalid content must not reach the selected API upstream')
-        assert.equal(acquired, 0, 'invalid content must not consume key admission')
+        // The custom quota gate admits before protocol validation. A rejected
+        // request must release its seat and never reach the API upstream.
+        assert.equal(acquired, 1)
+        assert.equal(released, 1, 'invalid content must not leave an occupied seat')
         return
       }
       assert.equal(audited.length, review.model && review.enabled ? 1 : 0)
@@ -249,7 +268,8 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
         assert.equal(response.status, 403, JSON.stringify(response.body))
         assert.equal(response.body.error.code, 'policy_blocked')
         assert.equal(captured.length, 0, 'blocked content must never reach the API upstream')
-        assert.equal(acquired, 0)
+        assert.equal(acquired, 1)
+        assert.equal(released, 1, 'blocked content must not leave an occupied seat')
         return
       }
       assert.equal(response.status, 200, JSON.stringify(response.body))
@@ -286,6 +306,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
     } finally {
       if (audit.listening) await new Promise((resolve) => audit.close(resolve))
       await new Promise((resolve) => kernel.close(resolve))
+      db.close()
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

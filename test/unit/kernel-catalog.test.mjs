@@ -473,7 +473,7 @@ test('explicit overrides block misleading pulls and preserve selected packages',
       { kernel: 'crag' },
       transport({ [CRAG_V2_RELEASE_ASSET]: archive(factory) }),
     )
-    assert.equal(result.code, 'kernel_override_active')
+    assert.equal(result.code, cragV2Arch() === 'amd64' ? 'kernel_override_active' : 'crag_v2_arch_mismatch')
     assert.equal(cragV2PackageRoot(root), factory)
   } finally {
     delete process.env.KIN_CRAG_V2_ROOT

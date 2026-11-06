@@ -84,7 +84,8 @@ export function createGracefulShutdown({
         let timer
         const timeoutPromise = new Promise((resolve) => {
           timer = setTimeout(resolve, drainTimeoutMs)
-          timer.unref?.()
+          // Keep the bounded drain alive after listeners and pollers close so
+          // teardown and usage flushing still run when no other handles remain.
         })
         const drainPromise = new Promise((resolve) => {
           drainResolve = resolve
