@@ -246,7 +246,7 @@ test('local egress imports as px-local and codex tokens stay out of vm.json', as
   assert.equal(mismatch.response.body.error.code, 'credential_kind_mismatch')
 })
 
-test('user cannot download a package and cannot import past the create quota', async (t) => {
+test('user cannot download or import VM packages', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-vm-pkg-user-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const pool = makePool(t)
@@ -272,7 +272,7 @@ test('user cannot download a package and cannot import past the create quota', a
   assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-other.json')), false)
 })
 
-test('tenant import cannot bind px-local or another owner SOCKS and drops seed_policy', async (t) => {
+test('tenant package imports are forbidden even within quota and cannot mutate slots', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-vm-pkg-tenant-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const pool = makePool(t)
@@ -287,28 +287,27 @@ test('tenant import cannot bind px-local or another owner SOCKS and drops seed_p
   local.proxy = { kind: 'local' }
   const localRes = await importAs(local)
   assert.equal(localRes.status, 403)
-  assert.equal(localRes.body.error.code, 'proxy_forbidden')
+  assert.equal(localRes.body.error.code, 'forbidden')
   assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-t-local.json')), false)
 
   // The platform already owns this SOCKS row; equal credentials must not hand it to the tenant.
   pool.ensureSocks({ host: '10.2.2.2', port: 1080, username: 'alice', password: 's3cret' })
   const taken = await importAs(claudePackage('vm-t-taken'))
   assert.equal(taken.status, 403)
-  assert.equal(taken.body.error.code, 'proxy_forbidden')
+  assert.equal(taken.body.error.code, 'forbidden')
   assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-t-taken.json')), false)
 
   const own = claudePackage('vm-t-own')
   own.proxy = { host: '10.3.3.3', port: 1080, username: 'bob', password: 'pw' }
   own.vm.seed_policy = { extra_env: { HTTP_PROXY: 'http://attacker:1' } }
-  const ok = await importAs(own)
-  assert.equal(ok.status, 201, ok.body?.error?.message)
-  const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', 'vm-t-own.json'), 'utf8'))
-  assert.equal(saved.owner_user_id, 'user-1')
-  assert.equal(saved.proxy.host, '10.3.3.3')
-  assert.equal(JSON.stringify(saved.seed_policy).includes('attacker'), false)
+  const denied = await importAs(own)
+  assert.equal(denied.status, 403)
+  assert.equal(denied.body.error.code, 'forbidden')
+  assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-t-own.json')), false)
 
   const reserved = await importAs(claudePackage('package'))
-  assert.equal(reserved.status, 400)
+  assert.equal(reserved.status, 403)
+  assert.equal(reserved.body.error.code, 'forbidden')
   assert.equal(fs.existsSync(path.join(root, 'vms', 'package.json')), false)
 })
 
