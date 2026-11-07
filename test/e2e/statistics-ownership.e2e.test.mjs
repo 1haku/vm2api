@@ -86,7 +86,21 @@ test('new logs and statistics remain caller-scoped after key and slot ownership 
         assert.equal(stats.status, 200, stats.text)
         assert.ok(!JSON.stringify(stats.json).includes(keys[1 - i].id), 'foreign key must not enter aggregates')
       }
-      assert.equal((await api(gw, 'GET', '/api/panel/statistics?dimension=vm', { headers: sessions[i] })).status, 400)
+      const vmStats = await api(gw, 'GET', `/api/panel/statistics?dimension=vm&${query}`, { headers: sessions[i] })
+      assert.equal(vmStats.status, 200, vmStats.text)
+      assert.equal(vmStats.json.data.totals.requests, 1)
+      const vmBoard = await api(gw, 'GET', `/api/panel/statistics/leaderboard?scope=vm&${query}`, {
+        headers: sessions[i],
+      })
+      assert.equal(vmBoard.status, 200, vmBoard.text)
+      if (i === 0) {
+        assert.deepEqual(vmBoard.json.data.entries, [])
+        assert.ok(!JSON.stringify(vmStats.json).includes('vm-sim-01'), 'shared slots remain unnamed')
+      } else {
+        assert.equal(vmBoard.json.data.entries.length, 1)
+        assert.equal(vmBoard.json.data.entries[0].id, 'vm-sim-01')
+        assert.equal(vmBoard.json.data.entries[0].totalRequests, 1, 'new VM owner cannot see prior tenant usage')
+      }
       assert.equal(
         (await api(gw, 'GET', '/api/panel/statistics/leaderboard?scope=user', { headers: sessions[i] })).status,
         400,

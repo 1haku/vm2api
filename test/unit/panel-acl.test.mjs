@@ -32,9 +32,12 @@ const serverSrc = [
   fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/server.mjs'), 'utf8'),
 ].join('\n')
 
-test('user sees subscriptions / usage records / keys', () => {
-  assert.deepEqual(viewsForRole('user'), ['subscriptions', 'usage-records', 'keys'])
+test('user sees subscriptions / usage records / keys / statistics', () => {
+  assert.deepEqual(viewsForRole('user'), ['subscriptions', 'usage-records', 'keys', 'statistics'])
   assert.equal(canViewPage('user', 'vm'), false)
+  assert.deepEqual(viewsForRole('super'), ['overview', 'cluster', 'logs', 'statistics', 'vm'])
+  assert.equal(canViewPage('admin', 'statistics'), true)
+  assert.equal(canViewPage('user', 'statistics'), true)
   assert.equal(canViewPage('user', 'overview'), false)
   assert.equal(canViewPage('super', 'vm'), true)
   assert.equal(canViewPage('admin', 'users'), true)
@@ -48,18 +51,23 @@ test('user sees subscriptions / usage records / keys', () => {
   assert.equal(hasCapability('user', 'vm.schedule'), true)
 })
 
-test('user can manage owned vm/proxy/key surfaces and nothing else', () => {
+test('user can view owned vms and manage keys, not proxies or reauth', () => {
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms', 'user').ok, true)
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/vm-01', 'user').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/create', 'user').ok, true)
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/create-options', 'user').ok, true)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/schedulable', 'user').ok, true)
-  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/import', 'user').ok, true)
-  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/package', 'user').ok, true)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/import', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/package', 'user').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/vm-01/package', 'user').ok, false)
   assert.equal(authorizePanelRoute('PUT', '/api/panel/vms/vm-01/package', 'user').ok, false)
   assert.equal(authorizePanelRoute('DELETE', '/api/panel/vms/vm-01', 'user').ok, false)
-  assert.equal(authorizePanelRoute('GET', '/api/panel/proxies', 'user').ok, true)
+  assert.equal(authorizePanelRoute('GET', '/api/panel/proxies', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/proxies/import', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/oauth/generate-auth-url', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/oauth/exchange-code', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/oauth/refresh', 'user').ok, false)
+  assert.equal(authorizePanelRoute('PUT', '/api/panel/vms/vm-01/oauth/credential', 'user').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/api-keys', 'user').ok, true)
   assert.equal(authorizePanelRoute('GET', '/api/panel/api-keys/key_a/stats', 'user').ok, true)
   assert.equal(authorizePanelRoute('GET', '/api/panel/request-logs', 'user').ok, true)
@@ -140,7 +148,7 @@ test('super can schedule VMs but cannot touch credentials or delete', () => {
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/oauth/to-setup-token', 'super').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/vm-01/oauth/credential', 'super').ok, false)
   assert.equal(authorizePanelRoute('PUT', '/api/panel/vms/vm-01/oauth/credential', 'super').ok, false)
-  assert.equal(authorizePanelRoute('GET', '/api/panel/vms/vm-01/oauth/credential', 'user').ok, false)
+  assert.equal(authorizePanelRoute('POST', '/api/panel/vms/vm-01/oauth/refresh', 'user').ok, false)
   assert.equal(authorizePanelRoute('DELETE', '/api/panel/vms/vm-01', 'super').ok, false)
   assert.equal(authorizePanelRoute('POST', '/api/panel/vms/create', 'super').ok, false)
   assert.equal(authorizePanelRoute('GET', '/api/panel/vms/create-options', 'super').ok, false)

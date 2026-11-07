@@ -24,7 +24,7 @@ export const Route = createFileRoute('/_authenticated')({
     const me = await context.queryClient.ensureQueryData(meQueryOptions())
     if (
       me.role === 'user' &&
-      !/^\/(subscriptions|usage-records|keys)(\/|$)/.test(location.pathname)
+      !/^\/(subscriptions|usage-records|keys|statistics)(\/|$)/.test(location.pathname)
     ) {
       throw redirect({ to: '/subscriptions' })
     }
@@ -41,7 +41,7 @@ function Authenticated() {
   const signOut = useAuthStore((s) => s.signOut)
   const userOutsideHome =
     meQuery.data?.role === 'user' &&
-    !/^\/(subscriptions|usage-records|keys)(\/|$)/.test(location.pathname)
+    !/^\/(subscriptions|usage-records|keys|statistics)(\/|$)/.test(location.pathname)
   useEffect(() => {
     if (meQuery.data) setMe(meQuery.data)
   }, [meQuery.data, setMe])
