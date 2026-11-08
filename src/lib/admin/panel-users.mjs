@@ -20,6 +20,9 @@ const SCRYPT_R = 8
 const SCRYPT_P = 1
 const KEYLEN = 32
 const USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9._-]{1,31}$/
+// users.concurrency caps the summed inflight requests of all of a user's keys (api-keys canAccept); 0 = no cap.
+const USER_CONCURRENCY_MIN = 0
+const USER_CONCURRENCY_MAX = 128
 
 function nowIso() {
   return new Date().toISOString()
@@ -93,6 +96,15 @@ function assertPassword(password) {
     throw err
   }
   return pass
+}
+
+function assertConcurrency(value) {
+  if (!Number.isInteger(value) || value < USER_CONCURRENCY_MIN || value > USER_CONCURRENCY_MAX) {
+    const err = new Error(`并发须为 ${USER_CONCURRENCY_MIN}–${USER_CONCURRENCY_MAX} 的整数（0 表示不限）`)
+    err.code = 'invalid_concurrency'
+    throw err
+  }
+  return value
 }
 
 function assertRole(role) {
@@ -191,7 +203,6 @@ export class PanelUserStore {
   }
 
   create({ username, password, role = 'user', enabled = true, vm_create_quota = 0, concurrency, rpm_limit } = {}) {
-    if (concurrency !== undefined) requestLimit(concurrency, '用户总并发', 128)
     if (rpm_limit !== undefined) requestLimit(rpm_limit, '用户总 RPM')
     const name = assertUsername(username)
     if (this.repo.getByUsername(name)) {
@@ -199,6 +210,7 @@ export class PanelUserStore {
       err.code = 'username_exists'
       throw err
     }
+    const limit = concurrency == null ? null : assertConcurrency(concurrency)
     const rec = {
       id: crypto.randomUUID(),
       username: name,
@@ -206,6 +218,7 @@ export class PanelUserStore {
       role: assertRole(role),
       enabled: enabled !== false,
       vm_create_quota: clampVmCreateQuota(vm_create_quota, 0),
+      concurrency: limit,
       created_at: nowIso(),
       updated_at: nowIso(),
       last_login_at: null,
@@ -258,9 +271,15 @@ export class PanelUserStore {
       next.vm_create_quota = clampVmCreateQuota(patch.vm_create_quota, rec.vm_create_quota || 0)
     }
 
+    if (patch.concurrency != null) {
+      next.concurrency = assertConcurrency(patch.concurrency)
+    }
+
     next.updated_at = nowIso()
     return withTransaction(this.db, () => {
-      new RequestLimitsRepo(this.db).saveUser(next, patch)
+      const limitPatch = { ...patch }
+      if (limitPatch.concurrency == null) delete limitPatch.concurrency
+      new RequestLimitsRepo(this.db).saveUser(next, limitPatch)
       if (Object.hasOwn(patch, 'image_generation_enabled'))
         new ImagePermissionsRepo(this.db).save(next.id, patch.image_generation_enabled)
       return this.withLimits(this.repo.update(next))

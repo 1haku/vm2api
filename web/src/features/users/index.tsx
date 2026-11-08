@@ -52,6 +52,7 @@ import { overviewQuery } from '@/features/subscriptions/admin-overview'
 import { SubscriptionWizard } from '@/features/subscriptions/wizard'
 import { usersQueryOptions } from '@/features/users/queries'
 import { UserSubscriptionDetail } from './subscription-detail'
+import { CONCURRENCY_MAX, parseConcurrency } from './user-concurrency'
 
 // Mirrors assertPassword() in src/lib/admin/panel-users.mjs.
 const PASSWORD_MIN = 8
@@ -388,10 +389,11 @@ function CreateUserDialog({
   const [confirm, setConfirm] = useState('')
   const [role, setRole] = useState<PanelRole>('user')
   const [quota, setQuota] = useState(0)
-  const [concurrency, setConcurrency] = useState(5)
+  const [concurrency, setConcurrency] = useState('5')
   const [rpm, setRpm] = useState(0)
   const [enabled, setEnabled] = useState(true)
   const pwErr = passwordError(password, confirm)
+  const concurrencyValue = parseConcurrency(concurrency)
 
   const reset = () => {
     setUsername('')
@@ -399,7 +401,7 @@ function CreateUserDialog({
     setConfirm('')
     setRole('user')
     setQuota(0)
-    setConcurrency(5)
+    setConcurrency('5')
     setRpm(0)
     setEnabled(true)
   }
@@ -414,7 +416,7 @@ function CreateUserDialog({
           role,
           enabled,
           vm_create_quota: quota,
-          concurrency,
+          concurrency: concurrencyValue,
           rpm_limit: rpm,
         }),
       }),
@@ -486,6 +488,7 @@ function CreateUserDialog({
                 !password ||
                 password !== confirm ||
                 !!pwErr ||
+                concurrencyValue == null ||
                 create.isPending
               }
               loading={create.isPending}
@@ -542,7 +545,10 @@ function EditUserForm({
   const [role, setRole] = useState<PanelRole>(user.role)
   const [enabled, setEnabled] = useState(user.enabled !== false)
   const [quota, setQuota] = useState(user.vm_create_quota ?? 0)
-  const [concurrency, setConcurrency] = useState(user.concurrency ?? 5)
+  const initialConcurrency = String(user.concurrency ?? 5)
+  const [concurrency, setConcurrency] = useState(initialConcurrency)
+  const concurrencyDirty = concurrency !== initialConcurrency
+  const concurrencyValue = parseConcurrency(concurrency)
   const [rpm, setRpm] = useState(user.rpm_limit ?? 0)
   const [imageEnabled, setImageEnabled] = useState(
     user.image_generation_enabled === true
@@ -556,7 +562,7 @@ function EditUserForm({
           role,
           enabled,
           vm_create_quota: quota,
-          concurrency,
+          ...(concurrencyDirty ? { concurrency: concurrencyValue } : {}),
           rpm_limit: rpm,
           image_generation_enabled: imageEnabled,
         }),
@@ -611,7 +617,9 @@ function EditUserForm({
       <DialogFooter>
         <Button
           type='submit'
-          disabled={patch.isPending}
+          disabled={
+            patch.isPending || (concurrencyDirty && concurrencyValue == null)
+          }
           loading={patch.isPending}
         >
           保存
@@ -862,9 +870,9 @@ function RequestLimitFields({
   setConcurrency,
   setRpm,
 }: {
-  concurrency: number
+  concurrency: string
   rpm: number
-  setConcurrency: (n: number) => void
+  setConcurrency: (n: string) => void
   setRpm: (n: number) => void
 }) {
   return (
@@ -876,10 +884,10 @@ function RequestLimitFields({
             type='number'
             required
             min={0}
-            max={128}
+            max={CONCURRENCY_MAX}
             step={1}
             value={concurrency}
-            onChange={(e) => setConcurrency(Number(e.target.value))}
+            onChange={(e) => setConcurrency(e.target.value)}
           />
         </Field>
         <Field id='user-rpm' label='用户总 RPM'>

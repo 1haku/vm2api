@@ -49,6 +49,12 @@ test('new logs and statistics remain caller-scoped after key and slot ownership 
     db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'))
     db.exec('PRAGMA busy_timeout=5000')
     db.prepare('UPDATE api_keys SET user_id=? WHERE id=?').run(ids[1], keys[0].id)
+    const transferredSelf = await api(gw, 'GET', `/v1/me/usage?user_id=${ids[0]}`, {
+      headers: { authorization: `Bearer ${keys[0].key}` },
+    })
+    assert.equal(transferredSelf.status, 200, transferredSelf.text)
+    assert.equal(transferredSelf.json.periods.today.requests, 0)
+    assert.deepEqual(transferredSelf.json.recent.items, [])
     const transferredStats = await api(gw, 'GET', `/api/panel/api-keys/${keys[0].id}/stats`, { headers: sessions[1] })
     assert.equal(transferredStats.status, 200, transferredStats.text)
     assert.equal(transferredStats.json.usage_stats.history.length, 0)

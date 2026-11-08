@@ -50,6 +50,7 @@ export function AppSidebar() {
                     : sidebarData.user.email,
             avatar: '',
           }}
+          views={me?.views}
         />
       </SidebarFooter>
       <SidebarRail />

@@ -271,15 +271,18 @@ async function harness(t, layout = 'zero', cliPath = cli) {
   // The real packed CLI can cold-start just beyond 5s on a shared build host.
   // Keep a bounded readiness gate and still fail immediately on process exit.
   const startupDeadline = performance.now() + 15_000
-  while (
-    !fs.existsSync(socketPath) &&
-    kernel.exitCode == null &&
-    kernel.signalCode == null &&
-    performance.now() < startupDeadline
-  )
+  let health
+  while (kernel.exitCode == null && kernel.signalCode == null && performance.now() < startupDeadline) {
+    try {
+      health = JSON.parse((await unixRequest(socketPath, token, '/internal/health')).text)
+      break
+    } catch (error) {
+      // bind() creates the pathname before listen(); only retry this readiness race.
+      if (!['ENOENT', 'ECONNREFUSED'].includes(error.code)) throw error
+    }
     await new Promise((resolve) => setTimeout(resolve, 50))
-  assert.ok(fs.existsSync(socketPath), log.slice(-1200))
-  const health = JSON.parse((await unixRequest(socketPath, token, '/internal/health')).text)
+  }
+  assert.ok(health, log.slice(-1200))
   const vm = {
     id: 'vm-01',
     claude: { mode: 'api-key' },
