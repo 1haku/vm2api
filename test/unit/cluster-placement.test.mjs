@@ -401,6 +401,7 @@ function fakeElf(file, fill) {
 }
 
 const SLOT_IMAGE_ENV_KEYS = [
+  'KIN_CRAG_V2_ROOT',
   'KIN_KERNEL_BIN',
   'KIN_WORKER_BIN',
   'KIN_EGRESS_BIN',
@@ -447,7 +448,7 @@ test('slot image uses factory cc-node when the wrap-cli cache package omits it',
   const root = tmpDir('kin-slot-cc-fallback-')
   withSlotImageEnv(t, root)
   seedSlotImagePayload(root, { factoryCcNode: true, cacheCcNode: false })
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const factoryCc = path.join(root, 'share/wrap-cli/cc-node')
   const spec = slotImageSpec(root, 'ubuntu-24.04')
   const cc = spec.files.find((file) => file.name === 'opt/kin/cc-node')
@@ -459,7 +460,7 @@ test('slot image reports factory cc-node path when both cache and factory omit i
   const root = tmpDir('kin-slot-cc-missing-')
   withSlotImageEnv(t, root)
   seedSlotImagePayload(root, { factoryCcNode: false, cacheCcNode: false })
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const factoryCc = path.join(root, 'share/wrap-cli/cc-node')
   assert.throws(
     () => slotImageSpec(root, 'ubuntu-24.04'),
@@ -506,7 +507,7 @@ test('slot image tag follows payload bytes only; a VERSION bump keeps the image'
   process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'bin/kin-worker')
   process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'bin/kin-egress')
   delete process.env.KIN_CRAG_V2_ROOT
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   fs.chmodSync(process.env.KIN_CODEX_KERNEL_BIN, 0o755)
 
   const a = slotImageSpec(root, 'ubuntu-24.04')
@@ -579,7 +580,7 @@ test('cluster payload check skips a container already on the content-hashed imag
     process.env.KIN_CODEX_KERNEL_BIN = path.join(root, 'bin/kin-codex-kernel')
     process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'bin/kin-worker')
     process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'bin/kin-egress')
-    seedEncryptedPackage(root)
+    seedEncryptedPackage(root, { arch: 'amd64' })
     const vm = { id: 'vm-03', node_id: 'node-a', kernel: 'ubuntu-24.04' }
     const current = slotImageSpec(root, 'ubuntu-24.04').ref
     const inspect = async () => ({ Config: { Image: current } })
@@ -639,7 +640,7 @@ test('node payload refresh leaves a running slot already on the current image up
   process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'bin/kin-worker')
   process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'bin/kin-egress')
   process.env.KIN_CODEX_KERNEL_BIN = path.join(root, 'bin/kin-codex-kernel')
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const vm = { id: 'vm-03', node_id: 'node-a', kernel: 'ubuntu-24.04', status: 'running' }
   const current = slotImageSpec(root, 'ubuntu-24.04').ref
   const inspected = []
@@ -704,7 +705,7 @@ test('amd64 node payload stays separate from native ARM control helpers', (t) =>
   fs.chmodSync(process.env.KIN_CODEX_KERNEL_BIN, 0o755)
   process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'amd64', 'kin-worker')
   process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'amd64', 'kin-egress')
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const payload = slotImageSpec(root, 'ubuntu-24.04')
   for (const name of ['kin-worker', 'kin-egress']) {
     const entry = payload.files.find((file) => file.name === `usr/local/bin/${name}`)
@@ -867,7 +868,7 @@ test('startSlotImageBuild returns a job awaitSlotImageBuild can finish', async (
   process.env.KIN_CODEX_KERNEL_BIN = path.join(root, 'bin/kin-codex-kernel')
   process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'bin/kin-worker')
   process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'bin/kin-egress')
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   bindPlacement({
     manager: {
       client() {

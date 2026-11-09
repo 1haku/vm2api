@@ -94,6 +94,8 @@ export function subscriptionSnapshot(db) {
             group_type: row.group_type ?? 'all',
             allowed_vms: row.allowed_vms ?? '[]',
             vm_pool_id: row.vm_pool_id ?? null,
+            // Upstream 054 leaves existing keys unrestricted; explicit lists remain hash-checked.
+            allowed_models: row.allowed_models ?? '[]',
           }
         return row
       })

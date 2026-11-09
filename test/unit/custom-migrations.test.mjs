@@ -267,6 +267,11 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
     assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /usage_logs/)
     db.prepare(`UPDATE usage_logs SET ${field}=NULL WHERE id='history'`).run()
   }
+  assert.equal(db.prepare("SELECT allowed_models FROM api_keys WHERE id='key'").get().allowed_models, '[]')
+  db.prepare("UPDATE api_keys SET allowed_models='[\"restricted-model\"]' WHERE id='key'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
+  db.prepare("UPDATE api_keys SET allowed_models='[]' WHERE id='key'").run()
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
   db.prepare("UPDATE api_keys SET group_type='openai',allowed_vms='[\"slot\"]' WHERE id='key'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
   db.prepare("UPDATE api_keys SET group_type='all',allowed_vms='[]' WHERE id='key'").run()

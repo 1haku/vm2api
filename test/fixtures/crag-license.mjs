@@ -85,9 +85,8 @@ export function issueUniversalCode(root, overrides = {}) {
     claims,
   }
 }
-export function seedEncryptedPackage(root, { revision = '' } = {}) {
+export function seedEncryptedPackage(root, { revision = '', arch = process.arch === 'arm64' ? 'arm64' : 'amd64' } = {}) {
   const authority = fixtureAuthority(root)
-  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64'
   const dir = path.join(root, 'share/crag/kernels/v2', arch)
   fs.mkdirSync(path.join(dir, 'claude-code-2.1.317'), { recursive: true })
   const elf = Buffer.alloc(96 + Buffer.byteLength(revision))
