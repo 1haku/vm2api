@@ -44,6 +44,7 @@ import {
 import { vmsListQueryOptions } from '@/features/vm/queries'
 import {
   keyIsDead,
+  keyModelsText,
   keyQuotaLabel,
   keyQuotaPct,
   keyStatusTone,
@@ -568,6 +569,7 @@ function KeyRow({
   onDelete: () => void
 }) {
   const metric = (value: string) => (ready ? value : '—')
+  const models = keyModelsText(item)
   return (
     <article
       aria-label={item.name || item.id}
@@ -582,6 +584,12 @@ function KeyRow({
         </p>
         <p className='truncate text-xs text-muted-foreground'>{planName}</p>
         <p className='text-xs text-muted-foreground'>{scopeText(item)}</p>
+        <p
+          className='truncate text-xs text-muted-foreground'
+          title={models.title}
+        >
+          {models.text}
+        </p>
         <code className='text-xs text-muted-foreground'>
           {maskApiKeyItem(item)}
         </code>
