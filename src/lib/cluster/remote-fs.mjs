@@ -113,26 +113,38 @@ export async function remoteSymlink(sftp, target, linkPath) {
 
 /**
  * Make each final component a real directory. Parents must be mount roots.
- * `chmod`/`chown` use `-h`: GNU coreutils otherwise follow a symlink the guest
- * swapped in, and `-h` on a symlink fails or changes the link instead.
+ * Open each directory with O_NOFOLLOW and change its mode/owner through the fd.
+ * Ubuntu's chmod has no -h option. Python 3 is also used by remote slot migration;
+ * fail closed if it is unavailable instead of falling back to pathname chmod.
  * `owner` is only meaningful for a root SSH session.
  */
 export function privateDirectoriesScript(dirs, owner = null) {
-  const own = owner == null ? '' : `chown -h ${requireId(owner.uid)}:${requireId(owner.gid)} "$d" || exit 1;`
-  return dirs
-    .map((dir) => {
-      const d = shellQuote(dir)
-      return [
-        `d=${d};`,
-        'if [ -L "$d" ]; then rm "$d" || exit 1; fi;',
-        'if [ -e "$d" ] && [ ! -d "$d" ]; then rm "$d" || exit 1; fi;',
-        'if [ ! -d "$d" ]; then mkdir "$d" || exit 1; fi;',
-        'if [ -L "$d" ] || [ ! -d "$d" ]; then echo "private directory was replaced" >&2; exit 1; fi;',
-        'chmod -h 700 "$d" || exit 1;',
-        own,
-      ].join(' ')
-    })
-    .join(' ')
+  const own = owner == null ? null : { uid: requireId(owner.uid), gid: requireId(owner.gid) }
+  const program = [
+    'import json, os, stat, sys',
+    'config = json.loads(sys.argv[1])',
+    'for directory in config["dirs"]:',
+    '    try:',
+    '        existing = os.lstat(directory)',
+    '    except FileNotFoundError:',
+    '        existing = None',
+    '    if existing is not None and not stat.S_ISDIR(existing.st_mode):',
+    '        os.unlink(directory)',
+    '        existing = None',
+    '    if existing is None:',
+    '        os.mkdir(directory, 0o700)',
+    '    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)',
+    '    try:',
+    '        os.fchmod(fd, 0o700)',
+    '        if config["owner"] is not None:',
+    '            os.fchown(fd, config["owner"]["uid"], config["owner"]["gid"])',
+    '    finally:',
+    '        os.close(fd)',
+  ].join('\n')
+  return [
+    'command -v python3 >/dev/null || { echo "private directory protection requires python3" >&2; exit 1; };',
+    `python3 -c ${shellQuote(program)} ${shellQuote(JSON.stringify({ dirs, owner: own }))} || exit 1;`,
+  ].join(' ')
 }
 
 function requireId(value) {

@@ -8,28 +8,59 @@ import { privateDirectoriesScript } from '../../src/lib/cluster/remote-fs.mjs'
 import { ensureHostPrivateDir } from '../../src/lib/vm/private-dir.mjs'
 
 test('remote private directories are chmodded without following a symlink', () => {
-  const script = privateDirectoriesScript(['/slot/run/crag-license', '/slot/run/work'], { uid: 10000, gid: 10000 })
-  assert.match(script, /chmod -h 700/)
-  assert.match(script, /chown -h 10000:10000/)
-  assert.equal(script.includes('chmod 700'), false)
-  assert.equal(script.includes('chown 10000'), false)
   assert.throws(() => privateDirectoriesScript(['/slot/run/work'], { uid: '1;rm', gid: 1 }))
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-private-remote-'))
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-private-target-'))
   try {
     fs.chmodSync(target, 0o755)
-    const leaf = path.join(root, 'work')
+    const leaf = path.join(root, "work 'quoted'")
     fs.symlinkSync(target, leaf)
-    execFileSync('sh', ['-c', privateDirectoriesScript([leaf])], { stdio: 'pipe' })
+    const owner = { uid: process.getuid(), gid: process.getgid() }
+    execFileSync('sh', ['-c', privateDirectoriesScript([leaf], owner)], { stdio: 'pipe' })
     const replaced = fs.lstatSync(leaf)
     assert.equal(replaced.isSymbolicLink(), false)
     assert.equal(replaced.isDirectory(), true)
     assert.equal(replaced.mode & 0o777, 0o700)
+    assert.equal(replaced.uid, owner.uid)
+    assert.equal(replaced.gid, owner.gid)
     assert.equal(fs.statSync(target).mode & 0o777, 0o755)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('remote private directories reject a symlink swapped in before open', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-private-race-'))
+  try {
+    const leaf = path.join(root, 'work'),
+      target = path.join(root, 'target')
+    fs.mkdirSync(leaf)
+    fs.mkdirSync(target, { mode: 0o755 })
+    // Simulate the guest replacing the leaf between lstat and the protected open.
+    fs.writeFileSync(
+      path.join(root, 'sitecustomize.py'),
+      [
+        'import os',
+        'original_open = os.open',
+        'def swap_open(path, flags, *args, **kwargs):',
+        '    if path == os.environ["TEST_PRIVATE_LEAF"]:',
+        '        os.rmdir(path)',
+        '        os.symlink(os.environ["TEST_PRIVATE_TARGET"], path)',
+        '    return original_open(path, flags, *args, **kwargs)',
+        'os.open = swap_open',
+      ].join('\n'),
+    )
+    assert.throws(() =>
+      execFileSync('sh', ['-c', privateDirectoriesScript([leaf])], {
+        stdio: 'pipe',
+        env: { ...process.env, PYTHONPATH: root, TEST_PRIVATE_LEAF: leaf, TEST_PRIVATE_TARGET: target },
+      }),
+    )
+    assert.equal(fs.statSync(target).mode & 0o777, 0o755)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })
 
