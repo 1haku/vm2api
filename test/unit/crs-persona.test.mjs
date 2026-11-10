@@ -512,7 +512,7 @@ test('missing billing receives cli and turn indexes; caller billing keeps entryp
   assert.match(
     added.system[0].text,
     new RegExp(
-      `^x-anthropic-billing-header: cc_version=2\\.1\\.296\\.[0-9a-f]{3}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${sessionId}; cc_turn_origin=sdk; cc_prompt_index=0; cc_turn_index=1;$`,
+      `^x-anthropic-billing-header: cc_version=2\\.1\\.296\\.[0-9a-f]{3}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${sessionId}; cc_turn_origin=human; cc_prompt_index=1; cc_turn_index=1;$`,
     ),
   )
   const caller = 'x-anthropic-billing-header: cc_version=2.1.296.abc; cc_entrypoint=cli; cch=00000;'
@@ -576,7 +576,7 @@ test('one routing read keeps billing, system identity and env on the same entryp
     )
     const sdk = render('sdk-cli')
     assert.match(sdk.system[0].text, /cc_entrypoint=sdk-cli;/)
-    assert.equal(sdk.system[1].text, "You are Claude Code, Anthropic's official CLI for Claude.")
+    assert.equal(sdk.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
     assert.doesNotMatch(sdk.system.map((block) => block.text).join('\n'), /! <command>/)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })

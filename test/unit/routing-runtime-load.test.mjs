@@ -267,7 +267,7 @@ test('persistRoutingPatch writes persona_preset into Claude kernel system_layout
     assert.equal(kernel.system_layout, 'zero')
     assert.equal(kernel.persona_preset, 'zero')
     assert.equal(kernel.default_cache_ttl, '1h')
-    assert.equal(kernel.cli_version, '2.1.303')
+    assert.equal(kernel.cli_version, OFFICIAL_CLI_VERSION)
     runtime.persistRoutingPatch({ compatibility: { persona_preset: 'official_full' } })
     const official = JSON.parse(fs.readFileSync(path.join(vms, 'vm-claude', 'run', 'kernel.json'), 'utf8'))
     assert.equal(official.persona_preset, 'official_full')
