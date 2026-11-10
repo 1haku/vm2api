@@ -510,7 +510,33 @@ test('one VM can switch cli-node to CRAG v2 and back without deleting cli-node',
   }
 })
 
-test('CRAG v2 rejects a bad package and a non-local slot without replacing cli-node', () => {
+test('CRAG resync keeps the mounted directory and the previous Claude binary', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-crag-v2-keep-'))
+  try {
+    seedTemplate(project)
+    seedV2Package(project)
+    const vm = { id: 'vm-13', dataplane: 'crag', crag_kernel_version: 'v2' }
+    const laid = materializeResolvedKernel(project, vm)
+    assert.equal(laid.ok, true, laid.error)
+    const dest = wrapCliHomeDir(project, 'vm-13')
+    const tree = path.join(dest, 'crag-v2')
+    const mounted = fs.statSync(tree).ino
+    const previous = path.join(tree, 'claude-code-2.1.317', 'claude')
+    fs.mkdirSync(path.dirname(previous), { recursive: true })
+    fs.writeFileSync(previous, 'still-running')
+    fs.writeFileSync(path.join(dest, 'kin-kernel'), 'not-the-wrapper')
+    const synced = materializeResolvedKernel(project, vm)
+    assert.equal(synced.ok, true, synced.error)
+    assert.equal(synced.kernel_changed, true)
+    assert.equal(fs.statSync(tree).ino, mounted)
+    assert.equal(fs.readFileSync(previous, 'utf8'), 'still-running')
+    assert.equal(materializeResolvedKernel(project, vm).kernel_changed, false)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('CRAG v2 rejects a bad package and a cluster slot without replacing cli-node', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-crag-v2-reject-'))
   try {
     const dir = seedV2Package(project)
@@ -530,7 +556,8 @@ test('CRAG v2 rejects a bad package and a non-local slot without replacing cli-n
     assert.equal(remote.code, 'crag_v2_hash_mismatch')
     assert.equal(fs.existsSync(wrapCliHomeDir(project, 'vm-remote')), false)
     const kvm = materializeCragV2(project, { id: 'vm-kvm', runtime: { type: 'kvm' } })
-    assert.equal(kvm.code, 'crag_v2_unsupported_placement')
+    assert.notEqual(kvm.code, 'crag_v2_unsupported_placement')
+    assert.equal(kvm.ok, false)
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }
@@ -598,12 +625,12 @@ const invalidNativePackages = [
     'Claude machine',
     'crag_v2_arch_mismatch',
     (dir) => {
-      const file = path.join(dir, 'claude-code-2.1.317', 'claude')
+      const file = path.join(dir, 'claude-code-2.1.321', 'claude')
       const body = fs.readFileSync(file)
       body.writeUInt16LE(body.readUInt16LE(18) === 62 ? 183 : 62, 18)
       fs.writeFileSync(file, body)
       rewriteV2Manifest(dir, (m) => {
-        m.sha256['claude-code-2.1.317/claude'] = sha256(body)
+        m.sha256['claude-code-2.1.321/claude'] = sha256(body)
       })
     },
   ],
@@ -637,15 +664,15 @@ const invalidNativePackages = [
   [
     'missing hashed member',
     'crag_v2_hash_mismatch',
-    (dir) => fs.unlinkSync(path.join(dir, 'claude-code-2.1.317', 'claude')),
+    (dir) => fs.unlinkSync(path.join(dir, 'claude-code-2.1.321', 'claude')),
   ],
   [
     'unbundled Claude',
     'crag_v2_manifest_invalid',
     (dir) => {
-      fs.unlinkSync(path.join(dir, 'claude-code-2.1.317', 'claude'))
+      fs.unlinkSync(path.join(dir, 'claude-code-2.1.321', 'claude'))
       rewriteV2Manifest(dir, (m) => {
-        delete m.sha256['claude-code-2.1.317/claude']
+        delete m.sha256['claude-code-2.1.321/claude']
       })
     },
   ],
@@ -670,7 +697,7 @@ const invalidNativePackages = [
     'symlink member',
     'crag_v2_symlink',
     (dir) => {
-      const file = path.join(dir, 'claude-code-2.1.317', 'claude')
+      const file = path.join(dir, 'claude-code-2.1.321', 'claude')
       fs.unlinkSync(file)
       fs.symlinkSync('../crag-v2', file)
     },
@@ -790,7 +817,7 @@ test('CRAG v2 publishes complete upgrades, repairs damaged installs, and leaves 
       'crag-v2',
       'crag-v2.payload.enc',
       'crag-license-public.pem',
-      'claude-code-2.1.317/claude',
+      'claude-code-2.1.321/claude',
     ]) {
       assert.deepEqual(fs.readFileSync(path.join(dest, 'crag-v2', member)), fs.readFileSync(path.join(dir, member)))
     }
@@ -821,7 +848,7 @@ test('CRAG v2 restores the previous tree if staged directory promotion fails', (
     const oldWrapper = fs.readFileSync(path.join(dest, 'kin-kernel'))
     seedV2Package(project, { revision: 'promotion-failure' })
     fs.renameSync = (from, to) => {
-      if (to === packageRoot && !from.endsWith('.bak')) {
+      if (to === path.join(packageRoot, 'manifest.json')) {
         throw Object.assign(new Error('promotion denied'), { code: 'EACCES' })
       }
       return rename(from, to)
