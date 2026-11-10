@@ -553,7 +553,7 @@ test('CRAG v2 rejects a bad package and a cluster slot without replacing cli-nod
     assert.equal(fs.readFileSync(path.join(dest, 'cli-node'), 'utf8'), 'keep-cli')
     assert.equal(fs.existsSync(path.join(dest, 'crag-v2')), false)
     const remote = materializeCragV2(project, { id: 'vm-remote', node_id: 'node-1' })
-    assert.equal(remote.code, 'crag_v2_hash_mismatch')
+    assert.equal(remote.code, 'crag_v2_unsupported_placement')
     assert.equal(fs.existsSync(wrapCliHomeDir(project, 'vm-remote')), false)
     const kvm = materializeCragV2(project, { id: 'vm-kvm', runtime: { type: 'kvm' } })
     assert.notEqual(kvm.code, 'crag_v2_unsupported_placement')
@@ -563,21 +563,22 @@ test('CRAG v2 rejects a bad package and a cluster slot without replacing cli-nod
   }
 })
 
-test('a cluster Docker slot keeps native Claude Code inside the CRAG package', () => {
+test('local materialization rejects a cluster slot without modifying its native Claude package', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-crag-v2-cluster-'))
   try {
     const dir = seedV2Package(project)
     activateCragLicense(project, { id: 'vm-13' }, issueUniversalCode(project).code)
+    const nativeCli = path.join(dir, 'claude-code-2.1.321', 'claude')
+    const originalCli = fs.readFileSync(nativeCli)
     const laid = materializeCragV2(project, {
       id: 'vm-remote',
       node_id: 'node-1',
       dataplane: 'crag',
       crag_kernel_version: 'v2',
     })
-    assert.equal(laid.ok, true, laid.error)
-    assert.equal(laid.remote, true)
-    assert.equal(laid.claude_bin, 'claude-code-2.1.317/claude')
-    assert.equal(fs.existsSync(path.join(dir, 'claude-code-2.1.317', 'claude')), true)
+    assert.equal(laid.ok, false)
+    assert.equal(laid.code, 'crag_v2_unsupported_placement')
+    assert.deepEqual(fs.readFileSync(nativeCli), originalCli)
     assert.equal(fs.existsSync(wrapCliHomeDir(project, 'vm-remote')), false)
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
