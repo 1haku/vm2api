@@ -39,7 +39,8 @@ export function startJsonKeepalive(
           'x-kin-rewrite': rewriteEnabled ? 'on' : 'off',
         })
         if (res._kinRequestId) headers['x-request-id'] = res._kinRequestId
-        res.writeHead(200, headers)
+        for (const [name, value] of Object.entries(headers)) res.setHeader(name, value)
+        res.writeHead(200)
         state.committed = true
         res.socket?.setNoDelay?.(true)
         res.flushHeaders?.()

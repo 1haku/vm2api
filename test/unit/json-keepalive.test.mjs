@@ -14,6 +14,7 @@ import {
 import { createRespond } from '../../src/lib/http/respond.mjs'
 import { runJsonKeepaliveProbe } from '../../src/lib/admin/json-keepalive-probe.mjs'
 import { authorizePanelRoute } from '../../src/lib/admin/panel-acl.mjs'
+import { RequestLogStore } from '../../src/lib/admin/request-log.mjs'
 
 const { json } = createRespond({ rewrite: { enabled: false } })
 async function serve(t, run) {
@@ -193,4 +194,29 @@ test('public diagnostic requires admin plus a short-lived local enable file', as
   }
   fs.writeFileSync(flag, JSON.stringify({ enabled_until: Date.now() + 60_000 }))
   assert.equal((await fetch(url)).status, 503)
+})
+
+test('real aborted response retains wire headers in debug metadata', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-json-log-'))
+  const store = new RequestLogStore({ dataDir: dir, mode: 'debug' })
+  t.after(() => {
+    store.db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  let record
+  const url = await serve(t, async (req, res) => {
+    const ctx = store.start(req, { pathName: '/v1/messages' })
+    store.tapResponse(ctx, res)
+    startJsonKeepalive(req, res, { delayMs: 10, maxDurationMs: 1000 })
+    await sleep(60)
+    json(res, 503, { error: { message: 'simulated' } })
+    store.finish(ctx, { status: jsonResponseLogStatus(res), final_state: 'incomplete' })
+    record = store.getDebug(ctx.request_id)
+  })
+  const res = await fetch(url)
+  await assert.rejects(res.json())
+  assert.equal(record.status, 503)
+  assert.equal(record.response.status, 200)
+  assert.match(record.response.headers['content-type'], /application\/json/)
+  assert.equal(record.response.headers['x-kin-json-keepalive'], '1')
 })
