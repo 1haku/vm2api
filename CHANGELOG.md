@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+## 1.4.067 — 2026-11-11
+
+- 将 cli-node 交付更新为当前本地源码构建的 2.1.321，使用 UPX 5.0.2 压缩并验证；不再沿用旧下载缓存中的 CLI。
+- pinned payload 首次包含完整的签名加密 CRAG native v2 出厂包及原版 Claude Code 2.1.321。bootstrap/core 在签名、加密前压缩，沿用现有发行权威和产品密钥；官方 Claude 文件保持原始字节。
+- 全部 22 个 payload 路径固定到同一个新发行，其他 kernel/helper 保留已验证基线。构建来源、压缩参数和哈希见 `docs/releases/v1.4.067-binaries.json`。
+
+已部署机升级：拉取新 payload，分别拉取 cli-node / CRAG 发行，并在内核页对所选 Claude VM 执行重启安装；仅更新出厂目录不能替换已有选中缓存或槽内副本。沿用 v1.4.066 的调度恢复流程，不覆盖账号、授权、配置及运行数据。
+
+## 1.4.066 — 2026-11-11
+
+- 内核页安装、重装和更新槽位改为完整重启：先暂停调度并等待在途请求结束，再停止、替换、启动并检查健康；成功后恢复运行状态与调度，保留操作前主动关闭调度的设置。
+- 集群内核操作持久化执行意图。控制面重启或节点连接中断后，在节点就绪时有界恢复未完成操作；确定性失败保留错误，不自动重试或把未健康的槽重新放回调度。
+- VM 页面切换内核增加持续进度、成功和失败反馈，阻止重复操作；完成或失败后刷新详情、VM 列表和仪表盘。运行中的 VM 明确提示重启结果，原已停止的 VM 保持停止并在下次启动生效。
+- CRAG 配置与面板终端统一从槽位当前选中的内核解析原生 Claude 路径，不再使用固定路径或按路径字符串猜测运行方式。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启。不必 `fetch:payload`，不必 `wrap-cli/sync`，本版不更换 pinned payload。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。不要 `docker rm` 槽。
+
+## 1.4.065 — 2026-11-11
+
+- 发布流程的 ARM64 镜像冒烟检查不再强制要求 `cc-node`（pinned payload 已不带它）。v1.4.062–v1.4.064 因此 `image-arm64` 失败、多架构镜像标签未更新，本版补齐。
+- CRAG 官方请求不再在网关删 `messages` 里的系统块。原生 Claude Code 2.1.321 的 Environment 在 system 第四块里；客户端还会在工具结果后追加 MCP 说明和 idle 提示。这些块要原样进 CRAG。PR #6 从 system 和每条 message 读取调用方写过的 cwd、git、platform、shell、OS，没写的不拿宿主机填。指纹是否把工具结果后的新系统块算进续接，由 CRAG 自己决定，不靠删正文。
+
+已部署机升级：更新 Node 控制面后重启。不必 `fetch:payload`，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。不要 `docker rm` 槽。
+
+## 1.4.064 — 2026-11-11
+
+- 修复指定 Claude 订阅档位或账号作为风控范围时，普通 Messages 请求返回 503：attempt 会话 ID 在范围审核之前初始化（#952）。
+- 请求热路径读取 `routing.json` 改为只做一次 `stat`，内容不变时复用同一份只读解析结果；面板保存改为原子写并即时生效，SCP / 手工编辑仍会在下次读取时被发现（#929）。
+- 集群槽位镜像准备时 `cc-node` 与本地 wrap 运行时一致为可选：缺失不报 `slot_payload_missing`，存在则校验并打包；`cli-node` 与 kin-kernel 仍为必填。
+
+已部署机升级：更新 Node 控制面后重启。不必 `fetch:payload`，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。不要 `docker rm` 槽。
+
+## 1.4.063 — 2026-11-11
+
+- 导出 `cliPayloadPath`。v1.4.062 的集群镜像代码引用了它，但模块没有导出，控制面启动即退出。
+
+已部署机升级：更新 Node 控制面后重启。不必 `fetch:payload`，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。不要 `docker rm` 槽。不要部署 v1.4.062。
+
+## 1.4.062 — 2026-11-11
+
+- CRAG v2 子进程连 OAuth token 主机（`platform.claude.com` / `console.anthropic.com` 的 443）时先写 `KIN-BLOCK`。kin-egress 在拨上游 SOCKS 之前关掉这条连接，刷新请求不出站。登录、`kin-oauth-auth` 和 `kin-worker oauth refresh` 不写标记，不受影响。随包发布的 `kin-egress` 仍是 `deploy/payload.json` 里钉住的那枚，这次不换二进制。
+- Fable 不再要求 Max 订阅。Pro 和未标明等级的槽可以接 `claude-fable-*`；型号拒绝和允许列表仍生效。号池空了按原来的冷却或无可用账号返回，不再一律报 `fable_requires_max`。
+- 集群节点可以只拉 CLI、不带可选 CRAG 包。拉完 CLI 后从工厂解析 cc-node，不再要求过时的 cc-node payload。
+- CRAG 槽一律走原生 Claude。面板终端和 OAuth 跟随该槽当前选中的内核。工具续接保留公开思考块。
+- 已停机的槽不再显示成「调度开」。Docker 内存上调改为异步，不再卡住面板请求。
+- 签名二进制更新会核对每一份槽内副本。OAuth 订阅档只认 profile 证据，不再用模型是否调用成功来推断。
+
+已部署机升级：更新 Node 控制面与 `web/dist` 后重启。cli-node、kernel、kin-egress 的 payload 哈希未变，不必 `fetch:payload`，不必 `wrap-cli/sync`。不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。不要 `docker rm` 槽。
+
 ## 1.4.061 — 2026-11-10
 
 - 升级同步二进制时不再先删除正在使用的文件。cli-node、内核和 CRAG 都是改名覆盖；已经挂载的目录保持原 inode。旧的 `claude-code-*` 目录先留着，槽位切到新路径之前仍能执行。写入失败会把原来的目录内容放回去。

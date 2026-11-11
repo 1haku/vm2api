@@ -14,6 +14,7 @@ import {
   clearVmQuotaRestriction,
   markVmRestriction,
   expiresAtToMs,
+  ensureSlotSubscriptionType,
 } from '../oauth/oauth-credentials.mjs'
 import {
   HOLD_MAINTENANCE,
@@ -122,6 +123,7 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
       hasToken: kind.kind === 'codex' ? !!codex?.has_token : hasAccessPresence(vm.claude),
     }),
     auth_scheme: kind.kind === 'codex' ? null : vm.claude?.auth_scheme || null,
+    account_tier_source: kind.kind === 'codex' ? null : vm.claude?.account_tier_source || null,
     has_refresh: kind.kind === 'codex' ? !!codex?.has_refresh : hasRefreshPresence(vm.claude),
     refresh_error: kind.kind === 'codex' ? null : vm.claude?.refresh_error || null,
     account_tier:
@@ -238,6 +240,9 @@ export function persistAccountTier(projectRoot, vmId, tier, { source = null } = 
   const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
   vm.claude = vm.claude || {}
   if (vm.claude.account_tier_source === 'profile' && source !== 'profile' && source !== 'usage') return vm
+  if (source === 'profile' || source === 'usage') {
+    ensureSlotSubscriptionType(path.join(projectRoot, 'vms', vmId, 'cli-home'), key, { source })
+  }
   if (vm.claude.account_tier === key && (vm.claude.account_tier_source || null) === source) return vm
   vm.claude.account_tier = key
   vm.claude.account_tier_source = source

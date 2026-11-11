@@ -10,6 +10,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 PROGRAM = r'''
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,10 @@ for name in ('kin-kernel', 'kin-codex-kernel'):
     assert 'not found' not in loaded.stdout + loaded.stderr, name + ': ' + loaded.stderr
 for name in ('cli-node', 'cc-node'):
     binary = root / 'image-wrap-cli' / name
+    # The pinned payload no longer ships cc-node (#967); check it only when present.
+    if name == 'cc-node' and not binary.exists():
+        print(name + ': absent (optional)')
+        continue
     elf(binary, 62)
     version = subprocess.check_output([str(binary), '--version'], text=True, timeout=60).strip()
     assert version, name
@@ -75,6 +80,10 @@ try:
     for name in ('kin-worker', 'kin-egress', 'kin-api-kernel'):
         elf(root / 'bin' / name, 183, static=True)
         assert (root / 'bin' / name).read_bytes() == (root / 'image-bin' / name).read_bytes()
+    payload = json.loads((root / 'deploy/payload.json').read_text())
+    for item in payload['files']:
+        if item['path'].startswith('share/crag/kernels/'):
+            assert hashlib.sha256((root / item['path']).read_bytes()).hexdigest() == item['sha256'], item['path']
     subprocess.run(['node', '--input-type=module', '-e', r"""
 import assert from 'node:assert/strict'
 import fs from 'node:fs'

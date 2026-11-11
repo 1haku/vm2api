@@ -1631,6 +1631,23 @@ export function createHandleProtocol(deps) {
               thinking_owner: { account_id: selected.accountId, kept, converted, dropped, unknown },
             }
           }
+          const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
+          // The runner snapshots after this session's queue turn, before VM prebinding.
+          const attemptBound = extra.stickyBound
+          const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
+          const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
+          const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
+          const attemptSessionId = resolveOutboundSessionId(executionSession, {
+            ...sessionContext,
+            accountId: selected.accountId,
+            boundSessionId: keptSession,
+            boundAccountId: keptAccount,
+            boundVmId: keptVm,
+            vmId: selected.vmId,
+            epoch: extra.freshSlot
+              ? `slot:${selected.slotIndex ?? 'x'}:${attemptStartedAt}`
+              : `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
+          })
           if (claudeScopePending()) {
             const blocked = await applyProtocolIntercept({
               req,
@@ -1651,23 +1668,6 @@ export function createHandleProtocol(deps) {
             }
           }
           const identity = loadVmIdentity(selected.exec)
-          const attemptStartedAt = extra.attemptStartedAt ?? Date.now()
-          // The runner snapshots after this session's queue turn, before VM prebinding.
-          const attemptBound = extra.stickyBound
-          const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
-          const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
-          const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
-          const attemptSessionId = resolveOutboundSessionId(executionSession, {
-            ...sessionContext,
-            accountId: selected.accountId,
-            boundSessionId: keptSession,
-            boundAccountId: keptAccount,
-            boundVmId: keptVm,
-            vmId: selected.vmId,
-            epoch: extra.freshSlot
-              ? `slot:${selected.slotIndex ?? 'x'}:${attemptStartedAt}`
-              : `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
-          })
           if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
@@ -1715,11 +1715,10 @@ export function createHandleProtocol(deps) {
               if (Object.keys(cragStandard.reverse || {}).length) {
                 inboundToolReverse = composeToolNames(inboundToolReverse, cragStandard.reverse)
               }
-              let source = filterThinkingForAccount(
-                shallowCopyBody(cragStandard.body),
-                selected.accountId,
-                thinkingOwnerStore,
-              ).body
+              // The CRAG kernel fingerprints the public stream it already sent,
+              // including thinking. Rewriting an unrecorded signature into text
+              // makes the tool continuation fail with tool_result history mismatch.
+              let source = shallowCopyBody(cragStandard.body)
               for (const policy of extra.repairs || []) source = repairAnthropicRequest(source, policy)
               hopBody = prepareCragPrintBody(source, { preset: cragPersona, officialPassthrough })
               hopBody = await materializeRemoteImageSources(hopBody)

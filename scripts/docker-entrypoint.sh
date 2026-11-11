@@ -86,6 +86,20 @@ if [ -f /opt/vm2api/image-crag/kin-kernel ]; then
   fi
 fi
 
+# Publish the release-pinned factory package without changing selected packages
+# or slot runtime files. Per-file replacement keeps existing directory mounts intact.
+if [ -d /opt/vm2api/image-crag/kernels ]; then
+  find /opt/vm2api/image-crag/kernels -type f | while IFS= read -r src; do
+    relative="${src#/opt/vm2api/image-crag/kernels/}"
+    dest="$ROOT/share/crag/kernels/$relative"
+    if [ ! -f "$dest" ] || ! cmp -s "$src" "$dest"; then
+      mkdir -p "$(dirname "$dest")"
+      cp -p "$src" "$dest.new"
+      mv -f "$dest.new" "$dest"
+    fi
+  done
+fi
+
 if [ ! -S /var/run/docker.sock ]; then
   echo "vm2api: /var/run/docker.sock not mounted; slot create/start will fail." >&2
 elif [ -f /opt/vm2api/docker/kin-os/build.mjs ]; then

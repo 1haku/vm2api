@@ -15,6 +15,10 @@ import zipfile
 RUNTIME_FILES = ('bun', 'cli.js', 'ld-linux-aarch64.so.1', 'libc.so.6',
                  'libpthread.so.0', 'libdl.so.2', 'libm.so.6')
 MISSING_RUNNING_STATE_SOURCE = 'ced77bcd9639314e6f277c23d91c98f5e178add7eb1eb93538d51ad1cb500830'
+MISSING_RUNNING_STATE_SOURCES = frozenset((
+    MISSING_RUNNING_STATE_SOURCE,
+    '9330fbc5b91d599d84bb280b19732c125ef43de9ae5d9581f740c70304c82116',
+))
 WRAPPER = '''#!/bin/sh
 # native-cli bundle: {digest}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -69,13 +73,13 @@ def archive_member(data, name, kind):
 
 
 def repair_native_job_state(source, pinned_source_hash):
-    """Repair the one reviewed 1.4.026 source, after its upstream hash is checked.
+    """Repair reviewed 1.4.026 and 1.4.067 sources after their upstream hashes are checked.
 
     Its telemetry insertion dropped phase=running. cancelJob only aborts running
     jobs, leaving requests with an unresponsive upstream permanently occupied.
     Other source revisions remain untouched and must pass the same real-chain tests.
     """
-    if pinned_source_hash != MISSING_RUNNING_STATE_SOURCE:
+    if pinned_source_hash not in MISSING_RUNNING_STATE_SOURCES:
         return source, []
     start_marker = b'function startJob(slots, slotIdArg, jobId, request3, hostOptions, requestContext) {'
     end_marker = b'async function cancelJob(slots, slotIdArg, jobId) {'

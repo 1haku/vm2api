@@ -209,14 +209,13 @@ function byVmHas(candidates, vmId) {
 }
 
 /**
- * Nothing eligible. Fable keeps its Max gate; otherwise an upstream cooldown on
- * the dropped accounts names the cause: any 529 overload cooldown is capacity
- * (529), only 429 rate-limit cooldowns are the provider's limit (429). Without
- * either, nothing will come back by waiting (503) — unless every slot is just
- * inside its operator rest window, whose open time rides along as retry_after.
+ * Nothing eligible. An upstream cooldown on the dropped accounts names the
+ * cause: any 529 overload cooldown is capacity (529), only 429 rate-limit
+ * cooldowns are the provider's limit (429). Without either, nothing will come
+ * back by waiting (503) — unless every slot is just inside its operator rest
+ * window, whose open time rides along as retry_after.
  */
-function emptyPoolFailure(model, candidates, now = Date.now()) {
-  if (isFableModel(model)) return { reason: 'fable_requires_max', retry_after_ms: null }
+function emptyPoolFailure(candidates, now = Date.now()) {
   if ((candidates?.rejections?.quota_guard_request_too_large || 0) > 0) {
     return { reason: 'quota_guard_request_too_large', retry_after_ms: null }
   }
@@ -591,7 +590,7 @@ export class PoolScheduler extends EventEmitter {
       const waitCandidates = reserveMisses.length ? effectiveCandidates : candidates
       const waitAvailable = reserveMisses.length ? effectiveAvailable : available
       if (waitCandidates.length === 0) {
-        const empty = emptyPoolFailure(model, candidates)
+        const empty = emptyPoolFailure(candidates)
         return { ...fail(empty.reason, waitCandidates, waitAvailable), retry_after_ms: empty.retry_after_ms }
       }
       const waitPool = waitCandidates.filter(
@@ -806,7 +805,7 @@ export class PoolScheduler extends EventEmitter {
             const granted = this.openNewSeat(seatKey, candidates, { avoided, homes, deviceKey: machineKey })
             if (granted) return finish(granted)
             if (!candidates.length) {
-              const empty = emptyPoolFailure(model, candidates)
+              const empty = emptyPoolFailure(candidates)
               return { ...fail(empty.reason), retry_after_ms: empty.retry_after_ms }
             }
             if (!allowWait || now >= failoverDeadline) return fail('all_accounts_busy')
@@ -1651,7 +1650,7 @@ export class PoolScheduler extends EventEmitter {
   async peekAccount({ model, stickyKey = null, signal, ownerScope = PLATFORM_SCOPE, keyScope = null } = {}) {
     const candidates = await this.eligibleCandidates({ model, signal, ownerScope, keyScope })
     if (!candidates.length) {
-      const empty = emptyPoolFailure(model, candidates)
+      const empty = emptyPoolFailure(candidates)
       return { ok: false, code: empty.reason, retry_after_ms: empty.retry_after_ms }
     }
     const bound = stickyKey ? this.stickyRouter?.resolve?.(stickyKey) : null

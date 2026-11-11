@@ -6,6 +6,15 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'crag-update',
+  'docker-memory-api',
+  'install-payload',
+  'probe-status',
+  'release-kernel',
+  'remote-memory-raise-bridge',
+  'scoped-intercept-session',
+  'slot-claude',
+  'subscription-availability',
   'crag-v2-credential-health',
   'crs-headers',
   'outbound-snapshot',

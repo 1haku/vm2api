@@ -19,9 +19,13 @@ class NativeCliBuilderTests(unittest.TestCase):
                   b'  if (slot.phase !== "idle") return;\n  slot.jobId = jobId;\n}\n'
                   b'async function cancelJob(slots, slotIdArg, jobId) {\n'
                   b'  if (slot.phase === "running") slot.abort.abort();\n}\nsuffix')
-        fixed, repairs = builder.repair_native_job_state(source, builder.MISSING_RUNNING_STATE_SOURCE)
-        self.assertEqual(fixed.replace(b'  slot.phase = "running";\n', b'', 1), source)
-        self.assertEqual(repairs, ['restore-native-job-running-state'])
+        for source_hash in builder.MISSING_RUNNING_STATE_SOURCES:
+            with self.subTest(source_hash=source_hash):
+                fixed, repairs = builder.repair_native_job_state(source, source_hash)
+                self.assertEqual(fixed.replace(b'  slot.phase = "running";\n', b'', 1), source)
+                self.assertEqual(repairs, ['restore-native-job-running-state'])
+                with self.assertRaises(ValueError):
+                    builder.repair_native_job_state(fixed, source_hash)
         self.assertEqual(builder.repair_native_job_state(source, '0' * 64), (source, []))
         with self.assertRaises(ValueError):
             builder.repair_native_job_state(source.replace(b'  slot.jobId = jobId;', b''), builder.MISSING_RUNNING_STATE_SOURCE)
