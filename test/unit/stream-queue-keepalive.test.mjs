@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
+import { createRespond } from '../../src/lib/http/respond.mjs'
 
 const MESSAGE = {
   model: 'claude-haiku-4-5',
@@ -45,29 +46,37 @@ function createResponse() {
       chunks.push(String(chunk))
       return true
     },
-    end() {
+    end(body) {
+      if (body) chunks.push(String(body))
       this.writableEnded = true
+    },
+    destroy() {
+      this.destroyed = true
     },
     on(event, fn) {
       if (event === 'finish') this.finish = fn
     },
     once() {},
     off() {},
-    setHeader() {},
+    setHeader() {
+      if (this.headersSent) throw new Error('headers already sent')
+    },
   }
   return res
 }
 
-function createHandler({ root, routing, run, stream = true }) {
+function createHandler({ root, routing, run, stream = true, jsonKeepaliveDelayMs = 0, logs = [] }) {
   const routingFile = path.join(root, 'routing.json')
   fs.writeFileSync(routingFile, JSON.stringify({ compatibility: {}, failover: routing.failover || {} }))
   return createHandleProtocol({
-    json(res, status, body) {
-      res.statusCode = status
-      res.body = body
-      res.headersSent = true
-      return body
-    },
+    json: jsonKeepaliveDelayMs
+      ? createRespond({ rewrite: { enabled: false } }).json
+      : (res, status, body) => {
+          res.statusCode = status
+          res.body = body
+          res.headersSent = true
+          return body
+        },
     writeSSEHeaders(res) {
       res.writeHead(200)
     },
@@ -83,12 +92,15 @@ function createHandler({ root, routing, run, stream = true }) {
         stream_idle_timeout_ms: 2000,
         stream_keepalive_ms: routing.failover?.stream_keepalive_ms ?? 20,
         queue_keepalive_delay_ms: routing.failover?.queue_keepalive_delay_ms ?? 60_000,
+        json_keepalive_delay_ms: jsonKeepaliveDelayMs,
       },
       paths: { data: root, project: root },
     },
     requestLog: {
       start: () => ({ request_id: 'queue-keepalive', mode: 'normal', t0: Date.now() }),
-      finish() {},
+      finish(_ctx, row) {
+        logs.push(row)
+      },
     },
     stickyRouter: {},
     accountQuota: {},
@@ -198,6 +210,52 @@ test('a non-stream Claude request does not emit queue pings', async () => {
     assert.equal(res.chunks.length, 0)
     assert.equal(res.statusCode, 529)
     assert.equal(res.body.error.type, 'overloaded_error')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('opt-in Claude JSON path pads a delayed result and logs the real outcome', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-json-keepalive-protocol-'))
+  try {
+    for (const fail of [false, true]) {
+      const res = createResponse()
+      const logs = []
+      let paddingObserved = false
+      const message = {
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        model: MESSAGE.model,
+        content: [{ type: 'text', text: 'test' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }
+      const handler = createHandler({
+        root,
+        routing: {},
+        stream: false,
+        jsonKeepaliveDelayMs: 20,
+        logs,
+        run: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 70))
+          paddingObserved = res.chunks.length > 0 && /^\s+$/.test(res.chunks.join(''))
+          return fail
+            ? { ...overloaded(), retryAfterSec: 30 }
+            : { ok: true, status: 200, body: message, finalState: 'verified', attemptCount: 1 }
+        },
+      })
+      await invoke(handler, res)
+      assert.equal(paddingObserved, true)
+      if (fail) {
+        assert.equal(res.destroyed, true)
+        assert.throws(() => JSON.parse(res.chunks.join('')))
+        assert.equal(logs.at(-1).status, 529)
+      } else {
+        assert.equal(JSON.parse(res.chunks.join('')).content[0].text, 'test')
+        assert.equal(logs.at(-1).status, 200)
+      }
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

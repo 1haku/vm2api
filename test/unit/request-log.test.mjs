@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import {
   RequestLogStore,
   resolveLogMode,
@@ -1167,6 +1168,29 @@ test('debug response body masks credentials that fit inside the capture window',
   const body = store.getDebug(ctx.request_id).response.body
   assert.doesNotMatch(body, /ABCDEFGH12345678/)
   assert.match(body, /REDACTED/)
+})
+
+test('interrupted JSON keeps wire headers separate from the failed usage outcome', () => {
+  const store = tmpStore('debug')
+  const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { pathName: '/v1/messages' })
+  const res = Object.assign(new EventEmitter(), {
+    statusCode: 200,
+    headersSent: true,
+    getHeaders: () => ({ 'content-type': 'application/json', 'set-cookie': 'private' }),
+    write: () => true,
+    end() {},
+  })
+  store.tapResponse(ctx, res)
+  res.write('\n')
+  // Handler settlement may precede the socket's close event; finish is absent.
+  store.finish(ctx, { status: 503, final_state: 'incomplete' })
+  res.emit('close')
+  const debug = store.getDebug(ctx.request_id)
+  assert.equal(debug.status, 503)
+  assert.equal(debug.response.status, 200)
+  assert.equal(debug.response.bytes, 1)
+  assert.equal(debug.response.headers['content-type'], 'application/json')
+  assert.equal(debug.response.headers['set-cookie'], '***REDACTED***')
 })
 
 test('slot ownership is snapshotted but tenant access remains attached to the recorded caller', () => {

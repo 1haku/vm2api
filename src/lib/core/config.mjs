@@ -238,6 +238,8 @@ export function loadConfig() {
       upstream_timeout_ms: Number(process.env.KIN_UPSTREAM_TIMEOUT || 600000),
       stream_idle_timeout_ms: streamIdleTimeoutMs(),
       stream_keepalive_ms: Number(process.env.KIN_STREAM_KEEPALIVE || 10000),
+      // Experimental JSON padding; 0 keeps ordinary non-streaming HTTP semantics.
+      json_keepalive_delay_ms: Math.max(0, Math.min(90_000, Number(process.env.KIN_JSON_KEEPALIVE_DELAY_MS) || 0)),
       queue_keepalive_delay_ms: queueKeepaliveDelayMs(null),
       rate_capacity: Number(process.env.KIN_RATE_CAP || 60),
       rate_refill: Number(process.env.KIN_RATE_REFILL || 1),

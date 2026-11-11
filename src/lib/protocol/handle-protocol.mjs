@@ -146,6 +146,12 @@ import {
 } from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
 import {
+  startJsonKeepalive,
+  stopJsonKeepalive,
+  abortJsonKeepalive,
+  jsonResponseLogStatus,
+} from '../http/json-keepalive.mjs'
+import {
   buildAnthropicSseError,
   createAnthropicSseErrorRemapper,
   createAnthropicStreamTracker,
@@ -351,7 +357,7 @@ export function createHandleProtocol(deps) {
   }
 
   function sendMapped(res, mapped) {
-    if (mapped.retryAfterSec) res.setHeader?.('retry-after', String(mapped.retryAfterSec))
+    if (mapped.retryAfterSec && !res.headersSent) res.setHeader?.('retry-after', String(mapped.retryAfterSec))
     return json(res, mapped.status, mapped.body)
   }
 
@@ -577,7 +583,7 @@ export function createHandleProtocol(deps) {
       try {
         const groupId = req.apiKeyRecord?.group_id ?? 1
         requestLog.finish(logCtx, {
-          status: res.statusCode || 0,
+          status: jsonResponseLogStatus(res, logBag.final_state),
           api_key_kind: req.apiKeyKind || null,
           api_key_id: req.apiKeyRecord?.id || null,
           user_id: req.apiKeyRecord?.user_id ?? null,
@@ -1510,6 +1516,16 @@ export function createHandleProtocol(deps) {
 
     const clientStream = isClientStream(inbound, req.headers)
     const streamTracker = clientStream && protocol === 'anthropic.messages' ? createAnthropicStreamTracker() : null
+    // Only the authenticated, admitted Claude slot JSON path. Validation and
+    // policy denials above retain their real HTTP status. Codex/panel/SSE paths
+    // keep their existing protocol, and a retry must not reset this timer.
+    if (!clientStream && protocol === 'anthropic.messages' && cfg.limits.json_keepalive_delay_ms > 0) {
+      startJsonKeepalive(req, res, {
+        delayMs: Math.max(1, cfg.limits.json_keepalive_delay_ms - (Date.now() - logCtx.t0)),
+        maxDurationMs: Math.max(1000, cfg.limits.upstream_timeout_ms - (Date.now() - logCtx.t0)),
+        rewriteEnabled: cfg.rewrite?.enabled === true,
+      })
+    }
     const anthropicSseErrorRemapper =
       clientStream && protocol === 'anthropic.messages' ? createAnthropicSseErrorRemapper() : null
     // One keepalive for the whole Claude stream, including session/seat queues
@@ -2214,7 +2230,11 @@ export function createHandleProtocol(deps) {
   async function handleProtocol(req, res, protocol, pathName) {
     try {
       return await handleProtocolInner(req, res, protocol, pathName)
+    } catch (error) {
+      abortJsonKeepalive(res, error?.status || 500)
+      throw error
     } finally {
+      stopJsonKeepalive(res)
       try {
         req.finalizeSubscriptionUsage?.()
       } finally {

@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createPanelLoginProtection } from './panel-login-protection.mjs'
+import { runJsonKeepaliveProbe } from './json-keepalive-probe.mjs'
 import {
   verifyPanelLogin,
   createPanelSession,
@@ -1570,6 +1571,13 @@ export function createPanelHandler(ctx) {
             status: 403,
           }).body,
         )
+      }
+      if (req.method === 'POST' && p === '/api/panel/diagnostics/json-keepalive') {
+        return runJsonKeepaliveProbe(req, res, {
+          dataDir: cfg.paths.data,
+          json,
+          scenario: url.searchParams.get('scenario') || 'success',
+        })
       }
       if (
         denyIfUserMissesVm(req, res, {

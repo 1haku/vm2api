@@ -503,12 +503,18 @@ export class RequestLogStore {
       take(chunk, encoding)
       return end.call(this, chunk, encoding, cb)
     }
-    res.once('finish', () => {
-      captured.status = res.statusCode || null
+    const captureMeta = () => {
+      // close without finish is normal for an interrupted padded JSON body.
+      // Preserve the wire status separately from the usage row's error status.
+      if (captured.status != null) return
+      captured.status = res.headersSent === false ? null : res.statusCode || null
       try {
         captured.headers = redactHeaders(res.getHeaders?.() || {})
       } catch {}
-    })
+    }
+    ctx.captureResponseMeta = captureMeta
+    res.once('finish', captureMeta)
+    res.once('close', captureMeta)
   }
 
   /**
@@ -517,6 +523,7 @@ export class RequestLogStore {
    */
   finish(ctx, extra = {}) {
     if (!ctx || (ctx.mode === 'off' && !extra.user_id && !extra.subscription_id)) return null
+    ctx.captureResponseMeta?.()
     const duration_ms = Math.max(0, Date.now() - (ctx.t0 || Date.now()))
     const usage = normalizeUsage(disjointOpenaiUsage(extra.usage || {}) || {})
     const breakdown = cacheCreationBreakdown(usage)

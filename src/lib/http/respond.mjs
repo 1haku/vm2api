@@ -4,6 +4,7 @@
  */
 import { ErrorCode, ErrorType, makeError } from '../core/errors.mjs'
 import { CORS_ALLOW_HEADERS, corsHeadersForRequest } from './cors.mjs'
+import { finishJsonKeepalive } from './json-keepalive.mjs'
 
 export { CORS_ALLOW_HEADERS } from './cors.mjs'
 
@@ -126,6 +127,7 @@ export function createRespond(cfg, options = {}) {
   }
 
   function json(res, status, body) {
+    if (finishJsonKeepalive(res, status, body)) return
     const data = JSON.stringify(body)
     const headers = corsHeadersForRequest(requestFromResponse(res), {
       'content-type': 'application/json; charset=utf-8',
