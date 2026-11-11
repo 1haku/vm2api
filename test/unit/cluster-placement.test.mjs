@@ -521,7 +521,7 @@ test('slot images use the pulled CLI pair with the factory cc-node fallback', (t
   process.env.KIN_CODEX_KERNEL_BIN = path.join(root, 'bin/kin-codex-kernel')
   process.env.KIN_CLUSTER_WORKER_BIN = path.join(root, 'bin/kin-worker')
   process.env.KIN_CLUSTER_EGRESS_BIN = path.join(root, 'bin/kin-egress')
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
 
   const cache = path.join(root, 'share/wrap-cli-releases')
   const relative = 'packages/amd64-00000000-0000-4000-8000-000000000001'
@@ -583,7 +583,7 @@ test('optional CRAG publication skips absent packages while explicit CRAG remain
     skipped: 'missing',
   })
   await assert.rejects(pushCragSlot(vm, root), { code: 'slot_payload_missing' })
-  const pkg = seedEncryptedPackage(root)
+  const pkg = seedEncryptedPackage(root, { arch: 'amd64' })
   fs.appendFileSync(path.join(pkg, 'crag-v2.payload.enc'), 'tampered')
   await assert.rejects(pushCragSlot(vm, root, null, { required: false }), { code: 'slot_payload_invalid' })
 })
