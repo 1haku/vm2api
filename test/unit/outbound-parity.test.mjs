@@ -167,7 +167,8 @@ test('vm-test-chat outbound equals /v1 official applyAttempt', () => {
   })
   assert.deepEqual(fromHelper.body, fromV1.body)
   assert.equal(fromHelper.body.system.length, 4)
-  assert.equal(fromHelper.body.thinking?.type, 'adaptive')
+  // Sonnet 5 supports optional thinking; the helper must not enable it itself.
+  assert.equal(fromHelper.body.thinking, undefined)
   const h1 = prepareOutboundHeaders(headers, dir, identity, inbound.model)
   const h2 = prepareOutboundHeaders(headers, dir, identity, inbound.model)
   assert.deepEqual(h1, h2)
