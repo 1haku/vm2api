@@ -19,6 +19,7 @@ MISSING_RUNNING_STATE_SOURCES = frozenset((
     MISSING_RUNNING_STATE_SOURCE,
     '9330fbc5b91d599d84bb280b19732c125ef43de9ae5d9581f740c70304c82116',
     'a35349bbd7e1b706f35beab73d66e7d141b01da7c0b5283f4531ed2804bfaff8',
+    '29a4bf26b5b00a5d2bb7eea0993b33a6b26d9ffecef925dae43e3744568c208f',
 ))
 WRAPPER = '''#!/bin/sh
 # native-cli bundle: {digest}
@@ -74,7 +75,7 @@ def archive_member(data, name, kind):
 
 
 def repair_native_job_state(source, pinned_source_hash):
-    """Repair reviewed 1.4.026, 1.4.067 and 1.4.070 sources after hash verification.
+    """Repair reviewed release sources after their exact upstream hash verification.
 
     Its telemetry insertion dropped phase=running. cancelJob only aborts running
     jobs, leaving requests with an unresponsive upstream permanently occupied.

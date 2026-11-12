@@ -171,7 +171,7 @@ test('classifier rejection releases subscription reservations without charging o
     const subId = assigned.json.data.ids[0]
     const sub = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === subId)
     const key = await api(gw, 'POST', '/api/panel/api-keys', {
-      body: { name: 'classifier', group_id: sub.group_id, user_id: user.json.data.item.id },
+      body: { name: 'classifier', group_id: sub.group_id, user_id: user.json.data.item.id, max_concurrency: 1 },
     })
     assert.equal(key.status, 201, key.text)
     const call = (body) =>

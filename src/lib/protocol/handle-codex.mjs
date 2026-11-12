@@ -77,7 +77,6 @@ import { imagePermissionError } from '../admin/image-permission.mjs'
 
 // Official Codex client headers for ChatGPT Responses. Auth is attached by the kernel.
 const CODEX_KERNEL_HEADER_ALLOWLIST = Object.freeze([
-  'originator',
   'openai-beta',
   'session-id',
   'thread-id',
@@ -861,7 +860,7 @@ export async function handleCodexProtocol({
                 headers: outboundHeaders,
                 stream: true,
                 session,
-                options: { ...codexKernelRequestOptions(routing), installation_id: written?.installationId },
+                options: { ...codexKernelRequestOptions(routing, vm), installation_id: written?.installationId },
               },
             },
             onReasoningFallback: ({ body: retryBody }) => {
