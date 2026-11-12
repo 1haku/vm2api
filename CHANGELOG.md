@@ -5,6 +5,14 @@
 - Claude Code OAuth 登录改用 CRAG 包内的官方原生 CC，与槽位推理内核分离；支持指定槽内原生可执行文件路径，票据绑定并复查最终程序，不回落 cli-node。仅补齐官方登录程序，不切换 / 激活 CRAG worker。
 - 重构 OAuth 登录工作区：修复公共弹窗桌面最大宽度覆盖导致的狭窄终端，改为近全屏终端和底部链接 / 授权码操作区，适配移动宽度并显示真实程序路径。断连不清空待发授权码；已有凭证不误报成本次授权成功，凭证仍由面板导入与管理。
 
+## 1.4.074 — 2026-11-12
+
+- 更新生产签名加密 CRAG 至 v2.8.13（源码 `66f1623f`，包含工具续接修复 `bbb5ce98`），内置官方 Claude Code 2.1.321。完整交付且尚未认领结果的工具批次，在 Claude 等待进程退出或 MCP stdio 断开后可校验历史并交给新进程续接；明确取消、部分交付和已认领结果后的失败不自动恢复，不重跑客户端工具。
+- 第三方请求的 Opus 5 / Sonnet 5 / Opus 4.7、4.8 不再误标为必须 adaptive thinking；强制 `tool_choice` 且省略 thinking 时，非官方清洗不补 adaptive thinking。真正要求 adaptive 的模型继续拒绝不兼容强制工具契约。
+- 全量 pinned payload 固定到本发行；只更换 CRAG bootstrap、加密 core 及对应清单，其余 kernel/helper 和官方 Claude 保留前版已验证字节。
+
+已部署机升级：先拉取 CRAG v2.8.13，再通过内核页对当前使用 CRAG 的目标槽逐个排空、安装并确认健康。仅更新出厂文件或缓存不等于替换运行中的 memfd core；停止槽不强启，其他内核不切换。该修复不消除容器 OOM，内存预算仍需匹配并发。保留 `routing.json`、`.env`、`vms/`、`data/` 和现有授权。
+
 ## 1.4.073 — 2026-11-12
 
 - 修复 CRAG 按候选槽旧快照组包、导致 `crag_prompt` 等字段在发送时丢失的问题。按本次发送所用 worker 的健康能力分别启用 append、replace、模型指令和 `caller_cwd`；旧 worker 不接收未声明支持的字段。
