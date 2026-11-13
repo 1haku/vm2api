@@ -89,6 +89,19 @@ export type ReasoningEffort =
   | 'max'
   | 'ultra'
 
+/** 网关读取请求体的指标快照，不包含正文或 headers。 */
+export type RequestBodyMetrics = {
+  /** 声明的字节数；未声明时为 null。 */
+  expected_bytes: number | null
+  received_bytes: number
+  /** 从网关开始读取 body 计时，不等于完整网络往返耗时。 */
+  read_ms: number
+  parse_ms: number
+  /** 是否完整接收；解析失败不代表接收未完成。 */
+  complete: boolean
+  error_code: string | null
+}
+
 /** 滚动日志的一行。`null` = 本行该字段为空（vm2api 不产出的 hub 字段已整体删去）。 */
 export type UsageLogRow = {
   /** `usage_logs.id`（`log_<12hex>`），游标 tiebreaker。 */
@@ -159,6 +172,8 @@ export type UsageLogRow = {
    * 禁止用总耗时减 TTFT 估。
    */
   generationMs: number | null
+  /** 普通日志也保存；旧日志或未采集时为 null，兼容旧接口缺失字段。 */
+  requestBodyMetrics?: RequestBodyMetrics | null
   stopReason: string | null
   attemptCount: number | null
   finalState: string | null

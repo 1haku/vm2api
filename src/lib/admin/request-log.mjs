@@ -21,7 +21,7 @@ import { redactSecrets } from '../core/security.mjs'
 import { resolveStoreDb, withTransaction } from '../db/database.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { enqueueWrite, writeBehindArmed } from '../db/write-behind.mjs'
-import { UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
+import { normalizeRequestBodyMetrics, UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
 import { classifyRequestError, resolveMutedErrorClasses } from './error-class.mjs'
 import { costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
 import { disjointOpenaiUsage } from '../protocol/openai-usage.mjs'
@@ -524,6 +524,7 @@ export class RequestLogStore {
   finish(ctx, extra = {}) {
     if (!ctx || (ctx.mode === 'off' && !extra.user_id && !extra.subscription_id)) return null
     ctx.captureResponseMeta?.()
+    const requestBodyMetrics = normalizeRequestBodyMetrics(extra.request_body_metrics)
     const duration_ms = Math.max(0, Date.now() - (ctx.t0 || Date.now()))
     const usage = normalizeUsage(disjointOpenaiUsage(extra.usage || {}) || {})
     const breakdown = cacheCreationBreakdown(usage)
@@ -583,6 +584,7 @@ export class RequestLogStore {
       first_token_ms: extra.first_token_ms ?? null,
       first_byte_ms: extra.first_byte_ms ?? null,
       generation_ms: extra.generation_ms ?? null,
+      custom_request_body_metrics: requestBodyMetrics ? JSON.stringify(requestBodyMetrics) : null,
       stop_reason: extra.stop_reason || usage.stop_reason || null,
       attempt_count: extra.attempt_count ?? null,
       final_state: extra.final_state || null,
@@ -633,6 +635,7 @@ export class RequestLogStore {
       if (ctx.mode !== 'debug') return
       const debugRec = {
         ...summary,
+        request_body_metrics: requestBodyMetrics,
         headers: ctx.headers,
         inbound_summary: extra.inbound_summary || summarizeBody(extra.inbound_body),
         request_body_snapshot:

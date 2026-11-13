@@ -10,6 +10,7 @@
  */
 
 import { getDb } from '../database.mjs'
+import { normalizeRequestBodyMetrics } from './usage-logs-repo.mjs'
 import { DEFAULT_MUTED_ERROR_CLASSES, enrichLogRow, excludeErrorClassSql } from '../../admin/error-class.mjs'
 import { reportTimezone, zonedDayStartMs } from '../../core/timezone.mjs'
 import {
@@ -212,6 +213,7 @@ export function toUsageLogRow(row, names, chain = []) {
     ttftMs: nullableNum(row.first_token_ms),
     firstByteMs: nullableNum(row.first_byte_ms),
     generationMs: nullableNum(row.generation_ms),
+    requestBodyMetrics: normalizeRequestBodyMetrics(row.custom_request_body_metrics),
     stopReason: row.stop_reason ?? null,
     attemptCount: nullableNum(row.attempt_count),
     finalState: row.final_state ?? null,

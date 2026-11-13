@@ -175,3 +175,59 @@ test('pings continue between attempts after the first byte', async () => {
   keepalive.stop()
   assert.ok(writes.length > first)
 })
+
+test('slow ingress consumes the queue delay and pings as soon as admitted', () => {
+  const writes = []
+  const keepalive = createDownstreamKeepalive({
+    intervalMs: 10_000,
+    requestStartedAt: Date.now() - 122_000,
+    write: (chunk) => writes.push(chunk),
+  })
+  try {
+    assert.equal(writes.length, 0, 'construction must not commit before admission')
+    keepalive.armAfter(60_000)
+    assert.equal(writes.length, 1, 'do not wait another 60 seconds after a long upload')
+    keepalive.arm()
+    keepalive.endAttempt()
+    keepalive.arm()
+    assert.equal(writes.length, 1, 'retries do not generate a burst of pings')
+  } finally {
+    keepalive.stop()
+  }
+})
+
+test('attempt first byte includes elapsed upload time even before the queue deadline', () => {
+  const writes = []
+  const keepalive = createDownstreamKeepalive({
+    intervalMs: 10_000,
+    requestStartedAt: Date.now() - 20_000,
+    write: (chunk) => writes.push(chunk),
+  })
+  try {
+    keepalive.armAfter(60_000)
+    assert.equal(writes.length, 0)
+    keepalive.arm()
+    assert.equal(writes.length, 1)
+    keepalive.stop()
+    keepalive.armAfter(0)
+    keepalive.arm()
+    assert.equal(writes.length, 1, 'stopped streams never resume')
+  } finally {
+    keepalive.stop()
+  }
+})
+
+test('fast requests retain their error-status window and disabled pings stay disabled', () => {
+  for (const intervalMs of [10_000, 0]) {
+    const writes = []
+    const keepalive = createDownstreamKeepalive({
+      intervalMs,
+      requestStartedAt: Date.now(),
+      write: (c) => writes.push(c),
+    })
+    keepalive.armAfter(60_000)
+    keepalive.arm()
+    keepalive.stop()
+    assert.equal(writes.length, 0)
+  }
+})

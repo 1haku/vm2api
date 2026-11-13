@@ -123,6 +123,7 @@ const SUMMARY_COLUMNS = [
   'first_token_ms',
   'first_byte_ms',
   'generation_ms',
+  'custom_request_body_metrics',
   'stop_reason',
   'attempt_count',
   'final_state',
@@ -160,8 +161,37 @@ const SUMMARY_COLUMNS = [
   'image_cost',
 ]
 
+/** Accept stored JSON or a live snapshot; copy only scalar ingress metrics. */
+export function normalizeRequestBodyMetrics(value) {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { expected_bytes, received_bytes, read_ms, parse_ms, complete, error_code } = value
+  if (expected_bytes != null && (!Number.isSafeInteger(expected_bytes) || expected_bytes < 0)) return null
+  if (!Number.isSafeInteger(received_bytes) || received_bytes < 0) return null
+  if (![read_ms, parse_ms].every((n) => Number.isFinite(n) && n >= 0)) return null
+  if (typeof complete !== 'boolean' || (error_code != null && typeof error_code !== 'string')) return null
+  return {
+    expected_bytes: expected_bytes ?? null,
+    received_bytes,
+    read_ms,
+    parse_ms,
+    complete,
+    error_code: error_code ?? null,
+  }
+}
+
 function toRow(rec) {
   return SUMMARY_COLUMNS.map((c) => {
+    if (c === 'custom_request_body_metrics') {
+      const metrics = normalizeRequestBodyMetrics(rec[c])
+      return metrics ? JSON.stringify(metrics) : null
+    }
     if (c === 'created_at') return rec.created_at ?? rec.ts ?? null
     if (c === 'ip_address') return rec.ip_address ?? rec.ip ?? null
     if (c === 'stream') return rec.stream ? 1 : 0

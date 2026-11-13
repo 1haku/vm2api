@@ -214,6 +214,15 @@ for (const model of ['claude-sonnet-5-5', 'claude-opus-5.5'])
     )
   })
 
+test('optional-thinking classifiers preserve an explicit disabled budget and forced tool selection', () => {
+  const input = classifierFixture({ model: 'claude-sonnet-5', format: 'tool' })
+  const body = prepareClassifierBody(input)
+  assert.deepEqual(body.thinking, input.thinking)
+  assert.equal(body.max_tokens, input.max_tokens)
+  assert.deepEqual(body.tool_choice, input.tool_choice)
+  assert.equal(body.temperature, input.temperature)
+})
+
 test('unknown capabilities fail explicitly and never substitute a model', () => {
   assert.throws(
     () => prepareClassifierBody(classifierFixture({ model: 'claude-unknown-test' })),

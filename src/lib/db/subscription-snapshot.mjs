@@ -57,6 +57,7 @@ export function subscriptionSnapshot(db) {
             // Upstream 043/044 add measured timing and audit context; historical
             // rows stay unknown. Non-null changes must still fail the hash check.
             first_byte_ms: row.first_byte_ms ?? null,
+            custom_request_body_metrics: row.custom_request_body_metrics ?? null,
             generation_ms: row.generation_ms ?? null,
             jev_state: row.jev_state ?? null,
             upstream_service_tier: row.upstream_service_tier ?? null,

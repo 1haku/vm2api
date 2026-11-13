@@ -217,6 +217,7 @@ export function isIgnoredClientCancel(row = {}) {
   const status = Number(row?.status) || 0
   const code = String(row?.error_code || '').trim()
   if (status >= 400 && status !== 499) return false
+  if (status === 499 && row?.final_state === 'cancelled') return true
   if (IGNORED_ERROR_CODES.has(code)) return true
   return /client_aborted|request_cancelled|selection_cancelled|context canceled/i.test(hay(row))
 }

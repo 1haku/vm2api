@@ -8,14 +8,22 @@ describe('redaction policy', () => {
   })
 
   it('rejects coerced booleans and unknown fields', () => {
-    assert.throws(() => normalizeRedaction({ enabled: 'false', secrets: true, personal: true }), /enabled/)
-    assert.throws(() => normalizeRedaction({ enabled: false, secrets: true, personal: true, shape: true }), /unknown/)
+    assert.throws(() => normalizeRedaction({ enabled: 'false', secrets: true, personal: true }), {
+      code: 'invalid_redaction_config',
+      status: 400,
+      message: /enabled/,
+    })
+    assert.throws(() => normalizeRedaction({ enabled: false, secrets: true, personal: true, shape: true }), {
+      code: 'invalid_redaction_config',
+      status: 400,
+      message: /unknown/,
+    })
   })
 
   it('rejects an enabled policy with nothing to protect', () => {
     assert.throws(
       () => normalizeRedaction({ enabled: true, secrets: false, personal: false, words: ['  '], rules: [] }),
-      /requires/,
+      { code: 'invalid_redaction_config', status: 400, message: /requires/ },
     )
   })
 
@@ -59,6 +67,21 @@ describe('redaction policy', () => {
         allow: ['build-01'],
         rules: [{ kind: 'GATEWAY_KEY', prefix: 'oc_sk_', regex: '' }],
       },
+    )
+  })
+
+  it('trims rule prefixes and normalizes the allow list', () => {
+    const policy = normalizeRedaction({
+      enabled: true,
+      secrets: true,
+      personal: true,
+      rules: [{ kind: 'GATEWAY_KEY', prefix: ' oc_sk_ ' }, { prefix: ' ' }],
+      allow: [' build-01 ', 'build-01', ''],
+    })
+    assert.deepEqual(policy.allow, ['build-01'])
+    assert.deepEqual(
+      policy.rules.map(({ kind, prefix }) => ({ kind, prefix })),
+      [{ kind: 'GATEWAY_KEY', prefix: 'oc_sk_' }],
     )
   })
 })

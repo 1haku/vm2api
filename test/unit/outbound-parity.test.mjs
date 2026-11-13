@@ -127,21 +127,19 @@ test('official UA without anthropic-beta does not overwrite stored CLI headers',
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test('vm-test-chat outbound equals /v1 official applyAttempt', () => {
+test('vm-test-chat outbound equals /v1 official applyAttempt', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-vmout-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const identity = fixtureIdentity(dir)
-  const { inbound, headers } = buildVmTestInbound({
+  const options = {
     model: 'claude-sonnet-5',
     prompt: 'hello',
     maxTokens: 8192,
     sessionId: 'vm-test-vm-01',
-  })
+  }
+  const { inbound, headers } = buildVmTestInbound(options)
+  const { inbound: helperPersona, headers: helperHeaders } = buildVmTestInbound({ ...options, rewrite: true })
   const cleaned = sanitizeInboundBody(inbound, defaultSeedPolicy())
-  const helperPersona = applyCrsUnofficialPersona(cleaned, {
-    officialClient: false,
-    mode: 'rewrite',
-    sessionId: 'vm-test-vm-01',
-  })
   const v1Persona = applyCrsUnofficialPersona(cleaned, {
     officialClient: false,
     mode: 'rewrite',
@@ -167,13 +165,12 @@ test('vm-test-chat outbound equals /v1 official applyAttempt', () => {
   })
   assert.deepEqual(fromHelper.body, fromV1.body)
   assert.equal(fromHelper.body.system.length, 4)
-  // Sonnet 5 supports optional thinking; the helper must not enable it itself.
-  assert.equal(fromHelper.body.thinking, undefined)
-  const h1 = prepareOutboundHeaders(headers, dir, identity, inbound.model)
+  // The probe explicitly disables optional thinking to preserve its output budget.
+  assert.deepEqual(fromHelper.body.thinking, { type: 'disabled' })
+  const h1 = prepareOutboundHeaders(helperHeaders, dir, identity, inbound.model)
   const h2 = prepareOutboundHeaders(headers, dir, identity, inbound.model)
   assert.deepEqual(h1, h2)
   assert.match(h1['user-agent'], /^claude-cli\//)
-  fs.rmSync(dir, { recursive: true, force: true })
 })
 
 test('same slot different unofficial UAs share outbound headers except inbound-only noise', () => {

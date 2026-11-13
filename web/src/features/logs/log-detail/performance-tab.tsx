@@ -93,6 +93,7 @@ function PerformanceGauge({
 
 export function PerformanceTab({ row }: { row: UsageLogRow }) {
   const { ttftMs, durationMs, outputTokens, firstByteMs, generationMs } = row
+  const bodyMetrics = row.requestBodyMetrics
   const rate = calculateOutputRate(outputTokens, generationMs)
   const wait = row.providerChain[0]?.waitMs ?? null
   const queued = queueWaitMs(row.providerChain)
@@ -111,7 +112,8 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
     ttftMs == null &&
     durationMs == null &&
     firstByteMs == null &&
-    generationMs == null
+    generationMs == null &&
+    bodyMetrics == null
   ) {
     return (
       <div className='py-8 text-center text-muted-foreground'>
@@ -150,6 +152,22 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
     breakdown?.find((s) => s.key === 'finalization')?.ms ?? 0
 
   const rows: [string, string][] = []
+  if (bodyMetrics) {
+    rows.push(
+      ['请求体接收字节数', `${bodyMetrics.received_bytes.toLocaleString()} B`],
+      [
+        '请求体声明字节数',
+        bodyMetrics.expected_bytes == null
+          ? '未声明'
+          : `${bodyMetrics.expected_bytes.toLocaleString()} B`,
+      ],
+      ['请求体接收耗时', formatDuration(bodyMetrics.read_ms)],
+      ['请求体解析耗时', formatDuration(bodyMetrics.parse_ms)],
+      ['请求体是否接收完成', bodyMetrics.complete ? '是' : '否（未完整接收）']
+    )
+    if (bodyMetrics.error_code)
+      rows.push(['请求体错误码', bodyMetrics.error_code])
+  }
   if (scheduling != null) rows.push(['调度处理', formatDuration(scheduling)])
   if (queued != null) rows.push(['排队等待', formatDuration(queued)])
   if (scheduling == null && wait != null)
@@ -212,6 +230,14 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
       ) : null}
       <div className='space-y-2'>
         <h4 className='text-sm font-semibold'>性能数据</h4>
+        {bodyMetrics ? (
+          <p className='text-xs text-muted-foreground'>
+            <strong>
+              接收耗时从网关开始读取请求体（body）计时，不等于完整网络往返耗时。
+            </strong>
+            解析耗时单独记录。
+          </p>
+        ) : null}
         <div className='divide-y rounded-lg border bg-card'>
           {rows.map(([label, value]) => (
             <div

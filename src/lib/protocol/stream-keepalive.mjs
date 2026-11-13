@@ -142,9 +142,14 @@ export function createDownstreamKeepalive({
   intervalMs = DEFAULT_STREAM_KEEPALIVE_MS,
   userAgent = '',
   protocol = 'anthropic.messages',
+  requestStartedAt,
   write,
 } = {}) {
   const interval = Math.max(0, Number(intervalMs) || 0)
+  // Count upload/admission time only once it is safe to commit an SSE response.
+  // Omitted by callers without a measured ingress timestamp.
+  const ingressAt =
+    Number.isFinite(requestStartedAt) && requestStartedAt > 0 ? Math.min(requestStartedAt, Date.now()) : null
   let state = { blockIndex: -1, deltaType: '', done: false }
   let lastWriteAt = 0
   let timer = null
@@ -152,6 +157,7 @@ export function createDownstreamKeepalive({
   let armed = false
   let written = false
   let attemptActive = false
+  let firstAttemptAt = null
   // Queue delay elapsed. The first byte is allowed even between attempts.
   let queueReleased = false
 
@@ -164,8 +170,9 @@ export function createDownstreamKeepalive({
     if (written) return Date.now() - lastWriteAt >= interval
     // Inside an attempt the first ping still waits one interval: a fast
     // upstream failure can change HTTP status and move to another slot.
-    if (attemptActive) return lastWriteAt > 0 && Date.now() - lastWriteAt >= interval
-    return queueReleased
+    if (queueReleased) return true
+    if (attemptActive) return firstAttemptAt != null && Date.now() - (ingressAt ?? firstAttemptAt) >= interval
+    return false
   }
 
   const beat = () => {
@@ -203,8 +210,9 @@ export function createDownstreamKeepalive({
     if (state.done || interval <= 0) return
     attemptActive = true
     armed = true
-    if (!written) markWrite()
+    if (ingressAt == null || firstAttemptAt == null) firstAttemptAt = Date.now()
     start()
+    beat()
   }
 
   // The attempt ended. Keep pinging only after the queue delay has already
@@ -219,7 +227,9 @@ export function createDownstreamKeepalive({
    */
   const armAfter = (delayMs) => {
     if (state.done || interval <= 0) return
-    const delay = Math.max(0, Number(delayMs) || 0)
+    const elapsed = ingressAt == null ? 0 : Math.max(0, Date.now() - ingressAt)
+    const delay = Math.max(0, (Number(delayMs) || 0) - elapsed)
+    if (holdTimer) clearTimeout(holdTimer)
     armed = true
     start()
     if (delay === 0) {

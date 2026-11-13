@@ -9,10 +9,12 @@ import { ignoredErrorSqlList, slaOkErrorSqlList } from '../../admin/error-class.
 const IGNORED_CODES_SQL = ignoredErrorSqlList()
 const SLA_OK_CODES_SQL = slaOkErrorSqlList()
 
-export const ERROR_PRED = `(status >= 400 OR (error_code IS NOT NULL AND error_code != '' AND error_code NOT IN (${IGNORED_CODES_SQL})))`
+const CLIENT_CANCELLED_PRED = `(status = 499 AND IFNULL(final_state, '') = 'cancelled')`
+export const ERROR_PRED = `(NOT ${CLIENT_CANCELLED_PRED} AND (status >= 400 OR (error_code IS NOT NULL AND error_code != '' AND error_code NOT IN (${IGNORED_CODES_SQL}))))`
 export const SUCCESS_PRED = `(status < 400 AND (error_code IS NULL OR error_code = '' OR error_code IN (${IGNORED_CODES_SQL})))`
 const SLA_OK_PRED = `(status = 429 OR (error_code IS NOT NULL AND error_code != '' AND error_code IN (${SLA_OK_CODES_SQL})))`
 export const SLA_SUCCESS_PRED = `(${SUCCESS_PRED} OR ${SLA_OK_PRED})`
+// Client disconnects have a truthful local 499 but are not provider failures.
 export const SLA_ERROR_PRED = `(${ERROR_PRED} AND NOT (${SLA_OK_PRED}))`
 
 // After migration 037 every row stores disjoint input. Prompt (cache hit

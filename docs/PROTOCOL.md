@@ -82,6 +82,8 @@ system提示词页有两套。cli-node 仍用上面的模板。CRAG 一套只认
 
 槽位显式 `zero` 覆盖成 replace。`official` / `official_full` / `official_303` 在这条 print 上都收成 append 尾巴；只要 identity 没有旗标，自定义模板不贴进去。print 不传 `--tools ""` 和 `--no-chrome`，内置工具和 Chrome 保持官方默认。thinking、temperature、betas、system 上的 `cache_control` 协议层可以收到，helper 不转发。今天进官方 CLI 的是 `--model`、64 KiB append/replace 文本、preload 的 `max_tokens` / `effort` / 已有 cache marker 的 ttl，以及调用方工具变成 MCP。
 
+官方 Claude Code 的 `agent_summary` 旁路只按当前完整摘要指令识别，沿用独立执行会话、席位与父会话粘性隔离。CRAG 的工具续接按工具 ID 认领，换 session ID 不会隔离继承的 `tool_result`：print 入核前，仅将已识别摘要的末条 user 消息中的工具结果展开为只读标签和原始内容块，保留正文、图片、错误标记、缓存断点及尾随 system 提示。历史工具调用/结果对与正常主请求保持原样；不靠匹配工具输出里的 `tool_result replayed` 文本触发清洗，不吞真实重放错误、不重发已消费结果。
+
 
 面板预览表达 Node 给出的模板内容；cli-hop 最终线序以上述 CLI-owned 前缀为准，不把 Node 对象预览当成最终 wire 抓包。更新 CLI 二进制后需要替换槽内副本并重启相应 kernel/CLI；配置热读不能让旧进程自动加载新 ELF。删除旧环境文本后首次前缀会冷写，后续 cache_read 数值须实测，不能保证必然不低于旧值。0注入 + 常驻约束关闭 + 无调用方 agent 的真实模型可见输出须单独验收。
 
@@ -114,6 +116,13 @@ DSH 在压缩压力下会把旧工具结果改为前4096码点、固定middle-pr
 非官方缺省还可补 `output_config.effort=high`，**不覆盖**已有 thinking / max_tokens。最新 main 在 unofficial 缺 `thinking.display` 时补 `omitted`。
 
 虚拟机测试未传 `max_tokens` 时用模型策略 `max_tokens_default`，再不行用 64（健康探测 hello 同口径）。
+
+连接测试及真实健康探针显式选择 thinking：允许关闭的模型发送 `{"type":"disabled"}`，要求 adaptive 的模型仍发送 adaptive。普通入站只有 Haiku 4.5 的小预算单次探针（原始 `max_tokens` 为 1–64 的整数、单条最多 64 字符的纯文本 user、无 system/tools/显式 thinking，且非官方透传）补 disabled；输出下限与模型 cap 沿用现有配置，不扩大预算、不改普通会话或调用方显式思考选择。
+
+显式携带既有 `x-kin-health-real` 标记的真实健康请求，在同样的 Haiku 4.5、1–64 token、单 user、无 system/tools/显式 thinking 条件下补 disabled，不以诊断标记的正文长度排除；没有此标记的普通长正文保持原行为。
+
+CRAG 需配套原生 helper 将显式 disabled 送到官方 Claude 的最终 fetch 边界；旧签名内核可能忽略该字段。修改 Node 或只热写配置不等于已更新运行中的 CRAG；新内核需要按现有签名交付与排空安装流程生效，不能用全局 `CLAUDE_CODE_MAX_OUTPUT_TOKENS` 覆盖所有模型来替代。
+
 
 ## beta 与 1M
 

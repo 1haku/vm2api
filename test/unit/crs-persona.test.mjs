@@ -498,7 +498,7 @@ test('billing attribution leaves caller-supplied billing unchanged', () => {
   assert.equal(out.system[0].text, caller)
 })
 
-test('missing billing receives cli and turn indexes; caller billing keeps entrypoint', () => {
+test('missing billing uses the supplied version and session; caller billing stays unchanged', () => {
   const messages = [
     { role: 'user', content: 'ping' },
     { role: 'assistant', content: 'pong' },
@@ -509,12 +509,18 @@ test('missing billing receives cli and turn indexes; caller billing keeps entryp
     { messages },
     { firstUserText: 'ping', cliVersion: '2.1.296', sessionId, indexes: billingIndexesFromMessages(messages) },
   )
-  assert.match(
-    added.system[0].text,
-    new RegExp(
-      `^x-anthropic-billing-header: cc_version=2\\.1\\.296\\.[0-9a-f]{3}; cc_entrypoint=cli; cch=${CCH_PLACEHOLDER}; cc_prompt_id=${sessionId}; cc_turn_origin=human; cc_prompt_index=1; cc_turn_index=1;$`,
-    ),
-  )
+  const billing = added.system[0].text
+  assert.match(billing, /^x-anthropic-billing-header: cc_version=2\.1\.296\.[0-9a-f]{3};/)
+  for (const field of [
+    'cc_entrypoint=cli',
+    `cch=${CCH_PLACEHOLDER}`,
+    `cc_prompt_id=${sessionId}`,
+    'cc_turn_origin=human',
+    'cc_prompt_index=1',
+    'cc_turn_index=1',
+  ]) {
+    assert.ok(billing.includes(`; ${field};`), field)
+  }
   const caller = 'x-anthropic-billing-header: cc_version=2.1.296.abc; cc_entrypoint=cli; cch=00000;'
   const kept = ensureBillingAttribution(
     { system: [{ type: 'text', text: caller }], messages },
@@ -545,7 +551,7 @@ test('routing.json cc_entrypoint reaches the rendered template billing without a
   }
 })
 
-test('one routing read keeps billing, system identity and env on the same entrypoint', () => {
+test('routing entrypoint switches rendered billing between cli and sdk-cli', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-entrypoint-sync-'))
   const file = path.join(dir, 'routing.json')
   const body = { model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hello' }] }
@@ -560,24 +566,20 @@ test('one routing read keeps billing, system identity and env on the same entryp
       forceConfigured: true,
       routingFile: file,
       mode: 'official_full',
-      entrypoint,
     })
   }
   try {
-    const cli = render('cli')
-    assert.match(cli.system[0].text, /cc_entrypoint=cli;/)
-    assert.equal(cli.system[1].text, "You are Claude Code, Anthropic's official CLI for Claude.")
-    assert.equal(
-      cli.system
-        .map((block) => block.text)
-        .join('\n')
-        .includes('! <command>'),
-      false,
-    )
-    const sdk = render('sdk-cli')
-    assert.match(sdk.system[0].text, /cc_entrypoint=sdk-cli;/)
-    assert.equal(sdk.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
-    assert.doesNotMatch(sdk.system.map((block) => block.text).join('\n'), /! <command>/)
+    for (const entrypoint of ['cli', 'sdk-cli', 'cli']) {
+      const out = render(entrypoint)
+      assert.match(out.system[0].text, new RegExp(`cc_entrypoint=${entrypoint};`))
+      assert.equal(
+        out.system[1].text,
+        entrypoint === 'cli'
+          ? "You are Claude Code, Anthropic's official CLI for Claude."
+          : "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+      )
+      assert.doesNotMatch(out.system.map((block) => block.text).join('\n'), /! <command>/)
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

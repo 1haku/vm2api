@@ -126,13 +126,14 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | POST | `/vms/:id/oauth/refresh` | 只转发 worker `Ensure`，不回 token |
 | POST | `/vms/:id/oauth/to-setup-token` | 把当前完整 OAuth 活票改成 Setup Token（保留 refresh/过期）。已是 setup-token 则幂等 |
 | POST | `/vms/:id/oauth/generate-auth-url` | PKCE 授权链接；无 SOCKS5 拒绝。`{ flavor: "claude_code" }` 为官方 Claude Code 授权页。`{ flavor: "setup_token" }` 为 inference-only PKCE，不启槽内 CLI |
-| POST | `/vms/:id/oauth/exchange-code` | 粘贴授权码，经槽代理换票。完整 OAuth 才排队初装。flavor 以 session 为准 |
+| POST | `/vms/:id/oauth/exchange-code` | 粘贴授权码，经槽代理换票；导入并同步 VM 客户端后才返回成功。完整 OAuth 才排队初装。flavor 以 session 为准 |
+| POST | `/vms/:id/credentials/sync` | 管理员手动同步 Claude 客户端凭证，成功返回 `{ synced: true }`。无凭证返回 409，同步失败返回 502；不换票、不回传 token。远程槽保留节点已轮换凭证并修复客户端链接 |
 | GET/POST | `/vms/:id/official-cc-bootstrap` | 初装进度 / `{ manual:true }` 再跑 |
 | GET/PUT | `/vms/:id/seed-settings` | 播种；面板默认锁定，解锁后改、播种前确认。`settings.json` 可编辑 env（经 `extra_env`）与 `theme`；`autoUpdates`/`grove_enabled` 与 TZ/LANG/LC_ALL、telemetry/bedrock/vertex 等契约 env 只读展示，TZ/LANG 经 PUT `timezone` / `timezone_follow_proxy` / `locale` 写入槽位后再播种，不经 `extra_env`；`claude_setting` 可编辑。`GET ?debug=1` 额外返回 `telemetry_log`（最近 40 行脱敏上传审计，默认不带） |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`、槽内 `/etc/os-release` 的 `VERSION_ID`、系统与架构）；Codex Analytics 只使用这次采集的运行环境 |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
 | GET | `/kernels` | 仅 admin/master。返回两种产品 `kernels`（`cli-node` 默认免费、`crag` 签名加密 V2）、真实本地版本/就绪状态、按 VM 的公开 `licenses` 与 `installations`。读取不会初始化设备身份，不返回机器码、注册码或私钥 |
-| POST | `/kernels/pull` | `{ kernel: "cli-node" \| "crag", tag?: "vX.Y.Z" }`。只更新安装包缓存，不安装、不停 VM。默认内核从 vm2api Release 下载 `kin-kernel` 与 `cli-node`；CRAG 优先使用应用固定的配套 Release（省略 tag 或请求该 tag），否则从供应仓 `dofastted/claude-code` 下载 `crag-v2-licensed-amd64.tar.gz`。两种来源都按本机可信发行公钥校验签名、密文与成员；缺少附件返回 `crag_v2_asset_missing`，不退回 legacy ELF |
+| POST | `/kernels/pull` | `{ kernel: "cli-node" | "crag", tag?: "vX.Y.Z" }`。只更新安装包缓存，不安装、不停 VM。默认内核从 vm2api Release 下载 `kin-kernel` 与 `cli-node`；CRAG 使用独立的 `crag_release` 供应仓 tag（例如 `v2.8.16`），从 `dofastted/claude-code` 下载 `crag-v2-licensed-amd64.tar.gz`。两种来源都按本机可信发行公钥校验签名、密文与成员；缺少附件返回 `crag_v2_asset_missing`，不退回 legacy ELF |
 | POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "crag" }] }`，仅处理非空显式范围；未知/重复/越权/Codex 目标在任何停用前拒绝。每槽先检查包与授权，再停服务、禁用自动重启、安装并保存选择；完成后保持 stopped，不自动启动。返回 `{ ok,total,ok_count,failed_count,items:[{id,kernel,ok,stopped,version?,code?,error?}] }`，逐项失败不伪装成全局成功 |
 | GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
 | POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
@@ -142,6 +143,8 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升 wrap 文件，不复制凭证/SOCKS。下次 sync 仍优先仓内最新 kernel |
 | POST | `/vms/:id/wrap-cli/repair` | 单槽重装 kernel。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
+| GET | `/vms/:id/diagnose` | 只读检查凭证、出口、容器、所选内核和自动恢复状态；CRAG 满载进程池不要求常驻 `cli_pid`，返回忙碌而非故障 |
+| POST | `/vms/:id/recover` | 按当前选择的 cli-node / CRAG 执行排空 → 关机 → 开机 → 就绪诊断；仅完整成功后清除请求熔断。授权错误在停机前拒绝；启动失败保留故障与不可调度原因 |
 | POST | `/vms/:id/activate` | 写入 `vms/active.json` 与 DB `active_vm`；列表/详情 `vm.active === true` 表示当前指针。管理台表格、机架、详情与行菜单可切换 |
 | POST | `/vms/:id/reset` | 销毁容器与家目录，再按原槽位重建（保留 ID/代理/种子；凭证清空） |
 | POST | `/vms/:id/reset-fingerprint` | |
@@ -150,8 +153,8 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | DELETE | `/vms/:id` | 多槽时不能删仍占 `active.json` 的槽（409 `switch active first`）；管理台删除确认可在有健康可调度候选时先 `activate` 再删。只解绑本槽代理 |
 | POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed`。Docker 槽可在 `machine` 里可选传 `docker_cpus`（见下） |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
-| POST | `/vms/:id/shell-ticket` | 30 秒单次终端票据。普通运维 `{}`；原生 CC 登录 `{ login: true, cli_bin?: "/槽内/原生/claude" }`。省略 / 空路径使用 CRAG 包内原生 CC，与推理内核无关；登录响应含最终 `cli_bin`。程序不存在或不可执行时拒绝，不回落 cli-node |
-| WS | `/vms/:id/shell?ticket=&cols=&rows=&login=1` | 登录标志须与票据一致，程序路径只取票据，不接受 query 覆盖。输入 `{"t":"d","d":"…"}`，尺寸 `{"t":"r","c":列,"r":行}`；二进制输出，文本 `exit` / `error` / `login`（面板导入凭证成功） |
+| POST | `/vms/:id/shell-ticket` | `{}` 获取 30 秒单次运维终端票据。`login: true` 返回 409 `panel_login_required`，换票统一走账号面板。终端 Claude 使用包内原生客户端，与推理内核无关 |
+| WS | `/vms/:id/shell?ticket=&cols=&rows=` | 输入 `{"t":"d","d":"…"}`，尺寸 `{"t":"r","c":列,"r":行}`；二进制输出，文本 `exit` / `error`。启动前检查原生 CC 可执行文件；不接受登录升级 |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
 | POST | `/vms/fleet-update` | 全槽 roll / 采集；`action=telemetry` 只更新 Go telemetry/egress 服务，不重建 VM |
 | POST | `/vms/reconcile-fingerprints` | 用官方 `~/.claude.json` 对齐指纹 |
@@ -170,6 +173,8 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 该重装入口当前仅支持本机 Linux Docker Claude 槽；远端、KVM 和 Codex 目标明确拒绝且不停止服务，不伪装成已安装。
 
 新安装与既有 PATCH/槽策略、同步、数据面切换、Release 同步及单槽修复共用同一记录锁；多槽操作在接收时固定目标并按稳定顺序加锁。其他页面的并发重装不能在安装器停止服务后穿插复制或自动重启；`restart:false` 仍只读检查。
+
+运行中槽位通过 PATCH、槽策略或 `/dataplane` 切核时，会先加入独立维护暂停并等待在途请求归零，同时暂停并排空该槽的看门狗操作。cli-node ↔ CRAG 双向切换重建需要变更创建参数的容器；容器已启动不等于内核就绪，`rust_ok:false` 仍视为失败。成功切核 / 重装重置该账号的请求熔断及内核恢复预算；失败不抹除故障。维护结束仅清除本次暂停，保留操作员调度关及其他出口 / 维护暂停。`restart:false` 的检查行为不变。
 
 `/vms`、`/vms/:id`、`/usage` 的账号行带窗口估算 `estimate_5h` / `estimate_7d` / `estimate_fable`（Fable 只在有 `7d_oi` 窗口的 Claude 号上非空）和 `window_fable_cost`。结构：`{ status, spent_usd, total_usd, remaining_usd, total_tokens, used_ratio }`。总量 = 窗口内官方费用 ÷ 已用比例，按官方价算，不乘分组倍率。`status` 不是 `ok` 时 `total_usd` / `remaining_usd` 为 `null`：`no_data`（无用量读数）、`no_reset`（无重置时间或已过期）、`log_gap`（日志没覆盖窗口起点，或已用比例动了但网关内无花费）、`low_usage`（已用 < 5%）、`unpriced`（窗口内有未定价请求）。token 字段 `total_tokens` / `today_tokens` / `window_*_tokens` 都是输入 + 输出 + 缓存读 + 缓存写，每类只算一次。
 

@@ -132,7 +132,7 @@ test('a bounded request deadline closes a stuck response and records 504', async
 })
 
 test('disabled keepalive produces no early response', async (t) => {
-  assert.equal(jsonResponseLogStatus({ statusCode: 200 }, 'cancelled'), 200)
+  assert.equal(jsonResponseLogStatus({ statusCode: 200 }, 'cancelled'), 499)
   const url = await serve(t, async (req, res) => {
     assert.equal(startJsonKeepalive(req, res, { delayMs: 0 }), null)
     await sleep(30)
@@ -141,6 +141,15 @@ test('disabled keepalive produces no early response', async (t) => {
   const res = await fetch(url)
   assert.equal(res.headers.get('x-kin-json-keepalive'), null)
   assert.deepEqual(await res.json(), { ok: true })
+})
+
+test('cancelled streams log 499 without rewriting an explicit error or a completed success', () => {
+  assert.equal(jsonResponseLogStatus({ statusCode: 200, headersSent: false }, 'cancelled'), 499)
+  assert.equal(jsonResponseLogStatus({ statusCode: 200, headersSent: true }, 'cancelled'), 499)
+  for (const statusCode of [400, 401, 403, 413, 429, 500, 504]) {
+    assert.equal(jsonResponseLogStatus({ statusCode }, 'cancelled'), statusCode)
+  }
+  assert.equal(jsonResponseLogStatus({ statusCode: 200 }, 'verified'), 200)
 })
 
 test('serialization failure is not recorded as HTTP 200 success', async (t) => {

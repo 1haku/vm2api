@@ -411,7 +411,7 @@ try {
 
 initPoolRuntime()
 try {
-  applyRoutingTierConcurrency(routingConfig.tiers)
+  applyRoutingTierConcurrency(routingConfig.tiers, { preserveExisting: true })
 } catch (e) {
   console.warn('[quota] apply tier concurrency failed', e?.message || e)
 }

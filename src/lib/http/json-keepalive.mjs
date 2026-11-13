@@ -109,6 +109,9 @@ export function abortJsonKeepalive(res, status = 500) {
 
 export function jsonResponseLogStatus(res, finalState) {
   const state = responses.get(res)
-  if (!state) return res.statusCode || 0
-  return state.status ?? (finalState === 'cancelled' ? 499 : res.statusCode || 0)
+  const status = state?.status ?? res.statusCode ?? 0
+  // A ServerResponse starts at 200 even if no header ever reached the client.
+  // Keep an explicit failure (including JSON keepalive timeouts); cancellation
+  // of an otherwise successful/pending stream is a local 499, not a success.
+  return finalState === 'cancelled' && status < 400 ? 499 : status
 }

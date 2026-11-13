@@ -46,7 +46,7 @@ import { validateOfficialModel } from './models.mjs'
 import { handleCodexImages, handleCodexProtocol, handleCodexSearch } from './handle-codex.mjs'
 import { imagePermissionError } from '../admin/image-permission.mjs'
 import { isMultipartFormData, normalizeImageEditBody } from './image-edit-multipart.mjs'
-import { readRawBody } from '../http/respond.mjs'
+import { readRawBody, requestBodyMetrics } from '../http/respond.mjs'
 import { disjointOpenaiUsage } from './openai-usage.mjs'
 import { costColumnsFromUsage } from '../admin/pricing.mjs'
 import { detectInboundPlatform } from './platform-detect.mjs'
@@ -592,6 +592,8 @@ export function createHandleProtocol(deps) {
   function trackUsage(req, res, logCtx, logBag) {
     req.finalizeSubscriptionUsage = () => {
       try {
+        if ((req.aborted || (res.destroyed && !res.writableFinished)) && !logBag.final_state && !logBag.error_code)
+          logBag.final_state = 'cancelled'
         const groupId = req.apiKeyRecord?.group_id ?? 1
         requestLog.finish(logCtx, {
           status: jsonResponseLogStatus(res, logBag.final_state),
@@ -602,6 +604,7 @@ export function createHandleProtocol(deps) {
           rate_multiplier: req.subscriptionAdmission?.group.rate_multiplier ?? deps.groupsRepo.rateMultiplier(groupId),
           subscription_id: req.subscriptionAdmission?.id ?? null,
           ...logBag,
+          request_body_metrics: requestBodyMetrics(req),
         })
       } catch (error) {
         console.error('[usage] settlement failed', logCtx.request_id, error.message)
@@ -738,6 +741,8 @@ export function createHandleProtocol(deps) {
     try {
       inbound = await readBody(req, inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes))
     } catch (error) {
+      if (req.aborted && ['request_stream_error', 'request_aborted'].includes(error?.body?.error?.code))
+        return finishClientCancel(res, null, logBag)
       stats.errors++
       logBag.error_code = error?.body?.error?.code || ErrorCode.INVALID_JSON
       logBag.error_message = error?.body?.error?.message || String(error?.message || error)
@@ -1189,7 +1194,27 @@ export function createHandleProtocol(deps) {
         logBag.error_message = error.body.error.message
         return json(res, error.status, error.body)
       }
-    } else if (!apiOpenAI) ctx.body = applyMinMaxTokens(ctx.body, getRouting()?.compatibility?.min_max_tokens)
+    } else if (!apiOpenAI) {
+      // Classify against the original budget, before the floor and persona add content.
+      // The health monitor can carry a longer diagnostic marker than an external short probe.
+      if (
+        !officialPassthrough &&
+        !Object.hasOwn(ctx.body, 'thinking') &&
+        !ctx.body.system?.length &&
+        /^claude-haiku-4-5(?:-|$)/i.test(ctx.body.model || '') &&
+        Number.isInteger(inbound.max_tokens) &&
+        inbound.max_tokens > 0 &&
+        inbound.max_tokens <= 64 &&
+        (isShortProbeRequest(inbound) ||
+          (isHealthRealBypass(req.headers) &&
+            !ctx.body.tools?.length &&
+            ctx.body.messages?.length === 1 &&
+            ctx.body.messages[0]?.role === 'user'))
+      ) {
+        ctx.body = { ...ctx.body, thinking: { type: 'disabled' } }
+      }
+      ctx.body = applyMinMaxTokens(ctx.body, getRouting()?.compatibility?.min_max_tokens)
+    }
     let inboundToolReverse = {}
     const cragSystem = projectCallerSystem(ctx.body.system, callerEnvironment)
     const hasCragSystem = cragSystem !== ctx.body.system
@@ -1563,6 +1588,7 @@ export function createHandleProtocol(deps) {
       clientStream && protocol === 'anthropic.messages' && streamKeepaliveMs > 0
         ? createDownstreamKeepalive({
             intervalMs: streamKeepaliveMs,
+            requestStartedAt: logCtx.t0,
             userAgent: req.headers['user-agent'] || req.headers['User-Agent'] || '',
             protocol,
             write: (chunk) => {
@@ -1778,6 +1804,7 @@ export function createHandleProtocol(deps) {
                 preset: cragPersona,
                 officialPassthrough,
                 capabilities: Array.isArray(caps) ? caps : [],
+                agentSummary: !!summarySession,
               })
               hopBody = await materializeRemoteImageSources(hopBody)
               if (identity) {
