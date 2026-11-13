@@ -30,6 +30,7 @@ execFileSync('git', [
   'VERSION',
   'CHANGELOG.md',
   '.dockerignore',
+  '.github',
 ])
 fs.writeFileSync(out + '.revision', revision + '\n')
 console.log(JSON.stringify({ archive: out, revision, bytes: fs.statSync(out).size }))
