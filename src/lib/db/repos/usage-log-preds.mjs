@@ -9,7 +9,7 @@ import { ignoredErrorSqlList, slaOkErrorSqlList } from '../../admin/error-class.
 const IGNORED_CODES_SQL = ignoredErrorSqlList()
 const SLA_OK_CODES_SQL = slaOkErrorSqlList()
 
-const CLIENT_CANCELLED_PRED = `(status = 499 AND IFNULL(final_state, '') = 'cancelled')`
+export const CLIENT_CANCELLED_PRED = `(IFNULL(status, 0) = 499 AND IFNULL(final_state, '') = 'cancelled')`
 export const ERROR_PRED = `(NOT ${CLIENT_CANCELLED_PRED} AND (status >= 400 OR (error_code IS NOT NULL AND error_code != '' AND error_code NOT IN (${IGNORED_CODES_SQL}))))`
 export const SUCCESS_PRED = `(status < 400 AND (error_code IS NULL OR error_code = '' OR error_code IN (${IGNORED_CODES_SQL})))`
 const SLA_OK_PRED = `(status = 429 OR (error_code IS NOT NULL AND error_code != '' AND error_code IN (${SLA_OK_CODES_SQL})))`

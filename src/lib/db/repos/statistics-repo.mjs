@@ -12,7 +12,14 @@
 
 import { getDb } from '../database.mjs'
 import { reportTimezone, zonedDayStartMs, zonedParts, zonedWallToMs } from '../../core/timezone.mjs'
-import { ERROR_PRED, PROMPT_TOKENS_SQL, SUCCESS_PRED, TOTAL_TOKENS_SQL, ownerPred } from './usage-log-preds.mjs'
+import {
+  CLIENT_CANCELLED_PRED,
+  ERROR_PRED,
+  PROMPT_TOKENS_SQL,
+  SUCCESS_PRED,
+  TOTAL_TOKENS_SQL,
+  ownerPred,
+} from './usage-log-preds.mjs'
 import { lookupNames } from './usage-logs-view.mjs'
 
 export const STATS_RANGES = ['today', '7days', '30days', 'thisMonth']
@@ -134,7 +141,7 @@ function leaderboardEntry(row, id, name) {
     totalRequests: requests,
     successRequests: num(row.success),
     errorRequests: num(row.errors),
-    successRate: requests > 0 ? num(row.success) / requests : 0,
+    successRate: requests > num(row.cancelled_count) ? num(row.success) / (requests - num(row.cancelled_count)) : 0,
     totalTokens: input + output + cacheRead + cacheCreation,
     inputTokens: input,
     outputTokens: output,
@@ -343,6 +350,7 @@ export class StatisticsRepo {
       SELECT ${col} AS sid,
              COUNT(*) AS requests,
              COALESCE(SUM(CASE WHEN ${SUCCESS_PRED} THEN 1 ELSE 0 END), 0) AS success,
+             COALESCE(SUM(CASE WHEN ${CLIENT_CANCELLED_PRED} THEN 1 ELSE 0 END), 0) AS cancelled_count,
              COALESCE(SUM(CASE WHEN ${ERROR_PRED} THEN 1 ELSE 0 END), 0) AS errors,
              COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens,

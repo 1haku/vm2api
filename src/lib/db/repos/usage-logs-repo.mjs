@@ -21,6 +21,7 @@ import { cacheHitStats } from '../../admin/cache-metrics.mjs'
 import { extraWindowSince, WINDOW_5H_MS, WINDOW_7D_MS } from '../../pool/quota-window.mjs'
 import {
   ERROR_PRED,
+  CLIENT_CANCELLED_PRED,
   SUCCESS_PRED,
   SLA_ERROR_PRED,
   SLA_SUCCESS_PRED,
@@ -1531,6 +1532,7 @@ export class UsageLogsRepo {
         SUM(CASE WHEN status = 429 THEN 1 ELSE 0 END) AS status_429,
         SUM(CASE WHEN status = 529 THEN 1 ELSE 0 END) AS status_529,
         SUM(CASE WHEN status = 503 THEN 1 ELSE 0 END) AS status_503,
+        SUM(CASE WHEN ${CLIENT_CANCELLED_PRED} THEN 1 ELSE 0 END) AS cancelled_count,
         SUM(CASE WHEN stream = 1 THEN 1 ELSE 0 END) AS stream_requests,
         SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END) AS ttft_samples,
         COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -1608,7 +1610,10 @@ export class UsageLogsRepo {
       requests,
       success,
       errors,
-      sla: requests ? success / requests : 1,
+      sla:
+        requests > Number(counts?.cancelled_count || 0)
+          ? success / (requests - Number(counts.cancelled_count || 0))
+          : 1,
       error_rate: requests ? errors / requests : 0,
       status_429: Number(counts?.status_429 || 0),
       status_529: Number(counts?.status_529 || 0),
