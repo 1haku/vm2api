@@ -477,11 +477,18 @@ test('OpenAI scheduling HTTP saves preserve platform isolation, pins and atomic 
   const gw = await startGateway()
   const rows = async () => (await api(gw, 'GET', '/api/panel/vms')).json.data.items
   try {
-    const claudeBefore = (await rows()).find((vm) => vm.id === 'vm-sim-01')
+    const claudeAtStartup = (await rows()).find((vm) => vm.id === 'vm-sim-01')
+    assert.equal(claudeAtStartup.max_concurrency, 16)
     const global = await api(gw, 'PUT', '/api/panel/routing', {
       body: { codex: { quota: { max_concurrency: 3, max_rpm: 37, max_sessions: 2 } } },
     })
     assert.equal(global.status, 200, global.text)
+    // #1009 preserves the fixture's legacy unflagged 16 at boot, then releases it on an explicit routing save.
+    // Capture the isolation baseline after that save has materialized the inherited Claude tier.
+    const claudeBefore = (await rows()).find((vm) => vm.id === 'vm-sim-01')
+    assert.equal(claudeBefore.max_concurrency, claudeAtStartup.scheduling_inherited.max_concurrency)
+    assert.equal(claudeBefore.concurrency_override, false)
+    assert.equal(claudeBefore.max_rpm, claudeAtStartup.max_rpm)
     const create = await api(gw, 'POST', '/api/panel/vms/create', {
       body: { id: 'vm-openai-follow', platform: 'openai', family: 'codex', start: false, auto_allocate_proxy: false },
     })
@@ -510,6 +517,7 @@ test('OpenAI scheduling HTTP saves preserve platform isolation, pins and atomic 
     assert.equal(cross.status, 400, cross.text)
     const claudeAfter = (await rows()).find((vm) => vm.id === 'vm-sim-01')
     assert.equal(claudeAfter.max_concurrency, claudeBefore.max_concurrency)
+    assert.equal(claudeAfter.concurrency_override, false)
     assert.equal(claudeAfter.max_rpm, claudeBefore.max_rpm)
     for (const quota of [null, [], { max_concurrency: 0 }, { max_sessions: '2' }]) {
       const bad = await api(gw, 'PUT', '/api/panel/routing', { body: { codex: { quota } } })

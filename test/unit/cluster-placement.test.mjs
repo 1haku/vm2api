@@ -165,7 +165,8 @@ test('KVM run publication selects the live guest kernel and preserves node crede
   const slotDir = path.join(root, 'vms', vm.id)
   fs.mkdirSync(slotDir, { recursive: true })
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const pkg = seedEncryptedPackage(root)
+  // The remote slot payload is amd64 even when the controller running this test is ARM64.
+  const pkg = seedEncryptedPackage(root, { arch: 'amd64' })
   node.files.set(node.remoteCred, Buffer.from('rotated-credential'))
   const target = { ...vm, runtime: { type: 'kvm' } }
   fs.mkdirSync(path.join(slotDir, 'run'))
@@ -209,7 +210,7 @@ test('CRAG config publication rejects missing or corrupt packages before changin
   node.files.set(entry, Buffer.from('old-entry'))
   const target = { ...vm, runtime: { type: 'kvm' } }
   await assert.rejects(pushSlotFiles(target, slotDir, ['run'], node.session), { code: 'slot_payload_missing' })
-  const pkg = seedEncryptedPackage(root)
+  const pkg = seedEncryptedPackage(root, { arch: 'amd64' })
   fs.appendFileSync(path.join(pkg, 'crag-v2.payload.enc'), 'corrupt')
   await assert.rejects(pushSlotFiles(target, slotDir, ['run'], node.session), { code: 'slot_payload_invalid' })
   assert.equal(node.files.get(config).toString(), 'old-config')
@@ -219,7 +220,7 @@ test('CRAG config publication rejects missing or corrupt packages before changin
 test('matching CRAG digest repairs missing and corrupt slot files without rewriting matching files', async (t) => {
   const root = tmpDir('kin-slot-crag-repair-')
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  seedEncryptedPackage(root)
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const node = fakeNode()
   const remote = `${node.session.host.root}/vms/${vm.id}/slot-bin`
   const payload = cragSlotPayload(root)
