@@ -18,7 +18,8 @@ test('enabling redaction through a routing patch retains the configured request 
   timeout: 60_000,
 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-routing-redact-budget-'))
-  const bin = path.join(root, 'bin', 'kin-redact')
+  const suppliedBin = process.env.KIN_TEST_REDACT_BIN
+  const bin = suppliedBin || path.join(root, 'bin', 'kin-redact')
   const routingFile = path.join(root, 'routing.json')
   const previousBin = process.env.KIN_REDACT_BIN
   const secret = 'synthetic-routing-secret'
@@ -56,10 +57,11 @@ test('enabling redaction through a routing patch retains the configured request 
   fs.mkdirSync(path.dirname(bin), { recursive: true })
   fs.mkdirSync(path.join(root, 'vms'))
   fs.writeFileSync(routingFile, JSON.stringify(routingConfig))
-  execFileSync('go', ['build', '-o', bin, './cmd/kin-redact'], {
-    cwd: path.join(process.cwd(), 'redact'),
-    stdio: 'inherit',
-  })
+  if (!suppliedBin)
+    execFileSync('go', ['build', '-o', bin, './cmd/kin-redact'], {
+      cwd: path.join(process.cwd(), 'redact'),
+      stdio: 'inherit',
+    })
   process.env.KIN_REDACT_BIN = bin
 
   const runtime = createRoutingRuntime({
