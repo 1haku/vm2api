@@ -20,6 +20,7 @@ MISSING_RUNNING_STATE_SOURCES = frozenset((
     '9330fbc5b91d599d84bb280b19732c125ef43de9ae5d9581f740c70304c82116',
     'a35349bbd7e1b706f35beab73d66e7d141b01da7c0b5283f4531ed2804bfaff8',
     '29a4bf26b5b00a5d2bb7eea0993b33a6b26d9ffecef925dae43e3744568c208f',
+    'a9137898764c7fa02e5b986242bdebbddc580dde3b1d8b8a0495934feb444b6a',
 ))
 WRAPPER = '''#!/bin/sh
 # native-cli bundle: {digest}
