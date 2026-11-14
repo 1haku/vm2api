@@ -84,8 +84,12 @@ http.createServer((req, res) => {
   it('masks and restores through the real helper when enabled', { timeout: 60_000 }, async () => {
     const binPath = realHelperBin()
     const policy = { enabled: true, secrets: true, personal: false, words: [], rules: [] }
-    const state = await ensureRedaction({ redaction: policy }, { projectRoot: root, binPath })
+    const state = await ensureRedaction(
+      { redaction: policy, failover: { max_request_mib: 64 } },
+      { projectRoot: root, binPath },
+    )
     helper = state.child
+    assert.equal(state.maxBodyBytes, 64 * 1024 * 1024)
     assert.equal(state.ready, true)
     const secret = 'sk-' + 'proj-' + 'Aa1Bb2Cc3Dd4Ee5Ff6Gg'
     const body = { messages: [{ role: 'user', content: `token ${secret}` }] }

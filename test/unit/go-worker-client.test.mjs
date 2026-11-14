@@ -11,6 +11,7 @@ import {
   workerHealth,
   usageFromSseEvent,
   isDownstreamCommitEvent,
+  restoreKernelErrorStatus,
   restoreUncommittedHop,
   semanticStatusForStreamError,
 } from '../../src/lib/transport/go-worker-client.mjs'
@@ -107,6 +108,47 @@ test('semanticStatusForStreamError reads outer Codex status 500 instead of defau
     }),
     502,
   )
+})
+test('server overload errors map to 503 and preserve retry identity', () => {
+  const body = {
+    type: 'error',
+    error: {
+      type: 'service_unavailable_error',
+      code: 'server_is_overloaded',
+      message: 'Our servers are currently overloaded. Please try again later.',
+    },
+  }
+  assert.equal(semanticStatusForStreamError(body), 503)
+  const restored = restoreUncommittedHop({
+    ok: false,
+    status: 200,
+    committed: false,
+    terminalState: 'incomplete',
+    headers: {},
+    body,
+  })
+  assert.equal(restored.status, 503)
+  assert.equal(restored.body.error.code, 'server_is_overloaded')
+  assert.equal(restored.streamError, true)
+})
+test('kernel-wrapped server overload restores 503 but explicit status wins', () => {
+  const body = {
+    type: 'error',
+    error: {
+      type: 'service_unavailable_error',
+      code: 'server_is_overloaded',
+      message: 'overloaded',
+    },
+  }
+  const restored = restoreKernelErrorStatus({ ok: false, status: 502, body })
+  assert.equal(restored.status, 503)
+  assert.equal(restored.body.error.code, 'server_is_overloaded')
+  const explicit = restoreKernelErrorStatus({
+    ok: false,
+    status: 502,
+    body: { ...body, error: { ...body.error, status: 502 } },
+  })
+  assert.equal(explicit.status, 502)
 })
 
 test('restoreUncommittedHop reports Codex outer status 500 rather than 502', () => {
@@ -1101,7 +1143,6 @@ unixTest('streamGoWorker stamps TTFT on text and thinking deltas', async () => {
 unixTest('streamGoWorker stamps TTFT on omitted thinking progress before visible output', async (t) => {
   let now = 1_000
   t.mock.method(Date, 'now', () => now)
-  const sawEmpty = gate()
   const sawProgress = gate()
   const fx = await fixture(async (req, res) => {
     res.setHeader('content-type', 'text/event-stream')
@@ -1112,7 +1153,9 @@ unixTest('streamGoWorker stamps TTFT on omitted thinking progress before visible
       index: 0,
       delta: { type: 'thinking_delta', thinking: '', estimated_tokens: 0 },
     })
-    await sawEmpty.ready
+    // Empty progress is intentionally held before commit. Advance the server
+    // clock rather than waiting for that uncommitted frame downstream.
+    now = 2_000
     writeData(res, {
       type: 'content_block_delta',
       index: 0,
@@ -1136,10 +1179,7 @@ unixTest('streamGoWorker stamps TTFT on omitted thinking progress before visible
         messages: [{ role: 'user', content: 'hi' }],
       },
       onEvent: (line) => {
-        if (line.includes('"estimated_tokens":0')) {
-          now = 2_000
-          sawEmpty.release()
-        } else if (line.includes('"estimated_tokens":50')) {
+        if (line.includes('"estimated_tokens":50')) {
           now = 5_000
           sawProgress.release()
         }
@@ -1492,12 +1532,32 @@ unixTest('streamGoWorker merges SSE cache details into a totals-only usage trail
   }
 })
 
-test('terminal metadata is not a downstream commit', () => {
+test('terminal metadata and empty blocks are not downstream commits', () => {
   assert.equal(isDownstreamCommitEvent({ type: 'message_start', message: {} }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'error', error: { message: 'Connection error' } }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'message_stop' }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }), false)
   assert.equal(isDownstreamCommitEvent({ type: 'message_delta', delta: {} }), false)
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_start', content_block: { type: 'text', text: '' } }),
+    false,
+  )
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } }),
+    false,
+  )
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_delta', delta: { type: 'thinking_delta', estimated_tokens: 1 } }),
+    true,
+  )
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_start', content_block: { type: 'redacted_thinking', data: '' } }),
+    false,
+  )
+  assert.equal(
+    isDownstreamCommitEvent({ type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'x' } }),
+    true,
+  )
   assert.equal(
     isDownstreamCommitEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } }),
     true,

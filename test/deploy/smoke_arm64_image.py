@@ -82,7 +82,7 @@ try:
         assert (root / 'bin' / name).read_bytes() == (root / 'image-bin' / name).read_bytes()
     payload = json.loads((root / 'deploy/payload.json').read_text())
     for item in payload['files']:
-        if item['path'].startswith('share/crag/kernels/'):
+        if item['path'].startswith(('share/crag/kernels/', 'dist/')):
             assert hashlib.sha256((root / item['path']).read_bytes()).hexdigest() == item['sha256'], item['path']
     subprocess.run(['node', '--input-type=module', '-e', r"""
 import assert from 'node:assert/strict'
