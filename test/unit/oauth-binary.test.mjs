@@ -361,10 +361,14 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
     'legacy kernel authorization-link and Cookie exchanges use the real helper and bound SOCKS exit',
     async (t) => {
       const previousCert = process.env.NODE_EXTRA_CA_CERTS
+      const previousHelper = process.env.KIN_OAUTH_AUTH_BIN
       process.env.NODE_EXTRA_CA_CERTS = cert
+      process.env.KIN_OAUTH_AUTH_BIN = binary
       t.after(() => {
         if (previousCert === undefined) delete process.env.NODE_EXTRA_CA_CERTS
         else process.env.NODE_EXTRA_CA_CERTS = previousCert
+        if (previousHelper === undefined) delete process.env.KIN_OAUTH_AUTH_BIN
+        else process.env.KIN_OAUTH_AUTH_BIN = previousHelper
       })
       const generated = generateAuthUrl({ vmId: vm.id, proxyUrl: 'socks5h://127.0.0.1:1' })
       const url = new URL(generated.auth_url)

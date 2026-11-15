@@ -251,6 +251,10 @@ function releaseFetch() {
   const payloads = { 1: elf('pulled-kernel'), 2: elf('pulled-cli') }
   return async (url) => {
     const href = String(url)
+    if (href.includes('/releases?'))
+      return new Response(JSON.stringify([{ tag_name: 'payload-2026.11.15-crag-1.2.3', draft: false, assets: [] }]), {
+        headers: { 'content-type': 'application/json' },
+      })
     if (href.endsWith('/releases/latest'))
       return new Response(
         JSON.stringify({
@@ -295,8 +299,11 @@ test('pull route updates cache only and returns actionable paid asset failure wi
   assert.equal(pulled.body.data.kernel.version, '1.2.3')
   assert.equal(pulled.body.data.release.tag, 'v1.2.3')
   const paid = await route(root, 'POST', '/pull', { kernel: 'crag' }, options)
-  assert.notEqual(paid.status, 200)
-  assert.match(paid.body.error.code, /crag.*asset.*missing/)
+  assert.equal(paid.status, 404)
+  assert.equal(paid.body.error.code, 'github_http_404')
+  const pinned = await route(root, 'POST', '/pull', { kernel: 'crag', tag: 'v1.2.3' }, options)
+  assert.notEqual(pinned.status, 200)
+  assert.match(pinned.body.error.code, /crag.*asset.*missing/)
   const inventory = await route(root, 'GET', '')
   assert.equal(inventory.body.data.kernels[1].ready, true, 'missing paid release must preserve local signed package')
   for (const [index, vm] of vms.entries()) {
