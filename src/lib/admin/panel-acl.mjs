@@ -1,3 +1,5 @@
+import { cragShopRoute } from './crag-shop.mjs'
+
 /**
  * Panel RBAC.
  *
@@ -28,6 +30,7 @@ export const PANEL_VIEWS = [
   'billing',
   'subscriptions',
   'usage-records',
+  'crag-subscription',
 ]
 
 const ROLE_VIEWS = {
@@ -219,6 +222,10 @@ export function authorizePanelRoute(method, path, role) {
   if (r === 'admin') return { ok: true, role: r }
   const m = String(method || 'GET').toUpperCase()
   const p = String(path || '')
+
+  const shopRoute = cragShopRoute(m, p)
+  if (shopRoute === 'apply-renewal') return { ok: false, role: r, code: 'forbidden', message: 'Forbidden' }
+  if (shopRoute) return { ok: true, role: r }
 
   if (/^\/api\/panel\/vms\/[^/]+\/migration(?:\/|$)/.test(p)) {
     return { ok: false, role: r, code: 'forbidden', message: '只有管理员可以迁移槽位' }

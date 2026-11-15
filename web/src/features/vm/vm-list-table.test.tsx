@@ -5,7 +5,7 @@ import { VmTable } from './vm-list-table'
 
 vi.mock('./vm-actions-context', () => ({ useVmActions: () => ({}) }))
 vi.mock('./vm-action-menu', () => ({ VmActionMenu: () => null }))
-vi.mock('./vm-owner-line', () => ({ VmOwnerLine: () => null }))
+vi.mock('./vm-owner-line', () => ({ VmOwnerLine: () => null, VmRentedMark: () => null }))
 vi.mock('./node-chip', () => ({ NodeChip: () => null }))
 vi.mock('@/features/subscriptions/slot-subscription', () => ({
   SlotSubscription: () => null,
@@ -25,9 +25,7 @@ describe('VM account column kernel label', () => {
     'renders %s as a silver standard kernel',
     (dataplane) => {
       const html = render({ resolved_dataplane: dataplane })
-      expect(html).toMatch(
-        /class="[^"]*bg-zinc-200[^"]*"[^>]*>标准内核<\/span>/
-      )
+      expect(html).toMatch(/class="[^"]*bg-zinc-200[^"]*"[^>]*>默认<\/span>/)
       expect(html).not.toContain('>crag</span>')
       expect(html).toContain('account@example.com')
     }
@@ -41,7 +39,7 @@ describe('VM account column kernel label', () => {
         resolved_crag_kernel_version: version,
       })
       expect(html).toMatch(/class="[^"]*bg-orange-200[^"]*"[^>]*>crag<\/span>/)
-      expect(html).not.toContain('>标准内核</span>')
+      expect(html).not.toContain('>默认</span>')
     }
   )
 
@@ -50,12 +48,56 @@ describe('VM account column kernel label', () => {
       '>crag</span>'
     )
     expect(render({ dataplane: 'crag', resolved_dataplane: 'wrap' })).toContain(
-      '>标准内核</span>'
+      '>默认</span>'
     )
   })
 
   it('supports older responses without a resolved route', () => {
     expect(render({ dataplane: 'crag' })).toContain('>crag</span>')
-    expect(render()).toContain('>标准内核</span>')
+    expect(render()).toContain('>默认</span>')
+  })
+
+  it('shows the platform mark, stable VM number, email and enrollment independently of the auth scheme', () => {
+    const vm: Partial<Vm> = {
+      has_token: true,
+      auth_scheme: 'authorization_bearer',
+      subscription_type: 'max',
+      runtime_type: 'kvm',
+      node_name: '测试集群',
+    }
+    const html = render(vm)
+    expect(html).toContain('aria-label="anthropic"')
+    for (const label of [
+      'vm-01',
+      'account@example.com',
+      'Max',
+      'kvm',
+      'oauth',
+      '测试集群',
+    ]) {
+      expect(html).toMatch(new RegExp(`>${label}</(?:span|div)>`))
+    }
+    expect(html).not.toContain('订阅 未知')
+    expect(html).not.toContain('01·account')
+    expect(
+      render({
+        ...vm,
+        credential_mode: 'setup-token',
+        oauth_registration: 'oauth',
+      })
+    ).toContain('>oauth</span>')
+    expect(
+      render({
+        ...vm,
+        credential_mode: 'setup-token',
+        oauth_registration: 'console',
+      })
+    ).toContain('>console</span>')
+    expect(render({ platform: 'openai', has_token: true })).toContain(
+      'aria-label="openai"'
+    )
+    expect(render({ platform: 'openai', has_token: true })).toContain(
+      '>local</span>'
+    )
   })
 })

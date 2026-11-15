@@ -2,6 +2,7 @@ import { canOpenPath } from '@/config/nav'
 import {
   Boxes,
   Cable,
+  CreditCard,
   ChartColumn,
   Cpu,
   Database,
@@ -18,7 +19,6 @@ import {
   ShieldAlert,
   Sparkles,
   Users,
-  CreditCard,
 } from 'lucide-react'
 import type { NavGroup, SidebarData } from '../types'
 
@@ -51,6 +51,7 @@ const ALL_GROUPS: NavGroup[] = [
       { title: '导入', url: '/import', icon: Download },
       { title: '规格', url: '/specs', icon: Cpu },
       { title: '代理', url: '/proxies', icon: Cable },
+      { title: '订阅 CRAG', url: '/crag-subscription', icon: CreditCard },
     ],
   },
   {

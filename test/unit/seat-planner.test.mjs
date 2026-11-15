@@ -11,6 +11,11 @@ import { AccountQuota } from '../../src/lib/pool/account-quota.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { stickyTenantPrefix } from '../../src/lib/pool/sticky-seat-scope.mjs'
+import { configureSlotCapacity } from '../../src/lib/vm/slot-capacity.mjs'
+
+// These tests cover other behaviour on the legacy fixed 20 native slots;
+// plan-based capacity has its own tests (slot-capacity*.test.mjs).
+configureSlotCapacity({ enabled: false })
 
 const MODEL = 'claude-test'
 

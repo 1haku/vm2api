@@ -42,6 +42,7 @@ const PANEL_VIEWS: ViewId[] = [
   'users',
   'wrap',
   'billing',
+  'crag-subscription',
 ]
 const ROLE_VIEWS: Record<'admin' | 'super' | 'user', ViewId[]> = {
   admin: PANEL_VIEWS,
@@ -121,7 +122,7 @@ describe('pages each role can open', () => {
     expect(openPages(ROLE_VIEWS.admin)).toEqual(PAGE_PATHS)
   })
 
-  it('super opens monitoring and the VM pages only', () => {
+  it('super opens monitoring and the VM pages', () => {
     expect(openPages(ROLE_VIEWS.super)).toEqual([
       '/',
       '/cluster',

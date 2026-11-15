@@ -107,11 +107,13 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 |------|------|------|
 | GET | `/dashboard` | 总览：健康、KPI、`proxy_pool`、`ops`（默认近 1h SLA/TTFT）、`billing` |
 | GET | `/vms` | 列表（`has_token`、`cred_status`、`proxy_configured`、`can_import_credential`、`account_tier`、`schedule_level`、`schedule_level_mode`、`worker_credential`、Fable 轨；Claude 行 `seats_used` / `seats_max` / `seats_grace` / `seat_sessions` / `queue_depth` / `conc_waiting` / `inflight`）。`seats_used` 是正在占槽的 client session 数，只含在飞请求和已排在这台 VM 上的后续请求；对话结束即释放，粘性 TTL 不占槽。`seats_grace` 只在重启交接的短窗口里计数；`seat_sessions` 是 `{ index, session_id, state, inflight, held_until }[]`，`state` 为 `active` 或 `held`。响应另带 `pool_queue: { global_queue_depth, queue_max }`。`availability.key` 取值 `ok` / `drain` / `quota` / `cool` / `rest` / `off` / `bad` / `none`，`drain` = 临近闸线（仍接单），`rest` = 工作时段外休息中 |
+| GET | `/vms/create-options` | 创建默认规格、本机 KVM 探测和 `crag_supported`（本机 Linux amd64 能力，不表示可信包已下载）。 |
+| POST | `/vms/create` | `kernel` 仍是客体系统；Anthropic 可选 `dataplane: "wrap"`（默认）或 `"crag"`（v2）。受支持的目标预装两套内核，包括 `start: false`；缺包返回 `409` 而不创建记录。选 CRAG 但无有效授权时仅创建停机槽，返回 `start_error` 提示先授权。Codex 不接受 `dataplane`；不支持的目标显式选 CRAG 返回 `409 crag_v2_unsupported_placement`。 |
 | GET | `/pool/stream` | SSE。`event: seats`：`{ seats: { [vmId]: { seats_used, seats_max, seats_grace, queue_depth, conc_waiting, inflight, sessions } }, global_queue_depth, queue_max, ts }`，`sessions` 与列表的 `seat_sessions` 同形；缺席的 VM 表示空闲；每次请求开始/结束都会推。`event: proxy`：`{ proxies: { [vmId]: { id, status, enabled, blocked_reason, latency_ms, last_error, last_probe_at } }, ts }`，每次探测或代理状态变化推送。两类帧都按 250ms 节流，租户只收到自己 VM 的条目 |
 | GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/prev_window_5h/prev_window_7d/window_5h_projection/by_model/usage_stats`（`usage_stats` = 近 30 个上海自然日的按日用量 + 模型 / 入站路径排名，日界同 `billing.today`；`prev_window_*` 与 `window_5h_projection` 见下） + `account.runtime_window` |
-| PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level`、`weight`（Codex 选槽权重 1–100，`null` 回默认 1）、`active_hours`、`timezone` 或 `name`（不重启槽，不改 VM 编号）。`name` 是 1–80 字符的面板显示名，创建时的编号保持不变。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
+| PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level`、`weight`（Codex 选槽权重 1–100，`null` 回默认 1）、`active_hours`、`timezone`、`name` 或 `id`。`name` 是 1–80 字符的面板显示名，不改编号。单独提交不同的 `id` 才改编号：槽必须已关机、在本机、且没有在飞请求；会移动 `vms/<id>` 与记录，并改写活跃指针、池成员、密钥允许列表和账号归属。运行中、远程节点、编号冲突或容器仍在跑时拒绝。历史请求日志保留旧编号。在线设备授权绑定旧编号，改号后需重新激活。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
 | GET | `/vms/:id/crag-license` | 仅 admin/master，沿用 VM 属主校验。返回 `{license,machine_code}`。在线授权显式初始化/复用本槽设备机器码；离线 `CRAGU1` 通用码不需机器码、不绑本槽，`machine_code` 可为空。`license` 含签名期限、绝对 UTC 生效/到期、公开状态及 `kind: 'online' \| 'offline'`，不回注册码/私钥/解密 key。需要已安装签名加密 native V2 包及 Linux 私有 run 映射 |
-| POST | `/vms/:id/crag-license` | `{registration_code}`。支持离线 `CRAGU1` 通用码（不绑 VM/machine-id/设备）与在线设备绑定码；响应 `license.kind` 区分 `offline` / `online`。在线码先验证 Ed25519 签名、VM/machine-id/设备绑定、封装 key 和当前有效期，再原子替换。`1m`/`6m`/`1y` 从签发时间按自然月计；客户不能请求任意延期。错误码保持 `license_required` / `license_invalid` / `license_binding_mismatch` / `license_not_yet_valid` / `license_expired` / `license_unconfigured`，失败不破坏已有有效授权；激活本身不隐式切换内核 |
+| POST | `/vms/:id/crag-license` | `{registration_code}`。支持统一激活的构建由 Authority 区分设备码和宿主订阅码，两类 `CRAGR1` 均由管理员从同源提交到本机 Linux Docker Claude 槽。以目标槽已安装的受信签名包的发行方和载荷 ID 为准，不与下载缓存比较发布版本号；未装 CRAG 的 Wrap 槽可按待安装包申请设备许可。`v1.4.104` 正式镜像仍使用旧路径：此接口仅兑换设备码，商城宿主码用 `/crag-subscription/redeem` 后再 `/vms/:id/crag-license/bind`。已签发的 `CRAGL1`、兼容离线码各按对应规则校验。失败不覆盖原授权；成功不返回原码，不安装、启动或切换内核。 |
 | POST | `/vms/pool-policy` | 批量槽策略。`{ ids: [...] }` 或 `{ all: true }`，可带 `weight`(1–100) / `schedule_level`(1–10 或 `"auto"`) / `max_concurrency`(1–256) / `max_rpm`(0–1000000) / `max_sessions`(0–256)；`null`（或 `""`）取消钉住：weight 回默认 1、schedule_level 回 auto、上限回 tier / 全局默认，语义与逐槽 PATCH 一致。只写 `vms/*.json`、不重建槽详情，100+ 槽一次调用即可（逐个 `PATCH /vms/:id` 每槽约 4s，并发下发会压住控制面）。返回 `{ updated, missing, failed, items: [{ id, weight, schedule_level, max_concurrency, concurrency_override, max_rpm, max_sessions }] }` |
 | POST | `/vms/:id/probe` | 槽 SOCKS5 探官方 `/usage` + Fable（Pro 跳过 Fable） |
 | POST | `/vms/:id/exit-probe` | 测这个槽真实出口的 IP 与地理（仅 admin）：SOCKS5 槽经代理查；本地代理槽查它所在 VPS 那条本地代理并刷新该行地理。未绑定 502 `proxy_required` |
@@ -132,9 +134,10 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | GET/PUT | `/vms/:id/seed-settings` | 播种；面板默认锁定，解锁后改、播种前确认。`settings.json` 可编辑 env（经 `extra_env`）与 `theme`；`autoUpdates`/`grove_enabled` 与 TZ/LANG/LC_ALL、telemetry/bedrock/vertex 等契约 env 只读展示，TZ/LANG 经 PUT `timezone` / `timezone_follow_proxy` / `locale` 写入槽位后再播种，不经 `extra_env`；`claude_setting` 可编辑。`GET ?debug=1` 额外返回 `telemetry_log`（最近 40 行脱敏上传审计，默认不带） |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`、槽内 `/etc/os-release` 的 `VERSION_ID`、系统与架构）；Codex Analytics 只使用这次采集的运行环境 |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
-| GET | `/kernels` | 仅 admin/master。返回两种产品 `kernels`（`cli-node` 默认免费、`crag` 签名加密 V2）、真实本地版本/就绪状态、按 VM 的公开 `licenses` 与 `installations`。读取不会初始化设备身份，不返回机器码、注册码或私钥 |
-| POST | `/kernels/pull` | `{ kernel: "cli-node" \| "crag", tag?: "vX.Y.Z" }`。只更新安装包缓存，不安装、不停 VM。cli-node 从 vm2api 应用 Release 下载 `kin-kernel` 与 `cli-node`；CRAG 默认使用 `crag_release` 固定版本，从同仓独立载荷 Release 下载 `crag-v2-licensed-amd64.tar.gz`。CRAG 用本机可信发行公钥校验签名、密文与成员；载荷缺少附件返回 `crag_v2_asset_missing`，不退回 legacy ELF |
-| POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "crag" }] }`，仅处理非空显式范围；未知/重复/越权/Codex 目标在任何停用前拒绝。每槽先检查包与授权，再停服务、禁用自动重启、安装并保存选择；完成后保持 stopped，不自动启动。返回 `{ ok,total,ok_count,failed_count,items:[{id,kernel,ok,stopped,version?,code?,error?}] }`，逐项失败不伪装成全局成功 |
+| GET | `/kernels` | 仅 admin/master。返回两种产品 `kernels`（`cli-node` 默认免费、`crag` 签名加密 V2）、本地包的就绪状态、按 VM 的公开 `licenses` 与 `installations`。CRAG 的 `release_options` 提供 3.0.9 标准版和 3.0.9 旧离线授权兼容版的完整发行标签，`payload_tag` 标识已下载或已安装的实际包（仅在可识别时返回）。不初始化身份，不返回机器码、注册码或私钥 |
+| GET | `/kernels/releases` | 返回近期具备完整附件的公开版本。`cli-node` 使用应用标签 `vX.Y.Z`，`crag` 使用完整载荷标签，同版本不同载荷分别列出 |
+| POST | `/kernels/pull` | `{ kernel: "cli-node" \| "crag", tag?: string }`。只更新安装包缓存，不安装、不停 VM。cli-node 接受 `vX.Y.Z`；CRAG 另接受完整 `payload-YYYY.MM.DD-crag-X.Y.Z[-legacy]` 标签。省略 `tag` 拉取最新，CRAG 默认和普通版本号不匹配 `-legacy`。返回 `release.payload_tag`；已固定的 CRAG 包另校验归档 SHA-256，拉取失败保留当前包 |
+| POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "crag", expected_tag?, payload_tag? }] }`。`expected_tag` 是确认时的 `vX.Y.Z`，CRAG 的 `payload_tag` 是确认时的完整载荷标签。缓存不符时拒绝重装。先验证包与授权，再排空、重装和重启，健康检查通过后恢复调度；逐槽报告实际 `version` / `payload_tag` |
 | GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
 | POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
 | POST | `/wrap-cli/kernel` | 原始 `application/octet-stream` linux amd64 ELF。替换仓内 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`。不自动同步槽位 |
@@ -294,6 +297,42 @@ OpenAI 图像模型不进入 GPT 对话矩阵，单独由 `image_tools` 管理�
 
 价格优先级：覆盖 `provider/model` > `provider/*` > `*/model` > models.dev > 内置快照。models.dev 缺的模型和档位（fast / flex / priority、长上下文、web search 按次费）从内置快照补。models.dev 每 24 小时刷新，遇到未定价模型且上次拉取超过 6 小时会后台补拉。
 
+## CRAG 订阅订单
+
+支付接口边界、`v1.4.104` 实付验收和复跑步骤见 [CRAG 支付与鉴权验收](crag-payment-acceptance.md)。
+
+仅 `GET /crag-shop/plans` 可匿名读取公开套餐，无需 CRAG Auth 或面板凭据。试点目录仅供有效的面板买家会话；试点凭据文件不可用时仍可读取公开目录。`payment_methods: []` 表示当前未开放收款，不表示套餐读取失败。
+
+其余接口只接受实际面板登录会话，不接受 Master 或托管 API 密钥。升级前发出的旧会话需要重新登录一次。管理员也只能访问自己的订单；不存在和不属于本人的订单均返回 `404`。响应禁止缓存，写入请求必须同源，有请求体时须用 `application/json`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/crag-shop/plans` | 在售 `plans`（`sku`、`term`、`amount_minor`、`slot_limit`，可选 `remaining`、`renewable`）、`payment_methods`，以及上线时的 `commerce` 核价规则 |
+| POST | `/crag-shop/quote` | JSON `{ sku, slots?, months?, coupon? }`；返回 `{ sku, term, months, slot_limit, subtotal_minor, discount_minor, amount_minor, remaining? }`。金额按人民币分计；仅自定义套餐接受槽位和月数，续费必须由管理员发起 |
+| POST | `/crag-shop/orders` | 在核价输入上增加 `{ payment_method, request_id, expected_amount_minor }`；提交金额不同于供应方当前核价时不创建订单。重试必须复用同一 `request_id` 及全部原参数；参数不一致返回 `409` |
+| GET | `/crag-shop/orders` | 查看本人订单列表 `{ orders, next_offset }`，每页最多 100 单，可用 `?offset=` 继续 |
+| GET | `/crag-shop/orders/:id` | 查看本人订单状态，不返回支付表单或兑换码 |
+| POST | `/crag-shop/orders/:id/resume` | 空请求体或 JSON `{}`；按订单 ID 恢复原付款表单（若仍可用），不会创建新订单。供应方未确认创建时返回 `404` |
+| POST | `/crag-shop/orders/:id/claim` | 空请求体或 JSON `{}`，普通订单返回 `{ order_id, redemption_code }`；未发货返回 `409`，不兑换到宿主机，续费订单不提供兑换码 |
+| POST | `/crag-shop/orders/:id/apply-renewal` | 空请求体或 JSON `{}`；仅管理员本人可将已发货的续费订单应用到当前宿主机，返回宿主订阅状态，不返回兑换码或续费证明 |
+
+历史订单优先按订单 ID 恢复。仅在供应方未收到建单时，才需要用原选项和 `request_id` 重新发起建单。未核价的旧方案仅在兼容模式下可建单。浏览器不能提交续费证明；控制面用已有的宿主凭据向固定供应方申请证明。
+
+订单视图包含 `order_id`、`request_id`、`status`、`sku`、`payment_method`、`created_at`（Unix 秒）、`term`、`amount_minor`、`slot_limit`。`reserved` 表示仅保留了本地订单标识、尚未确认供应方创建，后三个快照字段为 `null`；确认后的状态是 `pending`、`paid` 或 `fulfilled`。目录下架不影响已创建订单的历史快照。
+
+创建或恢复接口可能返回付款表单。收到配对的 `url` 和 `data` 时，使用 `url` 作为表单 POST 的目标，不能换成买家提供的地址。接口不返回订单私有凭据；仅普通订单的领取接口返回兑换码。有效的历史订单可能没有可用的支付表单，不能把这种情况当作支付成功。
+
+收据主密钥保存在数据目录的 `crag-shop-private/receipt.key`，仅控制进程可读；迁移安装或恢复订单库时，须单独安全备份并恢复同一份密钥。标准数据库备份不含该密钥，已有订单而密钥丢失时服务拒绝重建密钥。
+
+宿主订阅状态 `GET /crag-subscription` 仅管理员可查。`used_slots` / `available_slots` 表示应用锁用量；旧 `enabled_slots` 不用于统计实际服役。`ready` 仍表示有可绑定的 VM。H2 受签名名单 10,000 槽上限约束。仅受支持的 H1 宿主可通过 `POST /crag-subscription/upgrade`（JSON `{}`）升级；确认本机 Docker 槽已销毁后才释放 H2 应用锁，停机不释放。回收中断可以通过 `POST /crag-subscription/recover`（JSON `{}`）继续，未确认的销毁不会被判为成功。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/crag-subscription/redeem` | 管理员同源登录会话，JSON `{ "redemption_code": "<CRAGR1 宿主码>" }`，无需已有 VM，不自动绑定或启动。没有可信发行包时返回 `409 crag_subscription_host_package_unready`，不核销。新套餐替换额度上限；兑换中断可用 `/crag-subscription/recover` 继续同步。 |
+| POST | `/vms/:id/crag-license/bind` | 管理员同源登录会话，JSON `{}`，将有效宿主订阅绑定到合格的本机 Linux Docker CRAG v2 槽；回读槽授权确认 `license.valid` 与 `license.scope`。 |
+
+可选 `runtime` 返回实际运行的 `running_vms`、`ready_vms`、`unknown_vms`、`host_running_vms`、`host_unknown_vms`、`host_runtime_available`、`host_over_limit`、`checked_at` 和逐 VM 明细 `vms`。独立授权计入全局服役但不占宿主额度；未知不视为零。宿主订阅超额或无法核实在额度内时，新的宿主授权推理请求分别返回 `403 license_crag_host_over_quota` 或 `403 license_crag_host_usage_unverified`，不取消在途请求、不代替逐槽许可。
+
 ## 路由 / 设置
 
 | 方法 | 路径 | 说明 |
@@ -340,6 +379,8 @@ Analytics 按官方 [`codex_thread_initialized`](https://github.com/openai/codex
 `compatibility.persona_preset`（`official` / `official_full` / `zero` / `custom`）和 `compatibility.cache_ttl`（`5m` / `1h`）保存后投影到每个 Claude 槽的 `vms/<id>/run/kernel.json`：`persona_preset`、`system_layout`（`zero`→`zero`，其余→`identity`）、`default_cache_ttl`。响应 `kernel_persona.updated` 是本次字节有变化的槽数。`PATCH /vms/:id` 的 `timezone` / `timezone_follow_proxy` 另把 `timezone` 热写进该槽 `kernel.json`，`timezone_sync.kernel_hot` 表示文件有变化。容器 `TZ` 不在这次写入里。Codex 槽不写。
 
 `compatibility.crag_persona_preset`（`official_full` / `zero`，缺省 `official_full`）只给 CRAG v2 print 清洗，不投影进 `kernel.json`。v2 worker 不读 `persona_preset` 或 `CLAUDE_CODE_SYSTEM_LAYOUT`。`official_full` 只 append 调用方尾巴；`zero` 送 `crag_prompt.mode=replace`。其它值保存时 400。槽位显式 `zero` 覆盖该档；其它槽位人设在 print 上收成 append。这不是 TUI：不关内置工具，也不加 `--no-chrome`。
+
+`compatibility.crag_fold_history_system`（缺省开，写 `false` 关闭）：CRAG print 前把历史里的 `role: "system"` 消息改成 `<system-reminder>` 文本，并入前一条 user 消息（前一条是 assistant 时并入下一条 user，放在 tool_result 之后）；带图片等非文本内容的、找不到 user 可并的保持原样。Claude Code 几乎每轮都追加一条这类消息，不折叠时 CRAG `--resume` 重放出的请求每轮只命中 tools + system，整段对话按 1h 重写。
 
 `compatibility.cc_entrypoint`（`cli` / `sdk-cli`，缺省 `cli`）：OAuth 请求的 Node 协议清洗与 worker envelope 每次读取当前配置，UA 入口覆盖槽位身份中旧的 `sdk-cli` / `cli`，版本仍由槽位身份 / 代码 pin 提供。网关生成的 billing 使用同一入口，调用方已有 billing 不改写；Setup Token / API Key 的 inference-only UA 不变。保存同时投影到 Claude 槽的 `kernel.json.cc_entrypoint`，由支持该字段的 cli-node 在下次请求生成最终 UA；不需要为此次 Node 修复重建 CLI。
 

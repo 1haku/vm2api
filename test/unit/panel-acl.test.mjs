@@ -36,6 +36,8 @@ test('user sees subscriptions / usage records / keys / statistics', () => {
   assert.deepEqual(viewsForRole('user'), ['subscriptions', 'usage-records', 'keys', 'statistics'])
   assert.equal(canViewPage('user', 'vm'), false)
   assert.deepEqual(viewsForRole('super'), ['overview', 'cluster', 'logs', 'statistics', 'vm'])
+  assert.equal(canViewPage('admin', 'crag-subscription'), true)
+  assert.equal(canViewPage('user', 'crag-subscription'), false)
   assert.equal(canViewPage('admin', 'statistics'), true)
   assert.equal(canViewPage('user', 'statistics'), true)
   assert.equal(canViewPage('user', 'overview'), false)

@@ -203,11 +203,12 @@ import {
   readHostUpgradeStatus,
   startHostUpgrade,
 } from './release.mjs'
-import { downloadReleaseKernel, kernelReleaseHttpStatus } from './release-kernel.mjs'
+import { downloadReleaseKernel, kernelReleaseHttpStatus, listKernelReleaseVersions } from './release-kernel.mjs'
 import { describeKernelCatalog, pullKernelRelease } from './kernel-catalog.mjs'
 import { installKernelTargets, releaseKernelInstallSafetyHold, validateKernelTargets } from '../vm/kernel-install.mjs'
 import { withSlotMaintenance } from '../vm/slot-maintenance.mjs'
 import { clearActiveVmFromDb, removeVmFromDb } from '../vm/vm-db-sync.mjs'
+import { renameVmId } from '../vm/vm-rename.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
 import { reloadActiveVm } from '../core/config.mjs'
 import {
@@ -216,6 +217,7 @@ import {
   normalizeTimezone,
   nextNumericIndex,
   padVm,
+  discardSlotContainer,
   STANDARD_LOCALE,
 } from '../vm/vm-runtime.mjs'
 import {
@@ -227,11 +229,14 @@ import {
   switchInheritedInferenceEngines,
   slotExec,
 } from '../vm/slot-runtime.mjs'
-import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
+import { preflightFreshClaudeKernels, recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
 import { diagnoseSlotServices, powerOnSlot, recoverSlot, redactSecrets } from '../vm/slot-recovery.mjs'
 import { commitVmPackage, exportVmPackage, parseVmPackage } from '../vm/vm-package.mjs'
 import { slotMigrationBusy, slotMigrationJob, startSlotMigration } from '../cluster/slot-migration.mjs'
 import { isNativeNodeVm, preflightNode } from '../cluster/placement.mjs'
+import { stageFreshClaudeKernels } from '../cluster/remote-slot-files.mjs'
+import { cragSlotPayload } from '../cluster/slot-image.mjs'
+import { normalizeAutoPlacement, pickPlacement, readLocalHost, requestedPlacement } from '../cluster/auto-placement.mjs'
 import { probeLocalKvm } from '../vm/kvm-host.mjs'
 import { normalizeVmConfig, resolveMachineSpec, validateVmConfigPatch } from '../vm/machine-spec.mjs'
 import { raiseDockerSlotMemory } from '../vm/docker-slot-memory.mjs'
@@ -281,6 +286,8 @@ import {
 import { inspectClusterPayloadChanges, refreshClusterSlotPayloads } from '../cluster/remote-slot.mjs'
 import { readRawBody as defaultReadRawBody } from '../http/respond.mjs'
 import { corsHeadersForRequest } from '../http/cors.mjs'
+import { createCragShopHandler, cragShopRoute, isCragShopPath, sameOriginPost } from './crag-shop.mjs'
+import { createCragSubscriptionHandler, cragSubscriptionRoute } from './crag-subscription-routes.mjs'
 import { restartRustKernel, syncClaudeKernelConfigs, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
 import { countTokensViaWorker, syncClaudeClientCredentials } from '../transport/go-worker-client.mjs'
@@ -293,6 +300,8 @@ import {
   distributeCragUniversalGrant,
   getCragLicense,
   projectCragUniversalVm,
+  redeemCragDeviceVoucher,
+  resolveCragVoucherKind,
 } from '../vm/crag-license.mjs'
 import { applyNativeTelemetry } from '../vm/fleet-update.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
@@ -549,12 +558,23 @@ function syncInstalledKernels(args, operation = runKernelSync) {
   return run
 }
 
+async function teardownSlot(vm, subscription) {
+  try {
+    return subscription?.teardown
+      ? await subscription.teardown(vm, (requireConfirmation) => destroySlot(vm, { requireConfirmation }))
+      : await destroySlot(vm)
+  } catch {
+    return { ok: false, code: 'vm_teardown_unconfirmed', error: 'Could not safely finish VM teardown' }
+  }
+}
+
 async function runKernelSync({
   project,
   routingConfig,
   body = {},
   refreshCluster = refreshClusterSlotPayloads,
   restartKernel = restartRustKernel,
+  subscription,
 }) {
   const all = listVms(project)
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
@@ -599,7 +619,7 @@ async function runKernelSync({
   if (traits) {
     for (const vm of localVms) {
       if (isCodexVm(vm)) continue
-      const gone = await destroySlot(vm)
+      const gone = await teardownSlot(vm, subscription)
       if (!gone.ok) {
         const item = (local.items || []).find((row) => row.id === vm.id)
         if (item) {
@@ -664,6 +684,28 @@ export function createPanelHandler(ctx) {
   const refreshCluster = ctx.refreshClusterSlotPayloads || refreshClusterSlotPayloads
   const requireAuth = (...args) => ctx.requireAuth(...args)
   const cfg = ctx.cfg
+  const handleCragShop =
+    ctx.handleCragShop ??
+    createCragShopHandler({
+      getDb: ctx.getDb,
+      subscription: ctx.cragSubscription,
+      isCurrentAdmin: (req) => {
+        const record = ctx.panelUsers.getByUsername(req.panelUser)
+        if (record) return record.enabled && record.role === 'admin' && req.panelBuyerOwner === `panel:${record.id}`
+        return req.panelBuyerOwner === `configured-admin:${req.panelUser}`
+      },
+      dataDir: cfg?.paths?.data,
+      publicBaseUrl: cfg?.base_url,
+      json,
+      readRawBody,
+    })
+  const handleCragSubscription = createCragSubscriptionHandler({
+    subscription: ctx.cragSubscription,
+    getVm: (id) => (isValidVmId(id) ? getVm(cfg.paths.project, id) : null),
+    publicBaseUrl: cfg?.base_url,
+    json,
+    readRawBody,
+  })
   const routingConfigPath = ctx.routingConfigPath
   const stickyRouter = ctx.stickyRouter
   const accountQuota = ctx.accountQuota
@@ -1555,15 +1597,17 @@ export function createPanelHandler(ctx) {
       const username = body.username || body.user || body.u || ''
       const password = body.password || body.pass || body.p || ''
       const authed = verifyPanelLogin(username, password)
+      let buyerId = authed?.id
       if (!authed) {
         return json(res, 401, { ok: false, error: { message: '用户名或密码错误', type: 'auth' } })
       }
       if (authed.source === 'env') {
         try {
-          panelUsers.bootstrapFromEnv({ username: authed.username, password })
+          buyerId = panelUsers.bootstrapFromEnv({ username: authed.username, password })?.id
         } catch {}
       }
-      const token = createPanelSession(authed.username, { role: authed.role })
+      const buyer = buyerId ? { id: buyerId } : authed.source === 'env' ? { configuredAdmin: true } : undefined
+      const token = createPanelSession(authed.username, { role: authed.role, buyer })
       const secure = panelCookieSecure(req)
       res.setHeader('Set-Cookie', panelSessionCookie(token, { secure }))
       const me = { user: authed.username, role: authed.role }
@@ -1583,6 +1627,22 @@ export function createPanelHandler(ctx) {
       const secure = panelCookieSecure(req)
       res.setHeader('Set-Cookie', clearPanelSessionCookie({ secure }))
       return json(res, 200, { ok: true })
+    }
+
+    if (isCragShopPath(p)) {
+      res.setHeader('Cache-Control', 'no-store')
+      const route = cragShopRoute(req.method, p)
+      if (route === 'plans') {
+        // A valid buyer session gets the pilot catalogue; everyone else gets the public view.
+        requireAuth(req, res, { buyer: true, optionalBuyer: true })
+        if (res.headersSent) return true
+        return handleCragShop(req, res, url, route)
+      }
+      if (!requireAuth(req, res, { buyer: true })) return true
+      if (route && !authorizePanelRoute(req.method, p, panelIdentity(req).role).ok) {
+        return json(res, 403, { ok: false, error: { code: 'forbidden', message: 'Forbidden' } })
+      }
+      return handleCragShop(req, res, url, route)
     }
 
     if (p.startsWith('/api/panel')) {
@@ -1628,6 +1688,9 @@ export function createPanelHandler(ctx) {
           scenario: url.searchParams.get('scenario') || 'success',
         })
       }
+      const subscriptionRoute = cragSubscriptionRoute(req.method, p)
+      if (subscriptionRoute) return handleCragSubscription(req, res, subscriptionRoute)
+
       if (
         denyIfUserMissesVm(req, res, {
           projectRoot: cfg.paths.project,
@@ -2710,6 +2773,7 @@ export function createPanelHandler(ctx) {
           panel.ok({
             vm: normalizeVmConfig(ctx.routingConfig?.vm),
             kvm,
+            crag_supported: process.platform === 'linux' && process.arch === 'x64',
           }),
         )
       }
@@ -2724,6 +2788,7 @@ export function createPanelHandler(ctx) {
           ids: Array.isArray(body.ids) ? body.ids : null,
           concurrency: body.concurrency,
           routing: ctx.routingConfig,
+          telemetryLifecycle: { watchdog: ctx.kernelWatchdog, poolScheduler: ctx.poolScheduler },
         })
         return json(res, 200, panel.ok(report))
       }
@@ -2741,6 +2806,17 @@ export function createPanelHandler(ctx) {
         }
         return json(res, 200, panel.ok({ kernels: describeKernelCatalog(cfg.paths.project), licenses, installations }))
       }
+      if (req.method === 'GET' && p === '/api/panel/kernels/releases') {
+        try {
+          const releases = await listKernelReleaseVersions({ fetchImpl: ctx.fetchImpl })
+          return json(res, 200, panel.ok(releases))
+        } catch {
+          return json(res, 502, {
+            ok: false,
+            error: { code: 'kernel_releases_unavailable', message: '暂时无法读取发行版本' },
+          })
+        }
+      }
       if (req.method === 'POST' && p === '/api/panel/kernels/pull') {
         const body = await readBody(req, 8 * 1024)
         if (
@@ -2755,7 +2831,7 @@ export function createPanelHandler(ctx) {
         }
         const result = await pullKernelRelease(
           cfg.paths.project,
-          { kernel: body.kernel, tag: body.tag || '' },
+          { kernel: body.kernel, tag: body.tag || '', latest: true },
           { fetchImpl: ctx.fetchImpl },
         )
         if (!result.ok)
@@ -2963,6 +3039,7 @@ export function createPanelHandler(ctx) {
           {
             project: cfg.paths.project,
             routingConfig: ctx.routingConfig,
+            subscription: ctx.cragSubscription,
             body: { ...body, ids: requestedIds },
             restartKernel: ctx.kernelPolicyOps?.restartRustKernel,
           },
@@ -3040,6 +3117,7 @@ export function createPanelHandler(ctx) {
         const report = await syncInstalledKernels({
           project: cfg.paths.project,
           routingConfig: ctx.routingConfig,
+          subscription: ctx.cragSubscription,
           body,
           refreshCluster,
           restartKernel: ctx.kernelPolicyOps?.restartRustKernel || ctx.restartRustKernel,
@@ -3272,6 +3350,7 @@ export function createPanelHandler(ctx) {
       }
 
       if (['GET', 'POST'].includes(req.method) && /^\/api\/panel\/vms\/[^/]+\/crag-license$/.test(p)) {
+        res.setHeader?.('Cache-Control', 'no-store')
         if (panelIdentity(req).role !== 'admin')
           return json(res, 403, {
             ok: false,
@@ -3302,16 +3381,42 @@ export function createPanelHandler(ctx) {
               },
             })
           }
-          const activated = activateCragLicense(cfg.paths.project, vm, registrationCode)
+          const online = registrationCode.startsWith('CRAGR1.')
+          if (online && (req.apiKeyKind || !panelIdentity(req).user || !sameOriginPost(req, cfg.base_url))) {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'license_redeem_origin', message: 'Same origin required.' },
+            })
+          }
+          let activated
+          if (online) {
+            const kind = await resolveCragVoucherKind(cfg.paths.project, vm, registrationCode, ctx.fetchCragDeviceGrant)
+            if (kind === 'host') {
+              activated = await ctx.cragSubscription.activateVoucher(vm.id, registrationCode)
+            } else {
+              activated = await redeemCragDeviceVoucher(cfg.paths.project, vm, registrationCode, {
+                getTarget: () => getVm(cfg.paths.project, vm.id),
+                routing: ctx.routingConfig,
+                fetchImpl: ctx.fetchCragDeviceGrant,
+              })
+            }
+          } else {
+            activated = activateCragLicense(cfg.paths.project, vm, registrationCode)
+          }
           if (activated.license?.scope === 'kernel') await distributeCragUniversalGrant(cfg.paths.project)
           return json(res, 200, panel.ok(activated))
         } catch (error) {
-          const typed = error instanceof CragLicenseError
-          return json(res, typed ? 403 : 400, {
+          const typed =
+            error instanceof CragLicenseError ||
+            (Number.isInteger(error?.status) &&
+              error.status >= 400 &&
+              error.status <= 599 &&
+              /^[a-z][a-z0-9_]{1,63}$/.test(error?.code || ''))
+          return json(res, typed ? error.status : 400, {
             ok: false,
             error: {
               code: typed ? error.code : 'license_invalid',
-              message: typed ? error.message : 'The CRAG activation request is invalid.',
+              message: error instanceof CragLicenseError ? error.message : 'CRAG activation did not complete.',
             },
           })
         }
@@ -3343,6 +3448,32 @@ export function createPanelHandler(ctx) {
         return await withVmLock(path.join(cfg.paths.project, 'vms', `${id}.json`), async () => {
           const currentVm = getVm(cfg.paths.project, id)
           if (!currentVm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+          const requestedId =
+            body && Object.prototype.hasOwnProperty.call(body, 'id') ? String(body.id ?? '').trim() : ''
+          if (requestedId && requestedId !== id) {
+            const renamed = renameVmId(cfg.paths.project, id, requestedId, {
+              discardContainer: discardSlotContainer,
+            })
+            if (!renamed.ok) {
+              return json(res, renamed.status || 400, {
+                ok: false,
+                error: { code: renamed.code || 'vm_rename_failed', message: renamed.message || '改编号失败' },
+              })
+            }
+            const detail = await panel.buildVmDetail({
+              cfg,
+              accountQuota,
+              id: renamed.id,
+              routingConfig: ctx.routingConfig,
+              poolScheduler: ctx.poolScheduler,
+              requestLog,
+              proxyPool,
+              kernelHealth: panelKernelHealth,
+              clusterNodes: clusterNodesOf(ctx),
+              role: panelIdentity(req).role,
+            })
+            return json(res, 200, detail)
+          }
           const strictInteger = (value, min, max, label, { nullable = false } = {}) => {
             if (nullable && value === null) return null
             if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
@@ -3975,57 +4106,51 @@ export function createPanelHandler(ctx) {
           return json(res, 400, { ok: false, error: { message: 'invalid vm id' } })
         }
         const vmPath = path.join(cfg.paths.project, 'vms', `${id}.json`)
-        if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-        const active = getActiveVmId(cfg.paths.project)
-        if (active === id && listVms(cfg.paths.project).some((vm) => vm.id !== id)) {
-          return json(res, 409, { ok: false, error: { message: 'cannot delete active VM, switch active first' } })
-        }
-        const vm = getVm(cfg.paths.project, id)
-        if (denyIfUserCannotDeleteVm(req, res, vm, json)) return true
-        try {
-          if (vm) {
-            const gone = await destroySlot(vm)
-            // A node slot that could not be removed keeps running there with the account's credential.
-            if (!gone.ok && slotHost(vm).kind === 'node') {
-              return json(res, 409, {
-                ok: false,
-                error: { code: gone.code || 'remote_destroy_failed', message: gone.error || 'remote destroy failed' },
-              })
-            }
+        return await withVmLock(vmPath, async () => {
+          const vm = getVm(cfg.paths.project, id)
+          if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+          const active = getActiveVmId(cfg.paths.project)
+          if (active === id && listVms(cfg.paths.project).some((slot) => slot.id !== id)) {
+            return json(res, 409, { ok: false, error: { message: 'cannot delete active VM, switch active first' } })
           }
-        } catch {}
-        // detach this VM only — do not unbind other slots sharing the SOCKS5
-        try {
-          proxyPool.unbindVm(id)
-        } catch {}
-        // remove cli-home
-        try {
-          fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
-        } catch {}
-        fs.unlinkSync(vmPath)
-        invalidateVmSlotReadCache(cfg.paths.project, id)
-        try {
-          vmTestSchedule.remove(id)
-        } catch {}
-        if (active === id) {
-          clearActiveVm(cfg.paths.project)
+          if (denyIfUserCannotDeleteVm(req, res, vm, json)) return true
+          const gone = await teardownSlot(vm, ctx.cragSubscription)
+          if (!gone.ok) {
+            return json(res, 409, {
+              ok: false,
+              error: { code: gone.code || 'vm_destroy_failed', message: gone.error || 'VM teardown failed' },
+            })
+          }
+          // Detach this VM only — do not unbind other slots sharing the SOCKS5.
           try {
-            clearActiveVmFromDb()
+            proxyPool.unbindVm(id)
           } catch {}
           try {
-            reloadActiveVm(cfg)
+            fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
           } catch {}
-        }
-        // drop the DB credential mirror row too
-        try {
-          removeVmFromDb(id)
-        } catch {}
-        // optional chat side files
-        try {
-          const chat = path.join(cfg.paths.project, 'vms', `${id}-chat.json`)
-          if (fs.existsSync(chat)) fs.unlinkSync(chat)
-        } catch {}
-        return json(res, 200, panel.ok({ deleted: id }))
+          fs.unlinkSync(vmPath)
+          invalidateVmSlotReadCache(cfg.paths.project, id)
+          try {
+            vmTestSchedule.remove(id)
+          } catch {}
+          if (active === id) {
+            clearActiveVm(cfg.paths.project)
+            try {
+              clearActiveVmFromDb()
+            } catch {}
+            try {
+              reloadActiveVm(cfg)
+            } catch {}
+          }
+          try {
+            removeVmFromDb(id)
+          } catch {}
+          try {
+            const chat = path.join(cfg.paths.project, 'vms', `${id}-chat.json`)
+            if (fs.existsSync(chat)) fs.unlinkSync(chat)
+          } catch {}
+          return json(res, 200, panel.ok({ deleted: id, ...(gone.reclaim_pending && { reclaim_pending: true }) }))
+        })
       }
       // POST /api/panel/vms/:id/reset — destroy container + home, recreate same slot
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/reset$/.test(p)) {
@@ -4037,7 +4162,7 @@ export function createPanelHandler(ctx) {
         return await withVmLock(vmPath, async () => {
           if (!fs.existsSync(vmPath)) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
           const prev = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-          const gone = await destroySlot(prev)
+          const gone = await teardownSlot(prev, mode === 'traits' ? ctx.cragSubscription : null)
           if (!gone.ok) {
             return json(res, 500, { ok: false, error: { message: gone.error || 'destroy failed', code: gone.code } })
           }
@@ -4406,6 +4531,7 @@ export function createPanelHandler(ctx) {
               projectRoot: cfg.paths.project,
               vm,
               routing: ctx.routingConfig,
+              lifecycle: { watchdog: ctx.kernelWatchdog, poolScheduler: ctx.poolScheduler },
               replaceEnv: Object.hasOwn(body, 'extra_env') || Object.hasOwn(body, 'settings_json_override'),
             })
           }
@@ -4470,7 +4596,7 @@ export function createPanelHandler(ctx) {
             )
           }
           if (mode === 'traits') {
-            const gone = await destroySlot(vm)
+            const gone = await teardownSlot(vm, ctx.cragSubscription)
             if (!gone.ok)
               return json(res, 500, { ok: false, error: { code: gone.code, message: gone.error || '重建新特征失败' } })
             const rebuilt = recreateVmFiles(cfg.paths.project, vm, { mode: 'traits' })
@@ -4665,7 +4791,22 @@ export function createPanelHandler(ctx) {
         }
         const startNow = body.start !== false && body.status !== 'stopped'
         const wantKernel = body.kernel && OS_CATALOG[body.kernel] ? body.kernel : kernelForIndex(idx)
-        const nodeId = body.node_id ? String(body.node_id) : null
+        let nodeId = body.node_id ? String(body.node_id) : null
+        const kindProbe = {}
+        stampVmKind(kindProbe, body)
+        const codexCreate = isCodexVm(kindProbe)
+        if (Object.hasOwn(body, 'dataplane') && (codexCreate || !['wrap', 'crag'].includes(body.dataplane))) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_create_dataplane', message: '仅 Anthropic 支持选择 cli-node 或 CRAG 推理内核' },
+          })
+        }
+        const selectedCrag = body.dataplane === 'crag'
+        const unsupportedCrag = () =>
+          json(res, 409, {
+            ok: false,
+            error: { code: 'crag_v2_unsupported_placement', message: '此机器不支持 CRAG，只安装标准内核' },
+          })
         const vmDefaults = normalizeVmConfig(ctx.routingConfig?.vm)
         const requestedRuntime = body.runtime_type
         let runtime
@@ -4697,16 +4838,59 @@ export function createPanelHandler(ctx) {
           }
           throw error
         }
-        if (nodeId) {
+        // No node named: auto placement may still pick one by memory/load headroom.
+        // Only for admin Docker creates whose exit is not pinned to this host.
+        let placement = null
+        let releasePlacement = () => {}
+        const placementPolicy = normalizeAutoPlacement(ctx.routingConfig?.cluster?.auto_placement)
+        const wanted = requestedPlacement(body, placementPolicy)
+        const exitPinsHost = typeof body.proxy_id === 'string' && isLocalEgressId(body.proxy_id.trim())
+        const localCragSupported = process.platform === 'linux' && process.arch === 'x64'
+        const cragCapableNodes = new Set()
+        if (wanted.mode === 'auto' && ident.role === 'admin' && runtime !== RUNTIME_KVM && !exitPinsHost) {
+          const picked = await (ctx.pickPlacement || pickPlacement)({
+            vm: { machine },
+            vms: existing,
+            routing: ctx.routingConfig,
+            policy:
+              selectedCrag && !localCragSupported ? { ...placementPolicy, include_local: false } : placementPolicy,
+            nodes: clusterNodesOf(ctx),
+            localHost: (ctx.readLocalHost || readLocalHost)(),
+            preflight: async (id) => {
+              const checked = await preflightNode(id, { kernel: wantKernel, runtime })
+              const supported =
+                !isNativeNodeVm({ node_id: id }) && checked.checks.some((check) => check.id === 'arch' && check.ok)
+              if (checked.ok && supported) cragCapableNodes.add(id)
+              if (selectedCrag && checked.ok && !supported) {
+                return {
+                  ...checked,
+                  ok: false,
+                  checks: [...checked.checks, { id: 'crag', ok: false, level: 'error', message: '此机器不支持 CRAG' }],
+                }
+              }
+              return checked
+            },
+          })
+          if (picked.error) {
+            return json(res, picked.error.status, {
+              ok: false,
+              error: { code: picked.error.code, message: picked.error.message, placement: picked.error.report },
+            })
+          }
+          placement = picked.report
+          releasePlacement = picked.release || releasePlacement
+          nodeId = picked.node_id || null
+        }
+        if (nodeId && !placement) {
           if (ident.role !== 'admin') {
             return json(res, 403, {
               ok: false,
               error: { code: 'placement_forbidden', message: '只有管理员可以把虚拟机放到集群节点' },
             })
           }
-          const kindProbe = { node_id: nodeId }
-          stampVmKind(kindProbe, body)
-          if (isCodexVm(kindProbe) && !slotHost(kindProbe).supports('codex')) {
+          const native = isNativeNodeVm({ node_id: nodeId })
+          if (selectedCrag && native) return unsupportedCrag()
+          if (codexCreate && !slotHost({ ...kindProbe, node_id: nodeId }).supports('codex')) {
             return json(res, 400, {
               ok: false,
               error: { code: 'remote_unsupported', message: '集群节点上的虚拟机暂不支持此操作' },
@@ -4721,6 +4905,9 @@ export function createPanelHandler(ctx) {
               error: { code: e?.code || 'placement_failed', message: String(e?.message || e) },
             })
           }
+          const arch = preflight.checks.find((check) => check.id === 'arch')
+          if (selectedCrag && arch && !arch.ok) return unsupportedCrag()
+          if (!native && arch?.ok) cragCapableNodes.add(nodeId)
           if (!preflight.ok) {
             return json(res, 409, {
               ok: false,
@@ -4732,6 +4919,12 @@ export function createPanelHandler(ctx) {
             })
           }
         }
+        const cragSupported = nodeId ? cragCapableNodes.has(nodeId) : localCragSupported
+        if (selectedCrag && !cragSupported) {
+          releasePlacement()
+          return unsupportedCrag()
+        }
+        const preinstallBoth = !codexCreate && cragSupported
         // An explicit exit (e.g. local egress for a node: that VPS's own route) replaces auto-allocation.
         let pickedProxyId = typeof body.proxy_id === 'string' ? body.proxy_id.trim() : ''
         if (pickedProxyId && isLocalEgressId(pickedProxyId)) {
@@ -4864,6 +5057,12 @@ export function createPanelHandler(ctx) {
         }
         if (nodeId) vm.node_id = nodeId
         stampVmKind(vm, body)
+        if (!codexCreate) vm.dataplane = body.dataplane ?? 'wrap'
+        if (selectedCrag) {
+          vm.crag_kernel_version = 'v2'
+          // Do not publish a running record before the selected CRAG has passed licensing.
+          vm.status = 'stopped'
+        }
         const openaiPolicy = normalizeOpenAIQuotaPolicy(ctx.routingConfig?.codex?.quota)
         const explicitConcurrency =
           Object.prototype.hasOwnProperty.call(body, 'max_concurrency') ||
@@ -4923,11 +5122,24 @@ export function createPanelHandler(ctx) {
           vm.policy.maxRpm = explicitRpm ? rawRpm : Number(ctx.routingConfig?.concurrency?.default_max_rpm ?? 0)
           vm.policy.rpmOverride = explicitRpm
         }
+        if (preinstallBoth) {
+          const project = cfg.paths.project
+          const missing = '请在「内核」页拉取可信内核包后重试。'
+          try {
+            preflightFreshClaudeKernels(project, vm)
+            if (nodeId) cragSlotPayload(project, { required: true })
+          } catch (error) {
+            releasePlacement()
+            return json(res, 409, {
+              ok: false,
+              error: { code: error.code || 'kernel_package_missing', message: missing },
+            })
+          }
+        }
         atomicWriteJson(vmPath, vm, { mode: 0o600 })
+        // The record now books this slot's memory itself.
+        releasePlacement()
         writeGuestMachineIdFile(cfg.paths.project, id, generated.guest_machine_id)
-        try {
-          seedFreshCliHome(cfg.paths.project, vm)
-        } catch (e) {}
         let allocated = null
         let proxyError = null
         const wantProxy = body.auto_allocate_proxy === true || startNow || !!pickedProxyId
@@ -4958,13 +5170,28 @@ export function createPanelHandler(ctx) {
           vm.timezone_source = 'proxy_geo'
           if (vm.fingerprint && typeof vm.fingerprint === 'object') vm.fingerprint.timezone = zoned.timezone
         }
-        if (body.activate === true) {
+        let startError = null
+        try {
+          seedFreshCliHome(cfg.paths.project, vm, {
+            routing: ctx.routingConfig,
+            preinstallBoth: preinstallBoth && !nodeId,
+          })
+          if (preinstallBoth && nodeId) await stageFreshClaudeKernels(vm, cfg.paths.project)
+        } catch (error) {
+          const code = /^[a-z0-9_]+$/i.test(error.code || '') ? error.code : 'vm_init_failed'
+          startError = `虚拟机初始化失败（${code}）`
+          patchVmRecord(cfg.paths.project, id, { status: 'error' })
+          markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', { message: startError })
+        }
+        if (!startError && selectedCrag && !checkCragLicense(cfg.paths.project, vm, ctx.routingConfig).ok) {
+          startError = '已预装 CRAG，激活本槽授权后再启动'
+        }
+        if (!startError && body.activate === true) {
           try {
             activateVmSlot(id)
           } catch (e) {}
         }
-        let startError = null
-        if (startNow && hasExit(vm)) {
+        if (!startError && startNow && hasExit(vm)) {
           let boot
           try {
             boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
@@ -4982,7 +5209,7 @@ export function createPanelHandler(ctx) {
           } else {
             patchVmRecord(cfg.paths.project, id, { status: 'running' })
           }
-        } else if (startNow) {
+        } else if (!startError && startNow) {
           patchVmRecord(cfg.paths.project, id, { status: 'stopped' })
         }
         const saved = getVm(cfg.paths.project, id) || vm
@@ -4996,6 +5223,7 @@ export function createPanelHandler(ctx) {
               role: ident.role,
               nodes: clusterNodesOf(ctx),
             }),
+            ...(placement ? { placement } : {}),
             ...(startError ? { start_error: startError } : {}),
             ...(proxyError ? { proxy_error: proxyError } : {}),
           }),
@@ -5209,6 +5437,7 @@ export function createPanelHandler(ctx) {
             if (inference) {
               oauth.type = 'setup-token'
               oauth.mode = 'setup-token'
+              oauth.oauth_registration = 'console'
             }
           } else if (isSub2apiAccountExport(exportDoc)) {
             oauth = sub2apiAccountToOauth(exportDoc, existing)

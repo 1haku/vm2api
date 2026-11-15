@@ -31,6 +31,22 @@ test('broken native handoff contracts stop without replaying or cooling an accou
   }
 })
 
+test('CRAG host capacity rejections stop without an account or egress cooldown', () => {
+  for (const code of ['license_crag_host_over_quota', 'license_crag_host_usage_unverified']) {
+    const policy = classifyUpstreamResult({
+      ok: false,
+      status: 403,
+      terminalState: 'rejected',
+      body: { type: 'error', error: { type: 'permission_error', code } },
+    })
+    assert.equal(policy.reason, code)
+    assert.equal(policy.scope, 'request')
+    assert.equal(policy.action, 'stop')
+    assert.equal(policy.retrySameAccount, false)
+    assert.equal(policy.cooldownUntil, null)
+  }
+})
+
 test('unified account 429 without reset header uses usage window then 30 minutes', () => {
   const now = 1_700_000_000_000
   const usageReset = now + 3_600_000
@@ -234,6 +250,24 @@ test('incomplete 502 is an empty hop, not account overload', () => {
   assert.equal(policy.action, 'continue')
   assert.equal(policy.cooldownUntil, null)
   assert.equal(policy.retrySameAccount, true)
+})
+
+test('a dead native Claude process fails over without a cooldown or circuit', () => {
+  // crag-v2 answers 502 when the VM's Claude process dies before replying,
+  // e.g. killed by the container's memory or pids limit. The account is fine.
+  for (const error of [
+    { type: 'process_error', message: 'Claude process exited (None): Claude native process exited with code None' },
+    { type: 'api_error', message: 'Claude process exited (Some(1)): Claude native process exited with code Some(1)' },
+  ]) {
+    const policy = classifyUpstreamResult({ status: 502, body: { type: 'error', error } }, { now: 1000 })
+    assert.equal(policy.action, 'continue', error.type)
+    assert.equal(policy.reason, 'worker_process_exit')
+    assert.equal(policy.scope, 'worker')
+    assert.equal(policy.cooldownUntil, null)
+    assert.notEqual(policy.circuit, true)
+    assert.equal(policy.retrySameAccount, false)
+    assert.equal(shouldContinue(policy), true)
+  }
 })
 
 test('slot_busy 503 does not park the account', () => {
