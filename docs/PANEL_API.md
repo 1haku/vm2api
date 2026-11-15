@@ -125,15 +125,15 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | POST | `/test-schedule/sync` | 覆盖写调度时间：`{ scope: "all" \| "ids", vm_ids?, schedule }`。MVP **只**同步 `frequency`/时刻/星期/分钟/`timezone`，**不同步** prompt、模型、token·effort、`enabled`。无计划槽创建且 `enabled=false`（模型/Prompt 取该槽已有计划或 test-chat 默认 `hello` + 首个可测模型）。租户 `scope=all` 仅自己的槽；逐槽权限同 test-schedule |
 | POST | `/vms/:id/oauth/refresh` | 只转发 worker `Ensure`，不回 token |
 | POST | `/vms/:id/oauth/to-setup-token` | 把当前完整 OAuth 活票改成 Setup Token（保留 refresh/过期）。已是 setup-token 则幂等 |
-| POST | `/vms/:id/oauth/generate-auth-url` | PKCE 授权链接；无 SOCKS5 拒绝。`{ flavor: "claude_code" }` 为官方 Claude Code 授权页。`{ flavor: "setup_token" }` 为 inference-only PKCE，不启槽内 CLI |
-| POST | `/vms/:id/oauth/exchange-code` | 粘贴授权码，经槽代理换票；导入并同步 VM 客户端后才返回成功。完整 OAuth 才排队初装。flavor 以 session 为准 |
+| POST | `/vms/:id/oauth/generate-auth-url` | CAI / Setup Token PKCE 授权链接；要求绑定可用出口。`claude_code` 返回 409 `native_login_required`，请使用专用终端 |
+| POST | `/vms/:id/oauth/exchange-code` | CAI / Setup Token 提交会话 ID 和授权码；导入并同步后才返回成功。Claude Code 的回调由专用终端处理 |
 | POST | `/vms/:id/credentials/sync` | 管理员手动同步 Claude 客户端凭证，成功返回 `{ synced: true }`。无凭证返回 409，同步失败返回 502；不换票、不回传 token。远程槽保留节点已轮换凭证并修复客户端链接 |
 | GET/POST | `/vms/:id/official-cc-bootstrap` | 初装进度 / `{ manual:true }` 再跑 |
 | GET/PUT | `/vms/:id/seed-settings` | 播种；面板默认锁定，解锁后改、播种前确认。`settings.json` 可编辑 env（经 `extra_env`）与 `theme`；`autoUpdates`/`grove_enabled` 与 TZ/LANG/LC_ALL、telemetry/bedrock/vertex 等契约 env 只读展示，TZ/LANG 经 PUT `timezone` / `timezone_follow_proxy` / `locale` 写入槽位后再播种，不经 `extra_env`；`claude_setting` 可编辑。`GET ?debug=1` 额外返回 `telemetry_log`（最近 40 行脱敏上传审计，默认不带） |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`、槽内 `/etc/os-release` 的 `VERSION_ID`、系统与架构）；Codex Analytics 只使用这次采集的运行环境 |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
 | GET | `/kernels` | 仅 admin/master。返回两种产品 `kernels`（`cli-node` 默认免费、`crag` 签名加密 V2）、真实本地版本/就绪状态、按 VM 的公开 `licenses` 与 `installations`。读取不会初始化设备身份，不返回机器码、注册码或私钥 |
-| POST | `/kernels/pull` | `{ kernel: "cli-node" | "crag", tag?: "vX.Y.Z" }`。只更新安装包缓存，不安装、不停 VM。默认内核从 vm2api Release 下载 `kin-kernel` 与 `cli-node`；CRAG 使用独立的 `crag_release` 供应仓 tag（例如 `v2.8.16`），从 `dofastted/claude-code` 下载 `crag-v2-licensed-amd64.tar.gz`。两种来源都按本机可信发行公钥校验签名、密文与成员；缺少附件返回 `crag_v2_asset_missing`，不退回 legacy ELF |
+| POST | `/kernels/pull` | `{ kernel: "cli-node" \| "crag", tag?: "vX.Y.Z" }`。只更新安装包缓存，不安装、不停 VM。cli-node 从 vm2api 应用 Release 下载 `kin-kernel` 与 `cli-node`；CRAG 默认使用 `crag_release` 固定版本，从同仓独立载荷 Release 下载 `crag-v2-licensed-amd64.tar.gz`。CRAG 用本机可信发行公钥校验签名、密文与成员；载荷缺少附件返回 `crag_v2_asset_missing`，不退回 legacy ELF |
 | POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "crag" }] }`，仅处理非空显式范围；未知/重复/越权/Codex 目标在任何停用前拒绝。每槽先检查包与授权，再停服务、禁用自动重启、安装并保存选择；完成后保持 stopped，不自动启动。返回 `{ ok,total,ok_count,failed_count,items:[{id,kernel,ok,stopped,version?,code?,error?}] }`，逐项失败不伪装成全局成功 |
 | GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
 | POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
@@ -142,6 +142,7 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | POST | `/wrap-cli/sync` | `{ ids?, restart? }` 铺到槽 `.kin`（cli-node ELF + **最新** kernel.bin + 包装器）。kernel 优先仓内二进制，不被旧母样本盖回。`restart` 默认 true：有 kernel 字节变化时复制并 rust 槽 bounce kernel。**`restart: false`** 只读对比仓内 kernel 与各槽 `.kin`（含待重启标记），**不** hold 调度、**不**复制、**不**重启；用于升级前判断是否需要动槽 |
 | POST | `/vms/:id/wrap-cli/promote` | 从该槽晋升 wrap 文件，不复制凭证/SOCKS。下次 sync 仍优先仓内最新 kernel |
 | POST | `/vms/:id/wrap-cli/repair` | 单槽重装 kernel。`{ wrap, kernel }`；wrap 成功时 HTTP 200 |
+| POST / GET | `/vms/:id/kernel-switch` | 仅 admin/master。POST `{ dataplane: "crag" \| "wrap", crag_kernel_version?: "v2" \| "" }`，授权及参数预检后返回 202 任务；GET 返回本进程该槽最近任务或 `null`。任务含 `id,vm_id,dataplane,crag_kernel_version,status,started_at,finished_at,error`，`status` 为 `running` / `succeeded` / `failed`，失败 `error={code,message}`。同槽进行中再次提交回 409 `kernel_switch_in_progress`；202 不表示已切换成功 |
 | POST | `/vms/:id/start` · `/stop` | 容器生命周期。运行中容器除非显式 recreate，禁止 `docker rm -f` |
 | GET | `/vms/:id/diagnose` | 只读检查凭证、出口、容器、所选内核和自动恢复状态；CRAG 满载进程池不要求常驻 `cli_pid`，返回忙碌而非故障 |
 | POST | `/vms/:id/recover` | 按当前选择的 cli-node / CRAG 执行排空 → 关机 → 开机 → 就绪诊断；仅完整成功后清除请求熔断。授权错误在停机前拒绝；启动失败保留故障与不可调度原因 |
@@ -153,8 +154,8 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | DELETE | `/vms/:id` | 多槽时不能删仍占 `active.json` 的槽（409 `switch active first`）；管理台删除确认可在有健康可调度候选时先 `activate` 再删。只解绑本槽代理 |
 | POST | `/vms/create` | 种子 VM + Claude Code home；依赖私有 `kin-computer`。未安装返回 400 `computer_service_missing`，身份生成失败返回 400 `computer_create_failed`。Docker 槽可在 `machine` 里可选传 `docker_cpus`（见下） |
 | POST | `/vms/import` | sessionKey 导入（必须已有 VM+代理） |
-| POST | `/vms/:id/shell-ticket` | `{}` 获取 30 秒单次运维终端票据。`login: true` 返回 409 `panel_login_required`，换票统一走账号面板。终端 Claude 使用包内原生客户端，与推理内核无关 |
-| WS | `/vms/:id/shell?ticket=&cols=&rows=` | 输入 `{"t":"d","d":"…"}`，尺寸 `{"t":"r","c":列,"r":行}`；二进制输出，文本 `exit` / `error`。启动前检查原生 CC 可执行文件；不接受登录升级 |
+| POST | `/vms/:id/shell-ticket` | 管理员获取 30 秒单次票据和 `cli_bin`。`{login:true}` 申请专用登录终端，要求绑定可用出口 |
+| WS | `/vms/:id/shell?ticket=&cols=&rows=` | 运维票据打开槽内 shell；登录票据须附 `login=1`，只运行包内原生 `claude auth login`。输入 `{"t":"d","d":"…"}`，尺寸 `{"t":"r","c":列,"r":行}`；二进制帧为终端输出，文本帧为 `exit` / `error`。保存并同步成功后登录会话发送 `{"t":"login","ok":true,"official_cc_bootstrap":…}`，不返回 token |
 | GET | `/vms/fleet-status` | 全槽更新状态 |
 | POST | `/vms/fleet-update` | 全槽 roll / 采集；`action=telemetry` 只更新 Go telemetry/egress 服务，不重建 VM |
 | POST | `/vms/reconcile-fingerprints` | 用官方 `~/.claude.json` 对齐指纹 |
@@ -165,6 +166,8 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 | GET | `/oauth` | 全槽脱敏 credential |
 
 `/wrap` 仅展示 cli-node 默认内核与需注册码授权的 CRAG。每台 VM 可独立选择后安装；「全部重装并停用」先展示明确范围，再按各 VM 选择逐槽处理并显示结果。CRAG 可直接在行内打开授权管理；VM 详情「运维 → 推理内核」的既有授权入口仍可用。激活授权与安装是两个独立动作，不隐式开机。
+
+集群详情的一键切核通过上述异步任务等待真实完成：运行槽沿用排空、授权校验、规范 VM 锁及所选运行时就绪检查；关机槽只保存选择，不开机。失败后即使选择已经写成目标内核，运行槽仍可重试相同选择以修复 `runtime_start_failed`；其他不可调度原因及人工调度关闭不因此清除。任务只保留在控制面进程内，查询中的运行任务因控制面重启而消失时，页面提示核对 VM 状态，不把任务消失视为成功或自动重新提交。
 
 离线 `CRAGU1` 一次写入安装级授权，并把同一正式状态复制到每个本地槽和每台集群机器的 `registration.code`。不按 VM 槽或机器核销。在线 `CRAGL1` 仍只绑定本槽设备，已有在线授权不会被通用码覆盖。响应里的 `license.scope` 为 `kernel`（离线）或 `device`（在线）。
 
@@ -184,7 +187,7 @@ RPM 按最近 60 秒的已准入模型请求计数，管理查询不增加 RPM�
 
 `account.runtime_window`：`rate_limited_at` / `rate_limit_reset_at` / `overload_until` / `session_window_start|end|status`。
 
-`schedule_level` 是当前有效调度等级，范围 1–10；`schedule_level_mode` 为 `manual` 或 `auto`。`PATCH {"schedule_level": 1..10}` 写入手动等级，`null` 或 `"auto"` 清除手动值。自动模式按 Claude 7D 重置剩余时间滚动分档：不足 24h 为 7，之后每 24h 降一级，144h 及以上或无有效重置时间为 1。Claude 同等级内按 `routing.pool.strategy`（`balanced` / `fill`）开新席位；`weight` 只用于 Codex 选槽，与调度等级无关。整池改这两项用 `POST /vms/pool-policy`（只写记录，不重建槽详情）。
+`schedule_level` 是当前有效调度等级，范围 1–10；`schedule_level_mode` 为 `manual` 或 `auto`。`PATCH {"schedule_level": 1..10}` 写入手动等级，`null` 或 `"auto"` 清除手动值。Claude 和 Codex 的自动模式按各自 7D 重置剩余时间滚动分档：不足 24h 为 7，之后每 24h 降一级，144h 及以上或无有效重置时间为 1。新分配和换槽先比较可承接请求的 VM 的等级；亲和、Claude 的 `balanced` / `fill`、Codex 的 `weight` 和选槽策略只在同级内生效。显式指定的 VM、仍在使用的 Claude 席位及绑定原 VM 的 `previous_response_id` 不重新选槽。整池改等级或权重用 `POST /vms/pool-policy`（只写记录，不重建槽详情）。
 
 ### 调度状态（四态）
 

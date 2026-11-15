@@ -161,12 +161,18 @@ export async function pushSlotBinaries(vm, projectRoot, session = null) {
     } catch {
       continue
     }
-    await writeRemoteFile(sftp, `${remote}/${name}`, data, { mode: 0o755, owner })
+    // Every slot start (OAuth, recovery, watchdog) lands here; resending unchanged
+    // binaries over a slow node link pushed panel requests past the proxy timeout.
+    const target = `${remote}/${name}`
+    const sha = crypto.createHash('sha256').update(data).digest('hex')
+    if ((await remoteFileSha256(s.client, target)) !== sha) {
+      await writeRemoteFile(sftp, target, data, { mode: 0o755, owner })
+    }
     digest.update(name).update(data)
     pushed.push(name)
   }
   await pushLiveWrap(vm, projectRoot, s, { required: false })
-  const crag = await pushCragSlot(vm, projectRoot, s, { required: false })
+  const crag = await pushCragSlot(vm, projectRoot, s, { required: isKvmRuntime(vm) && !isCodexVm(vm) })
   return { pushed, digest: digest.digest('hex'), crag }
 }
 
@@ -318,10 +324,11 @@ export async function pushKernelSelection(vm, projectRoot, kernel) {
   const wrap = await pushLiveWrap(vm, projectRoot, session, { required: kernel !== 'crag' })
   if (!wrap.ok) return wrap
   let crag = { ok: true, pushed: false }
+  const requireCrag = kernel === 'crag' || isKvmRuntime(vm)
   try {
-    crag = await pushCragSlot(vm, projectRoot, session, { required: kernel === 'crag' })
+    crag = await pushCragSlot(vm, projectRoot, session, { required: requireCrag })
   } catch (error) {
-    if (kernel === 'crag') {
+    if (requireCrag) {
       return {
         ok: false,
         code: error?.code || 'kernel_materialize_failed',
@@ -403,7 +410,12 @@ export async function ensureRemoteOfficialCredentialLink(vm, slotDir, session = 
   if (!remote) return { linked: false, reason: 'remote_missing' }
   await prepareRemoteDir(s, vm)
   const sftp = await openSftp(s.client)
-  await remoteSymlink(sftp, 'credentials.json', `${remoteSlotDir(s.host, vm.id)}/claude/.credentials.json`)
+  const official = `${remoteSlotDir(s.host, vm.id)}/claude/.credentials.json`
+  // Preflight also runs while a shell is open: don't unlink a working alias on every tick.
+  const target = await new Promise((resolve) =>
+    sftp.readlink(official, (error, value) => resolve(error ? null : value)),
+  )
+  if (target !== 'credentials.json') await remoteSymlink(sftp, 'credentials.json', official)
   return { linked: true }
 }
 

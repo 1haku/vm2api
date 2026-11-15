@@ -20,7 +20,7 @@ for (const file of [
   'src/lib/db/custom-migrations',
 ])
   scan(file)
-for (const file of ['image-native-cli', 'cluster-bin-amd64', 'deploy/arm64-cli.json', 'dist'])
+for (const file of ['image-native-cli', 'cluster-bin-amd64', 'deploy/arm64-cli.json', 'dist', 'docker/kin-kvm'])
   if (fs.existsSync(path.join(root, file))) scan(file)
 fs.writeFileSync(
   'release-manifest.json',

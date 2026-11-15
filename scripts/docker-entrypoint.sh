@@ -85,6 +85,8 @@ if [ -f /opt/vm2api/image-crag/kin-kernel ]; then
     WRAP_CHANGED=1
   fi
 fi
+# Bind-mounted share starts empty; seed the image's signed native package once.
+node /opt/vm2api/scripts/seed-crag.mjs "$ROOT" /opt/vm2api/image-crag
 
 # Publish the release-pinned factory package without changing selected packages
 # or slot runtime files. Per-file replacement keeps existing directory mounts intact.

@@ -4,6 +4,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { createPanelLoginProtection } from './panel-login-protection.mjs'
 import { runJsonKeepaliveProbe } from './json-keepalive-probe.mjs'
 import {
@@ -44,7 +45,7 @@ import {
   looksLikeOfficialSetupToken,
   SETUP_TOKEN_FLAVOR,
 } from '../oauth/claude-setup-token.mjs'
-import { AUTH_LOGIN_FLAVOR, AUTH_LOGIN_SOURCE } from '../oauth/claude-auth-login.mjs'
+import { AUTH_LOGIN_FLAVOR } from '../oauth/claude-auth-login.mjs'
 import {
   canOfficialCc,
   isApiKeyMode,
@@ -164,6 +165,7 @@ import {
   migrateScheduleRecord,
 } from '../pool/schedule-state.mjs'
 import { fillVmTimezoneFromExit, syncVmTimezoneFromProxy } from '../vm/proxy-timezone.mjs'
+import { proxyScheme } from '../vm/proxy-pool.mjs'
 import { validTimezone } from '../core/timezone.mjs'
 import { stampVmKind, isCodexVm } from '../vm/vm-kind.mjs'
 import { parseAllowedModelsPatch } from '../pool/slot-model-gate.mjs'
@@ -290,6 +292,7 @@ import {
   CragLicenseError,
   distributeCragUniversalGrant,
   getCragLicense,
+  projectCragUniversalVm,
 } from '../vm/crag-license.mjs'
 import { applyNativeTelemetry } from '../vm/fleet-update.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
@@ -675,6 +678,8 @@ export function createPanelHandler(ctx) {
   const stats = ctx.stats
   const persistRoutingPatch = (...args) => ctx.persistRoutingPatch(...args)
   const applyVmConcurrency = (...args) => ctx.applyVmConcurrency(...args)
+  // Keep the last result per VM so slow SSH cutovers outlive an HTTP request.
+  const kernelSwitchJobs = new Map()
   const applyVmRpm = (...args) => ctx.applyVmRpm(...args)
   const applyVmSessionSlots = (...args) => ctx.applyVmSessionSlots(...args)
   const inheritVmScheduling = (...args) => ctx.inheritVmScheduling(...args)
@@ -1156,11 +1161,29 @@ export function createPanelHandler(ctx) {
     )
   }
 
+  async function projectKvmCragSwitchLicense(current, desired, previousRouting, nextRouting) {
+    if (!isKvmRuntime(desired) || resolveKernelDataplane(desired, nextRouting) !== 'crag') return
+    if (
+      resolveKernelDataplane(current, previousRouting) === 'crag' &&
+      resolveCragKernelVersion(current, previousRouting) === resolveCragKernelVersion(desired, nextRouting)
+    )
+      return
+    try {
+      const project = ctx.kernelPolicyOps?.projectCragUniversalVm || projectCragUniversalVm
+      const projected = await project(cfg.paths.project, desired)
+      if (!projected?.ok) throw new Error(projected?.error || 'CRAG license projection failed')
+    } catch (cause) {
+      const error = new Error(`CRAG 授权同步失败：${String(cause?.message || cause).slice(0, 200)}`)
+      error.code = 'crag_license_projection_failed'
+      throw error
+    }
+  }
+
   // PATCH already owns the full record lock, including its other metadata/config writes.
   async function applySlotPolicyWithRuntimeLocked(
     id,
     patch,
-    { maintenance = false, previousRouting = structuredClone(ctx.routingConfig) } = {},
+    { maintenance = false, previousRouting = structuredClone(ctx.routingConfig), cragLicenseProjected = false } = {},
   ) {
     const current = getVm(cfg.paths.project, id)
     if (!current) return { ok: false, id, code: 'vm_not_found', error: 'vm not found' }
@@ -1176,11 +1199,12 @@ export function createPanelHandler(ctx) {
     const dataplaneChanged = previousDataplane !== targetDataplane
     const versionChanged =
       previousVersion !== targetVersion && (previousDataplane === 'crag' || targetDataplane === 'crag')
-    const kernelSwitch = dataplaneChanged || versionChanged
+    const retryFailedRuntime =
+      current.status === 'running' &&
+      current.unschedulable?.reason === 'runtime_start_failed' &&
+      (Object.hasOwn(patch, 'dataplane') || Object.hasOwn(patch, 'crag_kernel_version'))
+    const kernelSwitch = dataplaneChanged || versionChanged || retryFailedRuntime
     if (kernelSwitch && targetDataplane === 'crag' && targetVersion === 'v2') {
-      if (isKvmRuntime(desired)) {
-        return { ok: false, id, code: 'remote_unsupported', error: 'crag 数据面暂不支持 KVM 槽' }
-      }
       if (isNativeNodeVm(desired)) {
         return { ok: false, id, code: 'native_crag_unsupported', error: 'crag 数据面暂不支持 macOS 原生节点' }
       }
@@ -1193,6 +1217,13 @@ export function createPanelHandler(ctx) {
         poolScheduler: ctx.poolScheduler,
         operation: () => applySlotPolicyWithRuntimeLocked(id, patch, { maintenance: true, previousRouting }),
       })
+    }
+    if (!cragLicenseProjected) {
+      try {
+        await projectKvmCragSwitchLicense(current, desired, previousRouting, ctx.routingConfig)
+      } catch (error) {
+        return { ok: false, id, code: error.code, error: error.message }
+      }
     }
     const restartFailed = (result) => {
       markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', { code: result.code })
@@ -1221,7 +1252,8 @@ export function createPanelHandler(ctx) {
             return { ok: false, id, code: laid.code || 'dataplane_materialize_failed', error: laid.error }
           }
         }
-        writeKernelConfig(cfg.paths.project, saved, { routing: ctx.routingConfig })
+        const write = ctx.kernelPolicyOps?.writeKernelConfig || writeKernelConfig
+        write(cfg.paths.project, saved, { routing: ctx.routingConfig })
         if (kernelSwitch && saved.status === 'running') {
           const remoteDocker =
             Boolean(String(saved.node_id || '').trim()) && !isKvmRuntime(saved) && !isNativeNodeVm(saved)
@@ -1655,6 +1687,65 @@ export function createPanelHandler(ctx) {
           ok: false,
           error: { code: 'migration_busy', message: '槽位迁移中或待人工恢复，暂不能修改' },
         })
+      }
+      const kernelSwitchRoute = /^\/api\/panel\/vms\/([^/]+)\/kernel-switch$/.exec(p)
+      if (kernelSwitchRoute && ['GET', 'POST'].includes(req.method)) {
+        const id = kernelSwitchRoute[1]
+        if (!isValidVmId(id))
+          return json(res, 400, { ok: false, error: { code: 'invalid_vm_id', message: '非法槽位 ID' } })
+        const vm = getVm(cfg.paths.project, id)
+        if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: '槽位不存在' } })
+        if (req.method === 'GET') return json(res, 200, panel.ok(kernelSwitchJobs.get(id) || null))
+        if (kernelSwitchJobs.get(id)?.status === 'running')
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'kernel_switch_in_progress', message: '该槽位正在切换内核，请等待完成' },
+          })
+        const body = await readBody(req, 4096)
+        if (!['crag', 'wrap'].includes(body?.dataplane))
+          return json(res, 400, { ok: false, error: { code: 'invalid_dataplane', message: '请选择 cli-node 或 CRAG' } })
+        const parsed = parseSlotEnginePolicyPatch({
+          dataplane: body.dataplane,
+          crag_kernel_version: body.dataplane === 'crag' ? (body.crag_kernel_version ?? 'v2') : '',
+        })
+        if (!parsed.ok)
+          return json(res, 400, { ok: false, error: { code: 'invalid_kernel_policy', message: parsed.error } })
+        if (isCodexVm(vm) || isNativeNodeVm(vm))
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'kernel_switch_unsupported', message: '当前槽位不支持切换 Claude 内核' },
+          })
+        const licensed = checkCragLicense(cfg.paths.project, vmWithSlotPolicyPatch(vm, parsed.patch), ctx.routingConfig)
+        if (!licensed.ok) return json(res, 403, { ok: false, error: { code: licensed.code, message: licensed.error } })
+        // readBody yielded: reserve only after checking the latest admission state.
+        if (kernelSwitchJobs.get(id)?.status === 'running')
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'kernel_switch_in_progress', message: '该槽位正在切换内核，请等待完成' },
+          })
+        const job = {
+          id: randomUUID(),
+          vm_id: id,
+          ...parsed.patch,
+          status: 'running',
+          started_at: new Date().toISOString(),
+          finished_at: null,
+          error: null,
+        }
+        kernelSwitchJobs.set(id, job)
+        setImmediate(async () => {
+          try {
+            const result = await applySlotPolicyWithRuntime(id, parsed.patch)
+            if (!result.ok) throw Object.assign(new Error(result.error || '内核切换失败'), { code: result.code })
+            job.status = 'succeeded'
+          } catch (error) {
+            job.status = 'failed'
+            job.error = { code: error.code || 'kernel_switch_failed', message: redactSecrets(error.message) }
+          } finally {
+            job.finished_at = new Date().toISOString()
+          }
+        })
+        return json(res, 202, panel.ok({ ...job }))
       }
       if ((req.method === 'GET' || req.method === 'PUT') && p === '/api/panel/onboarding') {
         if (req.method === 'PUT') {
@@ -2742,24 +2833,27 @@ export function createPanelHandler(ctx) {
                 const licensed = checkCragLicense(cfg.paths.project, desired, nextRouting)
                 if (!licensed.ok)
                   return json(res, 403, { ok: false, error: { code: licensed.code, message: licensed.error } })
-                if (
-                  resolveKernelDataplane(desired, nextRouting) === 'crag' &&
-                  (isKvmRuntime(desired) || isNativeNodeVm(desired))
-                ) {
+                if (resolveKernelDataplane(desired, nextRouting) === 'crag' && isNativeNodeVm(desired)) {
                   return json(res, 400, {
                     ok: false,
-                    error: { code: 'remote_unsupported', message: 'CRAG 切核暂不支持 KVM 或 macOS 原生槽' },
+                    error: { code: 'remote_unsupported', message: 'CRAG 切核暂不支持 macOS 原生槽' },
                   })
                 }
               }
               let switchAll = async () => {
+                // Publish every KVM grant before changing the inherited default or any slot policy.
+                for (const id of syncArgs.body.ids) {
+                  const vm = getVm(cfg.paths.project, id)
+                  const desired = targets.all ? vm : vmWithSlotPolicyPatch(vm, { dataplane: parsed.value })
+                  await projectKvmCragSwitchLicense(vm, desired, previous, nextRouting)
+                }
                 if (targets.all) await persistRoutingPatch({ inference: nextRouting.inference })
                 const items = []
                 for (const id of syncArgs.body.ids) {
                   const switched = await applySlotPolicyWithRuntimeLocked(
                     id,
                     targets.all ? {} : { dataplane: parsed.value },
-                    { maintenance: true, previousRouting: previous },
+                    { maintenance: true, previousRouting: previous, cragLicenseProjected: true },
                   )
                   items.push({ id, ok: switched.ok, code: switched.code, error: switched.error })
                 }
@@ -2791,7 +2885,10 @@ export function createPanelHandler(ctx) {
                 ctx.routingConfig = previous
                 return json(res, 503, {
                   ok: false,
-                  error: { code: 'dataplane_persist_failed', message: String(error?.message || error) },
+                  error: {
+                    code: error?.code === 'crag_license_projection_failed' ? error.code : 'dataplane_persist_failed',
+                    message: String(error?.message || error),
+                  },
                 })
               }
             }
@@ -3120,7 +3217,6 @@ export function createPanelHandler(ctx) {
         const body = await readBody(req, 1024).catch(() => ({}))
         const issued = await ctx.slotShell.issueTicket(p.split('/')[4], {
           login: body.login === true,
-          cliBin: body.cli_bin ?? '',
         })
         if (!issued.ok) return json(res, issued.status, { ok: false, error: issued.error })
         return json(
@@ -3183,30 +3279,26 @@ export function createPanelHandler(ctx) {
           })
         const vm = getVm(cfg.paths.project, p.split('/')[4])
         if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'vm not found' } })
-        if (isCodexVm(vm) || isKvmRuntime(vm) || isNativeNodeVm(vm))
+        if (isCodexVm(vm) || isNativeNodeVm(vm))
           return json(res, 400, {
             ok: false,
             error: {
               code: 'crag_v2_unsupported_placement',
-              message: isCodexVm(vm)
-                ? '请选择 Claude 虚拟机'
-                : isKvmRuntime(vm)
-                  ? 'CRAG v2 不支持 KVM 槽'
-                  : 'CRAG v2 不支持 macOS 原生节点',
+              message: isCodexVm(vm) ? '请选择 Claude 虚拟机' : 'CRAG v2 不支持 macOS 原生节点',
             },
           })
-        const remotePlacement = Boolean(vm.node_id) || isKvmRuntime(vm)
+        const offlineOnlyPlacement = Boolean(vm.node_id) || isKvmRuntime(vm)
         try {
           if (req.method === 'GET')
             return json(res, 200, panel.ok(getCragLicense(cfg.paths.project, vm, { initialize: true })))
           const body = await readBody(req, 32768)
           const registrationCode = typeof body?.registration_code === 'string' ? body.registration_code.trim() : ''
-          if (remotePlacement && !registrationCode.startsWith('CRAGU1.')) {
+          if (offlineOnlyPlacement && !registrationCode.startsWith('CRAGU1.')) {
             return json(res, 400, {
               ok: false,
               error: {
                 code: 'crag_v2_unsupported_placement',
-                message: '集群槽只能激活离线通用码。设备注册码仍需要本机 Linux Docker 槽。',
+                message: 'KVM 和集群槽只能激活 CRAGU1 离线通用码。设备注册码仍需要本机 Linux Docker 槽。',
               },
             })
           }
@@ -5217,11 +5309,13 @@ export function createPanelHandler(ctx) {
             )
           }
           const flavor = body.flavor || body.type || 'cai'
-          const generated = generateAuthUrl({
-            vmId: id,
-            proxyUrl: slotProxy.proxyUrl,
-            flavor,
-          })
+          if (normalizeOauthFlavor(flavor) === AUTH_LOGIN_FLAVOR) {
+            return json(res, 409, {
+              ok: false,
+              error: { code: 'native_login_required', message: '请使用 Claude Code 授权终端生成链接' },
+            })
+          }
+          const generated = generateAuthUrl({ vmId: id, proxyUrl: slotProxy.proxyUrl, flavor })
           const px = existing.proxy || {}
           return json(
             res,
@@ -5307,6 +5401,12 @@ export function createPanelHandler(ctx) {
           const sessionKey = String(body.session_id || body.sessionId || '')
           let oauth
           let oauthFromVm = false
+          if (normalizeOauthFlavor(flavor) === AUTH_LOGIN_FLAVOR || /^native-[a-f0-9]{32}$/.test(sessionKey)) {
+            return json(res, 409, {
+              ok: false,
+              error: { code: 'native_login_required', message: '请在 Claude Code 授权终端提交回调' },
+            })
+          }
           if (looksLikeOfficialSetupToken(code)) {
             oauth = await completeClaudeSetupToken({
               projectRoot: cfg.paths.project,
@@ -5328,9 +5428,6 @@ export function createPanelHandler(ctx) {
           if (looksLikeOfficialSetupToken(code) || oauth.flavor === SETUP_TOKEN_FLAVOR) {
             oauth.type = 'official-setup-token'
             oauth.mode = 'official-setup-token'
-          } else if (oauth.flavor === AUTH_LOGIN_FLAVOR || oauth.source === AUTH_LOGIN_SOURCE) {
-            oauth.type = 'oauth'
-            oauth.mode = 'oauth'
           } else if (
             normalizeOauthFlavor(flavor) === 'setup_token' ||
             oauth.flavor === 'setup_token' ||
@@ -6237,7 +6334,22 @@ export function createPanelHandler(ctx) {
         if (bindVmId && userMissesVmId(req, cfg.paths.project, bindVmId)) {
           return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
+        // Protocol for lines without their own scheme:// prefix. Reject unknown
+        // values rather than silently importing them as SOCKS5.
+        const defaultScheme =
+          body.default_scheme == null || body.default_scheme === '' ? 'socks5' : proxyScheme(body.default_scheme)
+        if (!defaultScheme) {
+          return json(res, 400, {
+            ok: false,
+            error: {
+              type: 'invalid_request_error',
+              code: 'invalid_scheme',
+              message: 'default_scheme must be socks5 or http',
+            },
+          })
+        }
         const result = proxyPool.importLines(text, {
+          defaultScheme,
           fields: body.proxies || body.entries || null,
           host: body.host,
           port: body.port,
@@ -6329,7 +6441,7 @@ export function createPanelHandler(ctx) {
         // Forward only the keys the caller actually sent — update() reads
         // presence, not value, to tell "leave alone" from "clear".
         const patch = {}
-        for (const key of ['host', 'port', 'username', 'password', 'label', 'domain_forward']) {
+        for (const key of ['scheme', 'host', 'port', 'username', 'password', 'label', 'domain_forward']) {
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key]
         }
         const result = proxyPool.update(id, patch)
