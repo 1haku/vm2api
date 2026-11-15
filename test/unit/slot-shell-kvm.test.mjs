@@ -83,8 +83,21 @@ for (const runtime of ['kvm', 'docker']) {
       const ticket = await shell.issueTicket('vm-01')
       assert.equal(ticket.ok, true)
       ws = new WebSocket(`ws://127.0.0.1:${panel.address().port}/api/panel/vms/vm-01/shell?ticket=${ticket.ticket}`)
-      const [output] = await once(ws, 'message', { signal: AbortSignal.timeout(5_000) })
-      assert.equal(String(output), 'slot-shell-ready\r\n')
+      const outputs = []
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('shell did not become ready')), 5_000)
+        t.after(() => clearTimeout(timer))
+        ws.once('error', reject)
+        ws.on('message', (output) => {
+          outputs.push(String(output))
+          if (String(output) === 'slot-shell-ready\r\n') {
+            clearTimeout(timer)
+            resolve()
+          }
+        })
+      })
+      // This transport fixture has no credential: report the sync warning but still open the shell.
+      assert.deepEqual(outputs, [JSON.stringify({ t: 'error', message: '请先在面板导入凭证' }), 'slot-shell-ready\r\n'])
       assert.equal(execBody.Tty, true)
       assert.ok(probeBody.Cmd.includes(LOCAL_CRAG_CLAUDE))
       assert.equal(probeBody.Tty, false)
@@ -96,19 +109,24 @@ for (const runtime of ['kvm', 'docker']) {
         assert.equal(execBody.Cmd[execBody.Cmd.indexOf('-w') + 1], '/home/kincli')
         assert.deepEqual(execBody.Env, [])
         assert.equal(probeBody.Cmd[0], '/usr/local/bin/kin-guest-exec')
+        assert.equal(Object.hasOwn(execBody, 'WorkingDir'), false)
       } else {
         assert.deepEqual(execBody.Cmd.slice(0, 2), ['/bin/sh', '-c'])
         assert.ok(execBody.Env.includes('TERM=xterm-256color'))
-        assert.equal(
-          execBody.Env.some((value) => /^(HOME|CLAUDE_CONFIG_DIR)=/.test(value)),
-          false,
-        )
+        assert.ok(execBody.Env.includes('HOME=/home/kincli'))
+        assert.ok(execBody.Env.includes('CLAUDE_CONFIG_DIR=/home/kincli/.claude'))
+        assert.equal(execBody.WorkingDir, '/home/kincli')
       }
-      assert.equal(Object.hasOwn(execBody, 'WorkingDir'), false)
       const closed = once(ws, 'close', { signal: AbortSignal.timeout(5_000) })
       const reaped = once(engine, 'reaped', { signal: AbortSignal.timeout(5_000) })
       ws.close()
       await Promise.all([closed, reaped])
+      // The fake engine emits reaped before the client receives its HTTP response.
+      // Upstream releases the shell token only after that cleanup request completes.
+      const cleanupDeadline = Date.now() + 5_000
+      while (shell.liveShellTokens().length && Date.now() < cleanupDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
       assert.deepEqual(shell.liveShellTokens(), [])
     } finally {
       ws?.terminate()
