@@ -174,7 +174,8 @@ test('KVM binary publication requires a complete CRAG preinstall even while cli-
   node.files.set(selector, Buffer.from('existing-selector'))
   node.files.set(node.remoteCred, Buffer.from('rotated-credential'))
   await assert.rejects(pushSlotBinaries(target, root, node.session), { code: 'slot_payload_missing' })
-  seedEncryptedPackage(root)
+  // Remote KVM guests use amd64 payloads even on an ARM64 control plane.
+  seedEncryptedPackage(root, { arch: 'amd64' })
   const result = await pushSlotBinaries(target, root, node.session)
   assert.equal(result.crag.ok, true)
   for (const file of cragSlotPayload(root).files) {
