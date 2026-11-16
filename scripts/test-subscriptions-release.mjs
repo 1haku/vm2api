@@ -6,6 +6,12 @@ const nativeCli = '/opt/vm2api/image-native-cli/cli-node'
 const testCli = process.arch === 'arm64' && fs.existsSync(nativeCli) ? nativeCli : '/opt/vm2api/image-wrap-cli/cli-node'
 
 const unit = [
+  'active-usage-query',
+  'cluster-slot-image-warm',
+  'gemini-host',
+  'kvm-crag-subscription',
+  'kvm-crag-subscription-runtime',
+  'quota-exhaustion-guard',
   'cluster-auto-placement',
   'codex-credential-state',
   'crag-runtime-inventory',

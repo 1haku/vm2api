@@ -293,7 +293,9 @@ test('summary cleanup preserves result text, media, errors and historical tool p
   current.cache_control = { type: 'ephemeral', ttl: '1h' }
   const before = structuredClone(body)
   const out = prepareCragPrintBody(body, { agentSummary: true, officialPassthrough: true, foldSystemMessages: false })
-  assert.deepEqual(out.messages.slice(0, 4), before.messages.slice(0, 4))
+  assert.deepEqual(out.messages.slice(0, 3), before.messages.slice(0, 3))
+  // The call is read-only too, so no tool_use is left without its tool_result.
+  assert.deepEqual(out.messages[3].content, [{ type: 'text', text: '[tool call Write test-tool] {"content":"Draft"}' }])
   assert.deepEqual(out.messages[4].content, [
     { type: 'text', text: '[tool result test-tool (error)]', cache_control: current.cache_control },
     ...current.content,
@@ -392,4 +394,111 @@ test('an agent summary keeps its trailing budget turns but folds shared history'
     false,
   )
   assert.ok(out[0].content.at(-1).text.includes('# Environment update'))
+})
+
+test('folded turn controls are lifted unless a later turn overrides them', () => {
+  const effortOnly = {
+    role: 'system',
+    content: [],
+    output_config: { effort: 'max' },
+  }
+  const dated = {
+    role: 'system',
+    content: "Today's date is 2026-11-15.",
+    output_config: { effort: 'medium' },
+  }
+  const lifted = prepareCragPrintBody({
+    output_config: { effort: 'high', format: { type: 'json_schema' } },
+    messages: [userTurn('q'), dated, asstTurn('a'), userTurn('r'), effortOnly],
+  })
+  assert.deepEqual(
+    lifted.messages.map((m) => m.role),
+    ['user', 'assistant', 'user'],
+  )
+  assert.deepEqual(lifted.output_config, {
+    effort: 'max',
+    format: { type: 'json_schema' },
+  })
+  assert.ok(lifted.messages[0].content.at(-1).text.includes("Today's date"))
+
+  const overridden = prepareCragPrintBody({
+    output_config: { effort: 'high' },
+    messages: [userTurn('q'), dated, asstTurn('a'), { ...userTurn('r'), output_config: { effort: 'low' } }],
+  })
+  assert.deepEqual(overridden.output_config, { effort: 'high' })
+
+  const clearAt = { role: 'system', content: 'cleared', clear_at: 'tool_uses' }
+  const kept = [userTurn('q'), clearAt]
+  assert.deepEqual(foldHistorySystemMessages(kept), kept)
+
+  const summary = agentBody({ summary: true })
+  summary.messages.splice(1, 0, dated)
+  summary.messages.push({
+    role: 'system',
+    content: [],
+    output_config: { effort: 'low' },
+  })
+  const summaryOut = prepareCragPrintBody(summary, { agentSummary: true })
+  assert.equal(summaryOut.output_config?.effort, summary.output_config?.effort)
+})
+
+test('a fold that would put a 1h breakpoint after a 5m one keeps the system turn', () => {
+  const longSystem = {
+    role: 'system',
+    content: [
+      {
+        type: 'text',
+        text: 'note',
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+    ],
+  }
+  const shortResult = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 't1',
+        content: 'ok',
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+  }
+  const inverted = [userTurn('q'), asstTurn('a'), longSystem, shortResult]
+  assert.deepEqual(foldHistorySystemMessages(inverted), inverted)
+
+  const longResult = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 't1',
+        content: 'ok',
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+    ],
+  }
+  const folded = foldHistorySystemMessages([userTurn('q'), asstTurn('a'), longSystem, longResult])
+  assert.deepEqual(
+    folded.map((m) => m.role),
+    ['user', 'assistant', 'user'],
+  )
+  assert.equal(folded[2].content[0].type, 'tool_result')
+  assert.equal(folded[2].content[1].cache_control.ttl, '1h')
+})
+
+test('an agent summary leaves no unpaired tool_use for CRAG (history tool_result set is incomplete)', () => {
+  const body = agentBody({ summary: true })
+  body.messages[1].content.push({ type: 'tool_use', id: 'other', name: 'Read', input: {} })
+  const out = prepareCragPrintBody(body, { agentSummary: true }).messages
+  const answered = out
+    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+    .filter((b) => b.type === 'tool_result')
+  const calls = out.flatMap((m) => (m.role === 'assistant' && Array.isArray(m.content) ? m.content : []))
+  // Only the unanswered call stays live; the answered one is text now.
+  assert.deepEqual(
+    calls.filter((b) => b.type === 'tool_use').map((b) => b.id),
+    ['other'],
+  )
+  assert.equal(answered.length, 0)
 })

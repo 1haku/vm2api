@@ -12,7 +12,7 @@ import {
   subscriptionRoute,
   canFallbackToSubscriptionApi,
 } from '../../src/lib/admin/subscription-resources.mjs'
-import { resolveInferenceBackend } from '../../src/lib/pool/api-protocol.mjs'
+import { apiScheduleScope, resolveInferenceBackend } from '../../src/lib/pool/api-protocol.mjs'
 import { subscriptionSnapshot, assertSubscriptionSnapshot } from '../../src/lib/db/subscription-snapshot.mjs'
 
 function setup(t, fields = {}) {
@@ -105,6 +105,21 @@ test('endpoint binding priority, catalog and plan model allowlist fail closed', 
     repo.apiResources(plan.id).map((e) => ({ ...e })),
     [{ endpoint_id: 'b', priority: 0 }],
   )
+})
+
+test('explicit API channels intersect subscription bindings and cannot widen the model catalog', (t) => {
+  const { db, req, scheduler } = setup(t, { resource_models: ['claude-sonnet-4-6'], resource_preference: 'api_first' })
+  selectSubscriptionResource(req, db, scheduler, 'claude-sonnet-4-6')
+  const scope = apiScheduleScope(req, 'all')
+  assert.equal(scope.groupType, 'anthropic')
+  assert.equal(scheduler.pick('claude-sonnet-4-6', Date.now(), { ...scope, endpointId: 'b' }).endpoint.id, 'b')
+  assert.equal(scheduler.pick('claude-sonnet-4-6', Date.now(), { ...scope, endpointId: 'private' }).ok, false)
+  assert.deepEqual(scheduler.catalog({ ...scope, endpointId: 'private' }).data, [])
+  assert.equal(scheduler.pick('claude-opus-4-6', Date.now(), scope).ok, false)
+  assert.deepEqual(apiScheduleScope({ apiKeyRecord: { api_endpoint_id: 'standalone' } }, 'anthropic'), {
+    endpointId: 'standalone',
+    groupType: 'all',
+  })
 })
 
 test('fallback reprices the same reservation atomically without a second concurrency seat or charge', (t) => {

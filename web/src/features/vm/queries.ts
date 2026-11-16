@@ -77,7 +77,13 @@ export type CragHostStatus = {
   used_slots?: number
   total_slots?: number
   enabled_slots?: number
+  activated_slots?: Array<{
+    vm_id: string
+    scope: 'host' | 'device' | 'kernel'
+    expires_at: number
+  }>
   available_slots?: number | null
+  available_seats?: number | 'unlimited' | null
   reclaim_supported?: boolean
   upgrade_available?: boolean
   runtime?: CragRuntime
@@ -222,5 +228,32 @@ export function vmOfficialCcQueryOptions(id: string) {
     },
     refetchInterval: (query) =>
       query.state.data?.status === 'running' ? 2500 : false,
+  })
+}
+
+export type VmHealthRange = '24h' | '7d'
+
+export type VmHealthPayload = {
+  range: VmHealthRange
+  slot_min: number
+  start: string
+  buckets: Array<[number, number]> | null
+  top_errors: Array<{
+    code: string
+    status: number | null
+    count: number
+    last_at: string
+  }>
+}
+
+/** 展开明细的请求健康：按需取，30 秒内复用。 */
+export function vmHealthQueryOptions(id: string, range: VmHealthRange) {
+  return queryOptions({
+    queryKey: ['panel', 'vm', id, 'health', range] as const,
+    queryFn: () =>
+      api<VmHealthPayload>(
+        `/api/panel/vms/${encodeURIComponent(id)}/health?range=${range}`
+      ),
+    staleTime: 30_000,
   })
 }

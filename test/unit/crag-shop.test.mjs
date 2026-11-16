@@ -6,6 +6,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { authorizePanelRoute } from '../../src/lib/admin/panel-acl.mjs'
+import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import {
   buyerOwner,
   createCragShopHandler,
@@ -16,9 +17,10 @@ import {
 import { createShopSupplier } from '../../src/lib/admin/crag-shop-supplier.mjs'
 import { deriveOrderReceipt, loadOrderReceiptKey } from '../../src/lib/admin/crag-shop-receipt.mjs'
 import { applyMigrations, createDatabase } from '../../src/lib/db/database.mjs'
-import { checkCragLicense } from '../../src/lib/vm/crag-license.mjs'
+import { checkCragLicense, cragTargetIds } from '../../src/lib/vm/crag-license.mjs'
 import { createCragSubscription } from '../../src/lib/vm/crag-subscription.mjs'
 import { cragSubscriptionPublicDirectory } from '../../src/lib/vm/crag-subscription-paths.mjs'
+import { materializeCragV2 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
 import {
   issueHostEntitlement,
   issueSlotPermit,
@@ -78,14 +80,11 @@ test('shop migration numbering preserves applied schemas and orders from either 
         activation_phase = 'redeemed', activation_attempts = 2`).run('a'.repeat(64))
     }
 
-    assert.deepEqual(
-      applyMigrations(db).filter((name) => !name.startsWith('custom/')),
-      legacy ? ['055_account_lifetime_usage.sql'] : ['057_crag_shop_commerce.sql', '058_crag_shop_activation.sql'],
-    )
+    applyMigrations(db)
     assert.deepEqual(applyMigrations(db), [])
     assert.deepEqual(
       db
-        .prepare("SELECT name FROM schema_migrations WHERE version >= '055' ORDER BY version")
+        .prepare("SELECT name FROM schema_migrations WHERE version BETWEEN '055' AND '058' ORDER BY version")
         .all()
         .map((r) => r.name),
       [
@@ -470,6 +469,125 @@ test('SQLite reservation survives restart; owners isolate retries, list, status 
   assert.equal((await call(PERSON, 'GET', `/orders/${id}`)).error.code, 'shop_private_storage_unavailable')
 })
 
+test('device checkout skips panel login, scopes orders to browser and host, and applies without exposing the code', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crag-device-shop-'))
+  const db = createDatabase({ dbPath: path.join(root, 'kin.db') })
+  t.after(() => {
+    db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const deviceId = 'a'.repeat(64)
+  let host = deviceId
+  let created = 0
+  let applied = 0
+  let status = 'pending'
+  const handler = createPanelHandler({
+    cfg: { base_url: PANEL },
+    requireAuth() {
+      assert.fail('device checkout must not invoke panel auth')
+    },
+    handleCragShop: createCragShopHandler({
+      getDb: () => db,
+      dataDir: root,
+      publicBaseUrl: PANEL,
+      json: (_, http, body) => ({ http, ...body }),
+      readRawBody: (req) => req.raw,
+      subscription: {
+        purchaseDeviceId: () => host,
+        async redeemDeviceOrder(expectedHost, code) {
+          assert.equal(expectedHost, deviceId)
+          assert.equal(code, CODE)
+          applied++
+        },
+      },
+      supplier: {
+        async plans(options) {
+          assert.equal(options.allowPilot, false)
+          return { plans: [PLAN], payment_methods: ['alipay'] }
+        },
+        async quote(_input, proof, options) {
+          assert.equal(proof, undefined)
+          assert.equal(options.allowPilot, false)
+          return PLAN
+        },
+        async create(row, _receipt, _proof, _purchase, options) {
+          assert.equal(options.allowPilot, false)
+          created++
+          return { order: order(row.order_id) }
+        },
+        async resume(row, _receipt, options) {
+          assert.equal(options.allowPilot, false)
+          return { order: order(row.order_id) }
+        },
+        async status(row) {
+          return order(row.order_id, status)
+        },
+        async claim(row) {
+          return { order_id: row.order_id, redemption_code: CODE }
+        },
+      },
+    }),
+  })
+  let cookie
+  async function call(method, endpoint, body, headers = {}, sendCookie = true) {
+    const url = new URL(`${PANEL}${BASE}/device${endpoint}`)
+    const req = {
+      method,
+      raw: Buffer.from(body === undefined ? '' : JSON.stringify(body)),
+      headers: {
+        host: 'panel.example.test',
+        origin: PANEL,
+        'sec-fetch-site': 'same-origin',
+        'content-type': 'application/json',
+        ...(sendCookie && cookie ? { cookie } : {}),
+        ...headers,
+      },
+    }
+    return handler(
+      req,
+      {
+        setHeader(name, value) {
+          if (name !== 'Set-Cookie') return
+          assert.match(value, /; HttpOnly; SameSite=Strict/)
+          cookie = value.split(';')[0]
+        },
+      },
+      url,
+    )
+  }
+  const input = { ...INPUT, expected_amount_minor: PLAN.amount_minor }
+  assert.equal((await call('GET', '/plans')).http, 200)
+  assert.equal((await call('POST', '/orders', { ...input, host_id: deviceId })).http, 400)
+  assert.equal((await call('POST', '/orders', { ...input, sku: 'renewal' })).http, 403)
+  assert.equal((await call('POST', '/orders', { ...input, activation_target: { vm_id: 'vm-ready' } })).http, 403)
+  assert.equal((await call('POST', '/orders', input, { origin: 'https://elsewhere.example.test' })).http, 403)
+  assert.equal((await call('POST', '/orders', input, {}, false)).http, 409)
+  assert.equal((await call('POST', '/quote', { sku: PLAN.sku })).http, 200)
+  host = undefined
+  assert.equal((await call('POST', '/orders', input)).error.code, 'shop_device_unavailable')
+  host = deviceId
+  const first = await call('POST', '/orders', input)
+  assert.equal(first.http, 200)
+  const id = first.data.order_id
+  assert.equal((await call('POST', '/orders', input)).data.order_id, id)
+  assert.equal(created, 1)
+  assert.equal((await call('GET', '/orders')).data.orders.length, 1)
+  assert.equal((await call('GET', '/orders', undefined, {}, false)).data.orders.length, 0)
+  host = 'b'.repeat(64)
+  assert.equal((await call('GET', `/orders/${id}`)).http, 404)
+  assert.equal((await call('POST', `/orders/${id}/apply`, {})).http, 404)
+  host = deviceId
+  assert.equal((await call('POST', `/orders/${id}/apply`, {})).http, 409)
+  status = 'fulfilled'
+  assert.equal((await call('GET', `/orders/${id}`)).data.activation.state, 'ready_to_apply')
+  assert.equal((await call('POST', `/orders/${id}/claim`, {})).http, 404)
+  const activation = await call('POST', `/orders/${id}/apply`, {})
+  assert.equal(activation.data.activation.state, 'active')
+  assert.equal(JSON.stringify(activation).includes(CODE), false)
+  assert.equal((await call('POST', `/orders/${id}/apply`, {})).data.activation.state, 'active')
+  assert.equal(applied, 1)
+})
+
 test('pinned fulfillment survives lost redeem and H2 bind replies without reapplying or rebinding another slot', {
   skip: process.platform !== 'linux',
 }, async (t) => {
@@ -498,7 +616,7 @@ test('pinned fulfillment survives lost redeem and H2 bind replies without reappl
   const source = path.join(root, 'host-machine-id')
   fs.writeFileSync(source, randomBytes(16).toString('hex'), { mode: 0o600 })
   seedEncryptedPackage(root)
-  const slots = ['vm-ready', 'vm-other', 'vm-stopped'].map((id) => ({
+  const slots = ['legacy-local_ready', 'vm-other', 'vm-stopped'].map((id) => ({
     id,
     dataplane: 'crag',
     crag_kernel_version: 'v2',
@@ -507,6 +625,20 @@ test('pinned fulfillment survives lost redeem and H2 bind replies without reappl
     const dir = path.join(root, 'vms', vm.id)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'machine-id'), randomBytes(16).toString('hex'))
+  }
+  assert.equal(materializeCragV2(root, slots[0], { select: false }).ok, true)
+  const { payloadKeyId: pinnedPayload, issuerId: pinnedIssuer } = cragTargetIds(root, slots[0])
+  fs.mkdirSync(path.join(root, 'deploy'))
+  fs.writeFileSync(
+    path.join(root, 'deploy/payload.json'),
+    JSON.stringify({
+      crag_authorization: { payload_key_id: pinnedPayload, issuer_public_key_id: pinnedIssuer },
+    }),
+  )
+  // Refreshing the download cache must not invalidate the installed target's unpaid order.
+  const refreshCache = () => {
+    seedEncryptedPackage(root, { payloadKey: randomBytes(32) })
+    assert.notEqual(cragTargetIds(root).payloadKeyId, pinnedPayload)
   }
 
   const merchant = new Map()
@@ -560,12 +692,15 @@ test('pinned fulfillment survives lost redeem and H2 bind replies without reappl
         assert.equal(init.headers.authorization, bearer)
         if (url.endsWith('/redeem')) {
           assert.equal(input.redemption_code, CODE)
+          assert.equal(input.payload_key_id, pinnedPayload)
+          assert.equal(input.issuer_public_key_id, pinnedIssuer)
           if (++redeems === 1) {
             rights = signedRights(input.host_id, 1, [])
             throw new Error('lost redeem reply after authority commit')
           }
         }
         if (url.endsWith('/bind')) {
+          assert.equal(input.payload_key_id, pinnedPayload)
           ++bindAttempts
           if (!machineCode) {
             hostIdAtBind = input.host_id
@@ -628,6 +763,10 @@ test('pinned fulfillment survives lost redeem and H2 bind replies without reappl
   assert.deepEqual((await call(PERSON, 'GET', '/activation-targets')).data.targets, [])
   const input = { ...INPUT, activation_target: { vm_id: slots[0].id } }
   assert.equal((await call(PERSON, 'POST', '/orders', input)).http, 403)
+  for (const vm_id of ['active', '../legacy-local_ready', 'a'.repeat(132)]) {
+    const rejected = await call(OTHER, 'POST', '/orders', { ...input, activation_target: { vm_id } })
+    assert.equal(rejected.error.code, 'shop_invalid_request')
+  }
   assert.equal(
     (await call(OTHER, 'POST', '/orders', { ...input, activation_target: { vm_id: slots[2].id } })).error.code,
     'shop_activation_target_unavailable',
@@ -650,6 +789,7 @@ test('pinned fulfillment survives lost redeem and H2 bind replies without reappl
   await handle.pollActivation()
   assert.deepEqual(deliveryRequests.splice(0), [{ id, operation: undefined, method: 'GET' }])
   assert.equal(redeems, 0)
+  refreshCache()
   merchant.get(id).status = 'fulfilled'
   due(id)
   await handle.pollActivation()

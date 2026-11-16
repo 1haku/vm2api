@@ -3,6 +3,8 @@
  */
 import path from 'node:path'
 import { resolveStreamIdleTimeoutMs } from '../core/config.mjs'
+import { upstreamRiskClientError } from './intercept-gate.mjs'
+import { buildAnthropicSseError } from './stream-truncation.mjs'
 import { isClientStream, fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions } from './convert.mjs'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
 import { isValidVmId, listVmRecordFiles, readJsonCached } from '../vm/vm-file.mjs'
@@ -230,13 +232,21 @@ function pinnedVmId(req) {
 export function pickCodexCandidates(
   projectRoot,
   req,
-  { stickyRouter = null, sessions = null, body = null, excluded = null, routing = {}, ownerScope = null } = {},
+  {
+    stickyRouter = null,
+    sessions = null,
+    body = null,
+    excluded = null,
+    routing = {},
+    ownerScope = null,
+    keyScope = null,
+  } = {},
 ) {
   const pin = pinnedVmId(req)
   const owner = ownerScope || ownerScopeFromRequest(req)
   const model = body?.model || null
   const routingPolicy = normalizeCodexRouting(routing.codex || routing).quota
-  const scope = keyScopeFromRequest(req)
+  const scope = keyScope || keyScopeFromRequest(req)
   const poolDenial = vmPoolDenial(scope)
   if (poolDenial) return { error: 'vm_pool_unavailable', message: poolDenial.message, ids: [], candidates: [] }
   if (scope.group_type === 'anthropic') return { error: 'key_group_mismatch', ids: [], candidates: [] }
@@ -591,6 +601,8 @@ export async function handleCodexProtocol({
   accountGate = null,
   onUsage = null,
   onFallback = null,
+  keyScope = null,
+  afterHop = null,
   ownerScope = null,
   cfg = null,
 }) {
@@ -684,6 +696,7 @@ export async function handleCodexProtocol({
     stickyRouter,
     sessions,
     body: body || converted.body || inbound,
+    keyScope,
     excluded: new Set(),
     routing,
     ownerScope,
@@ -927,11 +940,13 @@ export async function handleCodexProtocol({
             },
           })
         let result = await runHop()
+        let policyRefusal = afterHop?.(result)
         // A transient seat-local failure gets the same account up to N retries
         // before the request spends a switch. 401/403/429 are never retried here:
         // they are credential/account state and must move to another seat.
         let sameAccountRetries = result?.transport_retried || result?.reasoning_history_retried ? 1 : 0
         while (
+          !policyRefusal &&
           sameAccountRetries < failoverBudget.maxSameAccountRetries &&
           attempts < failoverBudget.maxAttempts &&
           isRetryableSameCodexAccount(result, {
@@ -948,6 +963,7 @@ export async function handleCodexProtocol({
           await new Promise((resolve) => setTimeout(resolve, sameRetryDelayMs))
           hopEmitted = false
           result = await runHop()
+          policyRefusal = afterHop?.(result)
         }
         // The log and total duration share ingress time; pool scoring keeps hop TTFT.
         logBag.first_token_ms = Number.isFinite(result?.firstTokenAt)
@@ -988,7 +1004,10 @@ export async function handleCodexProtocol({
         const usage = mergeUsage(preferredUsage === hopUsage ? streamedUsage : hopUsage, preferredUsage)
         // Responses SSE is not a Claude assistant message, so the stream client
         // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
-        const delivered = !conversionError && (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
+        const delivered =
+          !policyRefusal &&
+          !conversionError &&
+          (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
         if (delivered) {
           attemptKind = 'succeeded'
           bindSticky(outboundSessionId)
@@ -1039,15 +1058,25 @@ export async function handleCodexProtocol({
           return res.end()
         }
         reportOpenAIAttempt(vm.id, attemptKind, result?.ttftMs ?? null)
-        const failureHold = codexFailureHold(result)
+        const failureHold = !policyRefusal && codexFailureHold(result)
         if (failureHold) holdOpenAIAccount(vm.id, failureHold)
+        if (policyRefusal && policyRefusal !== 'upstream:billing_refusal') {
+          stats.errors++
+          const error = upstreamRiskClientError(policyRefusal, res._kinRequestId)
+          logBag.error_code = error.body.error.code
+          logBag.upstream_status = result?.status ?? null
+          if (!res.headersSent && !hopEmitted) return json(res, error.status, error.body)
+          if (protocol === 'anthropic.messages') res.write(buildAnthropicSseError(error.body.error))
+          else if (protocol !== 'openai.responses') res.write(`data: ${JSON.stringify(error.body)}\n\n`)
+          return res.end()
+        }
         if (res.headersSent || hopEmitted) {
           stats.errors++
           logBag.error_code = result?.body?.error?.code || 'codex_upstream'
           logBag.upstream_status = result?.status || 0
           return res.end()
         }
-        if (isCodexFailoverError(result)) {
+        if (!policyRefusal && isCodexFailoverError(result)) {
           pickOpts.excluded.add(vm.id)
           leaveSticky()
           switches += 1
@@ -1070,7 +1099,7 @@ export async function handleCodexProtocol({
   if (await onFallback?.(last || { status: 503 })) return
   stats.errors++
   logBag.error_code = last?.body?.error?.code || 'codex_upstream'
-  logBag.error_message = last?.body?.error?.message || null
+  logBag.error_message ||= last?.body?.error?.message || null
   logBag.upstream_status = last?.status || 0
   return json(res, last?.status || 502, last?.body || { error: { type: 'api_error', code: 'codex_upstream' } })
 }

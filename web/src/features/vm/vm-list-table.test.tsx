@@ -1,24 +1,99 @@
+import { type ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { Vm } from '@/types/panel-vm'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { VmTable } from './vm-list-table'
+import { VmSchedulingBlock, VmSchedulingEditor } from './vm-scheduling'
 
 vi.mock('./vm-actions-context', () => ({ useVmActions: () => ({}) }))
 vi.mock('./vm-action-menu', () => ({ VmActionMenu: () => null }))
-vi.mock('./vm-owner-line', () => ({ VmOwnerLine: () => null, VmRentedMark: () => null }))
+vi.mock('./vm-owner-line', () => ({
+  VmOwnerLine: () => null,
+  VmRentedMark: () => null,
+}))
 vi.mock('./node-chip', () => ({ NodeChip: () => null }))
 vi.mock('@/features/subscriptions/slot-subscription', () => ({
   SlotSubscription: () => null,
 }))
+vi.mock('./vm-owner-line', () => ({ VmRentedMark: () => null }))
+vi.mock('./vm-perms', () => ({ useVmPerms: () => ({ admin: false }) }))
 vi.mock('./use-vm-column-order', () => ({
-  useVmColumnOrder: () => ({ order: ['vm'], isDefault: true }),
+  useVmColumnOrder: () => ({
+    order: ['vm', 'sched', 'status'],
+    isDefault: true,
+  }),
+}))
+vi.mock('@/components/ui/dialog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/ui/dialog')>()),
+  DialogContent: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
 function render(over: Partial<Vm> = {}) {
   return renderToStaticMarkup(
-    <VmTable vms={[{ id: 'vm-01', email: 'account@example.com', ...over }]} />
+    <QueryClientProvider client={new QueryClient()}>
+      <VmTable vms={[{ id: 'vm-01', email: 'account@example.com', ...over }]} />
+    </QueryClientProvider>
   )
 }
+
+describe('VM scheduling priority', () => {
+  it.each(['anthropic', 'openai'] as const)(
+    'shows and edits the same %s priority throughout the panel',
+    (platform) => {
+      const vm: Vm = {
+        id: 'vm-01',
+        platform,
+        schedule_level: 8,
+        schedule_level_mode: 'manual',
+        weight: 42,
+      }
+      const list = render(vm)
+      expect(list).toContain('>调度 · 优先级</div>')
+      expect(list).toMatch(
+        /text-blue-800[^"]*shadow-\[inset_0_0_0_1px_currentColor\][^"]*"[^>]*>P8</
+      )
+      expect(list).not.toMatch(/等级|权重/)
+
+      const detail = renderToStaticMarkup(<VmSchedulingBlock vm={vm} />)
+      expect(detail).toContain('>调度优先级</span>')
+      expect(detail).toContain('>8 · 手动</span>')
+
+      const editor = renderToStaticMarkup(
+        <QueryClientProvider client={new QueryClient()}>
+          <VmSchedulingEditor vm={vm} />
+        </QueryClientProvider>
+      )
+      expect(editor).toContain('role="radiogroup" aria-label="调度优先级"')
+      expect(editor).toMatch(/role="radio" aria-checked="true"[^>]*>8</)
+    }
+  )
+
+  it('does not substitute legacy weight when priority is missing', () => {
+    expect(render({ weight: 4 })).toMatch(/>P—</)
+  })
+})
+
+describe('VM row interaction and health', () => {
+  it('opens detail from a left button and exposes a separate expand control', () => {
+    const html = render()
+    expect(html).toContain('aria-label="打开 vm-01 详情页"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('aria-controls="vm-row-detail-vm-01"')
+    expect(html).not.toContain('role="button"')
+  })
+
+  it('shows request success rate and never infers health without requests', () => {
+    const buckets = Array.from({ length: 48 }, (_, i): [number, number] =>
+      i === 47 ? [99, 1] : [0, 0]
+    )
+    const html = render({ health_24h: buckets })
+    expect(html).toContain('>99.0%</b>')
+    expect(html).toContain('>99/100</span>')
+    expect(render({ health_24h: null })).toContain('24h 无请求')
+    expect(render({ health_24h: null })).not.toContain('主机内存紧张')
+  })
+})
 
 describe('VM account column kernel label', () => {
   it.each(['wrap', 'cc'] as const)(
@@ -99,5 +174,21 @@ describe('VM account column kernel label', () => {
     expect(render({ platform: 'openai', has_token: true })).toContain(
       '>local</span>'
     )
+  })
+})
+
+describe('VM list summary and toggles', () => {
+  it('renders the fleet summary and both list toggles', () => {
+    const buckets = Array.from({ length: 48 }, (_, i): [number, number] =>
+      i === 47 ? [9, 1] : [0, 0]
+    )
+    const html = render({ health_24h: buckets, seats_used: 1, seats_max: 4 })
+    expect(html).toContain('aria-label="全局汇总"')
+    expect(html).toContain('>在池</div>')
+    expect(html).toContain('>90.0%</b>')
+    expect(html).toContain('失败 1')
+    expect(html).toMatch(/aria-pressed="false"[^>]*>.*按状态分组/)
+    expect(html).toMatch(/aria-pressed="false"[^>]*>.*次要信息常显/)
+    expect(html).toContain('data-pin="false"')
   })
 })

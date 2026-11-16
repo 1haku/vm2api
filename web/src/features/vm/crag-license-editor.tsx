@@ -25,31 +25,35 @@ const licenseMessages: Record<string, string> = {
   license_unconfigured:
     '服务器尚未配置可信授权公钥或加密 CRAG 包。请联系管理员安装受信任的完整软件包后重试。',
   license_redeem_unavailable:
-    '兑换码无效、已过期或已使用。若兑换时连接中断，请联系签发方核对记录并找回已签发的注册码。',
+    '兑换码无效、已过期或已使用。若兑换时连接中断，请联系签发方核对兑换记录。',
   license_redeem_conflict:
     '此兑换码已绑定另一台设备或另一版内核。请回到原槽并使用原内核版本。',
   license_redeem_target_changed:
     '激活期间目标槽、设备或授权发生变化，未覆盖现有授权。请联系管理员核对本次签发。',
   license_redeem_subscription:
-    '本槽已使用宿主订阅许可。请在「宿主订阅」管理续期或占槽。',
+    '本槽已使用宿主订阅许可。请在「宿主机订阅」管理续期或绑定。',
   license_redeem_service:
-    '未确认联网激活。请在同一槽使用原码重试；若提示已使用，请联系签发方找回注册码。',
+    '未确认联网激活。请在同一槽使用原码重试；若提示已使用，请联系签发方核对兑换记录。',
   license_redeem_origin: '请在当前面板页提交兑换，不要从其他站点发起。',
   redeem_unavailable: '兑换码无效、已过期或不可用，请核对原码。',
   host_redeem_conflict: '兑换码不属于本机或已在其他宿主机使用。',
+  auth_forbidden: '鉴权服务不接受当前宿主机的订阅凭据。',
+  host_subscription_inactive: '本机没有有效订阅，请兑换或续费。',
+  host_binding_conflict: '此槽的设备身份与原绑定不一致。',
   issuer_mismatch: '授权服务不认可目标内核的发行方，本次未兑换。',
-  payload_key_unknown: '授权服务未配置当前内核载荷，本次未兑换。',
+  payload_key_unknown:
+    '授权服务未登记此内核载荷。已到账的订阅额度会保留，可在兼容槽位使用。',
   payload_key_conflict: '本槽已有绑定对应不同的内核载荷。',
   slot_limit_reached: '宿主机应用锁额度已用完，本槽未绑定。',
   crag_subscription_target_unready:
-    '此槽暂不能绑定订阅。请选择已预装受信 CRAG v2 包的本机 Linux Docker Claude 槽，并核对是否已有其他有效授权。',
+    '此槽暂不能绑定订阅。请确认使用可信 CRAG 包，且未绑定其他有效授权。',
   crag_subscription_target_changed: '目标槽或内核已变化，请核对后重试。',
   crag_subscription_sync_pending:
     '宿主机还有未完成的同步。请在原目标槽使用原码完成激活，或先完成原订单的激活。',
   crag_subscription_authority_unavailable:
     '尚未确认订阅已激活，请在同一目标槽使用原码重试，不必重新购买。',
   crag_v2_unsupported_placement:
-    '此槽不支持该授权方式。KVM 和集群槽仅支持离线通用码。',
+    '此槽不支持该授权方式。单设备兑换码需要本机 Linux Docker 槽。',
 }
 
 const statusLabels: Record<CragLicenseStatus['status'], string> = {
@@ -349,7 +353,7 @@ export function CragActivationForm({
           id={`${formId}-registration-help`}
           className='text-xs leading-relaxed text-muted-foreground'
         >
-          支持联网兑换码、购买的订阅码、设备注册码和离线通用码。系统自动识别。订阅码会兑换到本机并绑定目标槽；新套餐额度会替换现有额度。
+          系统自动识别订阅码、设备兑换码、设备注册码和离线通用码。订阅码兑换到本机后无法转移；系统会为目标槽绑定应用锁，新套餐额度会替换现有额度。离线通用码会同步到所有兼容槽位。
         </p>
       </div>
       {error ? (

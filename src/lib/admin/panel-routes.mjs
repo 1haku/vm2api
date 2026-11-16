@@ -105,6 +105,7 @@ import { publicEndpointView, fetchUpstreamModels, API_ENDPOINT_PRESETS } from '.
 import { runAnthropicConsole, resolveConsoleProxyUrl, savedEndpointKey } from './anthropic-console.mjs'
 import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
+import { createGeminiPanelHandler, isGeminiPanelPath } from '../gemini/routes.mjs'
 import {
   denyIfUserCannotDeleteVm,
   denyIfUserMissesKey,
@@ -193,6 +194,7 @@ import * as panel from './panel-api.mjs'
 import { GATEWAY_CAPABILITIES } from '../vm/execution-context.mjs'
 import { withVmLock, atomicWriteJson, isValidVmId, invalidateVmSlotReadCache } from '../vm/vm-file.mjs'
 import { snapshotDatabaseMetrics } from '../db/database-metrics.mjs'
+import { queryActiveUsage } from '../oauth/active-usage-query.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
 import { getDb, getDbPath } from '../db/database.mjs'
 import { usagePoolEnabled, usageRead } from '../db/sqlite-pool.mjs'
@@ -244,7 +246,7 @@ import { isKvmRuntime, RUNTIME_KVM } from '../vm/runtime-kind.mjs'
 import { hostProxyUrlForVm, slotHost } from '../vm/slot-host.mjs'
 import { syncIpv6ProxyEgress } from '../vm/proxy-policy-runtime.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
-import { writeSlotSeedFiles } from '../vm/slot-seed.mjs'
+import { initializeSlotSeedFiles, writeSlotSeedFiles } from '../vm/slot-seed.mjs'
 import {
   egressEnabled,
   ensureProxyEgress,
@@ -286,7 +288,13 @@ import {
 import { inspectClusterPayloadChanges, refreshClusterSlotPayloads } from '../cluster/remote-slot.mjs'
 import { readRawBody as defaultReadRawBody } from '../http/respond.mjs'
 import { corsHeadersForRequest } from '../http/cors.mjs'
-import { createCragShopHandler, cragShopRoute, isCragShopPath, sameOriginPost } from './crag-shop.mjs'
+import {
+  createCragShopHandler,
+  cragShopRoute,
+  isCragDeviceShopPath,
+  isCragShopPath,
+  sameOriginPost,
+} from './crag-shop.mjs'
 import { createCragSubscriptionHandler, cragSubscriptionRoute } from './crag-subscription-routes.mjs'
 import { restartRustKernel, syncClaudeKernelConfigs, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
@@ -406,6 +414,8 @@ function usageLogFilters(req, u) {
     endpoint: get('endpoint'),
     protocol: get('protocol'),
     status_code: get('status_code'),
+    upstream_400: get('upstream_400') === '1',
+    request_id: get('request_id'),
     exclude_status_200: get('exclude_status_200') === '1',
     model_mismatch: get('model_mismatch') === '1',
     min_attempt_count: get('min_attempt_count'),
@@ -668,6 +678,11 @@ function slotProxyHint(px = {}, label = null) {
 
 export function createPanelHandler(ctx) {
   const loginProtection = createPanelLoginProtection({ fetchImpl: ctx.turnstileFetch || fetch })
+  const geminiPanel = createGeminiPanelHandler({
+    json: ctx.json,
+    readBody: ctx.readBody,
+    proxyPool: () => ctx.proxyPool,
+  })
   // A checkout can change under a live Node process; report its boot version.
   const runningVersion = readLocalVersion(ctx.cfg?.paths?.project)
   const json = (...args) => ctx.json(...args)
@@ -978,6 +993,7 @@ export function createPanelHandler(ctx) {
         if (!group?.subscription_enabled) delete normalized.group_id
       }
       delete normalized.vm_pool_id
+      delete normalized.api_endpoint_id
     }
     const hasRequestQuota = Object.prototype.hasOwnProperty.call(body, 'quota_requests')
     const hasLegacyQuota = Object.prototype.hasOwnProperty.call(body, 'quota')
@@ -997,6 +1013,21 @@ export function createPanelHandler(ctx) {
         .trim()
         .toLowerCase() === 'api'
     )
+  }
+
+  function validateKeyEndpoint(value, isApi, previous = null) {
+    if (value == null) return null
+    if (typeof value !== 'string' || !value.trim() || !isApi) {
+      throw Object.assign(new Error('请选择有效的 API 渠道'), { code: 'invalid_api_endpoint_id' })
+    }
+    const id = value.trim()
+    if (id !== previous) {
+      const endpoint = apiEndpointStore.getRaw(id)
+      if (!endpoint || endpoint.disabled) {
+        throw Object.assign(new Error('所选 API 渠道不存在或已停用'), { code: 'api_endpoint_unavailable' })
+      }
+    }
+    return id
   }
 
   /** Slots a key may be scoped to; a tenant's foreign slots read as missing. */
@@ -1265,6 +1296,14 @@ export function createPanelHandler(ctx) {
         await projectKvmCragSwitchLicense(current, desired, previousRouting, ctx.routingConfig)
       } catch (error) {
         return { ok: false, id, code: error.code, error: error.message }
+      }
+    }
+    if (kernelSwitch && !isCodexVm(desired)) {
+      try {
+        const initialize = ctx.kernelPolicyOps?.initializeSlotSeedFiles || initializeSlotSeedFiles
+        await initialize(cfg.paths.project, desired, slotHost(desired))
+      } catch {
+        return { ok: false, id, code: 'kernel_seed_failed', error: 'Claude Code 初始化配置生成或发布失败' }
       }
     }
     const restartFailed = (result) => {
@@ -1632,6 +1671,7 @@ export function createPanelHandler(ctx) {
     if (isCragShopPath(p)) {
       res.setHeader('Cache-Control', 'no-store')
       const route = cragShopRoute(req.method, p)
+      if (isCragDeviceShopPath(p)) return handleCragShop(req, res, url, route)
       if (route === 'plans') {
         // A valid buyer session gets the pilot catalogue; everyone else gets the public view.
         requireAuth(req, res, { buyer: true, optionalBuyer: true })
@@ -1688,6 +1728,7 @@ export function createPanelHandler(ctx) {
           scenario: url.searchParams.get('scenario') || 'success',
         })
       }
+      if (isGeminiPanelPath(p)) return geminiPanel(req, res, p)
       const subscriptionRoute = cragSubscriptionRoute(req.method, p)
       if (subscriptionRoute) return handleCragSubscription(req, res, subscriptionRoute)
 
@@ -2068,6 +2109,7 @@ export function createPanelHandler(ctx) {
             name: body?.name,
             key: body?.key || body?.custom_key || undefined,
             category: body?.category,
+            api_endpoint_id: validateKeyEndpoint(input.api_endpoint_id, isApi),
             user_id: input.user_id,
             group_id: input.group_id,
             group_type: scope.group_type,
@@ -2132,6 +2174,9 @@ export function createPanelHandler(ctx) {
               ident.role,
             )
           const isApi = isApiCategory(body?.category ?? currentRec?.category)
+          if (Object.hasOwn(input, 'api_endpoint_id')) {
+            input.api_endpoint_id = validateKeyEndpoint(input.api_endpoint_id, isApi, currentRec?.api_endpoint_id)
+          }
           const scopeInput = {
             group_type: body?.group_type,
             allowed_vms: body?.allowed_vms,
@@ -2229,7 +2274,7 @@ export function createPanelHandler(ctx) {
             base_url: body?.base_url || saved?.base_url,
             api_key: body?.api_key || saved?.api_key,
             proxy_url: proxyUrl,
-            headers: body?.headers,
+            headers: body?.headers ?? saved?.headers,
             auth_scheme: body?.auth_scheme || body?.authScheme || saved?.auth_scheme,
             forward: ctx.forwardApi,
           })
@@ -2314,8 +2359,27 @@ export function createPanelHandler(ctx) {
             api_key: key.api_key,
             proxy_url: key.proxy_url,
             headers: ep.headers,
+            forward: ctx.forwardApi,
           })
           const apply = body?.apply !== false
+          if (apply) {
+            const current = apiEndpointStore.getRaw(id)
+            if (!current) return json(res, 404, { ok: false, error: { message: 'endpoint not found' } })
+            const currentKey = current.api_key_entries.find((item) => item.id === key.id && !item.disabled)
+            if (
+              current.base_url !== ep.base_url ||
+              current.kind !== ep.kind ||
+              current.protocol !== ep.protocol ||
+              JSON.stringify(current.headers) !== JSON.stringify(ep.headers) ||
+              currentKey?.api_key !== key.api_key ||
+              currentKey.proxy_url !== key.proxy_url
+            ) {
+              return json(res, 409, {
+                ok: false,
+                error: { message: '渠道配置已变更，请重新获取模型', code: 'endpoint_changed' },
+              })
+            }
+          }
           const rec = apply ? apiEndpointStore.mergeFetchedModels(id, result.models) : ep
           if (apply) apiScheduler.reload(apiEndpointStore.listRaw())
           return json(res, 200, {
@@ -2795,6 +2859,7 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/kernels') {
         const vms = keyScopeVms(req).filter((vm) => !isCodexVm(vm))
         const licenses = Object.create(null)
+        const installLicenses = Object.create(null)
         const installations = Object.create(null)
         for (const summary of vms) {
           const vm = getVm(cfg.paths.project, summary.id)
@@ -2802,9 +2867,19 @@ export function createPanelHandler(ctx) {
           // Inventory is read-only: only the explicit activation endpoint creates identities.
           const { license } = getCragLicense(cfg.paths.project, vm, { initialize: false })
           licenses[vm.id] = license
+          installLicenses[vm.id] = getCragLicense(cfg.paths.project, vm, { preferInstalled: false }).license
           if (summary.kernel_installation) installations[vm.id] = summary.kernel_installation
         }
-        return json(res, 200, panel.ok({ kernels: describeKernelCatalog(cfg.paths.project), licenses, installations }))
+        return json(
+          res,
+          200,
+          panel.ok({
+            kernels: describeKernelCatalog(cfg.paths.project),
+            licenses,
+            install_licenses: installLicenses,
+            installations,
+          }),
+        )
       }
       if (req.method === 'GET' && p === '/api/panel/kernels/releases') {
         try {
@@ -2850,6 +2925,15 @@ export function createPanelHandler(ctx) {
         const selection = validateKernelTargets(cfg.paths.project, body?.targets)
         if (!selection.ok)
           return json(res, selection.status, { ok: false, error: { code: selection.code, message: selection.error } })
+        const identity = panelIdentity(req)
+        const mayBindSubscription =
+          !req.apiKeyKind && identity.role === 'admin' && !!identity.user && sameOriginPost(req, cfg.base_url)
+        if (!mayBindSubscription && body.targets.some((target) => target.reissue === true)) {
+          return json(res, 403, {
+            ok: false,
+            error: { code: 'forbidden', message: '只有从面板确认安装的管理员才能绑定订阅许可。' },
+          })
+        }
         // Check the entire explicit scope before the first target can be stopped.
         if (body.targets.some((target) => userMissesVmId(req, cfg.paths.project, target.id))) {
           return json(res, 403, { ok: false, error: { code: 'forbidden', message: '无权管理所选虚拟机' } })
@@ -2861,6 +2945,7 @@ export function createPanelHandler(ctx) {
           watchdog: ctx.kernelWatchdog,
           poolScheduler: ctx.poolScheduler,
           ops: ctx.kernelInstallOps,
+          cragSubscription: mayBindSubscription ? ctx.cragSubscription : undefined,
         })
         return json(res, 200, panel.ok(report))
       }
@@ -2967,6 +3052,25 @@ export function createPanelHandler(ctx) {
                   },
                 })
               }
+            }
+            try {
+              const nextRouting = targets.all
+                ? { ...previous, inference: { ...previous.inference, dataplane: parsed.value } }
+                : previous
+              const initialize = ctx.kernelPolicyOps?.initializeSlotSeedFiles || initializeSlotSeedFiles
+              for (const id of syncArgs.body.ids) {
+                const vm = getVm(cfg.paths.project, id)
+                if (!vm || isCodexVm(vm)) continue
+                const desired = targets.all ? vm : vmWithSlotPolicyPatch(vm, { dataplane: parsed.value })
+                if (resolveKernelDataplane(vm, previous) === resolveKernelDataplane(desired, nextRouting)) continue
+                if (checkCragLicense(cfg.paths.project, desired, nextRouting).ok)
+                  await initialize(cfg.paths.project, desired, slotHost(desired))
+              }
+            } catch {
+              return json(res, 503, {
+                ok: false,
+                error: { code: 'kernel_seed_failed', message: 'Claude Code 初始化配置生成或发布失败' },
+              })
             }
             try {
               if (targets.all) {
@@ -3366,22 +3470,22 @@ export function createPanelHandler(ctx) {
               message: isCodexVm(vm) ? '请选择 Claude 虚拟机' : 'CRAG v2 不支持 macOS 原生节点',
             },
           })
-        const offlineOnlyPlacement = Boolean(vm.node_id) || isKvmRuntime(vm)
+        const deviceUnsupported = Boolean(vm.node_id) || isKvmRuntime(vm)
         try {
           if (req.method === 'GET')
             return json(res, 200, panel.ok(getCragLicense(cfg.paths.project, vm, { initialize: true })))
           const body = await readBody(req, 32768)
           const registrationCode = typeof body?.registration_code === 'string' ? body.registration_code.trim() : ''
-          if (offlineOnlyPlacement && !registrationCode.startsWith('CRAGU1.')) {
+          const online = registrationCode.startsWith('CRAGR1.')
+          if (deviceUnsupported && !online && !registrationCode.startsWith('CRAGU1.')) {
             return json(res, 400, {
               ok: false,
               error: {
                 code: 'crag_v2_unsupported_placement',
-                message: 'KVM 和集群槽只能激活 CRAGU1 离线通用码。设备注册码仍需要本机 Linux Docker 槽。',
+                message: '设备注册码需要本机 Linux Docker 槽；也可使用 CRAGU1 离线码。',
               },
             })
           }
-          const online = registrationCode.startsWith('CRAGR1.')
           if (online && (req.apiKeyKind || !panelIdentity(req).user || !sameOriginPost(req, cfg.base_url))) {
             return json(res, 403, {
               ok: false,
@@ -3394,6 +3498,12 @@ export function createPanelHandler(ctx) {
             if (kind === 'host') {
               activated = await ctx.cragSubscription.activateVoucher(vm.id, registrationCode)
             } else {
+              if (deviceUnsupported) {
+                return json(res, 400, {
+                  ok: false,
+                  error: { code: 'crag_v2_unsupported_placement', message: '设备兑换码需要本机 Linux Docker 槽。' },
+                })
+              }
               activated = await redeemCragDeviceVoucher(cfg.paths.project, vm, registrationCode, {
                 getTarget: () => getVm(cfg.paths.project, vm.id),
                 routing: ctx.routingConfig,
@@ -3842,6 +3952,16 @@ export function createPanelHandler(ctx) {
           if (memoryRaiseResult && detail?.data) detail.data.memory_raise = memoryRaiseResult
           return json(res, 200, detail)
         })
+      }
+      // Explicit quota refresh: no inference request or cached-success response.
+      if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/usage\/query$/.test(p)) {
+        const id = p.split('/')[4]
+        const result = await queryActiveUsage({
+          projectRoot: cfg.paths.project,
+          vm: getVm(cfg.paths.project, id),
+          accountQuota,
+        })
+        return json(res, result.status, result.body)
       }
       // POST /api/panel/vms/:id/probe
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/probe$/.test(p)) {
@@ -4364,6 +4484,27 @@ export function createPanelHandler(ctx) {
         )
       }
 
+      // GET /api/panel/vms/:id/health?range=24h|7d — request success / error buckets for the row detail.
+      if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/health$/.test(p)) {
+        const id = p.split('/')[4]
+        const vm = getVm(cfg.paths.project, id)
+        if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
+        if (!requestLog?.healthBuckets)
+          return json(res, 503, { ok: false, error: { message: 'request log unavailable' } })
+        const range = new URL(req.url || '/', 'http://localhost').searchParams.get('range') === '7d' ? '7d' : '24h'
+        const shape = range === '7d' ? { slots: 84, slotMin: 120 } : { slots: 48, slotMin: 30 }
+        const now = Date.now()
+        const start = new Date(now - shape.slots * shape.slotMin * 60_000).toISOString()
+        const buckets = requestLog.healthBuckets({ now, vmId: id, ...shape }).get(id) || null
+        return json(res, 200, {
+          range,
+          slot_min: shape.slotMin,
+          start,
+          buckets,
+          top_errors: requestLog.topErrors({ vmId: id, since: start }),
+        })
+      }
+
       // GET /api/panel/vms/:id/seed-settings
       if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/seed-settings$/.test(p)) {
         const id = p.split('/')[4]
@@ -4849,7 +4990,7 @@ export function createPanelHandler(ctx) {
         const cragCapableNodes = new Set()
         if (wanted.mode === 'auto' && ident.role === 'admin' && runtime !== RUNTIME_KVM && !exitPinsHost) {
           const picked = await (ctx.pickPlacement || pickPlacement)({
-            vm: { machine },
+            vm: { ...kindProbe, machine },
             vms: existing,
             routing: ctx.routingConfig,
             policy:
@@ -5232,6 +5373,9 @@ export function createPanelHandler(ctx) {
       // POST /api/panel/vms/:id/start
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/start$/.test(p)) {
         const id = p.split('/')[4]
+        const identity = panelIdentity(req)
+        const bindSubscription =
+          !req.apiKeyKind && identity.role === 'admin' && !!identity.user && sameOriginPost(req, cfg.base_url)
         const started = await withVmLock(path.join(cfg.paths.project, 'vms', `${id}.json`), async () => {
           const result = await powerOnSlot({
             projectRoot: cfg.paths.project,
@@ -5240,6 +5384,7 @@ export function createPanelHandler(ctx) {
             routing: ctx.routingConfig,
             fillTimezone: fillTimezoneFromExit,
             by: 'start',
+            runtimeOptions: { bindSubscription },
           })
           if (result.ok) releaseKernelInstallSafetyHold(cfg.paths.project, id, ctx.kernelWatchdog)
           return result

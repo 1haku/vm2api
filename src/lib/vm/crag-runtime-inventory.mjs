@@ -16,7 +16,7 @@ const MAX_PROBES = 8
 const CONTAINER_TIMEOUT_MS = 1500
 const HEALTH_TIMEOUT_MS = 2500
 const MAX_H2_SLOTS = 10_000
-const STOPPED = new Set(['stopped', 'missing', 'paused', 'restarting'])
+const CONFIRMED_STOPPED = new Set(['stopped', 'missing'])
 const STANDARD_VARIANTS = new Set(['wrap', 'cli-node', 'cc-node', 'standard'])
 const MAX_CONFIG_BYTES = 1024 * 1024
 const PUBLIC_VERSION = /^v?\d{1,5}\.\d{1,5}\.\d{1,5}(?:-native-v\d{1,3})?$/
@@ -34,8 +34,7 @@ const unknown = (state = 'unknown') => ({
   ready_slots: null,
 })
 const cragIdentity = (value) =>
-  value?.runtime_variant === 'crag-v2' ||
-  (value?.runtime_variant == null && value?.dataplane === 'crag' && value?.kernel_version === 'v2')
+  value?.runtime_variant === 'crag-v2' || (value?.runtime_variant == null && value?.dataplane === 'crag')
 const localDocker = (vm) => process.platform === 'linux' && !vmNodeId(vm) && !isKvmRuntime(vm)
 
 function healthObservation(value) {
@@ -60,7 +59,11 @@ function healthObservation(value) {
   const variant = value?.runtime_variant
   const standard =
     plane !== 'crag' && (variant == null ? plane === 'wrap' || plane === 'cc' : STANDARD_VARIANTS.has(variant))
-  return value?.status === 200 && value.ok === true && standard ? unknown('not_running') : unknown()
+  if (value?.status !== 200 || value.ok !== true || !standard) return unknown()
+  const negative = unknown('not_running')
+  // Status still reports an identifiable standard worker as non-CRAG when
+  // unhealthy, but it is not strong enough evidence to free runtime capacity.
+  return value.healthy === true ? { ...negative, non_crag_confirmed: true } : negative
 }
 
 function within(promise, signal) {
@@ -176,7 +179,7 @@ function publishedConfig(exec) {
 function subscriptionScope(projectRoot, vm, hostId) {
   let permit = null
   let permitError = false
-  if (localDocker(vm)) {
+  if (!isNativeNodeVm(vm)) {
     try {
       permit = readCragSubscriptionReleaseCandidate(projectRoot, vm, hostId)
     } catch {
@@ -225,7 +228,8 @@ export function createCragRuntimeInventory({
   async function probe(vm) {
     try {
       const physical = await boundedProbe(CONTAINER_TIMEOUT_MS, (options) => observe(vm, options))
-      if (STOPPED.has(physical?.state)) return unknown('not_running')
+      if (CONFIRMED_STOPPED.has(physical?.state)) return { ...unknown('not_running'), stopped_confirmed: true }
+      if (physical?.state === 'paused' || physical?.state === 'restarting') return unknown('not_running')
       if (physical?.state !== 'running') return unknown()
       const target = watchdogProbeVm(vm, { exists: (socket) => socketEntry(socket) === 'socket' })
       if (!target) return unknown()
@@ -268,12 +272,13 @@ export function createCragRuntimeInventory({
     return age >= 0 && age < CACHE_TTL_MS ? Promise.resolve(entry.result) : null
   }
 
-  async function readProbe(candidate, signal) {
-    let result = cached(candidate)
+  async function readProbe(candidate, signal, fresh) {
+    // Admission must not borrow a probe that started before this snapshot.
+    let result = fresh ? null : cached(candidate)
     if (result) return within(result, signal)
     const release = await acquireProbe(signal)
     if (!release) return EXPIRED
-    result = cached(candidate)
+    result = fresh ? null : cached(candidate)
     if (result || signal.aborted) {
       release()
       return result ? within(result, signal) : EXPIRED
@@ -288,11 +293,11 @@ export function createCragRuntimeInventory({
         return observed
       })
       .finally(release)
-    cache.set(candidate.vm.id, entry)
+    if (!fresh) cache.set(candidate.vm.id, entry)
     return within(entry.promise, signal)
   }
 
-  async function snapshot({ hostId, claims, pending, hostOnly = false, currentHop, timeoutMs } = {}) {
+  async function snapshot({ hostId, claims, pending, hostOnly = false, currentHop, timeoutMs, fresh = false } = {}) {
     const controller = new AbortController()
     const deadline = Number.isFinite(timeoutMs) ? performance.now() + Math.max(0, timeoutMs) : Infinity
     const expired = () => {
@@ -325,7 +330,6 @@ export function createCragRuntimeInventory({
       const candidates = []
       const selectedVms = new Map()
       for (const vm of registered.values()) {
-        if (hostOnly && !localDocker(vm)) continue
         const scope = subscriptionScope(projectRoot, vm, hostId)
         if (hostOnly && !scope.permit && !scope.permitError) continue
         const exec = inventoryExec(projectRoot, vm)
@@ -357,7 +361,7 @@ export function createCragRuntimeInventory({
         candidates.push(candidate)
         selectedVms.set(vm.id, candidate)
       }
-      const hop = currentHop?.id ? healthObservation(currentHop.health) : null
+      const hop = !fresh && currentHop?.id ? healthObservation(currentHop.health) : null
       const hasHopEvidence = (vm, scope) => !!scope.permit && vm.id === currentHop?.id && hop?.state === 'running'
       const observations = new Map()
       let next = 0
@@ -367,7 +371,7 @@ export function createCragRuntimeInventory({
           // An accepted hop already observed this same slot. Do not replace
           // that evidence with an older cached negative or put it in the cache.
           if (hasHopEvidence(candidate.vm, candidate)) continue
-          const result = await readProbe(candidate, controller.signal)
+          const result = await readProbe(candidate, controller.signal, fresh)
           if (result === EXPIRED) return
           observations.set(candidate.vm.id, result)
         }
@@ -381,7 +385,6 @@ export function createCragRuntimeInventory({
         const candidate = selectedVms.get(vm.id)
         // A permit may have been installed while another slot was probed.
         // Without an observation it belongs in the upper bound, not outside it.
-        if (!candidate && !localDocker(vm)) continue
         const scope = subscriptionScope(projectRoot, vm, hostId)
         if ((hostOnly || !candidate) && !scope.permit && !scope.permitError) continue
         const observed = hasHopEvidence(vm, scope) ? hop : observations.get(vm.id) || unknown()
@@ -402,6 +405,8 @@ export function createCragRuntimeInventory({
           vm.id,
           {
             state: observed.state,
+            ...(observed.stopped_confirmed === true ? { stopped_confirmed: true } : {}),
+            ...(observed.non_crag_confirmed === true ? { non_crag_confirmed: true } : {}),
             ready: observed.reachable && license?.ok === true && vm.schedulable !== false,
             scope: scope.permit ? 'host' : !scope.permitError && independent ? 'independent' : 'unknown',
             version: observed.version,
@@ -435,5 +440,10 @@ export function createCragRuntimeInventory({
     }
   }
 
-  return { snapshot }
+  async function confirmReclaimableStop(vm) {
+    const actual = await boundedProbe(CONTAINER_TIMEOUT_MS, (options) => observe(vm, options))
+    return actual?.state === 'missing' || (actual?.state === 'stopped' && actual.restartDisabled === true)
+  }
+
+  return { snapshot, confirmReclaimableStop }
 }

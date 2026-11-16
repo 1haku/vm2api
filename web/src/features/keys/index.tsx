@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import type { ApiKeyItem } from '@/types/panel-keys'
@@ -32,6 +32,7 @@ import { TableSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
 import { StatCard } from '@/components/stat-card'
 import { StatusMark } from '@/components/status-mark'
+import { apiEndpointsQueryOptions } from '@/features/api-endpoints/queries'
 import { apiKeysQueryOptions } from '@/features/keys/queries'
 import { DateRange } from '@/features/usage-records/date-range'
 import {
@@ -54,8 +55,12 @@ import {
 import { KeyLimitsDialog } from './key-limits-dialog'
 import { keyLimitsPayload, type KeyLimitsDraft } from './key-payload'
 import { KeyRevealDialog, type RevealedKey } from './key-reveal-dialog'
-import { KeyStatsDialog } from './key-stats-dialog'
 import { VmPoolsCard, vmPoolsQueryOptions } from './vm-pools-card'
+
+// 统计弹窗带 recharts（约 100 KB gzip），只在点开时加载。
+const KeyStatsDialog = lazy(() =>
+  import('./key-stats-dialog').then((m) => ({ default: m.KeyStatsDialog }))
+)
 
 export function KeysPage() {
   const qc = useQueryClient()
@@ -97,9 +102,16 @@ export function KeysPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editId, setEditId] = useState('')
   const [statsId, setStatsId] = useState('')
+  // 首次打开后保持挂载，关闭动画照常播放。
+  const [statsOpened, setStatsOpened] = useState(false)
+  if (statsId && !statsOpened) setStatsOpened(true)
   const [rotateId, setRotateId] = useState('')
   const [revealed, setRevealed] = useState<RevealedKey | null>(null)
   const [delId, setDelId] = useState('')
+  const channels = useQuery({
+    ...apiEndpointsQueryOptions(),
+    enabled: isAdmin && (createOpen || !!editId),
+  })
   const keys = q.data?.keys || []
   const visible = keys.filter((k) =>
     (k.name || '').toLowerCase().includes(filter.toLowerCase())
@@ -469,6 +481,9 @@ export function KeysPage() {
         pending={create.isPending}
         vms={vmItems}
         pools={isAdmin ? pools.data?.pools || [] : undefined}
+        channels={isAdmin ? channels.data?.items || [] : undefined}
+        channelsLoading={channels.isPending}
+        channelsError={channels.isError}
         onSubmit={(draft) => create.mutate(draft)}
       />
       <KeyLimitsDialog
@@ -480,6 +495,9 @@ export function KeysPage() {
         initial={editing}
         vms={vmItems}
         pools={isAdmin ? pools.data?.pools || [] : undefined}
+        channels={isAdmin ? channels.data?.items || [] : undefined}
+        channelsLoading={channels.isPending}
+        channelsError={channels.isError}
         pending={edit.isPending}
         onSubmit={(draft) => {
           if (!editId) return
@@ -487,13 +505,17 @@ export function KeysPage() {
         }}
       />
       <KeyRevealDialog value={revealed} onClose={() => setRevealed(null)} />
-      <KeyStatsDialog
-        item={keys.find((k) => k.id === statsId) || null}
-        vms={vmItems}
-        onOpenChange={(open) => {
-          if (!open) setStatsId('')
-        }}
-      />
+      {statsOpened ? (
+        <Suspense fallback={null}>
+          <KeyStatsDialog
+            item={keys.find((k) => k.id === statsId) || null}
+            vms={vmItems}
+            onOpenChange={(open) => {
+              if (!open) setStatsId('')
+            }}
+          />
+        </Suspense>
+      ) : null}
       <ConfirmDialog
         open={!!rotateId}
         onOpenChange={() => setRotateId('')}

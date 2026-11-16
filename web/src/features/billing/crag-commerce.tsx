@@ -1,31 +1,11 @@
 import { useEffect, useId, useState } from 'react'
-import { api, isApiError } from '@/lib/api'
+import { api, cragDeviceApi, isApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { yuan, type CommerceRules, type CragPlan as Plan } from './crag-catalog'
+import { CommercePlanContent, CommerceRulesSummary } from './crag-plan-content'
 
-export type CommerceRules = {
-  unit_amount_minor: number
-  max_amount_minor: number
-  min_months?: number
-  max_months: number
-  min_slots?: number
-  max_slots: number
-  custom_enabled?: boolean
-  custom_renewable?: boolean
-}
-
-type Plan = {
-  sku: string
-  term: string
-  slot_limit: number | 'unlimited'
-  amount_minor: number
-  remaining?: number | null
-  renewable?: boolean
-  enabled?: boolean
-  name?: string
-  description?: string
-  months?: number
-}
+export type { CommerceRules } from './crag-catalog'
 
 export type CommerceSelection = {
   sku: string
@@ -43,14 +23,6 @@ type Quote = {
   amount_minor: number
 }
 
-const currency = new Intl.NumberFormat('zh-CN', {
-  style: 'currency',
-  currency: 'CNY',
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-})
-const yuan = (minor: number) => currency.format(minor / 100)
-
 function count(value: string, min: number, max: number) {
   if (!/^\d+$/.test(value)) return null
   const quantity = Number(value)
@@ -62,6 +34,10 @@ function count(value: string, min: number, max: number) {
 export function quoteProblem(error: unknown) {
   if (!isApiError(error)) return '暂时无法确认报价，请重试。'
   const code = error.code ?? ''
+  if (code === 'shop_device_unavailable')
+    return '无法验证本机宿主设备，请联系管理员检查设备配置。'
+  if (code === 'shop_device_checkout_required')
+    return '请允许浏览器 Cookie，刷新设备购买页后重试。'
   if (code.includes('coupon'))
     return '优惠码不可用、次数已用完，或优惠后金额低于 ¥0.01。'
   if (/stock|sold_out|inventory/.test(code)) return '此档首批名额已售罄。'
@@ -83,6 +59,7 @@ export function CragCommerce({
   initialQuoteKey,
   catalogKey,
   customTitle,
+  device = false,
   onOrder,
 }: {
   rules: CommerceRules
@@ -95,6 +72,7 @@ export function CragCommerce({
   initialQuoteKey: number
   catalogKey?: string
   customTitle?: string
+  device?: boolean
   onOrder: (selection: CommerceSelection, price: number) => void
 }) {
   const id = useId()
@@ -144,7 +122,8 @@ export function CragCommerce({
     if (!canQuote) return
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      void api<Quote>('/api/panel/crag-shop/quote', {
+      const quoteRequest = device ? cragDeviceApi<Quote> : api<Quote>
+      void quoteRequest(device ? '/quote' : '/api/panel/crag-shop/quote', {
         method: 'POST',
         body,
         signal: controller.signal,
@@ -177,17 +156,14 @@ export function CragCommerce({
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [body, canQuote, key, rules.max_amount_minor, sku])
+  }, [body, canQuote, device, key, rules.max_amount_minor, sku])
 
   const selectionUnavailable =
     !available && (sku !== 'custom' || !customEnabled)
 
   return (
     <div className='space-y-4'>
-      <p className='text-sm text-muted-foreground'>
-        标准价 {yuan(rules.unit_amount_minor)} / 槽位 / 月，人民币结算。
-        优惠后单笔不超过 {yuan(rules.max_amount_minor)}，实付以供应方报价为准。
-      </p>
+      <CommerceRulesSummary rules={rules} />
       <fieldset className='grid gap-2' disabled={busy}>
         <legend className='mb-2 text-sm font-medium'>固定套餐与续费</legend>
         {plans
@@ -195,7 +171,7 @@ export function CragCommerce({
           .map((plan) => (
             <label
               key={plan.sku}
-              className='flex items-center gap-2 rounded-md border p-3 text-sm has-checked:border-primary has-enabled:cursor-pointer'
+              className='flex items-center gap-3 rounded-xl border bg-card p-4 text-sm text-card-foreground shadow-xs transition-colors has-checked:border-primary has-checked:bg-primary/5 has-checked:ring-2 has-checked:ring-primary/20 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring has-enabled:cursor-pointer has-enabled:hover:border-primary/50 has-disabled:opacity-60'
             >
               <input
                 type='radio'
@@ -205,46 +181,11 @@ export function CragCommerce({
                 disabled={plan.remaining === 0}
                 onChange={() => onSelect(plan.sku)}
               />
-              <span className='min-w-0 flex-1'>
-                <span className='block font-medium'>
-                  {plan.name ? (
-                    <span className='block'>{plan.name}</span>
-                  ) : null}
-                  {plan.slot_limit === 'unlimited'
-                    ? '不限槽位'
-                    : `${plan.slot_limit} 槽位`}{' '}
-                  /{' '}
-                  {plan.months ??
-                    (plan.term === '1y'
-                      ? '12'
-                      : plan.term.replace(/m$/, ''))}{' '}
-                  个月
-                </span>
-                {plan.description ? (
-                  <span className='block whitespace-pre-line text-muted-foreground'>
-                    {plan.description}
-                  </span>
-                ) : null}
-                <span className='block text-xs text-muted-foreground'>
-                  {plan.remaining === 0
-                    ? '首批售罄'
-                    : plan.remaining != null
-                      ? `首批剩余 ${plan.remaining} 份`
-                      : '订阅套餐'}
-                  {plan.renewable === true
-                    ? ' · 可续费'
-                    : plan.renewable === false
-                      ? ' · 不可续费'
-                      : ''}
-                </span>
-              </span>
-              <span className='shrink-0 font-semibold tabular-nums'>
-                {yuan(plan.amount_minor)}
-              </span>
+              <CommercePlanContent plan={plan} />
             </label>
           ))}
         {allowRenewal ? (
-          <label className='flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm has-checked:border-primary'>
+          <label className='flex cursor-pointer items-center gap-3 rounded-xl border bg-card p-4 text-sm font-medium shadow-xs transition-colors hover:border-primary/50 has-checked:border-primary has-checked:bg-primary/5 has-checked:ring-2 has-checked:ring-primary/20'>
             <input
               type='radio'
               name={id}
@@ -258,7 +199,7 @@ export function CragCommerce({
       </fieldset>
       {customEnabled ? (
         <fieldset
-          className='space-y-3 rounded-md border p-3 has-checked:border-primary'
+          className='space-y-3 rounded-xl border bg-card p-4 shadow-xs has-checked:border-primary has-checked:bg-primary/5'
           disabled={busy}
         >
           <legend className='px-1 text-sm font-medium'>
