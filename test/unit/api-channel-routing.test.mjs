@@ -199,8 +199,10 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
       const epRepo = new ApiEndpointsRepo(db)
       const upstreamModel = upstreamProtocol === 'openai' ? 'gpt-5.4' : 'claude-opus-4-6'
       scheduler.endpoints[0].models[0].name = upstreamModel
+      scheduler.endpoints[0].name = 'bound-endpoint'
       epRepo.insertEndpoint({ ...scheduler.endpoints[0], name: 'bound-endpoint' })
       if (review.bindAlternative) {
+        secondary.name = 'bound-alternative'
         secondary.models[1].name = 'claude-haiku-4-5'
         epRepo.insertEndpoint({ ...secondary, name: 'bound-alternative' })
       }
@@ -454,7 +456,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
           const expected = repo.reserve(
             req.apiKeyRecord,
             'verify-reservation',
-            { ...outbound, model: 'claude-haiku-4-5' },
+            { ...body, model: 'claude-haiku-4-5' },
             { requestedModel: 'claude-light' },
           )
           assert.equal(captured[0].reservation, expected.reserved)
