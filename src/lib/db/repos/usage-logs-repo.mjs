@@ -127,6 +127,8 @@ const SUMMARY_COLUMNS = [
   'first_byte_ms',
   'generation_ms',
   'custom_request_body_metrics',
+  'custom_resource_kind',
+  'custom_resource_name',
   'stop_reason',
   'attempt_count',
   'final_state',

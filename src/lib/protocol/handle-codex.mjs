@@ -590,6 +590,7 @@ export async function handleCodexProtocol({
   requestStartedAt = Date.now(),
   accountGate = null,
   onUsage = null,
+  onFallback = null,
   ownerScope = null,
   cfg = null,
 }) {
@@ -711,6 +712,12 @@ export async function handleCodexProtocol({
         }
         // Real upstream failures already happened: report the last one, not the pool.
         if (last) break
+        if (
+          picked.error !== 'platform_mismatch' &&
+          picked.error !== 'key_vm_forbidden' &&
+          (await onFallback?.({ status: 503, code: picked.error }))
+        )
+          return
         return rejectCodexAdmission({ res, json, stats, logBag, picked, model: converted.body?.model })
       }
       const vm = getVm(projectRoot, admitted.vmId)
@@ -1060,6 +1067,7 @@ export async function handleCodexProtocol({
   } finally {
     gone.settle()
   }
+  if (await onFallback?.(last || { status: 503 })) return
   stats.errors++
   logBag.error_code = last?.body?.error?.code || 'codex_upstream'
   logBag.error_message = last?.body?.error?.message || null

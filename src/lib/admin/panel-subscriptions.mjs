@@ -7,7 +7,7 @@ import { persistCodexQuotaSnapshot } from '../vm/codex-slot.mjs'
 import { subscriptionOverview } from './subscription-overview.mjs'
 
 // This is a configuration readiness summary, not an upstream health probe.
-export function subscriptionAvailability(sub, slots = [], pending = 0) {
+export function subscriptionAvailability(sub, slots = [], pending = 0, apiReady = false) {
   if (sub.plan_status !== 'active') return { code: 'plan_disabled', message: '方案已停用，请联系管理员' }
   if (sub.status !== 'active')
     return {
@@ -26,6 +26,7 @@ export function subscriptionAvailability(sub, slots = [], pending = 0) {
     (sub.weekly_limit_usd > 0 && sub.weekly_used + pending >= sub.weekly_limit_usd)
   )
     return { code: 'quota_exhausted', message: '个人额度已用尽或被进行中请求预留，请等待重置' }
+  if (apiReady) return { code: 'configured', message: '已绑定 API 资源；实际可用性以上游响应为准' }
   if (!slots.length) return { code: 'no_slots', message: '尚未配置可用账号，请联系管理员' }
   if (!slots.some((v) => v.has_token))
     return { code: 'login_required', message: '上游账号尚未登录，请联系管理员完成登录' }
@@ -66,7 +67,7 @@ export function usageRecords(db, params, userId, admin = false) {
   const totals = db.prepare(`SELECT ${select} FROM usage_logs l ${cond}`).get(...values)
   const items = db
     .prepare(
-      `SELECT l.request_id,l.created_at,l.model,l.status,l.input_tokens,l.output_tokens,l.cache_read_tokens,l.cache_creation_tokens,l.actual_cost,l.total_cost,l.duration_ms,l.first_token_ms,l.group_id,l.subscription_id,l.api_key_id,${admin ? 'l.user_id,l.vm_id,u.username,' : ''}g.name AS plan_name,k.name AS key_name FROM usage_logs l LEFT JOIN groups g ON g.id=l.group_id LEFT JOIN api_keys k ON k.id=l.api_key_id ${admin ? '' : 'AND k.user_id=l.user_id'} LEFT JOIN users u ON u.id=l.user_id ${cond} ORDER BY l.created_at DESC,l.id DESC LIMIT ? OFFSET ?`,
+      `SELECT l.request_id,l.created_at,l.model,l.status,l.custom_resource_kind,l.custom_resource_name,l.input_tokens,l.output_tokens,l.cache_read_tokens,l.cache_creation_tokens,l.actual_cost,l.total_cost,l.duration_ms,l.first_token_ms,l.group_id,l.subscription_id,l.api_key_id,${admin ? 'l.user_id,l.vm_id,u.username,' : ''}g.name AS plan_name,k.name AS key_name FROM usage_logs l LEFT JOIN groups g ON g.id=l.group_id LEFT JOIN api_keys k ON k.id=l.api_key_id ${admin ? '' : 'AND k.user_id=l.user_id'} LEFT JOIN users u ON u.id=l.user_id ${cond} ORDER BY l.created_at DESC,l.id DESC LIMIT ? OFFSET ?`,
     )
     .all(...values, size, (page - 1) * size)
   const trend = db
@@ -125,6 +126,11 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
             s,
             slots.filter((v) => plans.get(s.group_id)?.vm_ids.includes(v.id)),
             pending,
+            !!db
+              .prepare(
+                'SELECT 1 FROM custom_subscription_api_endpoints b JOIN api_endpoints e ON e.id=b.endpoint_id JOIN api_endpoint_keys k ON k.endpoint_id=e.id WHERE b.group_id=? AND e.disabled=0 AND k.disabled=0 LIMIT 1',
+              )
+              .get(s.group_id),
           ),
         }
       })
@@ -140,6 +146,9 @@ export async function handleSubscriptionPanel(req, res, { path, json, readBody, 
             ...s
           }) => s,
         )
+    } else if (path === '/api/panel/subscription-plans/resources' && req.method === 'GET') {
+      if (!admin) throw subscriptionError('仅管理员可执行此操作', 403)
+      result = { items: db.prepare('SELECT id,name,protocol,disabled FROM api_endpoints ORDER BY name,id').all() }
     } else if (path === '/api/panel/subscription-plans' && req.method === 'GET') {
       const own = new Set(
         repo

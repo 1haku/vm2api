@@ -584,6 +584,8 @@ export class RequestLogStore {
       first_token_ms: extra.first_token_ms ?? null,
       first_byte_ms: extra.first_byte_ms ?? null,
       generation_ms: extra.generation_ms ?? null,
+      custom_resource_kind: extra.custom_resource_kind || null,
+      custom_resource_name: extra.custom_resource_name || null,
       custom_request_body_metrics: requestBodyMetrics ? JSON.stringify(requestBodyMetrics) : null,
       stop_reason: extra.stop_reason || usage.stop_reason || null,
       attempt_count: extra.attempt_count ?? null,

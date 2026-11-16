@@ -45,6 +45,8 @@ type Row = Totals & {
   created_at: string
   username?: string
   vm_id?: string
+  custom_resource_kind?: string
+  custom_resource_name?: string
   model: string
   status: number
   plan_name: string
@@ -508,6 +510,7 @@ export function UsageRecordsPage() {
               {[
                 '时间',
                 ...(admin ? ['用户', '槽位'] : []),
+                '资源',
                 '订阅 / 密钥',
                 '模型',
                 'Token（输入 / 输出 / 缓存）',
@@ -540,6 +543,13 @@ export function UsageRecordsPage() {
                     <td className='p-3'>{r.vm_id || '—'}</td>
                   </>
                 )}
+                <td className='p-3 whitespace-nowrap'>
+                  {r.custom_resource_kind === 'api'
+                    ? `API · ${r.custom_resource_name || '端点'}`
+                    : r.custom_resource_kind === 'slot' || r.vm_id
+                      ? 'OAuth 槽位'
+                      : '—'}
+                </td>
                 <td className='p-3'>
                   {r.plan_name || '—'}
                   <span className='block text-xs text-muted-foreground'>

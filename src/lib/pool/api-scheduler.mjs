@@ -140,16 +140,17 @@ export class ApiScheduler {
     this.endpoints = Array.isArray(endpoints) ? endpoints : []
   }
 
-  catalog({ groupType = 'all' } = {}) {
+  catalog({ groupType = 'all', endpointBindings = null, allowedModels = [] } = {}) {
     const data = []
     const seen = new Set()
     const targetGroup = String(groupType || 'all').toLowerCase()
     for (const ep of this.endpoints) {
-      if (ep.disabled) continue
+      if (ep.disabled || (endpointBindings && !endpointBindings.some((b) => b.endpoint_id === ep.id))) continue
       const proto = normalizeProtocol(ep.protocol, ep.kind)
       if (targetGroup === 'anthropic' && proto !== 'anthropic') continue
       if (targetGroup === 'openai' && proto !== 'openai') continue
       for (const id of modelIdsForEndpoint(ep, { forcePrefix: this.forcePrefix })) {
+        if (allowedModels.length && !allowedModels.includes(id)) continue
         const k = lower(id)
         if (seen.has(k)) continue
         seen.add(k)
@@ -165,17 +166,25 @@ export class ApiScheduler {
     return { object: 'list', data, source: 'api-endpoints' }
   }
 
-  pick(requestedModel, now = Date.now(), { groupType = 'all' } = {}) {
+  pick(requestedModel, now = Date.now(), { groupType = 'all', endpointBindings = null, allowedModels = [] } = {}) {
     const targetGroup = String(groupType || 'all').toLowerCase()
-    const parents = this.endpoints
+    let parents = this.endpoints
       .filter((ep) => {
-        if (ep.disabled) return false
+        if (ep.disabled || (allowedModels.length && !allowedModels.includes(requestedModel))) return false
+        if (endpointBindings && !endpointBindings.some((b) => b.endpoint_id === ep.id)) return false
         const proto = normalizeProtocol(ep.protocol, ep.kind)
         if (targetGroup === 'anthropic' && proto !== 'anthropic') return false
         if (targetGroup === 'openai' && proto !== 'openai') return false
         return endpointMatchesModel(ep, requestedModel)
       })
       .sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0))
+    if (endpointBindings) {
+      // Binding priority is strict; rotate only among equally ranked ready endpoints.
+      const ready = parents.filter((ep) => (ep.api_key_entries || []).some((k) => keyReady(k, now, ep.disable_cooling)))
+      const rank = (ep) => endpointBindings.find((b) => b.endpoint_id === ep.id)?.priority || 0
+      const best = Math.max(...ready.map(rank))
+      if (ready.length) parents = ready.filter((ep) => rank(ep) === best)
+    }
     if (!parents.length) {
       return { ok: false, code: 'model_not_found', message: `no api endpoint serves ${requestedModel}` }
     }

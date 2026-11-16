@@ -1,3 +1,4 @@
+import { subscriptionRoute } from '../admin/subscription-resources.mjs'
 import { OFFICIAL_CLAUDE_CLI_UA } from '../identity/vm-identity.mjs'
 import { stripIllegalCacheControlFields } from '../protocol/cache-ttl.mjs'
 import { officialMessagesBody } from '../protocol/anthropic-messages.mjs'
@@ -27,6 +28,7 @@ import { ensureRedaction, maskJson, restoreSseLine } from '../redaction/runtime.
 
 export function resolveInferenceBackend(req) {
   if (req?.apiKeyKind !== 'managed') return 'oauth'
+  if (req[subscriptionRoute]) return req[subscriptionRoute].backend
   return String(req.apiKeyRecord?.category || '')
     .trim()
     .toLowerCase() === 'api'

@@ -1,3 +1,4 @@
+import { subscriptionApiOptions } from './lib/admin/subscription-resources.mjs'
 /**
  * vm2api — Node control plane.
  * Inference data plane: one long-lived Go slot worker per VM
@@ -1405,6 +1406,20 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (p === '/v1/models' || p === '/models')) {
       if (!requireAuth(req, res)) return
       const groupType = keyScopeFromRequest(req).group_type
+      const sub = req.apiKeyRecord ? new SubscriptionsRepo().entitlement(req.apiKeyRecord) : null
+      if (sub) {
+        const options = subscriptionApiOptions(sub)
+        const slots = sub.vmIds.length ? await fetchWorkerModels({ groupType: options.groupType }) : { data: [] }
+        const endpoints = apiScheduler.catalog(options)
+        const data = [
+          ...new Map(
+            [...(slots.data || []), ...endpoints.data]
+              .filter((m) => !options.allowedModels.length || options.allowedModels.includes(m.id))
+              .map((m) => [m.id, { ...m, owned_by: 'subscription' }]),
+          ).values(),
+        ]
+        return json(res, 200, filterModelCatalogForKey({ object: 'list', data }, req))
+      }
       if (resolveInferenceBackend(req) === 'api') {
         return json(res, 200, filterModelCatalogForKey(apiScheduler.catalog({ groupType }), req))
       }

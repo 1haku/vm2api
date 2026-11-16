@@ -34,19 +34,32 @@ export class SubscriptionsRepo {
   group(id) {
     return this.db
       .prepare(
-        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
+        'SELECT g.*,p.group_id IS NOT NULL AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account,p.resource_preference,p.api_fallback,p.resource_models FROM groups g LEFT JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.id=?',
       )
       .get(id)
+  }
+
+  apiResources(groupId) {
+    return this.db
+      .prepare(
+        'SELECT endpoint_id,priority FROM custom_subscription_api_endpoints WHERE group_id=? ORDER BY priority DESC,endpoint_id',
+      )
+      .all(groupId)
   }
 
   plans() {
     return this.db
       .prepare(
-        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
+        'SELECT g.*,1 AS subscription_enabled,p.daily_limit_usd,p.weekly_limit_usd,p.default_validity_days,p.subscription_concurrency,p.group_rpm_limit,p.user_rpm_limit,p.weekly_reset_mode,p.weekly_reset_vm_id,p.weekly_window_start,p.weekly_window_end,p.weekly_source_account,p.resource_preference,p.api_fallback,p.resource_models FROM groups g JOIN custom_subscription_plans p ON p.group_id=g.id WHERE g.deleted_at IS NULL ORDER BY g.id DESC',
       )
       .all()
       .map((g) => ({
         ...g,
+        api_endpoints: this.apiResources(g.id).map((e) => ({
+          ...e,
+          name: this.db.prepare('SELECT name FROM api_endpoints WHERE id=?').get(e.endpoint_id)?.name || e.endpoint_id,
+        })),
+        resource_models: JSON.parse(g.resource_models || '[]'),
         vm_ids: this.db
           .prepare('SELECT vm_id FROM custom_subscription_slots WHERE group_id=? ORDER BY vm_id')
           .all(g.id)
@@ -87,14 +100,40 @@ export class SubscriptionsRepo {
       input.user_rpm_limit === undefined ? (old?.user_rpm_limit ?? 0) : input.user_rpm_limit,
       '分组内每人 RPM',
     )
+    const endpoints = input.api_endpoints ?? (id ? this.apiResources(id) : [])
+    if (
+      !Array.isArray(endpoints) ||
+      endpoints.length > 100 ||
+      endpoints.some(
+        (e) => !e || typeof e.endpoint_id !== 'string' || !Number.isInteger(e.priority) || Math.abs(e.priority) > 10000,
+      ) ||
+      new Set(endpoints.map((e) => e.endpoint_id)).size !== endpoints.length
+    )
+      throw subscriptionError('API 端点或优先级无效')
+    for (const resource of endpoints) {
+      const ep = this.db.prepare('SELECT id,protocol FROM api_endpoints WHERE id=?').get(resource.endpoint_id)
+      if (!ep || ep.protocol !== (platform === 'claude' ? 'anthropic' : 'openai'))
+        throw subscriptionError('API 端点不存在或与套餐平台不一致')
+    }
+    const preference = input.resource_preference ?? old?.resource_preference ?? 'slots_first'
+    if (!['slots_first', 'api_first'].includes(preference)) throw subscriptionError('无效的资源优先顺序')
+    const fallback = input.api_fallback ?? old?.api_fallback ?? 0
+    if (![true, false, 0, 1].includes(fallback)) throw subscriptionError('无效的 API 故障切换设置')
+    const models = input.resource_models ?? JSON.parse(old?.resource_models || '[]')
+    if (
+      !Array.isArray(models) ||
+      models.length > 500 ||
+      models.some((m) => typeof m !== 'string' || !m.trim() || m.length > 200)
+    )
+      throw subscriptionError('模型名单无效')
     const slots = input.vm_ids ?? (id ? this.plans().find((g) => g.id === id)?.vm_ids : [])
     if (
       !Array.isArray(slots) ||
-      (status === 'active' && slots.length < 1) ||
+      (status === 'active' && slots.length + endpoints.length < 1) ||
       slots.length > 100 ||
       slots.some((s) => typeof s !== 'string')
     )
-      throw subscriptionError('启用的方案至少需要一个槽位')
+      throw subscriptionError('启用的方案至少需要一个槽位或 API 端点')
     if (!Number.isInteger(values[6]) || !Number.isInteger(values[7]))
       throw subscriptionError('有效天数和并发数须为整数')
     for (const vmId of slots) {
@@ -161,13 +200,32 @@ export class SubscriptionsRepo {
           weeklyMode === 'independent' ? null : source?.accountId || old.weekly_source_account,
           groupId,
         )
+      this.db
+        .prepare(
+          'UPDATE custom_subscription_plans SET resource_preference=?,api_fallback=?,resource_models=? WHERE group_id=?',
+        )
+        .run(preference, fallback ? 1 : 0, JSON.stringify([...new Set(models.map((m) => m.trim()))]), groupId)
+      this.db.prepare('DELETE FROM custom_subscription_api_endpoints WHERE group_id=?').run(groupId)
+      for (const ep of endpoints)
+        this.db
+          .prepare('INSERT INTO custom_subscription_api_endpoints(group_id,endpoint_id,priority) VALUES(?,?,?)')
+          .run(groupId, ep.endpoint_id, ep.priority)
       this.db.prepare('DELETE FROM custom_subscription_slots WHERE group_id=?').run(groupId)
       for (const vmId of new Set(slots))
         this.db.prepare('INSERT INTO custom_subscription_slots(group_id,vm_id) VALUES(?,?)').run(groupId, vmId)
       this.event(id ? 'plan_updated' : 'plan_created', {
         group_id: groupId,
         actor,
-        detail: { name, vm_ids: slots, weekly_reset_mode: weeklyMode, weekly_reset_vm_id: weeklyVm },
+        detail: {
+          name,
+          vm_ids: slots,
+          api_endpoints: endpoints,
+          resource_preference: preference,
+          api_fallback: !!fallback,
+          resource_models: models,
+          weekly_reset_mode: weeklyMode,
+          weekly_reset_vm_id: weeklyVm,
+        },
       })
       return this.plans().find((g) => g.id === groupId)
     })
@@ -356,15 +414,17 @@ export class SubscriptionsRepo {
       .prepare('SELECT vm_id FROM custom_subscription_slots WHERE group_id=?')
       .all(group.id)
       .map((r) => r.vm_id)
-    if (!vmIds.length) throw subscriptionError('订阅未绑定可用槽位', 503, 'subscription_no_slots')
-    return { ...sub, group, vmIds }
+    const apiEndpoints = this.apiResources(group.id)
+    if (!vmIds.length && !apiEndpoints.length)
+      throw subscriptionError('订阅未绑定可用资源', 503, 'subscription_no_slots')
+    return { ...sub, group, vmIds, apiEndpoints }
   }
 
   assertKey(userId, groupId, category, role) {
     const group = this.group(Number(groupId || 1))
     if (!group || group.deleted_at) throw subscriptionError('分组不存在')
     if (group.subscription_enabled) {
-      if (category === 'api') throw subscriptionError('槽位订阅仅支持槽位密钥')
+      if (category === 'api') throw subscriptionError('订阅密钥自动使用套餐资源，请选择默认密钥分类')
       this.entitlement({ user_id: userId, group_id: group.id })
     } else if (role === 'user') {
       const owned = this.db.prepare('SELECT id FROM vms WHERE owner_user_id=? LIMIT 1').get(userId)
@@ -373,15 +433,25 @@ export class SubscriptionsRepo {
     }
   }
 
-  reserve(key, requestId, body, { imageOnly = false } = {}) {
+  reserve(key, requestId, body, { imageOnly = false, replace = false, requestedModel = body.model } = {}) {
     return withTransaction(this.db, () => {
       const sub = this.entitlement(key)
       if (!sub) return null
+      const models = JSON.parse(sub.group.resource_models || '[]')
+      if (models.length && !models.includes(requestedModel))
+        throw subscriptionError('此模型不在套餐授权范围内', 403, 'subscription_model_forbidden')
+      if (
+        replace &&
+        !this.db
+          .prepare('SELECT 1 FROM custom_subscription_reservations WHERE request_id=? AND subscription_id=?')
+          .get(requestId, sub.id)
+      )
+        throw subscriptionError('请求预留已失效', 409)
       const pending = this.db
         .prepare(
-          'SELECT COUNT(*) AS n,COALESCE(SUM(amount),0) AS cost FROM custom_subscription_reservations WHERE subscription_id=?',
+          'SELECT COUNT(*) AS n,COALESCE(SUM(amount),0) AS cost FROM custom_subscription_reservations WHERE subscription_id=? AND request_id!=?',
         )
-        .get(sub.id)
+        .get(sub.id, replace ? requestId : '')
       if (pending.n >= sub.group.subscription_concurrency)
         throw subscriptionError('订阅并发已满，请稍后重试', 429, 'subscription_concurrency')
       const progress = this.progress(sub)
@@ -461,11 +531,17 @@ export class SubscriptionsRepo {
           )
         }
       }
-      this.db
-        .prepare(
-          'INSERT INTO custom_subscription_reservations(request_id,subscription_id,amount,created_at) VALUES(?,?,?,?)',
-        )
-        .run(requestId, sub.id, amount, iso())
+      if (replace) {
+        this.db
+          .prepare('UPDATE custom_subscription_reservations SET amount=? WHERE request_id=? AND subscription_id=?')
+          .run(amount, requestId, sub.id)
+      } else {
+        this.db
+          .prepare(
+            'INSERT INTO custom_subscription_reservations(request_id,subscription_id,amount,created_at) VALUES(?,?,?,?)',
+          )
+          .run(requestId, sub.id, amount, iso())
+      }
       return { ...sub, reserved: amount }
     })
   }

@@ -229,7 +229,9 @@ export function KeyLimitsDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='oauth'>OAuth 槽位</SelectItem>
+                <SelectItem value='oauth'>
+                  {draft.group_id ? '订阅资源（自动选择）' : 'OAuth 槽位'}
+                </SelectItem>
                 {user?.role === 'admin' && !draft.group_id && (
                   <SelectItem value='api'>API 直连</SelectItem>
                 )}

@@ -28,10 +28,15 @@ import {
 import { SlotLoadPanel } from './admin-overview'
 import { BatchActions } from './batch-actions'
 import { SubscriptionHome } from './home'
+import {
+  ResourceFields,
+  resourceDefaults,
+  type ResourceConfig,
+} from './resource-fields'
 import { WeeklyCycleFields } from './weekly-cycle-fields'
 import { SubscriptionWizard, type WizardPreset } from './wizard'
 
-export type Plan = {
+export type Plan = ResourceConfig & {
   weekly_reset_mode: string
   weekly_reset_vm_id: string | null
   id: number
@@ -80,6 +85,7 @@ const statusName: Record<string, string> = {
 }
 const date = (value: string) => new Date(value).toLocaleString('zh-CN')
 const emptyPlan = {
+  ...resourceDefaults,
   weekly_reset_mode: 'independent',
   weekly_reset_vm_id: null as string | null,
   name: '',
@@ -550,7 +556,7 @@ export function SubscriptionsPage() {
                 </Badge>
               </div>
               <p className='text-sm text-muted-foreground'>
-                {p.description || '共享槽位 · 独立用户额度'}
+                {p.description || '共享资源 · 独立用户额度'}
               </p>
               <div className='my-4 grid grid-cols-2 gap-3 text-sm'>
                 <span>
@@ -573,6 +579,11 @@ export function SubscriptionsPage() {
                 </span>
               </div>
               <div className='mb-4 flex flex-wrap gap-2'>
+                {p.api_endpoints.map((ep) => (
+                  <Badge key={ep.endpoint_id} variant='outline'>
+                    API · {ep.name || ep.endpoint_id} · 优先级 {ep.priority}
+                  </Badge>
+                ))}
                 {p.vm_ids.map((id) => (
                   <Link
                     key={id}
@@ -593,7 +604,7 @@ export function SubscriptionsPage() {
                   setPlanOpen(true)
                 }}
               >
-                编辑方案与槽位
+                编辑方案与资源
               </Button>
               <Button
                 className='ml-2'
@@ -702,6 +713,7 @@ export function SubscriptionsPage() {
                       ...draft,
                       platform: e.target.value,
                       vm_ids: [],
+                      api_endpoints: [],
                       weekly_reset_mode: 'independent',
                       weekly_reset_vm_id: null,
                     })
@@ -770,6 +782,7 @@ export function SubscriptionsPage() {
                   })}
               </div>
             </fieldset>
+            <ResourceFields value={draft} onChange={setDraft} />
             <WeeklyCycleFields
               value={draft}
               platform={draft.platform}
@@ -824,7 +837,9 @@ export function SubscriptionsPage() {
               type='submit'
               disabled={
                 mutate.isPending ||
-                (draft.status === 'active' && !draft.vm_ids.length)
+                (draft.status === 'active' &&
+                  !draft.vm_ids.length &&
+                  !draft.api_endpoints.length)
               }
               className='w-full'
             >

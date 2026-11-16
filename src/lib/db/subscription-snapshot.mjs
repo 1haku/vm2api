@@ -60,6 +60,8 @@ export function subscriptionSnapshot(db) {
             // rows stay unknown. Non-null changes must still fail the hash check.
             first_byte_ms: row.first_byte_ms ?? null,
             custom_request_body_metrics: row.custom_request_body_metrics ?? null,
+            custom_resource_kind: row.custom_resource_kind ?? null,
+            custom_resource_name: row.custom_resource_name ?? null,
             generation_ms: row.generation_ms ?? null,
             jev_state: row.jev_state ?? null,
             upstream_service_tier: row.upstream_service_tier ?? null,
@@ -110,6 +112,7 @@ export function subscriptionSnapshot(db) {
     'vm_pools',
     'vm_pool_members',
     'api_endpoints',
+    'custom_subscription_api_endpoints',
     'api_endpoint_keys',
     'api_endpoint_models',
     'cluster_nodes',
@@ -169,6 +172,9 @@ export function subscriptionSnapshot(db) {
     hash: digest(
       plans.map((row) => ({
         ...row,
+        resource_preference: row.resource_preference ?? 'slots_first',
+        api_fallback: row.api_fallback ?? 0,
+        resource_models: row.resource_models ?? '[]',
         group_rpm_limit: row.group_rpm_limit ?? 0,
         user_rpm_limit: row.user_rpm_limit ?? 0,
         weekly_reset_mode: row.weekly_reset_mode ?? 'independent',

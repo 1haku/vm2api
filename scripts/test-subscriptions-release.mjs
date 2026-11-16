@@ -237,6 +237,7 @@ const unit = [
   'cache-breakpoints',
   'panel-login-protection',
   'subscriptions',
+  'subscription-resources',
   'subscription-estimate',
   'request-limits',
   'request-limits-stream',

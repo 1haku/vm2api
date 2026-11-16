@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { Plan } from './index'
+import { ResourceFields, resourceDefaults } from './resource-fields'
 import { WeeklyCycleFields } from './weekly-cycle-fields'
 
 export type WizardPreset = {
@@ -45,6 +46,7 @@ export function SubscriptionWizard({
   const [search, setSearch] = useState('')
   const [daysOverride, setDays] = useState<number>()
   const [draft, setDraft] = useState({
+    ...resourceDefaults,
     weekly_reset_mode: 'independent',
     weekly_reset_vm_id: null as string | null,
     name: preset.vm ? `${preset.vm.name || preset.vm.id} 共享订阅` : '',
@@ -130,7 +132,7 @@ export function SubscriptionWizard({
     (step === 0
       ? !!plan && (mode === 'existing' || !!draft.name.trim())
       : step === 1
-        ? !!plan?.vm_ids.length
+        ? !!(plan?.vm_ids.length || plan?.api_endpoints.length)
         : step === 2
           ? selected.length > 0 &&
             selected.length <= 100 &&
@@ -249,6 +251,7 @@ export function SubscriptionWizard({
                           weekly_reset_mode: 'independent',
                           weekly_reset_vm_id: null,
                           vm_ids: [],
+                          api_endpoints: [],
                         })
                       }
                     >
@@ -294,7 +297,7 @@ export function SubscriptionWizard({
               <p className='text-sm'>
                 {mode === 'new'
                   ? '勾选此方案使用的槽位。同一槽位可供多个套餐共享，各套餐独立计算额度和限流。'
-                  : '以下为方案已绑定的槽位；更换绑定可到“编辑方案与槽位”。'}
+                  : '以下为方案已绑定的槽位；更换绑定可到“编辑方案与资源”。'}
               </p>
               <div className='max-h-72 space-y-2 overflow-y-auto'>
                 {vms.data?.items
@@ -348,14 +351,17 @@ export function SubscriptionWizard({
                 可以先分配订阅，再由管理员登录上游账号；未登录时用户首页会提示原因。
               </p>
               {mode === 'new' && (
-                <WeeklyCycleFields
-                  value={draft}
-                  platform={draft.platform}
-                  slots={(vms.data?.items || []).filter((v) =>
-                    draft.vm_ids.includes(v.id)
-                  )}
-                  onChange={(patch) => setDraft({ ...draft, ...patch })}
-                />
+                <>
+                  <ResourceFields value={draft} onChange={setDraft} />
+                  <WeeklyCycleFields
+                    value={draft}
+                    platform={draft.platform}
+                    slots={(vms.data?.items || []).filter((v) =>
+                      draft.vm_ids.includes(v.id)
+                    )}
+                    onChange={(patch) => setDraft({ ...draft, ...patch })}
+                  />
+                </>
               )}
             </>
           )}

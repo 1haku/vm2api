@@ -1,3 +1,8 @@
+import {
+  subscriptionRoute,
+  selectSubscriptionResource,
+  canFallbackToSubscriptionApi,
+} from '../admin/subscription-resources.mjs'
 /**
  * /v1 protocol handler. URLs, auth, and response envelopes stay with the
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
@@ -619,7 +624,11 @@ export function createHandleProtocol(deps) {
       if (denied) throw Object.assign(new Error(denied.message), { code: denied.code, status: 403 })
       if (req.apiKeyRecord && apiKeyStore?.repo?.db) {
         // Reserve against the model actually sent upstream, never a cheaper alias.
-        const rewrite = applyCodexInboundModelRewrite(inbound, getRouting() || {})
+        const route = req[subscriptionRoute]
+        const rewrite =
+          route?.backend === 'api'
+            ? { ok: true, body: { ...inbound, model: route.picked.upstream_model } }
+            : applyCodexInboundModelRewrite(inbound, getRouting() || {})
         if (!rewrite.ok) throw Object.assign(new Error(rewrite.message), { status: 400, code: rewrite.code })
         const mappedDenied = imagePermissionError(req, rewrite.body, {
           force: options.imageOnly,
@@ -627,12 +636,12 @@ export function createHandleProtocol(deps) {
         })
         if (mappedDenied) throw Object.assign(new Error(mappedDenied.message), { status: 403, code: mappedDenied.code })
         let reservationBody = rewrite.body
-        let reservationOptions = options
+        let reservationOptions = { ...options, requestedModel: inbound.model }
         if (!options.imageOnly && canonicalImageToolModel(rewrite.body?.model)) {
           const turn = imagesRequestFromTurn(logBag.protocol, rewrite.body)
           if (!turn.ok) throw Object.assign(new Error(turn.message), { status: 400, code: turn.code })
           reservationBody = turn.body
-          reservationOptions = { ...options, imageOnly: true }
+          reservationOptions = { ...reservationOptions, imageOnly: true }
         }
         withTransaction(apiKeyStore.repo.db, () => {
           req.subscriptionAdmission = new SubscriptionsRepo(apiKeyStore.repo.db).reserve(
@@ -641,8 +650,10 @@ export function createHandleProtocol(deps) {
             reservationBody,
             reservationOptions,
           )
-          if (req.subscriptionAdmission && resolveInferenceBackend(req) === 'api')
-            throw Object.assign(new Error('订阅只允许访问已分配槽位'), { status: 403, code: 'subscription_scope' })
+          if (req.subscriptionAdmission && resolveInferenceBackend(req) === 'api' && !route)
+            throw Object.assign(new Error('订阅只允许访问已绑定的资源'), { status: 403, code: 'subscription_scope' })
+          if (req.subscriptionAdmission && !route && !req.subscriptionAdmission.vmIds.length)
+            throw Object.assign(new Error('此接口需要套餐绑定槽位'), { status: 403, code: 'subscription_scope' })
           const gate = apiKeyStore.acquire(req.apiKeyRecord, Date.now(), logCtx.request_id)
           if (!gate.ok) throw Object.assign(new Error(gate.message), gate)
           req.releaseManagedKey = gate.release
@@ -668,12 +679,12 @@ export function createHandleProtocol(deps) {
     return true
   }
 
-  async function handleProtocolInner(req, res, protocol, pathName) {
-    const logCtx = requestLog.start(req, { protocol, pathName })
+  async function handleProtocolInner(req, res, protocol, pathName, resume = null) {
+    const logCtx = resume?.logCtx || requestLog.start(req, { protocol, pathName })
     res._kinRequestId = logCtx.request_id
     // Registers its own 'finish' listener first so status/headers are final when finish() runs.
-    requestLog.tapResponse?.(logCtx, res)
-    const logBag = {
+    if (!resume) requestLog.tapResponse?.(logCtx, res)
+    const logBag = resume?.logBag || {
       protocol,
       model: null,
       stream: false,
@@ -706,7 +717,7 @@ export function createHandleProtocol(deps) {
       reasoning_effort: null,
       outbound_session_id: null,
     }
-    trackUsage(req, res, logCtx, logBag)
+    if (!resume) trackUsage(req, res, logCtx, logBag)
     let toolPruneAttempt = null
     let toolPruneClosed = false
     const discardToolPrune = () => {
@@ -727,20 +738,20 @@ export function createHandleProtocol(deps) {
         outputTokens: Number(usage.output_tokens || 0),
       })
     })
-    if (!requireAuth(req, res)) {
+    if (!resume && !requireAuth(req, res)) {
       logBag.error_code = req.authError?.code || ErrorCode.INVALID_API_KEY
       logBag.error_message = req.authError?.message || 'Invalid credentials'
       logBag.api_key_presented = presentedApiKeyForLog(req.presentedApiKey)
       return
     }
-    if (req.apiKeyRecord) {
+    if (!resume && req.apiKeyRecord) {
       logCtx.request_id = crypto.randomUUID()
       res._kinRequestId = logCtx.request_id
     }
 
     let inbound
     try {
-      inbound = await readBody(req, inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes))
+      inbound = resume?.inbound || (await readBody(req, inboundBodyLimit(getRouting(), cfg.limits.max_body_bytes)))
     } catch (error) {
       if (req.aborted && ['request_stream_error', 'request_aborted'].includes(error?.body?.error?.code))
         return finishClientCancel(res, null, logBag)
@@ -818,7 +829,56 @@ export function createHandleProtocol(deps) {
       logBag.error_message = errorResult.body?.error?.message || null
       return json(res, errorResult.status, errorResult.body)
     }
-    if (!admitManagedRequest(req, res, logCtx, logBag, inbound)) return
+    try {
+      if (!resume) selectSubscriptionResource(req, apiKeyStore?.repo?.db, apiScheduler, inbound.model)
+    } catch (error) {
+      logBag.error_code = error.code
+      logBag.error_message = error.message
+      return json(res, error.status || 400, { error: { code: error.code, message: error.message } })
+    }
+    if (!resume && !admitManagedRequest(req, res, logCtx, logBag, inbound)) return
+    const fallbackInbound = req[subscriptionRoute]?.sub.group.api_fallback ? structuredClone(inbound) : inbound
+    const fallbackToApi = async (result) => {
+      if (!canFallbackToSubscriptionApi(req, res, result, logBag.usage)) return false
+      try {
+        const route = selectSubscriptionResource(req, apiKeyStore.repo.db, apiScheduler, inbound.model, {
+          forceApi: true,
+        })
+        const mappedBody = { ...fallbackInbound, model: route.picked.upstream_model }
+        const denied = imagePermissionError(req, mappedBody, { db: apiKeyStore.repo.db })
+        if (denied) throw Object.assign(new Error(denied.message), { code: denied.code, status: 403 })
+        req.subscriptionAdmission = new SubscriptionsRepo(apiKeyStore.repo.db).reserve(
+          req.apiKeyRecord,
+          logCtx.request_id,
+          mappedBody,
+          { replace: true, requestedModel: inbound.model },
+        )
+        discardToolPrune()
+        for (const field of [
+          'vm_id',
+          'account_id',
+          'usage_account_id',
+          'final_account_id',
+          'usage',
+          'error_code',
+          'error_message',
+          'upstream_status',
+          'upstream_model',
+          'first_token_ms',
+          'first_byte_ms',
+          'generation_ms',
+          'final_state',
+          'pricing',
+        ])
+          logBag[field] = null
+        await handleProtocolInner(req, res, protocol, pathName, { logCtx, logBag, inbound: fallbackInbound })
+      } catch (error) {
+        logBag.error_code = error.code || 'subscription_api_fallback'
+        logBag.error_message = error.message
+        json(res, error.status || 502, { error: { code: logBag.error_code, message: error.message } })
+      }
+      return true
+    }
     const healthDecision = req.subscriptionAdmission
       ? null
       : getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
@@ -894,7 +954,11 @@ export function createHandleProtocol(deps) {
       return json(res, errorResult.status, errorResult.body)
     }
     const inferenceBackend = resolveInferenceBackend(req)
-    if (inferenceBackend === 'api' && ownerScopeFromRequest(req, apiKeyStore?.users).type !== 'platform') {
+    if (
+      inferenceBackend === 'api' &&
+      !req[subscriptionRoute] &&
+      ownerScopeFromRequest(req, apiKeyStore?.users).type !== 'platform'
+    ) {
       stats.errors++
       const errorResult = makeError({
         type: ErrorType.PERMISSION,
@@ -935,8 +999,17 @@ export function createHandleProtocol(deps) {
     const apiKeyScope = inferenceBackend === 'api' ? keyScopeFromRequest(req) : null
     const apiPicked =
       inferenceBackend === 'api'
-        ? apiScheduler.pick(ctx.body?.model, Date.now(), { groupType: apiKeyScope?.group_type })
+        ? req[subscriptionRoute]?.picked ||
+          apiScheduler.pick(ctx.body?.model, Date.now(), { groupType: apiKeyScope?.group_type })
         : null
+    if (apiPicked && req[subscriptionRoute] && ctx.body?.model !== req[subscriptionRoute].model) {
+      logBag.error_code = 'subscription_model_rewrite'
+      return json(res, 400, {
+        error: { code: logBag.error_code, message: '订阅 API 请在端点配置模型别名，不支持中途改写模型' },
+      })
+    }
+    logBag.custom_resource_kind = inferenceBackend === 'api' ? 'api' : 'slot'
+    logBag.custom_resource_name = apiPicked?.endpoint?.name || null
     if (apiPicked && !apiPicked.ok) {
       stats.errors++
       logBag.error_code = apiPicked.code
@@ -1049,6 +1122,7 @@ export function createHandleProtocol(deps) {
       const routing = getRouting() || {}
       const codexSticky = {
         cfg,
+        onFallback: fallbackToApi,
         onUsage: () =>
           attachPricing(logBag, {
             managedKey: req.apiKeyRecord || null,
@@ -2169,6 +2243,7 @@ export function createHandleProtocol(deps) {
     }
 
     if (result?.responseSent) return
+    if (!result?.ok && (await fallbackToApi(result))) return
 
     result = acceptAssistantHop(result)
     if (result?.finalState === 'verified' && logBag.cache_prefix_key) {

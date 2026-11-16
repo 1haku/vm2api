@@ -1,3 +1,6 @@
+import { RequestLogStore } from '../../src/lib/admin/request-log.mjs'
+import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs'
+import { ApiEndpointsRepo } from '../../src/lib/db/repos/api-endpoints-repo.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -11,6 +14,11 @@ import { ImagePermissionsRepo } from '../../src/lib/db/repos/image-permissions-r
 
 for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
   ['anthropic.messages', 'relay/sonnet', 'anthropic'],
+  ['anthropic.messages', 'claude-sonnet-4-6', 'anthropic', false, { subscription: true }],
+  ['openai.responses', 'gpt-5.4', 'openai', false, { subscription: true }],
+  ['openai.chat', 'gpt-5.4', 'openai', false, { subscription: true }],
+  ['anthropic.messages', 'claude-sonnet-4-6', 'anthropic', false, { subscription: true, fallback: true }],
+  ['openai.responses', 'gpt-5.4', 'openai', false, { subscription: true, fallback: true }],
   ['openai.chat', 'gpt-5.4', 'openai'],
   ['openai.responses', 'gpt-5.4', 'openai'],
   ['anthropic.messages', 'gpt-5.4', 'openai'],
@@ -48,7 +56,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
   ].map((unsafe) => ['openai.responses', 'gpt-5.4', 'openai', false, { invalid: 'shared', unsafe }]),
   ['openai.responses', 'gpt-5.4', 'openai', false, { stateless: true }],
 ]) {
-  test(`API key routes ${protocol} ${model}, review=${review.enabled ?? 'default'}, risky=${!!review.risky}, decision=${!!review.model}, block=${!!review.block}, input=${JSON.stringify(review.unsafe || review.stateless || null)}`, async () => {
+  test(`API key routes ${protocol} ${model}, review=${review.enabled ?? 'default'}, risky=${!!review.risky}, decision=${!!review.model}, subscription=${!!review.subscription}, fallback=${!!review.fallback}, block=${!!review.block}, input=${JSON.stringify(review.unsafe || review.stateless || null)}`, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'api-channel-'))
     const db = createDatabase({ dataDir: root })
     db.prepare('INSERT INTO users(id,email,username,password_hash,role,status) VALUES(?,?,?,?,?,?)').run(
@@ -123,6 +131,31 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
         api_key_entries: [{ id: 'ek', api_key: 'sk-upstream', proxy_url: 'socks5://proxy.invalid:1080' }],
       },
     ])
+    let subscriptionPlan = null
+    if (review.subscription) {
+      const epRepo = new ApiEndpointsRepo(db)
+      const upstreamModel = upstreamProtocol === 'openai' ? 'gpt-5.4' : 'claude-opus-4-6'
+      scheduler.endpoints[0].models[0].name = upstreamModel
+      epRepo.insertEndpoint({ ...scheduler.endpoints[0], name: 'bound-endpoint' })
+      db.prepare("UPDATE users SET role='user' WHERE id='api-admin'").run()
+      if (review.fallback) db.prepare("INSERT INTO vms(id,name,vm_json) VALUES('unused-slot','unused-slot','{}')").run()
+      const repo = new SubscriptionsRepo(db)
+      subscriptionPlan = repo.savePlan(
+        {
+          name: 'mixed',
+          platform: upstreamProtocol === 'openai' ? 'openai' : 'claude',
+          vm_ids: review.fallback ? ['unused-slot'] : [],
+          api_endpoints: [{ endpoint_id: 'ep', priority: 0 }],
+          api_fallback: !!review.fallback,
+          daily_limit_usd: 10,
+          weekly_limit_usd: 20,
+        },
+        'admin',
+      )
+      repo.assign({ group_id: subscriptionPlan.id, user_ids: ['api-admin'] }, 'admin')
+    }
+    const realLog = review.subscription ? new RequestLogStore({ db, dataDir: root, mode: 'off' }) : null
+    let finished = null
     const response = { headersSent: false, on() {}, once() {}, off() {}, end() {}, write() {} }
     const body =
       protocol === 'openai.responses'
@@ -174,6 +207,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
     let released = 0
     const handler = createHandleProtocol({
       json: (_res, status, body) => {
+        response.statusCode = status
         response.status = status
         response.body = body
       },
@@ -191,12 +225,18 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
         limits: { max_body_bytes: 1024 * 1024, upstream_timeout_ms: 2000 },
         paths: { data: root, project: root },
       },
-      requestLog: { start: () => ({ request_id: 'api-channel', t0: Date.now() }), finish() {} },
+      requestLog: {
+        start: (req, meta) => realLog?.start(req, meta) || { request_id: 'api-channel', t0: Date.now() },
+        finish: (ctx, extra) => {
+          finished = extra
+          realLog?.finish(ctx, extra)
+        },
+      },
       stickyRouter: {},
       accountQuota: {},
       apiKeyStore: {
         repo: { db },
-        users: { db, getById: () => ({ role: 'admin' }) },
+        users: { db, getById: () => ({ role: review.subscription ? 'user' : 'admin' }) },
         acquire: () => {
           acquired++
           return {
@@ -228,8 +268,10 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
       routingConfigPath: routingFile,
       routingConfig: { failover: {} },
       groupsRepo: { rateMultiplier: () => 1 },
+      failoverRunner: { run: async () => ({ ok: false, status: 503, code: 'no_schedulable_account' }) },
       codexOps: {
         list: () => {
+          if (review.fallback) return []
           throw new Error('API keys must not use OAuth slots')
         },
       },
@@ -239,7 +281,12 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
       url: '/v1/messages',
       headers: { 'user-agent': 'api-test' },
       apiKeyKind: 'managed',
-      apiKeyRecord: { id: 'api-key', category: 'api', user_id: 'api-admin', group_id: 1 },
+      apiKeyRecord: {
+        id: 'api-key',
+        category: review.subscription ? 'oauth' : 'api',
+        user_id: 'api-admin',
+        group_id: subscriptionPlan?.id || 1,
+      },
       once() {},
       off() {},
     }
@@ -280,7 +327,19 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
         `https://relay.invalid/v1/${upstreamProtocol === 'openai' ? 'responses' : 'messages?beta=true'}`,
       )
       const outbound = JSON.parse(captured[0].body)
-      assert.equal(outbound.model, 'upstream-model')
+      assert.equal(
+        outbound.model,
+        review.subscription ? (upstreamProtocol === 'openai' ? 'gpt-5.4' : 'claude-opus-4-6') : 'upstream-model',
+      )
+      if (review.subscription) {
+        assert.equal(finished.custom_resource_kind, 'api')
+        assert.equal(finished.subscription_id, new SubscriptionsRepo(db).list('api-admin')[0].id)
+        assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+        assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger').get().n, 1)
+        const log = db.prepare('SELECT * FROM usage_logs').get()
+        assert.equal(log.custom_resource_kind, 'api')
+        if (upstreamProtocol === 'openai') assert.ok(log.actual_cost > 0)
+      }
       assert.equal(acquired, 1)
       assert.equal(released, 1)
       if (upstreamProtocol === 'openai') {
