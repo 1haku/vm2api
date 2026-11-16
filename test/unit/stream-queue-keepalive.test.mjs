@@ -6,6 +6,7 @@ import path from 'node:path'
 import http from 'node:http'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { createRespond } from '../../src/lib/http/respond.mjs'
+import { activateFixture, seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 
 const MESSAGE = {
@@ -527,6 +528,9 @@ test('an incomplete native handoff never becomes a successful output-limit termi
       runtime: { kernel_socket: socketPath, worker_run_dir: root, worker_token_file: tokenPath },
     },
   }
+  // Native admission now verifies the fixture license even when a prepared hop is supplied.
+  seedEncryptedPackage(root)
+  activateFixture(root, exec.vm)
   const res = createResponse()
   const handler = createHandler({
     root,
@@ -547,7 +551,7 @@ test('an incomplete native handoff never becomes a successful output-limit termi
   try {
     await invoke(handler, res)
     const body = res.chunks.join('')
-    assert.equal(upstreamRequests, 1)
+    assert.equal(upstreamRequests, 1, JSON.stringify({ status: res.statusCode, body: res.body, chunks: res.chunks }))
     assert.doesNotMatch(body, /"stop_reason":"max_tokens"|event: message_stop/)
     if (res.statusCode === 200) assert.match(body, /event: error/)
     else assert.equal(res.statusCode, 502)

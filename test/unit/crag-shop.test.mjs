@@ -79,7 +79,7 @@ test('shop migration numbering preserves applied schemas and orders from either 
     }
 
     assert.deepEqual(
-      applyMigrations(db),
+      applyMigrations(db).filter((name) => !name.startsWith('custom/')),
       legacy ? ['055_account_lifetime_usage.sql'] : ['057_crag_shop_commerce.sql', '058_crag_shop_activation.sql'],
     )
     assert.deepEqual(applyMigrations(db), [])

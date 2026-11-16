@@ -147,10 +147,11 @@ test('native switch stops before real replacement, writes candidate config and c
   const { root, vm, home, run } = fixture(t)
   const factory = cragV2PackageRoot(root)
   const base = path.dirname(factory)
-  const snapshot = 'packages/amd64-00000000-0000-4000-8000-000000000000'
+  const arch = path.basename(factory)
+  const snapshot = `packages/${arch}-00000000-0000-4000-8000-000000000000`
   fs.cpSync(factory, path.join(base, snapshot), { recursive: true })
   fs.writeFileSync(
-    path.join(base, 'current-amd64.json'),
+    path.join(base, `current-${arch}.json`),
     JSON.stringify({ package: snapshot, release: { tag: 'v3.0.4', version: '3.0.4' } }),
   )
   activateFixture(root, vm)

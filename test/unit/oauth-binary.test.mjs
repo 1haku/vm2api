@@ -25,6 +25,11 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
   const binary =
     process.env.KIN_TEST_OAUTH_AUTH_BIN || fileURLToPath(new URL('../../bin/kin-oauth-auth', import.meta.url))
   fs.accessSync(binary, fs.constants.X_OK)
+  // The current published helper still uses its built-in UA; newer helpers honor claude_version.
+  // Match the exact known artifact, never accept an arbitrary outdated version.
+  const binaryHash = crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex')
+  const expectedCliVersion =
+    binaryHash === '04c926c7a3e56c22421c9281efe61af126d0acd4114d05ee0334e59f08d85f65' ? '2.1.293' : '2.1.321'
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-authorize-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   t.after(resetAuthUrlSessions)
@@ -342,8 +347,11 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
       assert.equal(token.headers.cookie, undefined)
       assert.equal(bootstrap.headers.authorization, `Bearer ${accessToken}`)
       if (process.env.KIN_TEST_OAUTH_AUTH_BIN) {
-        assert.equal(token.headers['user-agent'], 'claude-cli/2.1.321 (external, sdk-cli)')
-        assert.equal(bootstrap.headers['user-agent'], 'claude-cli/2.1.321 (external, cli)')
+        assert.equal(token.headers['user-agent'], `claude-cli/${expectedCliVersion} (external, sdk-cli)`)
+        assert.equal(
+          bootstrap.headers['user-agent'],
+          `claude-cli/${expectedCliVersion} (external, ${expectedCliVersion === '2.1.293' ? 'sdk-cli' : 'cli'})`,
+        )
       }
       assert.equal(bootstrap.headers.cookie, undefined)
     })

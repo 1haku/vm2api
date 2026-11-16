@@ -49,6 +49,8 @@ export function subscriptionSnapshot(db) {
             outbound_session_id: row.outbound_session_id ?? null,
             // Upstream 041 adds only a nullable inbound device identifier.
             inbound_device_id: row.inbound_device_id ?? null,
+            // Upstream 055 adds a nullable lifetime usage account link.
+            usage_account_id: row.usage_account_id ?? null,
             image_model: row.image_model ?? null,
             image_usage: row.image_usage ?? null,
             image_input_tokens: row.image_input_tokens ?? 0,

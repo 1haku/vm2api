@@ -402,6 +402,8 @@ const result = spawnSync(
     stdio: 'inherit',
     env: {
       ...process.env,
+      // Fixtures must own their per-project data roots, not share the image's service data directory.
+      KIN_DATA_DIR: '',
       // Unit fixtures choose their own generator; the real payload is checked separately.
       KIN_COMPUTER_BIN: '',
       // Synthetic slot fixtures use their own payloads; the real native overlay

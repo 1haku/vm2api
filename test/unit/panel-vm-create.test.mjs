@@ -384,7 +384,9 @@ test('create kvm persists runtime and preinstalls original Claude Code when prob
   }
 })
 
-test('both Anthropic choices install both packages with a cold standard wrapper', async (t) => {
+test('both Anthropic choices install both packages with a cold standard wrapper', {
+  skip: process.platform !== 'linux' || process.arch !== 'x64',
+}, async (t) => {
   for (const dataplane of [undefined, 'crag']) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-crag-'))
     t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -414,7 +416,9 @@ test('both Anthropic choices install both packages with a cold standard wrapper'
   }
 })
 
-test('create rejects missing required packages before persisting a slot', async (t) => {
+test('create rejects missing required packages before persisting a slot', {
+  skip: process.platform !== 'linux' || process.arch !== 'x64',
+}, async (t) => {
   for (const [missing, code] of [
     ['wrap', 'kernel_package_missing'],
     ['crag', 'crag_v2_package_missing'],
@@ -522,4 +526,25 @@ test('GET /vms/create-options is available to a tenant user', async () => {
   assert.equal(response.body.data.vm.memory, '4g')
   assert.equal(response.body.data.vm.default_runtime, 'kvm')
   assert.deepEqual(response.body.data.kvm, { ok: true, accel: 'tcg', error: null })
+})
+
+// Upstream only preinstalls both kernels on native Linux x64 placements.
+test('ARM control rejects native CRAG selection and keeps standard slots independent', {
+  skip: process.arch !== 'arm64',
+}, async (t) => {
+  for (const dataplane of ['crag', 'wrap']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-arm-'))
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+    const { handlePanel, response } = makeCreateHandler(
+      root,
+      { runtime_type: 'docker', start: false, dataplane },
+      undefined,
+      undefined,
+      { missing: 'crag' },
+    )
+    await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/vms/create'))
+    assert.equal(response.status, dataplane === 'crag' ? 409 : 200, JSON.stringify(response.body))
+    if (dataplane === 'crag') assert.equal(response.body.error.code, 'crag_v2_unsupported_placement')
+    else assert.equal(response.body.data.vm.status, 'stopped')
+  }
 })
