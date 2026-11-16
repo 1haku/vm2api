@@ -147,6 +147,7 @@ export function KeyLimitsDialog({
   const quotaOpts = mode === 'edit' ? QUOTA_EDIT : QUOTA_CREATE
   const rpmOpts = mode === 'edit' ? RPM_EDIT : RPM_CREATE
   const isApi = draft.category === 'api'
+  const isSubscription = plans.data?.items.some((p) => p.id === draft.group_id)
   const listed = vmsInGroup(vms || [], draft.group_type)
   const scopeBlocked = isApi
     ? false
@@ -230,7 +231,7 @@ export function KeyLimitsDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value='oauth'>
-                  {draft.group_id ? '订阅资源（自动选择）' : 'OAuth 槽位'}
+                  {isSubscription ? '订阅资源（自动选择）' : 'OAuth 槽位'}
                 </SelectItem>
                 {user?.role === 'admin' && !draft.group_id && (
                   <SelectItem value='api'>API 直连</SelectItem>

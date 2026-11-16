@@ -144,6 +144,10 @@ test('fallback never retries committed, billed, cancelled, policy or local limit
   assert.equal(canFallbackToSubscriptionApi(req, {}, { status: 503 }), true)
   for (const result of [
     { status: 400 },
+    { status: 503, finalState: 'content_filter' },
+    { status: 503, body: { stop_reason: 'refusal' } },
+    { status: 503, code: 'model_not_allowed' },
+    { status: 503, policy: { rememberRefusal: true } },
     { status: 403 },
     { status: 503, committed: true },
     { status: 429, code: 'subscription_quota' },

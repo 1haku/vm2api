@@ -1,5 +1,6 @@
 import { SubscriptionsRepo, subscriptionError } from '../db/repos/subscriptions-repo.mjs'
 import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
+import { isUpstreamRefusal } from '../core/refusal-guard.mjs'
 
 // Server-owned state: never inferred from caller headers or body flags.
 export const subscriptionRoute = Symbol('subscriptionRoute')
@@ -40,9 +41,14 @@ export function canFallbackToSubscriptionApi(req, res, result, usage) {
     return false
   if (req.aborted || res.destroyed || res.headersSent || res.writableEnded || result?.committed || result?.responseSent)
     return false
+  if (isUpstreamRefusal(result) || result?.policy?.rememberRefusal) return false
   const code = String(result?.body?.error?.code || result?.error?.code || result?.code || '')
   // Never route around policy, identity, client admission, or quota restrictions.
-  if (/refusal|policy|guard|permission|forbidden|subscription|concurrency|rpm|invalid|client|cancel|abort/i.test(code))
+  if (
+    /refusal|policy|guard|permission|forbidden|subscription|concurrency|rpm|invalid|client|cancel|abort|mismatch|not_allowed|not_portable|vm_pool_unavailable/i.test(
+      code,
+    )
+  )
     return false
   if (![429, 500, 502, 503, 504].includes(result?.status)) return false
   const hasUsage = (value) =>

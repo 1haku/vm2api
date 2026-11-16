@@ -350,6 +350,15 @@ export function SubscriptionWizard({
               <p className='text-xs text-muted-foreground'>
                 可以先分配订阅，再由管理员登录上游账号；未登录时用户首页会提示原因。
               </p>
+              {mode === 'existing' && !!plan?.api_endpoints?.length && (
+                <p className='text-sm'>
+                  API 端点：
+                  {plan.api_endpoints
+                    .map((e) => e.name || e.endpoint_id)
+                    .join('、')}
+                  ；与槽位共用额度。
+                </p>
+              )}
               {mode === 'new' && (
                 <>
                   <ResourceFields value={draft} onChange={setDraft} />
@@ -438,6 +447,12 @@ export function SubscriptionWizard({
                         vms.data?.items.find((v) => v.id === id)?.name || id
                     )
                     .join('、')}
+                </dd>
+                <dt>API 端点</dt>
+                <dd>
+                  {plan.api_endpoints
+                    ?.map((e) => e.name || e.endpoint_id)
+                    .join('、') || '未绑定'}
                 </dd>
                 <dt>每人每日 / 每周额度</dt>
                 <dd>
