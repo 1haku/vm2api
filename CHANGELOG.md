@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- 上游「Third-party apps now draw from your extra usage…」和「no third-party apps allowed」（HTTP 400/503）单独归类为 `third_party_client`：客户端收到 400 `invalid_request_error`，文案为中性说明，`details.upstream_message` 保留原文，请求日志 `error_code` 记为 `third_party_client`。主修复是 #1208（把第三方 system 搬进首条 user，避免触发）；这里只管漏网时的归类和兜底。不再报成 `refusal_guard`「usage policy」，不写拒答缓存、不封会话或设备（取代 #842 的缓存和 1.4.131 的会话封锁），不换号、不冷却槽位，请求日志归「请求格式」、不计 SLA 失败；历史上记成 `refusal_guard` 的同类行也按「请求格式」统计。
+
+## 1.4.138 — 2026-11-18 · OpenAI 模型目录 6.2 系列默认暴露
+
+- 静态回退目录补齐 `gpt-6.2-astra` 与 `gpt-6.2-sol` 并默认启用，`GET /v1/models` 开箱即对外列出；两款在模型页同样默认可调度。
+- 同步发现的新 ID 改为按回退目录决定默认开关：目录内的 ID 经账号 `/backend-api/codex/models` 确认后立即可调度，目录外的陌生 ID 仍默认关闭、等管理员启用。
+- `gpt_model_policy` 新增 `seed_version`，对已同步过的实例一次性补齐新增代次。迁移只补该代次列出的 ID，不整体合并回退目录，避免复活上游已下线的旧型号；已存在的行保留上游 catalog 事实，只校正开关。升级后若不想暴露 6.2，在模型页关闭即永久生效。
+- 目录客户端 `auto` 解析失败时的兜底版本跟随官方发布更新到 `0.169.0`，不再用过期版本向上游查询可见模型。内核出站身份与自定义 UA 不变。
+- 6.2 两款尚无官方公布价目，内置价表不臆造，其用量按未计价处理。
+- 沿用现有签名载荷，无需 `wrap-cli/sync` 或重装槽位；本版不改变上游计费策略。
+
+## 1.4.137 — 2026-11-18 · Claude 入口工具历史兼容
+
+- `/v1/messages` 转换混入的 Chat 工具调用及结果，保留原生内容块。`/v1/responses` 支持 Codex 动态工具声明，并在不跨消息和缓存边界时归并交错的并行工具历史；无法转换时返回具体字段错误。
+- CRAG 面板复用已校验的入站结构，减少重复转换和冗余请求头（#1201）。
+- 沿用现有签名载荷，无需 `wrap-cli/sync` 或重装槽位；本版不改变上游计费策略。
+
 ## 1.4.136 — 2026-11-17 · CRAG thinking 采样参数修复
 
 - CRAG 在确定 thinking 模式后再校准采样参数：启用 thinking 或使用 adaptive 时将 `temperature` 设为 `1`，移除 `top_p` 和 `top_k`；关闭 thinking 时保留原值。修复最简 Messages 请求因采样参数不兼容返回 400 的问题。

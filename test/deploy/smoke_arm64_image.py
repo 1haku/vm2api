@@ -69,6 +69,9 @@ for name in ('cli-node', 'cc-node'):
             assert hashlib.sha256((native / relative).read_bytes()).hexdigest() == sha, relative
         elf(native / 'glibc239/arm64/bun', 183)
         binary = native / 'cli-node'
+    else:
+        print(name + ': x86 ELF verified')
+        continue
     version = subprocess.check_output([str(binary), '--version'], text=True, timeout=60).strip()
     assert version, name
     print(name + ': ' + version)

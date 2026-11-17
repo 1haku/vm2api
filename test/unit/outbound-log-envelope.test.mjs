@@ -115,7 +115,9 @@ function fakeResponse() {
       writes.push(String(chunk))
       return true
     },
-    end() {},
+    end(chunk) {
+      if (chunk != null) writes.push(String(chunk))
+    },
     finish() {
       listeners.finish?.()
     },
@@ -350,7 +352,11 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
   fs.writeFileSync(path.join(kernel.root, 'routing.json'), JSON.stringify(routing))
   const { handler, finished, preparedCandidates, request } = protocolHarness(kernel, routing, interceptRules)
   return {
-    async send(body, candidateHealth = staleHealth, { protocol = 'anthropic.messages', headers = {} } = {}) {
+    async send(
+      body,
+      candidateHealth = staleHealth,
+      { protocol = 'anthropic.messages', headers = {}, status = 200 } = {},
+    ) {
       kernel.selected.exec.workerStatus = structuredClone(candidateHealth)
       const postedBefore = kernel.posted.length
       const finishedBefore = finished.length
@@ -359,9 +365,14 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
       const req = request(body)
       Object.assign(req.headers, headers)
       if (protocol === 'openai.responses') req.url = '/v1/responses'
+      if (protocol === 'openai.chat') req.url = '/v1/chat/completions'
       await handler.handleProtocol(req, response, protocol, req.url)
       response.finish()
-      assert.equal(response.statusCode, 200, response.writes.join(''))
+      assert.equal(response.statusCode, status, response.writes.join(''))
+      if (status !== 200) {
+        assert.equal(kernel.posted.length, postedBefore)
+        return JSON.parse(response.writes.join(''))
+      }
       assert.deepEqual(preparedCandidates.at(-1), candidateHealth)
       assert.equal(kernel.posted.length, postedBefore + 1)
       assert.equal(finished.length, finishedBefore + 1)
@@ -377,7 +388,7 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
       const envelope = kernel.posted.at(-1)
       const extra = finished.at(-1)
       assert.deepEqual(JSON.parse(JSON.stringify(extra.outbound_body)), envelope.body)
-      assert.deepEqual(extra.worker_envelope_headers, envelope.headers)
+      assert.deepEqual(extra.worker_envelope_headers, envelope.headers ?? null)
       assert.equal(Object.hasOwn(envelope.body, 'caller_cwd'), false)
       assert.equal(Object.hasOwn(extra, 'caller_cwd'), false)
       assert.equal(Object.hasOwn(extra.outbound_body, 'caller_cwd'), false)
@@ -392,7 +403,7 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
   const fixture = await protocolKernelFixture(t, {
     health: {
       ...printHealth,
-      capabilities: [...printCapabilities, 'generation_controls_v3', 'system_text_cache_v3'],
+      capabilities: [...printCapabilities, 'generation_controls_v3', 'system_text_cache_v3', 'linux_tui_native_queue'],
     },
     staleHealth: ordinaryHealth,
   })
@@ -413,11 +424,11 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
       role: 'user',
       content: [
         { type: 'tool_result', tool_use_id: 'toolu_fixture', content: 'result' },
-        { type: 'text', text: 'Summarize it', cache_control: anchor },
+        { type: 'text', text: 'Summarize it', cache_control: { type: 'ephemeral' } },
       ],
     },
   ]
-  const { envelope } = await fixture.send({
+  const { envelope, extra } = await fixture.send({
     model: 'claude-sonnet-5-5',
     max_tokens: 32000,
     stream: true,
@@ -426,6 +437,8 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
     messages,
     tool_choice: { type: 'auto' },
   })
+  assert.equal(Object.hasOwn(envelope, 'headers'), false)
+  assert.equal(extra.worker_envelope_headers, null)
   assert.deepEqual(envelope.body.tools, tools)
   assert.deepEqual(envelope.body.system, system)
   assert.equal(envelope.body.crag_prompt, undefined)
@@ -438,7 +451,12 @@ unixTest('zero CRAG sends mixed Responses tools and structured system to the cap
   const fixture = await protocolKernelFixture(t, {
     health: {
       ...printHealth,
-      capabilities: [...printCapabilities, 'generation_controls_v3', 'provider_managed_tools_v1'],
+      capabilities: [
+        ...printCapabilities,
+        'generation_controls_v3',
+        'provider_managed_tools_v1',
+        'linux_tui_native_queue',
+      ],
     },
     staleHealth: ordinaryHealth,
     preset: 'zero',
@@ -461,6 +479,7 @@ unixTest('zero CRAG sends mixed Responses tools and structured system to the cap
     ordinaryHealth,
     { protocol: 'openai.responses' },
   )
+  assert.equal(Object.hasOwn(envelope, 'headers'), false)
   assert.equal(envelope.body.tools.length, 48)
   assert.deepEqual(envelope.body.tools[47], search)
   assert.deepEqual(envelope.body.system, [{ type: 'text', text: 'Caller policy' }])
@@ -468,7 +487,7 @@ unixTest('zero CRAG sends mixed Responses tools and structured system to the cap
 })
 
 for (const runtime of ['crag-v2', 'cli-node']) {
-  unixTest(`Codex Responses tool continuation is structured before ${runtime} dispatch`, async (t) => {
+  unixTest(`Three protocol entrances send structured tool continuation before ${runtime} dispatch`, async (t) => {
     const health =
       runtime === 'crag-v2'
         ? { ...printHealth, capabilities: [...printCapabilities, 'generation_controls_v3', 'system_text_cache_v3'] }
@@ -482,20 +501,24 @@ for (const runtime of ['crag-v2', 'cli-node']) {
         input: [
           { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Find it' }] },
           {
+            type: 'additional_tools',
+            role: 'developer',
+            tools: [{ type: 'function', name: 'fixture_lookup', parameters: { type: 'object' } }],
+          },
+          {
             type: 'function_call',
             id: 'fc_different',
             call_id: 'call_existing',
-            name: 'read_file',
+            name: 'fixture_lookup',
             arguments: '{"file":"sample"}',
           },
           { type: 'function_call_output', call_id: 'call_existing', output: 'Here it is' },
         ],
-        tools: [{ type: 'function', name: 'read_file', parameters: { type: 'object' } }],
       },
       ordinaryHealth,
       { protocol: 'openai.responses', headers: { 'user-agent': 'codex_cli_rs/0.0.0' } },
     )
-    const expectedName = runtime === 'crag-v2' ? 'read_file' : 'mcp__read_file'
+    const expectedName = runtime === 'crag-v2' ? 'fixture_lookup' : 'mcp__fixture_lookup'
     assert.equal(envelope.body.tools[0].name, expectedName)
     assert.deepEqual(envelope.body.tools[0].input_schema, { type: 'object' })
     assert.equal(envelope.body.max_tokens, 32000)
@@ -513,6 +536,47 @@ for (const runtime of ['crag-v2', 'cli-node']) {
     const result = blocks.find((block) => block.type === 'tool_result')
     assert.equal(result.tool_use_id, 'call_existing')
     assert.deepEqual(result.content, [{ type: 'text', text: 'Here it is' }])
+
+    const messages = [
+      { role: 'user', content: 'Find it' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            type: 'function',
+            id: 'call_existing',
+            function: { name: 'fixture_lookup', arguments: '{"file":"sample"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_existing', content: 'Here it is' },
+    ]
+    const tools = [{ type: 'function', function: { name: 'fixture_lookup', parameters: { type: 'object' } } }]
+    for (const protocol of ['anthropic.messages', 'openai.chat']) {
+      const { envelope: converted } = await fixture.send(
+        { model: 'claude-sonnet-5-5', max_tokens: 32000, messages, tools },
+        ordinaryHealth,
+        { protocol },
+      )
+      const name = converted.body.tools[0].name
+      assert.match(name, /^(mcp__)?fixture_lookup$/)
+      assert.deepEqual(converted.body.tools[0].input_schema, { type: 'object' })
+      assert.ok(converted.body.messages.every((message) => message.role !== 'tool' && !message.tool_calls))
+      const history = converted.body.messages.flatMap((message) => message.content)
+      assert.deepEqual(
+        history.find((block) => block.type === 'tool_use'),
+        { ...blocks.find((block) => block.type === 'tool_use'), name },
+      )
+      assert.equal(history.find((block) => block.type === 'tool_result')?.tool_use_id, 'call_existing')
+    }
+    const invalid = await fixture.send(
+      { model: 'claude-sonnet-5-5', messages: messages.slice(0, 2), tools },
+      ordinaryHealth,
+      { status: 400 },
+    )
+    assert.equal(invalid.error.code, 'invalid_messages_conversion')
+    assert.equal(invalid.error.param, 'messages[1].tool_calls[0].id')
   })
 }
 
