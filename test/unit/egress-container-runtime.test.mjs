@@ -185,7 +185,7 @@ test('container runtime replaces the helper on config change, binary upgrade or 
 
 test('container runtime inspect and stop act on the helper container', async (t) => {
   const fx = fixture(t)
-  const opts = { runtime: 'container', runDocker: fx.d.run }
+  const opts = { runtime: 'container', runDocker: fx.d.run, bin: fx.bin }
   assert.equal(inspectEgressProcess(fx.root, 'px-ctr', opts).reason, 'not_running')
   await fx.start()
   const st = inspectEgressProcess(fx.root, 'px-ctr', opts)
