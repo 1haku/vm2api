@@ -59,6 +59,16 @@ for name in ('cli-node', 'cc-node'):
         print(name + ': absent (optional)')
         continue
     elf(binary, 62)
+    if name == 'cli-node':
+        # ARM64 slots select nativeCliForVm, not the dormant x86 factory copy.
+        # The upstream Bun-packed x86 executable can abort under QEMU; execute
+        # and hash-check the actual deployed native overlay instead.
+        native = root / 'image-native-cli'
+        manifest = json.loads((native / 'manifest.json').read_text())
+        for relative, sha in manifest['files'].items():
+            assert hashlib.sha256((native / relative).read_bytes()).hexdigest() == sha, relative
+        elf(native / 'glibc239/arm64/bun', 183)
+        binary = native / 'cli-node'
     version = subprocess.check_output([str(binary), '--version'], text=True, timeout=60).strip()
     assert version, name
     print(name + ': ' + version)
@@ -116,7 +126,7 @@ finally:
     except subprocess.TimeoutExpired:
         server.kill()
         server.wait(timeout=5)
-print('PASS: native control plane, amd64 cluster helpers, QEMU CLI/computer, stable Docker/KVM identities, entrypoint refresh, health and console')
+print('PASS: native control plane and CLI, amd64 cluster helpers, QEMU computer, stable Docker/KVM identities, entrypoint refresh, health and console')
 '''
 
 
