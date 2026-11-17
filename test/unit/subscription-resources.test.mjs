@@ -169,6 +169,10 @@ test('fallback never retries committed, billed, cancelled, policy or local limit
     { status: 503, code: 'refusal_guard' },
     { status: 429, code: 'user_concurrency' },
     { status: 502, usage: { output_tokens: 1 } },
+    { status: 502, clusterDeliveryUnconfirmed: true },
+    { status: 503, code: 'cluster_slot_reconnecting' },
+    { status: 502, body: { error: { code: 'cluster_delivery_unconfirmed' } } },
+    { status: 502, nativeHandoff: true, body: { error: { code: 'native_handoff_missing' } } },
   ])
     assert.equal(canFallbackToSubscriptionApi(req, {}, result), false, JSON.stringify(result))
   assert.equal(canFallbackToSubscriptionApi(req, { headersSent: true }, { status: 503 }), false)

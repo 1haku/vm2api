@@ -1981,6 +1981,9 @@ export function createHandleProtocol(deps) {
                   sessionId: attemptSessionId,
                   cliHop: true,
                   cragPrint: true,
+                  // CRAG replays caller thinking unfiltered; signatures this pool never
+                  // issued make an "Invalid signature" 400 safe to strip and retry.
+                  foreignThinking: owned.converted + owned.dropped > 0,
                   callerCwd: callerEnvironment?.cwd,
                   preparedHop,
                   transportRouting,
@@ -2420,6 +2423,18 @@ export function createHandleProtocol(deps) {
         stats.errors++
         logBag.error_code = result?.body?.error?.code || 'stream_incomplete'
         logBag.error_message = result?.body?.error?.message || 'Stream did not reach a verified terminal state'
+        if (logBag.error_code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED && !res.writableEnded) {
+          const { body } = mapProtocolClientError(result, logBag, logBag.error_code)
+          if (protocol === 'anthropic.messages') {
+            if (!streamTracker?.isFinished()) res.write(buildAnthropicSseError(body.error))
+          } else if (protocol === 'openai.responses') {
+            const { code, message } = body.error
+            res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', code, message, param: null })}\n\n`)
+          } else {
+            res.write(`data: ${JSON.stringify(body)}\n\n`)
+          }
+          return res.end()
+        }
         const closing = isRecoverableTruncation(result) && !res.writableEnded ? streamTracker?.closingEvents() : null
         if (closing) res.write(closing)
         else if (

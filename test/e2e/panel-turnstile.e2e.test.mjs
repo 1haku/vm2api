@@ -2,6 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { startGateway, api } from '../harness.mjs'
 
+test('readiness belongs to the spawned gateway instead of another listener on the chosen port', async () => {
+  const occupied = await startGateway()
+  try {
+    await assert.rejects(startGateway({ port: occupied.port, readyMs: 3000 }), /EADDRINUSE/)
+    assert.equal((await api(occupied, 'GET', '/api/panel/me')).status, 200)
+  } finally {
+    await occupied.stop()
+  }
+})
+
 test('enabled login protection is mandatory while health, existing master auth and model API remain independent', async () => {
   const gw = await startGateway({
     env: {

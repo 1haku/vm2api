@@ -127,6 +127,16 @@ export async function startGateway(opts = {}) {
   let ready = false
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 50))
+    if (child.exitCode != null || child.signalCode != null) break
+    const listening = stdout.split('\n').some((line) => {
+      try {
+        const event = JSON.parse(line)
+        return event.event === 'vm2api-started' && Number(event.port) === Number(port)
+      } catch {
+        return false
+      }
+    })
+    if (!listening) continue
     try {
       const r = await fetch(`${baseUrl}/health`)
       if (r.ok) {
@@ -140,6 +150,9 @@ export async function startGateway(opts = {}) {
     try {
       child.kill('SIGKILL')
     } catch {}
+    if (child.exitCode == null && child.signalCode == null) await new Promise((resolve) => child.once('exit', resolve))
+    if (!opts.port && /EADDRINUSE/.test(stderr) && (opts.portRetries || 0) < 2)
+      return startGateway({ ...opts, project, portRetries: (opts.portRetries || 0) + 1 })
     throw new Error(`gateway failed to start\nstdout:\n${stdout}\nstderr:\n${stderr}`)
   }
 
@@ -153,10 +166,13 @@ export async function startGateway(opts = {}) {
     stdout: () => stdout,
     stderr: () => stderr,
     async stop() {
-      if (child.exitCode == null) {
+      if (child.exitCode == null && child.signalCode == null) {
         child.kill('SIGTERM')
         await new Promise((r) => setTimeout(r, 150))
-        if (child.exitCode == null) child.kill('SIGKILL')
+        if (child.exitCode == null && child.signalCode == null) {
+          child.kill('SIGKILL')
+          await new Promise((resolve) => child.once('exit', resolve))
+        }
       }
     },
   }

@@ -43,6 +43,12 @@ export function canFallbackToSubscriptionApi(req, res, result, usage) {
     return false
   if (isUpstreamRefusal(result) || result?.policy?.rememberRefusal) return false
   const code = String(result?.body?.error?.code || result?.error?.code || result?.code || '')
+  if (
+    result?.clusterDeliveryUnconfirmed === true ||
+    ['cluster_delivery_unconfirmed', 'cluster_slot_reconnecting'].includes(code) ||
+    (result?.nativeHandoff === true && /^native_handoff_(missing|invalid|conflict|incomplete)$/.test(code))
+  )
+    return false
   // Never route around policy, identity, client admission, or quota restrictions.
   if (
     /refusal|policy|guard|permission|forbidden|subscription|concurrency|rpm|invalid|client|cancel|abort|mismatch|not_allowed|not_portable|vm_pool_unavailable/i.test(
