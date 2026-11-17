@@ -13,3 +13,14 @@
 - 官方周窗口仍由套餐指定的槽位决定，API 用量也计入该窗口。纯 API 套餐使用独立周期。
 
 自定义迁移 010 仅新增套餐资源配置、关联表和日志资源类型/名称；旧套餐默认值保持原有槽位调度。保留现有模型费率、账号凭证和日志，迁移检查对新增默认值做规范化，新增绑定与配置也进入完整性核对。
+
+## Anthropic 余额充足但 Claude Code 返回余额不足
+
+本地订阅额度、Anthropic 赠送 API 额度和购买的预付余额是不同的额度。
+Anthropic 的 Max/Ultra/Team 赠送 API 额度覆盖普通 API、Agent SDK 等服务，但不覆盖交互式 Claude Code。仅有赠送额度时，同一 API Key 可以完成普通 API 请求，而 Claude Code 请求返回余额不足。应核对该 Key 所属组织的 Billing 页面中的余额类型和工作区消费限制；不能仅依据总余额判断。
+
+官方依据：https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers
+
+真实 Claude Code 请求应保留客户端身份。网关不会通过删除身份标记把交互式调用伪装成赠送额度支持的用途。若需交互式 Claude Code 的 API 回退，应使用该用途可用的购买余额。无有效 Token 用量的拒绝请求不扣本地订阅额度，且必须释放预留。
+
+诊断应先检查已有错误、官方说明和离线回归；不使用真实凭证进行多组字段枚举测试。

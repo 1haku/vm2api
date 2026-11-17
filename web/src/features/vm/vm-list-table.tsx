@@ -37,12 +37,14 @@ import {
   SLOT_BG,
   type SlotState,
 } from '@/lib/vm-health'
+import { clipLabel } from '@/lib/vm-kind'
 import {
   claudeTier,
   poolStatus,
   scheduleStateLabel,
   seatTitle,
   type ScheduleStateLabel,
+  vmRequestingCount,
 } from '@/lib/vm-status'
 import { vmCostLedger, vmTodayStats, vmWeekOutcome } from '@/lib/vm-usage'
 import { useNow } from '@/hooks/use-now'
@@ -56,6 +58,7 @@ import { riskFg, RISK_SOLID, riskLevel } from '@/features/vm/usage-meter'
 import { PlatformMark } from '@/features/vm/vm-account-identity'
 import { VmActionMenu } from '@/features/vm/vm-action-menu'
 import { useVmActions } from '@/features/vm/vm-actions-context'
+import { GeminiSlotStatus } from '@/features/vm/vm-rack-blade'
 import {
   vmWindows,
   type WindowKey,
@@ -103,6 +106,7 @@ const STATE_ICON_FG: Partial<Record<ScheduleStateLabel, string>> = {
 }
 
 function SchedCell({ vm }: { vm: Vm }) {
+  if (vm.gemini) return <GeminiSlotStatus vm={vm} />
   const level = Number(vm.schedule_level)
   const levelOk = Number.isInteger(level) && level >= 1 && level <= 10
   const manual = vm.schedule_level_mode === 'manual'
@@ -338,7 +342,7 @@ function rowData(vm: Vm, accounts?: UsageAccountRow[]): RowData {
     seatsUsed: Number(vm.seats_used) || 0,
     seatsMax: vm.seats_max == null ? null : Number(vm.seats_max),
     queue: Number(vm.queue_depth) || 0,
-    inflight: Number(vm.inflight) || 0,
+    inflight: vmRequestingCount(vm),
     spend: d7.cost,
     tokens: d7.tokens,
     perReq: week.req > 0 && d7.cost ? d7.cost / week.req : null,
@@ -449,7 +453,7 @@ const COLS: Col[] = [
       ),
   },
   {
-    label: '在飞',
+    label: '请求中',
     sort: 'inflight',
     num: true,
     cell: (r) => (r.inflight ? r.inflight : <span className={TERT}>0</span>),
@@ -486,6 +490,7 @@ const COLS: Col[] = [
 
 function ProdCell({ vm }: { vm: Vm }) {
   const tier = claudeTier(vm)
+  const plan = vm.gemini ? vm.gemini.account?.plan : tier.label
   const crag = (vm.resolved_dataplane ?? vm.dataplane) === 'crag'
   const registration = credentialRegistrationOf(vm)
   const node = vm.node_name || vm.node_id || 'local'
@@ -493,19 +498,22 @@ function ProdCell({ vm }: { vm: Vm }) {
     <>
       <PlatformMark vm={vm} />
       <span
-        className='shrink-0 font-mono font-semibold'
+        className={cn(
+          'font-mono font-semibold',
+          vm.gemini ? 'min-w-0 truncate' : 'shrink-0'
+        )}
         title={vm.name || vm.id}
       >
-        {vm.id}
+        {clipLabel(vm.gemini ? vm.name || vm.id : vm.id)}
       </span>
-      {tier.label && tier.label !== '—' ? (
+      {plan && plan !== '—' ? (
         <span
           className={cn(
             'shrink-0 rounded-[3px] px-1 font-mono text-[10px] leading-[1.5] font-semibold',
             tierVisual(vm).badge
           )}
         >
-          {tier.label}
+          {plan}
         </span>
       ) : null}
       <span
@@ -517,7 +525,7 @@ function ProdCell({ vm }: { vm: Vm }) {
         )}
         title='当前内核'
       >
-        {crag ? 'crag' : '默认'}
+        {vm.gemini ? 'CRAGAnti' : crag ? 'crag' : '默认'}
       </span>
       <span
         className={cn(
@@ -526,7 +534,7 @@ function ProdCell({ vm }: { vm: Vm }) {
         )}
         title={vm.email || ''}
       >
-        {vm.email || '未绑定邮箱'}
+        {vm.email ? clipLabel(vm.email) : '未绑定邮箱'}
       </span>
       <span
         className={cn(
@@ -534,7 +542,9 @@ function ProdCell({ vm }: { vm: Vm }) {
           SEC
         )}
       >
-        <span>{vm.runtime_type === 'kvm' ? 'kvm' : 'vm'}</span>
+        <span>
+          {vm.gemini ? '宿主机' : vm.runtime_type === 'kvm' ? 'kvm' : 'vm'}
+        </span>
         <span aria-hidden>·</span>
         <span>{registration === 'none' ? '无凭证' : registration}</span>
         <span aria-hidden>·</span>
@@ -714,9 +724,12 @@ function ToggleBtn({
 export function VmTable({
   vms,
   accounts,
+  zoom = 100,
 }: {
   vms: Vm[]
   accounts?: UsageAccountRow[]
+  /** 列表放大，100–200。100 为原尺寸。 */
+  zoom?: number
 }) {
   const actions = useVmActions()
   const now = useNow()
@@ -826,7 +839,12 @@ export function VmTable({
         data-pin={pinSec}
         className='group/tbl overflow-x-auto rounded-lg border border-border/60 bg-card text-[12.5px]'
       >
-        <div className='min-w-[1408px]' role='table' aria-label='槽位列表'>
+        <div
+          className='min-w-[1408px]'
+          role='table'
+          aria-label='槽位列表'
+          style={zoom === 100 ? undefined : { zoom: zoom / 100 }}
+        >
           <div
             role='row'
             className='sticky top-0 z-[6] grid h-8 border-b bg-muted/40 text-[11.5px] text-muted-foreground [--row-bg:var(--card)]'
@@ -1012,7 +1030,11 @@ export function VmTable({
                                   dim && i > 0 && 'opacity-50'
                                 )}
                               >
-                                {c.cell(r, now)}
+                                {vm.gemini && i > 0 ? (
+                                  <span className={TERT}>—</span>
+                                ) : (
+                                  c.cell(r, now)
+                                )}
                               </div>
                             ))}
                             <div
@@ -1042,7 +1064,26 @@ export function VmTable({
                               </span>
                             </div>
                           </div>
-                          {open ? (
+                          {open && vm.gemini ? (
+                            <div
+                              id={detailId}
+                              className='flex items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground'
+                            >
+                              <span>{vm.email || '未提供邮箱'}</span>
+                              <span>
+                                {vm.gemini.account?.plan || '未提供订阅'}
+                              </span>
+                              <ProxyChip vm={vm} compact />
+                              <Button
+                                type='button'
+                                size='sm'
+                                variant='ghost'
+                                onClick={() => actions.openDetail(vm)}
+                              >
+                                管理 Gemini 凭证
+                              </Button>
+                            </div>
+                          ) : open ? (
                             <VmRowDetail
                               id={detailId}
                               vm={vm}

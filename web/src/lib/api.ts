@@ -199,6 +199,10 @@ export type VmKernelSwitchJob = VmKernelSwitchTarget & {
   started_at: string
   finished_at: string | null
   error: { code: string; message: string } | null
+  reclaim_pending?: boolean
+  deferred_start?: boolean
+  deferred_reason?: string | null
+  start_error?: string | null
 }
 
 export function startVmKernelSwitch(id: string, body: VmKernelSwitchTarget) {
@@ -218,16 +222,6 @@ export function getVmKernelSwitch(id: string, signal?: AbortSignal) {
 export function getVmCragLicense(id: string) {
   return api<CragLicenseResponse>(
     `/api/panel/vms/${encodeURIComponent(id)}/crag-license`
-  )
-}
-
-export function activateVmCragLicense(id: string, registrationCode: string) {
-  return api<CragLicenseResponse>(
-    `/api/panel/vms/${encodeURIComponent(id)}/crag-license`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ registration_code: registrationCode }),
-    }
   )
 }
 

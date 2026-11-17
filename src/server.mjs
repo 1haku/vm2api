@@ -12,7 +12,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadConfig, reloadActiveVm, routingConfigFile } from './lib/core/config.mjs'
-import { geminiBillingUnavailable, isGeminiPublicPath } from './lib/gemini/routes.mjs'
+import { geminiKeyAllowsPath, handleGeminiPublic, isGeminiPublicPath } from './lib/gemini/routes.mjs'
 import {
   extractApiKey,
   timingSafeEqualStr,
@@ -864,6 +864,21 @@ function requireAuth(req, res, { keyGate = true, buyer = false, optionalBuyer = 
       }),
     )
   }
+  if (
+    managed.record.group_type === 'gemini' &&
+    !geminiKeyAllowsPath(parseRequestUrl(req)?.pathname || '', req.method)
+  ) {
+    return rejectAuth(
+      req,
+      res,
+      makeError({
+        type: ErrorType.PERMISSION,
+        code: 'key_group_mismatch',
+        message: 'This key can only call Gemini endpoints.',
+        status: 403,
+      }),
+    )
+  }
   const gate = keyGate ? apiKeyStore.canAccept(managed.record) : { ok: true }
   if (!gate.ok) {
     if (gate.status === 429) res.setHeader('Retry-After', String(gate.retry_after || 1))
@@ -1425,6 +1440,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (p === '/v1/models' || p === '/models')) {
       if (!requireAuth(req, res)) return
       const groupType = keyScopeFromRequest(req).group_type
+      if (groupType === 'gemini') return json(res, 200, { object: 'list', data: [] })
       const sub = req.apiKeyRecord ? new SubscriptionsRepo().entitlement(req.apiKeyRecord) : null
       if (sub) {
         const options = subscriptionApiOptions(sub)
@@ -1470,7 +1486,7 @@ const server = http.createServer(async (req, res) => {
 
     if (isGeminiPublicPath(p)) {
       if (!requireAuth(req, res)) return
-      return geminiBillingUnavailable(json, res)
+      return handleGeminiPublic(req, res, json)
     }
 
     if (req.method === 'POST' && (p === '/v1/chat/completions' || p === '/chat/completions')) {
@@ -1623,6 +1639,7 @@ server.listen(cfg.port, cfg.host, () => {
           routing: routingConfig,
           watchdog: kernelWatchdog,
           poolScheduler,
+          releaseStoppedBinding: cragSubscription.releaseStoppedBinding.bind(cragSubscription),
         })
         for (const item of report.items) {
           if (!item.ok) console.warn(`[kernel-install] ${item.id} recovery failed (${item.code})`)

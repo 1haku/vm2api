@@ -141,6 +141,7 @@ export function WorkspaceSummary() {
           </p>
           <Link
             to='/import'
+            search={{ tab: undefined }}
             className='inline-flex items-center gap-1 font-medium text-primary'
           >
             配置凭证

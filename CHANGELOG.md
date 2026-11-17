@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 1.4.136 — 2026-11-17 · CRAG thinking 采样参数修复
+
+- CRAG 在确定 thinking 模式后再校准采样参数：启用 thinking 或使用 adaptive 时将 `temperature` 设为 `1`，移除 `top_p` 和 `top_k`；关闭 thinking 时保留原值。修复最简 Messages 请求因采样参数不兼容返回 400 的问题。
+- 沿用现有签名载荷；只需更新控制面，无需 `wrap-cli/sync` 或重装槽位。
+
+## 1.4.135 — 2026-11-17 · Claude 托管工具与 CRAG 请求兼容
+
+- Claude Messages、OpenAI Chat Completions 和 Responses 转发至 Claude 时保留受支持的托管工具定义；只无损转换根级工具 schema，无法转换时返回具体字段错误。
+- CRAG 按运行时能力处理托管工具；`zero` 模式直接传递结构化 `system`。运行时不支持时在本地返回错误，不执行请求或轮换账号。
+- 沿用签名载荷，无需 `wrap-cli/sync` 或重装槽位；本版不改变上游计费策略。
+
+## 1.4.134 — 2026-11-17 · CRAG 订阅准入与开槽切核修复
+
+- 解除 `sync-pending` 对整机有效宿主订阅和已购 CRAG 槽位的连坐失效，修复 4xx 拒绝或跨订单中断后遗留永久同步锁的问题，并在切换/兑换过程中不再无差别阻断运行中的 KVM 槽位。
+- 无论通过何种购买方式或兑换路径获得订阅，本地订阅权益与运行额度均正常计算；纳入未发送订单取消、已登记 VM 计数及订阅页统一展示。
+- 开槽、导入与切换推理内核到 CRAG 不再受前置单槽授权拦截；仅当运行中的宿主订阅 CRAG 槽位达到上限时阻止新增启动，且自动回收停机、已切回 cli-node 或已孤立的占位，不暂停已在运行的已购服务。
+- 拆分设备码 `payload_key_conflict` 与 `license_redeem_conflict`，并在槽位未物化独立安装包时回落使用宿主共享包。
+- 沿用现有签名载荷，不需要 `wrap-cli/sync` 或重装 CRAG 槽。控制面与面板需更新到本版。
+
+## 1.4.133 — 2026-11-17 · CRAG 面板与 Responses 续轮
+
+- 面板为原生 CRAG 规范化内嵌 `image_url`（含工具结果），保留内容顺序和缓存标记；无法保真的输入在面板返回 400。合规长历史由 4 次重建降为 1 次重建加 3 次校验复用。
+- 删除 CRAG 槽、单槽或批量切回 cli-node、以及内核安装都会释放宿主订阅席位，避免已删除或已切走的槽继续占用名册。
+- 面板可开关 CRAG 原生遥测：停机槽只发布设置；需要生效时先排空，再重启内核并恢复原调度。区分已生效和已验证上传。非 CRAG 槽的发送状态与日志展示不变。
+- `/v1/responses` 转 Claude 时保留调用方工具的 `eager_input_streaming`，恢复消息级 `cache_control`，中途 developer 消息的缓存断点留在原位。
+- 调度原因表补上 `license_crag_host_over_quota`（受限 · 宿主订阅满额）。
+- 修复 KVM 来宾内核退出时误删 `/run/kin-guest/slot.env`、导致已校验的 CRAG 许可同步返回 403 的问题。已有来宾需更新 `kin-kernel.service` 并从原 seed 重新运行 `kin-guest-setup.service` 后再同步；无需重置虚拟机或重新签发许可。
+- 沿用现有签名载荷，不需要 `wrap-cli/sync` 或重装 CRAG 槽。控制面与面板需更新到本版。
+
+## 1.4.132 — 2026-11-17 · 已安装 CRAG 槽更新
+
+- 宿主订阅满额时，正在运行的原 CRAG 槽仍可更新，不因运行额度拒绝。
+- 候选安装失败后，只有旧版本重新启动并通过鉴权健康检查才恢复运行；未验证时保持停止并保留回滚包。
+- 订阅状态暂时读不到时，在停槽前返回明确错误。沿用现有签名载荷，不需要 `wrap-cli/sync` 或重装槽位。
+
+## 1.4.131 — 2026-11-17 · Codex 调用 Claude 协议修复
+
+- `/v1/responses` 支持已获授权的 Claude 模型。控制面在派发给 CRAG 或 cli-node 前转换并校验结构化 Messages，按 `call_id` 配对工具历史，输出转换回 Responses JSON 或 SSE。无法转换的请求在本地报错，不把上游计费拒绝当作转换失败。
+- CRAG 保留调用方工具名、系统提示分块与缓存断点，避免重复改写影响续轮。
+- 纳入主线的 CRAG 订阅兼容与调度修复、风险审计系统提示改写开关、用量拒绝的会话级处理及官方客户端限制的明确报错。
+- 载荷 [payload-2026.11.17-cli-node-321](https://github.com/dofastted/vm2api/releases/tag/payload-2026.11.17-cli-node-321) 将 cli-node 换为 2.1.321 UPX 5.0.2 `--best --lzma`（31005108 字节，`f6c3744dda01f756049360113607d2bd9a25911de0fdaf30fe9bb1a1918a6788`）；其余附件沿用现有固定载荷。仅当现有 cli-node 槽的程序摘要不一致时需要 `wrap-cli/sync`，无需重装 CRAG 槽。
+
+## 1.4.130 — 2026-11-17 · Gemini 宿主账号与专用密钥
+
+- 在 VM 列表和机架管理 Gemini 宿主账号，分开显示授权与运行状态。导入仍不创建 VM 或槽位。
+- 新增 Gemini 专用 API Key，与 Claude、Codex 等调用范围隔离；Gemini 推理和计费仍未开放。
+
 ## 1.4.129 — 2026-11-17 · 会话粘性调度修复
 
 - Claude 与 Codex 的有效会话绑定优先于调度等级和权重。调高其他 VM 的等级或权重不再迁移续轮；新会话及失去粘性后的重选仍按等级和选槽策略分配。

@@ -142,7 +142,9 @@ export function KeyLimitsDialog({
         expires_in_days: 0,
         group_type: group,
         allowed_vms:
-          group === 'all' || group === 'pool' ? [] : initial.allowed_vms || [],
+          group === 'all' || group === 'pool' || group === 'gemini'
+            ? []
+            : initial.allowed_vms || [],
         ...(pools ? { vm_pool_id: initial.vm_pool_id || '' } : {}),
         allowed_models: (initial.allowed_models || []).join(', '),
       })
@@ -240,7 +242,8 @@ export function KeyLimitsDialog({
                   category: v === 'api' ? 'api' : 'oauth',
                   api_endpoint_id: v === 'api' ? d.api_endpoint_id : '',
                   group_type:
-                    v === 'api' && d.group_type === 'pool'
+                    v === 'api' &&
+                    (d.group_type === 'pool' || d.group_type === 'gemini')
                       ? 'all'
                       : d.group_type,
                   allowed_vms: v === 'api' ? [] : d.allowed_vms,
@@ -411,6 +414,11 @@ export function KeyLimitsDialog({
                       <SelectItem value='openai'>
                         {isApi ? 'openai · OpenAI 协议' : 'openai'}
                       </SelectItem>
+                      {!isApi && pools && !isSubscription ? (
+                        <SelectItem value='gemini'>
+                          Gemini · CRAGAnti
+                        </SelectItem>
+                      ) : null}
                     </SelectContent>
                   </Select>
                 </Field>

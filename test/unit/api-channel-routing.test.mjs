@@ -67,6 +67,7 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
   ]),
   ['anthropic.messages', 'claude-review', 'anthropic', false, { upstream: 'policy' }],
   ['anthropic.messages', 'claude-review', 'anthropic', false, { upstream: 'invalid' }],
+  ['anthropic.messages', 'claude-review', 'anthropic', false, { upstream: 'credits', subscription: true }],
   ['anthropic.messages', 'claude-opus-5-5', 'anthropic', false, { invalid: 'thinking' }],
   ['anthropic.messages', 'claude-sonnet-5-5', 'anthropic', false, { invalid: 'tools' }],
   ['openai.chat', 'claude-sonnet-5-5', 'anthropic', false, { invalid: 'tools' }],
@@ -139,9 +140,11 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
             error: {
               type: 'api_error',
               message:
-                review.upstream === 'policy'
-                  ? 'API Error: request rejected under the Usage Policy.'
-                  : 'API Error: invalid max_tokens.',
+                review.upstream === 'credits'
+                  ? 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'
+                  : review.upstream === 'policy'
+                    ? 'API Error: request rejected under the Usage Policy.'
+                    : 'API Error: invalid max_tokens.',
             },
           }),
         )
@@ -379,6 +382,15 @@ for (const [protocol, model, upstreamProtocol, modelOverride, review = {}] of [
         assert.equal(response.status, 400, JSON.stringify(response.body))
         assert.equal(captured.length, 1)
         assert.equal(refusalCache.size, review.upstream === 'policy' ? 1 : 0)
+        if (review.upstream === 'credits') {
+          assert.equal(captured.length, 1, 'credit rejection must not be retried')
+          assert.match(response.body.error.message, /credit balance is too low/)
+          const progress = new SubscriptionsRepo(db).list('api-admin')[0]
+          assert.equal(progress.daily_used, 0)
+          assert.equal(progress.weekly_used, 0)
+          assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_reservations').get().n, 0)
+          assert.equal(db.prepare('SELECT COUNT(*) n FROM custom_subscription_ledger WHERE amount <> 0').get().n, 0)
+        }
         if (review.upstream === 'policy') {
           assert.equal(response.body.error.details.retryable, false)
           await handler.handleProtocol(req, response, protocol, req.url)
