@@ -122,7 +122,8 @@ export function issueSlotPermit(root, machineCode, hostId, overrides = {}, wrap 
   }
   return { claims, code: signSubscriptionBytes(root, 'CRAGS1', JSON.stringify(claims)) }
 }
-export function seedEncryptedPackage(root, { revision = '', arch = process.arch === 'arm64' ? 'arm64' : 'amd64', payloadKey = fixtureAuthority(root).payloadKey } = {}) {
+export function seedEncryptedPackage(root, options = {}) {
+  const { revision = '', arch = process.arch === 'arm64' ? 'arm64' : 'amd64', payloadKey = fixtureAuthority(root).payloadKey } = options
   const authority = fixtureAuthority(root)
   const dir = path.join(root, 'share/crag/kernels/v2', arch)
   fs.mkdirSync(path.join(dir, 'claude-code-2.1.321'), { recursive: true })
@@ -145,6 +146,8 @@ export function seedEncryptedPackage(root, { revision = '', arch = process.arch 
     payload: { path: 'crag-v2.payload.enc', ...signed, signature: crypto.sign(null, Buffer.concat([Buffer.from('CRAG-PAYLOAD-V1\0'), Buffer.from(JSON.stringify(signed))]), authority.privateKey).toString('base64url') },
     sha256: Object.fromEntries(Object.entries(files).map(([name, body]) => [name, sha(body)])) }
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest))
+  // ARM control planes still need a separate amd64 fixture for their remote slots.
+  if (options.arch == null && arch === 'arm64') seedEncryptedPackage(root, { ...options, revision, payloadKey, arch: 'amd64' })
   return dir
 }
 export function activateFixture(root, vm = { id: 'vm-13' }) {

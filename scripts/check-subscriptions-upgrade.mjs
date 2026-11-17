@@ -31,6 +31,8 @@ try {
         '040/041 Linux node default and nullable inbound device only; existing data unchanged',
         '043/044/046 nullable timing and audit fields only; historical values stay unknown',
         '047 upstream service tier is nullable; historical prices and sent tiers are preserved',
+        '049 API channel binding is nullable; existing key scope is preserved',
+        '059 audit fields retain legacy device subjects and historical unknown status',
       ],
       tables: before,
     }),

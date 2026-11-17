@@ -1242,7 +1242,12 @@ test('H2 reissues the same KVM seat when changing payload keys and recovers a lo
   fs.mkdirSync(directory, { recursive: true })
   fs.writeFileSync(path.join(directory, 'machine-id'), vm.fingerprint.guest_machine_id)
   assert.equal(materializeCragV2(root, vm, { select: false }).ok, true)
-  const service = connect({ listTargets: () => [vm], assertReady: () => true })
+  const service = connect({
+    listTargets: () => [vm],
+    assertReady: () => true,
+    blockKvmBinding: async () => true,
+    publishKvmBinding: async () => true,
+  })
   await service.redeem(voucher())
   assert.deepEqual(await service.bind(vm), { seat: 1 })
   const entitlement = path.join(publicDir, 'entitlement.code')

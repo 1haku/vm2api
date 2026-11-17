@@ -5,7 +5,12 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { authorizePanelRoute } from '../../src/lib/admin/panel-acl.mjs'
-import { AGY_SHA256, installGeminiPayload, readSignedGeminiManifest } from '../../src/lib/gemini/payload.mjs'
+import {
+  AGY_SHA256,
+  installGeminiPayload,
+  readSignedGeminiManifest,
+  verifyGeminiPayload,
+} from '../../src/lib/gemini/payload.mjs'
 import {
   createGeminiPanelHandler,
   geminiBillingUnavailable,
@@ -206,6 +211,12 @@ test('host installer refuses an unsigned manifest and never activates damaged pa
   assert.equal((await readSignedGeminiManifest(source, verificationKey)).manifest.version, '0.3.0-rc.1')
   await writeFile(path.join(source, 'craggemini'), 'elf')
   await writeFile(path.join(source, 'libagy_bridge.so'), 'bad')
-  await assert.rejects(installGeminiPayload(source, destination, verificationKey), /gemini_payload_member_mismatch/)
+  await assert.rejects(verifyGeminiPayload(source, verificationKey), /gemini_payload_member_mismatch/)
+  await assert.rejects(
+    installGeminiPayload(source, destination, verificationKey),
+    process.platform === 'linux' && process.arch === 'x64'
+      ? /gemini_payload_member_mismatch/
+      : /gemini_payload_unsupported_host/,
+  )
   await assert.rejects(writeFile(path.join(destination, 'unexpected'), 'no'), { code: 'ENOENT' })
 })

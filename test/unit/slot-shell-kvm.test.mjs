@@ -11,15 +11,19 @@ import { WebSocket } from 'ws'
 import { createSlotShell } from '../../src/lib/vm/slot-shell.mjs'
 import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { LOCAL_CRAG_CLAUDE } from '../../src/lib/vm/slot-engine.mjs'
+import { activateCragLicense } from '../../src/lib/vm/crag-license.mjs'
+import { materializeCragV2 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
+import { issueUniversalCode, seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 
 for (const runtime of ['kvm', 'docker']) {
   test(`${runtime} panel shell sends its home and working directory to the correct runtime`, async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-kvm-'))
     fs.mkdirSync(path.join(root, 'vms'))
     fs.writeFileSync(path.join(root, 'vms', 'vm-01.json'), JSON.stringify({ id: 'vm-01', runtime: { type: runtime } }))
-    const client = path.join(root, 'vms', 'vm-01', 'cli-home', path.posix.relative('/home/kincli', LOCAL_CRAG_CLAUDE))
-    fs.mkdirSync(path.dirname(client), { recursive: true })
-    fs.writeFileSync(client, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    seedEncryptedPackage(root)
+    const vm = { id: 'vm-01', runtime: { type: runtime } }
+    activateCragLicense(root, vm, issueUniversalCode(root).code)
+    assert.equal(materializeCragV2(root, vm, { select: false }).ok, true)
     writeWorkerCredentialFile(path.join(root, 'vms', 'vm-01', 'cli-home'), {
       access_token: 'fixture-access',
       refresh_token: 'fixture-refresh',

@@ -262,6 +262,8 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
     ['jev_state', 'changed'],
     ['upstream_service_tier', 'priority'],
     ['usage_account_id', 'changed-account'],
+    ['upstream_status', 400],
+    ['upstream_400_message', 'changed-error'],
   ]) {
     assert.equal(db.prepare(`SELECT ${field} value FROM usage_logs WHERE id='history'`).get().value, null)
     db.prepare(`UPDATE usage_logs SET ${field}=? WHERE id='history'`).run(changed)
@@ -269,6 +271,10 @@ test('v3 data migrates without changing ownership, amounts, limits or history; t
     db.prepare(`UPDATE usage_logs SET ${field}=NULL WHERE id='history'`).run()
   }
   assert.equal(db.prepare("SELECT allowed_models FROM api_keys WHERE id='key'").get().allowed_models, '[]')
+  assert.equal(db.prepare("SELECT api_endpoint_id FROM api_keys WHERE id='key'").get().api_endpoint_id, null)
+  db.prepare("UPDATE api_keys SET api_endpoint_id='another-channel' WHERE id='key'").run()
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
+  db.prepare("UPDATE api_keys SET api_endpoint_id=NULL WHERE id='key'").run()
   db.prepare("UPDATE api_keys SET allowed_models='[\"restricted-model\"]' WHERE id='key'").run()
   assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_keys/)
   db.prepare("UPDATE api_keys SET allowed_models='[]' WHERE id='key'").run()

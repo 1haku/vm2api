@@ -65,6 +65,8 @@ export function subscriptionSnapshot(db) {
             generation_ms: row.generation_ms ?? null,
             jev_state: row.jev_state ?? null,
             upstream_service_tier: row.upstream_service_tier ?? null,
+            upstream_status: row.upstream_status ?? null,
+            upstream_400_message: row.upstream_400_message ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
             web_search_requests: row.web_search_requests ?? 0,
@@ -101,6 +103,7 @@ export function subscriptionSnapshot(db) {
             vm_pool_id: row.vm_pool_id ?? null,
             // Upstream 054 leaves existing keys unrestricted; explicit lists remain hash-checked.
             allowed_models: row.allowed_models ?? '[]',
+            api_endpoint_id: row.api_endpoint_id ?? null,
           }
         return row
       })
@@ -109,6 +112,7 @@ export function subscriptionSnapshot(db) {
   for (const table of [
     'refusal_guards',
     'refusal_device_blocks',
+    'risk_device_aliases',
     'vm_pools',
     'vm_pool_members',
     'api_endpoints',
@@ -123,17 +127,26 @@ export function subscriptionSnapshot(db) {
     const normalized =
       table === 'refusal_guards'
         ? rows.map((row) => ({ ...row, signature: row.signature ?? null }))
-        : table === 'api_endpoint_keys'
-          ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
-          : table === 'request_attempts'
-            ? rows.map((row) => ({
-                ...row,
-                queue_wait_ms: row.queue_wait_ms ?? null,
-                scheduling_ms: row.scheduling_ms ?? null,
-              }))
-            : table === 'cluster_nodes'
-              ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
-              : rows
+        : table === 'refusal_device_blocks'
+          ? rows.map((row) => ({
+              ...row,
+              subject_kind: row.subject_kind ?? 'device',
+              identity_value: row.identity_value ?? null,
+              session_id: row.session_id ?? null,
+              violations: row.violations ?? 1,
+              expires_at: row.expires_at ?? null,
+            }))
+          : table === 'api_endpoint_keys'
+            ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
+            : table === 'request_attempts'
+              ? rows.map((row) => ({
+                  ...row,
+                  queue_wait_ms: row.queue_wait_ms ?? null,
+                  scheduling_ms: row.scheduling_ms ?? null,
+                }))
+              : table === 'cluster_nodes'
+                ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
+                : rows
     state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [
