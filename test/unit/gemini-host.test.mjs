@@ -182,6 +182,10 @@ test('Gemini inventory distinguishes a missing socket from an invalid host respo
   const run = createGeminiPanelHandler({ json: (_response, _status, body) => body })
   const status = async () => (await run({ method: 'GET' }, { setHeader() {} }, root)).data.host_error
   try {
+    if (process.platform !== 'linux' || process.arch !== 'x64') {
+      assert.equal(await status(), 'gemini_host_unsupported_platform')
+      return
+    }
     assert.equal(await status(), 'gemini_host_socket_missing')
     await new Promise((resolve, reject) => server.once('error', reject).listen(socketPath, resolve))
     assert.equal(await status(), 'gemini_host_protocol_error')
