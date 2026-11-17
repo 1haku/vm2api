@@ -55,9 +55,10 @@ test('WebSocket rejected turns release reservations and recheck quota, revocatio
       ws.once('error', reject)
     })
     const body = { model: 'claude-haiku-4-5', input: 'Reply OK.', max_output_tokens: 16 }
-    const first = await turn(ws, body)
-    // Deliberately incompatible model: exercise admission and cleanup without contacting an upstream.
-    assert.equal(first.error?.code, 'protocol_not_allowed', JSON.stringify(first))
+    // Claude now supports Responses conversion. Use an unsupported input item
+    // to exercise admission and cleanup before contacting the mock upstream.
+    const first = await turn(ws, { ...body, input: [{ type: 'unsupported_fixture_item' }] })
+    assert.equal(first.error?.code, 'invalid_responses_conversion', JSON.stringify(first))
     let after
     for (let i = 0; i < 30; i++) {
       after = await getSub()
