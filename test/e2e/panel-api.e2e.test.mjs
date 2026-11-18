@@ -188,7 +188,7 @@ test('panel VM concurrency, RPM and session slots return to tier / global on nul
   }
 })
 
-test('sessionKey import without SOCKS5 is rejected', async () => {
+test('Console key import without SOCKS5 is rejected', async () => {
   const gw = await startGateway()
   try {
     const vmPath = path.join(gw.project, 'vms', 'vm-sim-01.json')
@@ -196,7 +196,7 @@ test('sessionKey import without SOCKS5 is rejected', async () => {
     rec.proxy = null
     fs.writeFileSync(vmPath, JSON.stringify(rec, null, 2))
     const imp = await api(gw, 'POST', '/api/panel/vms/import', {
-      body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid01-' + 'e'.repeat(24) },
+      body: { vm_id: 'vm-sim-01', api_key: 'sk-ant-api03-' + 'e'.repeat(24) },
     })
     assert.equal(imp.status, 400, imp.text)
     assert.match(String(imp.json?.error?.message || ''), /SOCKS5/)
@@ -205,7 +205,7 @@ test('sessionKey import without SOCKS5 is rejected', async () => {
   }
 })
 
-test('sessionKey import rejected when bound proxy is dead', async () => {
+test('Console key import rejected when bound proxy is dead', async () => {
   const gw = await startGateway()
   try {
     const added = await api(gw, 'POST', '/api/panel/proxies/import', {
@@ -220,7 +220,7 @@ test('sessionKey import rejected when bound proxy is dead', async () => {
     const off = await api(gw, 'POST', `/api/panel/proxies/${pxId}/disable`)
     assert.equal(off.status, 200, off.text)
     const imp = await api(gw, 'POST', '/api/panel/vms/import', {
-      body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid01-' + 'e'.repeat(24) },
+      body: { vm_id: 'vm-sim-01', api_key: 'sk-ant-api03-' + 'e'.repeat(24) },
     })
     assert.equal(imp.status, 400, imp.text)
     assert.match(String(imp.json?.error?.message || ''), /SOCKS5/)
@@ -341,7 +341,8 @@ test('OAuth exchange reuses VM egress without a host-side proxy hop', async () =
       const imported = await api(gw, 'POST', '/api/panel/vms/import', {
         body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid-proxy-reuse' },
       })
-      assert.equal(imported.status, 200, imported.text)
+      assert.equal(imported.status, 403, imported.text)
+      assert.equal(imported.json.error.code, 'cookie_import_disabled')
       assert.equal(connections, 0)
     } finally {
       await gw.stop()

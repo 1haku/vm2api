@@ -87,9 +87,9 @@ test('vm credentials are mirrored into the vms table (入库)', async () => {
       db.close()
     }
 
-    // sessionKey import (fake) writes through persistOauthToVm → DB mirror updates
+    // Console key import (fake) writes through persistOauthToVm → DB mirror updates
     const imp = await api(gw, 'POST', '/api/panel/vms/import', {
-      body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid01-' + 'e'.repeat(24), require_proxy: false },
+      body: { vm_id: 'vm-sim-01', api_key: 'sk-ant-api03-' + 'e'.repeat(24), require_proxy: false },
     })
     assert.equal(imp.status, 200, imp.text)
     const db2 = openDb(gw)

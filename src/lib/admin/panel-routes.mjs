@@ -37,7 +37,7 @@ import { RefusalSessionBlocksRepo } from '../db/repos/refusal-session-blocks-rep
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { parseCodexImportPayload, upsertCodexAccount, readCodexAccounts } from '../vm/codex-slot.mjs'
 import { generateAuthUrl, exchangeAuthCode, normalizeOauthFlavor } from '../oauth/oauth-auth-url.mjs'
-import { sessionKeyToOAuth, panelImportErrorPayload } from '../oauth/cookie-auth.mjs'
+import { panelImportErrorPayload } from '../oauth/cookie-auth.mjs'
 import { enrichOauthIdentity } from '../oauth/oauth-identity.mjs'
 import { generateCodexAuthUrl, exchangeCodexAuthCode } from '../oauth/codex-oauth.mjs'
 import {
@@ -5932,17 +5932,22 @@ export function createPanelHandler(ctx) {
             return json(res, 200, panel.ok(committed))
           }
 
-          const slotProxy = requireSlotProxy(existing, body)
           const wantsApiKey =
             looksLikeConsoleApiKey(apiKeyRaw || sessionKey || accessToken) ||
             String(requestedType).toLowerCase() === 'apikey' ||
             String(requestedType).toLowerCase() === 'console'
-          if ((sessionKey || wantsApiKey) && !slotProxy.ok) {
+          if ((sessionKey && !looksLikeConsoleApiKey(sessionKey)) || /^sk-ant-sid/i.test(String(accessToken).trim())) {
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'cookie_import_disabled', message: '请使用授权链接在浏览器中完成 Claude 授权。' },
+            })
+          }
+          const slotProxy = requireSlotProxy(existing, body)
+          if (wantsApiKey && !slotProxy.ok) {
             return json(res, slotProxy.status, { ok: false, error: { message: slotProxy.message } })
           }
           const proxyUrl = slotProxy.proxyUrl
           let oauth = null
-          let oauthFromVm = false
           if (wantsApiKey) {
             const apiKey = String(apiKeyRaw || sessionKey || accessToken).trim()
             if (!looksLikeConsoleApiKey(apiKey)) {
@@ -5956,25 +5961,6 @@ export function createPanelHandler(ctx) {
               base_url: body.base_url || body.baseUrl || 'https://api.anthropic.com',
               source: 'console-api-key',
               auth_scheme: body.auth_scheme || body.authScheme,
-            }
-          } else if (sessionKey) {
-            const inference =
-              String(requestedType).toLowerCase() === 'inference' ||
-              String(requestedType).toLowerCase() === 'setup-token' ||
-              String(requestedType).toLowerCase() === 'setup_token' ||
-              String(body.scope || '').toLowerCase() === 'inference'
-            oauth = await sessionKeyToOAuth(String(sessionKey).trim(), {
-              scope: inference ? 'inference' : 'full',
-              exec: slotExec(cfg.paths.project, existing),
-              projectRoot: cfg.paths.project,
-              routing: ctx.routingConfig,
-              proxyPool,
-            })
-            oauthFromVm = true
-            if (inference) {
-              oauth.type = 'setup-token'
-              oauth.mode = 'setup-token'
-              oauth.oauth_registration = 'console'
             }
           } else if (isSub2apiAccountExport(exportDoc)) {
             oauth = sub2apiAccountToOauth(exportDoc, existing)
@@ -6006,10 +5992,10 @@ export function createPanelHandler(ctx) {
               oauth.mode = 'setup-token'
             }
           } else {
-            return json(res, 400, { ok: false, error: { message: 'sessionKey or access_token required' } })
+            return json(res, 400, { ok: false, error: { message: 'access_token or API key required' } })
           }
           if (body.auth_scheme || body.authScheme) oauth.auth_scheme = body.auth_scheme || body.authScheme
-          if (oauth.access_token && !wantsApiKey && !oauthFromVm) {
+          if (oauth.access_token && !wantsApiKey) {
             oauth = await enrichOauthIdentity(oauth, { proxyUrl })
           }
           const committed = await commitImportedOauth({
@@ -6017,7 +6003,7 @@ export function createPanelHandler(ctx) {
             vmPath,
             existing,
             oauth,
-            source: oauth.source || 'sessionKey-cookie-auth',
+            source: oauth.source || 'access-token',
             name: body.name,
           })
           if (!committed.ok) {

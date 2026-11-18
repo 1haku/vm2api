@@ -14,7 +14,6 @@ import {
   peekAuthUrlSession,
   resetAuthUrlSessions,
 } from '../../src/lib/oauth/oauth-auth-url.mjs'
-import { sessionKeyToOAuth } from '../../src/lib/oauth/cookie-auth.mjs'
 import {
   CLIENT_ID,
   FULL_OAUTH_SCOPE,
@@ -26,7 +25,7 @@ import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
 import { prepareSlotOAuth, runGuestOAuthAuthService } from '../../src/lib/oauth/guest-oauth-helper.mjs'
 import { slotExec } from '../../src/lib/vm/slot-runtime.mjs'
 
-test('guest OAuth helper preserves provider state, PKCE and cookie authorization', {
+test('guest OAuth helper preserves provider state, PKCE for browser authorization', {
   timeout: process.arch === 'arm64' ? 90000 : 30000,
 }, async (t) => {
   const binary =
@@ -166,6 +165,20 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
         )
         return
       }
+      if (authorizeMode === 'attestation') {
+        res.writeHead(400)
+        res.end(
+          JSON.stringify({
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              message: "This request couldn't be completed.",
+              details: { error_code: 'missing_client_attestation' },
+            },
+          }),
+        )
+        return
+      }
       expectedExchange = {
         code: 'cookie-auth-code',
         challenge: payload.code_challenge,
@@ -227,7 +240,9 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
   fs.writeFileSync(
     path.join(runDir, 'kernel.json'),
     JSON.stringify({
+      vm_id: vm.id,
       credential_path: '/home/kincli/.claude/credentials.json',
+      proxy_url: `socks5h://127.0.0.1:${proxy.address().port}`,
     }),
   )
   const exec = slotExec(root, vm)
@@ -361,102 +376,8 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
     })
   }
   assert.equal(tokenRequests, 3)
-  for (const runtimeMode of ['oauth', 'setup-token']) {
-    await t.test(`session cookie: ${runtimeMode}`, async () => {
-      const requestStart = requests.length
-      const credential = await run({
-        operation: 'session_key',
-        session_key: sessionKey,
-        scope: FULL_OAUTH_SCOPE,
-        runtime_mode: runtimeMode,
-      })
-      assert.equal(credential.access_token, accessToken)
-      assert.equal(credential.refresh_token, refreshToken)
-      assert.equal(credential.scope, FULL_OAUTH_SCOPE)
-      assert.equal(credential.type, runtimeMode)
-      assert.equal(credential.mode, runtimeMode)
-      assert.equal(credential.email, 'exchange@example.test')
-      assert.equal(credential.account_uuid, 'account-exchange')
-      assert.equal(credential.org_uuid, org)
-      const flow = requests.slice(requestStart)
-      const setup = runtimeMode === 'setup-token'
-      assert.deepEqual(
-        flow.map(({ method, url }) => [method, url.split('?')[0]]),
-        [
-          ['GET', '/api/organizations'],
-          ['POST', `/v1/oauth/${org}/authorize`],
-          ['POST', '/v1/oauth/token'],
-          ['GET', '/api/oauth/profile'],
-          ['POST', '/api/eval/sdk-zAZezfDKGoZuXXKe'],
-          ['GET', '/api/oauth/claude_cli/roles'],
-          ['GET', '/api/organization/claude_code_first_token_date'],
-          ['POST', '/api/eval/sdk-zAZezfDKGoZuXXKe'],
-          ['GET', '/api/claude_cli/bootstrap'],
-        ],
-      )
-      const [orgs, authorize, token, profile, evalBefore, roles, firstToken, evalAfter, bootstrap] = flow
-      for (const request of [orgs, authorize]) {
-        assert.equal(request.headers.cookie, `sessionKey=${sessionKey}`)
-        assert.match(request.headers['user-agent'], /Chrome\/146\.0\.0\.0/)
-        assert.match(request.headers['sec-ch-ua'], /Google Chrome/)
-      }
-      assert.equal(orgs.headers.host, 'claude.ai')
-      assert.equal(authorize.headers.host, setup ? 'platform.claude.com' : 'claude.ai')
-      assert.equal(orgs.headers.origin, 'https://claude.ai')
-      assert.equal(authorize.headers.origin, 'https://claude.ai')
-      assert.equal(
-        authorize.headers.referer,
-        setup ? 'https://platform.claude.com/oauth/authorize?code=true' : 'https://claude.ai/new',
-      )
-      assert.equal(token.headers['user-agent'], 'axios/1.15.2')
-      assert.equal(token.headers['sec-ch-ua'], undefined)
-      assert.equal(Object.hasOwn(token.payload, 'expires_in'), false)
-      assert.equal(profile.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
-      assert.match(evalBefore.payload.attributes.sdkCachePartition, /^served-to-bearer:/)
-      assert.equal(roles.headers['content-type'], undefined)
-      assert.equal(firstToken.headers['user-agent'], `claude-cli/${OFFICIAL_CLI_VERSION} (external, sdk-cli)`)
-      assert.equal(evalAfter.payload.attributes.organizationRole, 'admin')
-      assert.equal(evalAfter.payload.attributes.subscriptionType, 'pro')
-      assert.equal(evalAfter.payload.attributes.accountUUID, 'account-exchange')
-      assert.equal(evalAfter.payload.attributes.organizationUUID, org)
-      assert.equal(bootstrap.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
-      assert.match(bootstrap.url, /entrypoint=sdk-cli&model=claude-opus-5-5$/)
-      assert.equal(authorize.payload.response_type, 'code')
-      assert.equal(authorize.payload.client_id, CLIENT_ID)
-      assert.equal(authorize.payload.redirect_uri, REDIRECT_URI)
-      assert.equal(authorize.payload.scope, FULL_OAUTH_SCOPE)
-      assert.equal(authorize.payload.code_challenge_method, 'S256')
-      assert.ok(authorize.payload.state)
-      assert.equal(token.payload.state, authorize.payload.state)
-      assert.equal(
-        crypto.createHash('sha256').update(token.payload.code_verifier).digest('base64url'),
-        authorize.payload.code_challenge,
-      )
-      assert.equal(token.headers.cookie, undefined)
-      assert.equal(bootstrap.headers.authorization, `Bearer ${accessToken}`)
-      assert.equal(bootstrap.headers.cookie, undefined)
-      assert.equal(
-        flow.some((item) => item.method === 'PATCH'),
-        false,
-      )
-    })
-  }
-  for (const mode of ['stale', 'state_mismatch']) {
-    await t.test(`session cookie rejects ${mode} before token exchange`, async () => {
-      authorizeMode = mode
-      const before = tokenRequests
-      const requestStart = requests.length
-      await assert.rejects(run({ operation: 'session_key', session_key: sessionKey }))
-      assert.equal(tokenRequests, before)
-      assert.deepEqual(
-        requests.slice(requestStart).map(({ url }) => url),
-        ['/api/organizations', `/v1/oauth/${org}/authorize`],
-      )
-    })
-  }
-  assert.equal(tokenRequests, 5)
   await t.test(
-    'legacy kernel authorization-link and Cookie exchanges use the real helper and bound SOCKS exit',
+    'legacy kernel authorization-link exchange uses the real helper and bound SOCKS exit',
     async (t) => {
       const previousCert = process.env.NODE_EXTRA_CA_CERTS
       const previousHelper = process.env.KIN_OAUTH_AUTH_BIN
@@ -488,11 +409,7 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
       assert.equal(linked.access_token, accessToken)
       assert.equal(linked.email, 'exchange@example.test')
       assert.equal(peekAuthUrlSession(generated.session_id), null)
-      authorizeMode = 'success'
-      const cookie = await sessionKeyToOAuth(sessionKey, { exec, proxyUrl: 'socks5h://127.0.0.1:1' })
-      assert.equal(cookie.access_token, accessToken)
-      assert.equal(cookie.email, 'exchange@example.test')
-      assert.equal(tokenRequests, before + 2)
+      assert.equal(tokenRequests, before + 1)
       assert.equal(fs.readFileSync(vmFile, 'utf8'), vmBefore)
     },
   )

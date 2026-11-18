@@ -116,7 +116,7 @@ export function importSurfaceFor(vm: Vm | undefined): 'claude' | 'codex' {
   return isCodexVm(vm) ? 'codex' : 'claude'
 }
 
-/** 导入方式。Setup Token 只有 Cookie / 授权链接；OAuth 另加官方 Claude Code。 */
+/** 导入方式。Setup Token 支持 Access token / 授权链接；OAuth 另加官方 Claude Code。 */
 export type ImportMethod = 'session' | 'link' | 'cc'
 
 export const IMPORT_KINDS: { id: ImportKind; label: string }[] = [
@@ -132,7 +132,7 @@ export function importMethodsFor(
   const methods: { id: ImportMethod; label: string }[] = [
     { id: 'cc', label: 'Claude Code 授权' },
     { id: 'link', label: '授权链接' },
-    { id: 'session', label: 'Cookie' },
+    { id: 'session', label: 'Access token' },
   ]
   if (kind === 'setup-token') return methods.filter((item) => item.id !== 'cc')
   return methods
@@ -144,7 +144,7 @@ export function defaultImportKind(): ImportKind {
 
 export function defaultImportMethod(kind: ImportKind): ImportMethod {
   if (kind === 'oauth') return 'cc'
-  return kind === 'apikey' ? 'link' : 'session'
+  return 'link'
 }
 
 export function resolveImportMethod(

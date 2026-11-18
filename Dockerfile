@@ -12,6 +12,10 @@ RUN pnpm build
 FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS helpers
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 WORKDIR /src
+COPY worker/go.mod worker/go.sum ./worker/
+RUN cd worker && go mod download
+COPY worker/ ./worker/
+RUN cd worker && go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/kin-worker ./cmd/kin-worker
 COPY api-kernel/go.mod api-kernel/go.sum ./api-kernel/
 COPY redact/go.mod redact/go.sum ./redact/
 RUN cd api-kernel && go mod download && cd ../redact && go mod download

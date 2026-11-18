@@ -163,7 +163,7 @@ function ClaudeCredentialPanel({
   )
   const [link, setLink] = useState<Link>(EMPTY_LINK)
   const [code, setCode] = useState('')
-  const [sessionKey, setSessionKey] = useState('')
+  const [accessToken, setAccessToken] = useState('')
   const [apiKey, setApiKey] = useState('')
   const activeMethod = resolveImportMethod(kind, method)
   const sig = `${kind}:${activeMethod}`
@@ -268,10 +268,9 @@ function ClaudeCredentialPanel({
           body.type = type
           body.scope = 'inference'
         }
-        const value = sessionKey.trim()
-        // 前缀决定分支：sk-ant-sid 走 cookie 换票，否则按 access token 落盘
-        if (SESSION_KEY_PREFIX.test(value)) body.session_key = value
-        else body.access_token = value
+        const value = accessToken.trim()
+        if (SESSION_KEY_PREFIX.test(value)) throw new Error('请使用授权链接在浏览器中完成 Claude 授权。')
+        body.access_token = value
       }
       return api<CommitResult>('/api/panel/vms/import', {
         method: 'POST',
@@ -281,7 +280,7 @@ function ClaudeCredentialPanel({
     onSuccess: async (d) => {
       // 明文凭证提交后立即丢弃，不回显
       setApiKey('')
-      setSessionKey('')
+      setAccessToken('')
       await invalidate()
       toast.success('凭证已导入并同步到 VM 客户端')
       onCommitted?.(d, vmId, '已导入并同步')
@@ -385,36 +384,26 @@ function ClaudeCredentialPanel({
         />
       ) : activeMethod === 'session' ? (
         <div className='space-y-2'>
-          <Label htmlFor='cred-session-key'>sessionKey / access token</Label>
+          <Label htmlFor='cred-access-token'>Access token</Label>
           <Input
-            id='cred-session-key'
+            id='cred-access-token'
             type='password'
             autoComplete='off'
-            value={sessionKey}
+            value={accessToken}
             disabled={busy}
-            onChange={(e) => setSessionKey(e.target.value)}
-            placeholder='sk-ant-sid01-… 或 access token，不会回显'
+            onChange={(e) => setAccessToken(e.target.value)}
+            placeholder='粘贴 access token'
           />
-          <Hint>
-            {kind === 'setup-token'
-              ? !sessionKey.trim()
-                ? 'sessionKey 经槽出口申请完整 OAuth 权限（含 profile、inference、sessions），换票后采集身份。以 Setup Token 模式运行，不跑官方初装；直接粘贴 access token 不增加权限。'
-                : SESSION_KEY_PREFIX.test(sessionKey.trim())
-                  ? '识别为 sessionKey，将申请完整 OAuth 权限、换票后采集身份，以 Setup Token 模式运行。'
-                  : '识别为 access token，将按 Setup Token 直接落盘，不增加权限。'
-              : !sessionKey.trim()
-                ? 'sk-ant-sid 经槽出口申请完整 OAuth 权限、换票后采集身份；其它值按 access token 直接落盘，不增加权限。'
-                : SESSION_KEY_PREFIX.test(sessionKey.trim())
-                  ? '识别为 sessionKey，将申请完整 OAuth 权限、换票后采集身份。'
-                  : '识别为 access token，将直接落盘，不增加权限。'}
-          </Hint>
+          {SESSION_KEY_PREFIX.test(accessToken.trim()) && (
+            <Hint>这是浏览器 Cookie。请切换到「授权链接」完成授权。</Hint>
+          )}
           <Button
             size='sm'
-            disabled={!sessionKey.trim() || busy}
+            disabled={!accessToken.trim() || SESSION_KEY_PREFIX.test(accessToken.trim()) || busy}
             loading={importCred.isPending}
             onClick={() => importCred.mutate()}
           >
-            {importCred.isPending ? '换票中…' : '导入'}
+            {importCred.isPending ? '导入中…' : '导入'}
           </Button>
         </div>
       ) : linkReady ? (

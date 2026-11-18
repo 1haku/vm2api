@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { startGateway, api } from '../harness.mjs'
 
-test('concurrent sessionKey import vs harvest leaves valid vm.json', async () => {
+test('concurrent Console key import vs harvest leaves valid vm.json', async () => {
   const gw = await startGateway()
   try {
     const home = path.join(gw.project, 'vms', 'vm-sim-01', 'cli-home', '.claude')
@@ -22,11 +22,11 @@ test('concurrent sessionKey import vs harvest leaves valid vm.json', async () =>
 
     const results = await Promise.all([
       api(gw, 'POST', '/api/panel/vms/import', {
-        body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid-test-raceaaaa', require_proxy: false },
+        body: { vm_id: 'vm-sim-01', api_key: 'sk-ant-api03-raceaaaa', require_proxy: false },
       }),
       api(gw, 'POST', '/admin/vm/oauth/refresh', { body: { force: true } }),
       api(gw, 'POST', '/api/panel/vms/import', {
-        body: { vm_id: 'vm-sim-01', sessionKey: 'sk-ant-sid-test-racebbbb', require_proxy: false },
+        body: { vm_id: 'vm-sim-01', api_key: 'sk-ant-api03-racebbbb', require_proxy: false },
       }),
       api(gw, 'POST', '/admin/vm/oauth/refresh', { body: {} }),
     ])

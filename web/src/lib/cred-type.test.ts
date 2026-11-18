@@ -23,22 +23,22 @@ describe('credential import defaults', () => {
     expect(defaultImportMethod('oauth')).toBe('cc')
   })
 
-  it('keeps Cookie as the Setup Token default', () => {
-    expect(defaultImportMethod('setup-token')).toBe('session')
+  it('defaults Setup Token to the authorization link', () => {
+    expect(defaultImportMethod('setup-token')).toBe('link')
     expect(importTypeFor('setup-token')).toBe('setup-token')
     expect(oauthFlavorFor('setup-token', 'link')).toBe('setup_token')
   })
 
-  it('offers Cookie and auth-link for setup-token, not Claude Code', () => {
+  it('offers access token import and auth-link for setup-token, not Claude Code', () => {
     expect(importMethodsFor('setup-token').map((m) => m.id)).toEqual([
       'link',
       'session',
     ])
-    expect(resolveImportMethod('setup-token', 'cc')).toBe('session')
+    expect(resolveImportMethod('setup-token', 'cc')).toBe('link')
     expect(resolveImportMethod('setup-token', 'link')).toBe('link')
   })
 
-  it('keeps authorization link and Cookie as OAuth alternatives', () => {
+  it('keeps authorization link and access token import as OAuth alternatives', () => {
     expect(importMethodsFor('oauth').map((m) => m.id)).toEqual([
       'cc',
       'link',
