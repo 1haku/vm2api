@@ -43,9 +43,12 @@ import {
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
 import {
   clientCancelledResult,
+  ErrorCode,
+  isClaudeSlotOAuthError,
   isClientCancelledResult,
   isCompleteAssistantMessage,
   isWrapConnectionError,
+  mapUpstreamError,
 } from '../core/errors.mjs'
 import { extraHeadersFromLimitError } from '../pool/quota-window.mjs'
 import { createStreamTiming } from '../protocol/stream-timing.mjs'
@@ -814,7 +817,10 @@ function mockScenario(exec) {
   }
 }
 
-function restoreCragPolicyBlock(result) {
+function restoreInferenceFailure(result, requestPath = '/internal/v1/messages') {
+  if (requestPath === '/internal/v1/messages' && isClaudeSlotOAuthError(result?.body)) {
+    return slotOAuthUnavailable(result)
+  }
   if (!result || result.ok || result.committed || isClientCancelledResult(result)) return result
   const facts = result.providerResult
   if (
@@ -837,6 +843,24 @@ function restoreCragPolicyBlock(result) {
         code: 'crag_policy_blocked',
         message: 'Gateway kernel rejected the request cache controls before dispatch (CRAG_CACHE_CONTROL)',
         details: { retryable: false },
+      },
+    },
+  }
+}
+
+export function slotOAuthUnavailable(result = {}) {
+  return {
+    ...result,
+    ok: false,
+    status: 503,
+    transportError: false,
+    terminalState: result.committed ? 'incomplete' : 'rejected',
+    body: {
+      type: 'error',
+      error: {
+        type: 'worker_error',
+        code: ErrorCode.SLOT_OAUTH_UNAVAILABLE,
+        message: 'The VM slot could not load its Claude OAuth credential',
       },
     },
   }
@@ -1244,7 +1268,9 @@ async function streamGoWorkerRaw({
     const headers = mergeRateLimitHeaders(publicHeaders(response.headers))
     observedHeaders = headers
     handoff?.observeHeaders(response.headers)
-    if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
+    const claudeMessages = requestPath === '/internal/v1/messages'
+    const jsonReply = claudeMessages && /^application\/json\b/i.test(response.headers['content-type'] || '')
+    if (jsonReply || (response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
       const data = await readAll(response, handoff ? MAX_BODY : 1024 * 1024)
       let decoded = await inferenceCodec.decode(data, { status: response.statusCode, signal })
       if (handoff) decoded = handoff.consumeBody(decoded)
@@ -1335,6 +1361,9 @@ async function streamGoWorkerRaw({
     let sseModel = null
     let sseStop = null
     let sseRateHeaders = {}
+    const codexResponses = requestPath === '/internal/v1/codex/responses'
+    let responsesId = null
+    let responsesTerminal = null
     const assembler = createClaudeMessageAssembler()
     const pendingLines = []
     const takeSseEvent = () => {
@@ -1365,12 +1394,32 @@ async function streamGoWorkerRaw({
     const observeSseEvent = (event) => {
       if (!event) return event
       timing.observe(event, receivedAt)
+      if (claudeMessages && isClaudeSlotOAuthError(event)) {
+        lastError = slotOAuthUnavailable().body
+        return lastError
+      }
       if (event.type === 'response_headers' && event.headers && typeof event.headers === 'object') {
         sseRateHeaders = { ...sseRateHeaders, ...event.headers }
       }
-      if (event.type === 'error') {
-        lastError = event
-        handoff?.observeError(event)
+      if (event.type === 'error' || (codexResponses && event.type === 'response.failed')) {
+        const error = event.error ?? event.response?.error
+        lastError = codexResponses
+          ? {
+              ...event,
+              error: {
+                type: 'upstream_error',
+                message: 'Upstream returned a Responses error',
+                ...error,
+                code: error?.code || 'upstream_error',
+              },
+            }
+          : event
+        handoff?.observeError(lastError)
+      }
+      if (codexResponses && event.response && typeof event.response === 'object' && !Array.isArray(event.response)) {
+        if (typeof event.response.id === 'string') responsesId = event.response.id
+        if (['response.completed', 'response.done', 'response.incomplete'].includes(event.type))
+          responsesTerminal = event
       }
       if (event.type === 'message_stop') sawMessageStop = true
       if (event.type === 'message_start') rememberThreadTurn(event.message?.id, prepared.thread)
@@ -1380,6 +1429,14 @@ async function streamGoWorkerRaw({
       const stop = event.message?.stop_reason || event.delta?.stop_reason
       if (stop) sseStop = stop
       return event
+    }
+    const shouldCommit = (event) =>
+      lastError?.error?.code !== ErrorCode.SLOT_OAUTH_UNAVAILABLE &&
+      (isDownstreamCommitEvent(event) || (!!event && event === responsesTerminal))
+    const publicSseLine = (line, event) => {
+      if (event?.error?.code !== ErrorCode.SLOT_OAUTH_UNAVAILABLE) return line
+      const { body } = mapUpstreamError(503, event)
+      return `data: ${JSON.stringify({ type: 'error', ...body })}`
     }
     const firstByteMs = Math.max(0, Number(timeoutMs) || 0)
     const idleMs = Math.max(0, Number(idleTimeoutMs) || 0)
@@ -1452,19 +1509,20 @@ async function streamGoWorkerRaw({
             if (piece && piece !== '[DONE]') {
               dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
               const event = observeSseEvent(takeSseEvent())
-              if (isDownstreamCommitEvent(event)) await flushCommit()
+              line = publicSseLine(line, event)
+              if (shouldCommit(event)) await flushCommit()
             }
           } else if (line === '') {
             if (dataBuf) {
               const event = takeSseEvent()
               dataBuf = ''
               observeSseEvent(event)
-              if (isDownstreamCommitEvent(event)) await flushCommit()
+              if (shouldCommit(event)) await flushCommit()
             }
           } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
             dataBuf = `${dataBuf}\n${line}`
             const event = observeSseEvent(takeSseEvent())
-            if (isDownstreamCommitEvent(event)) await flushCommit()
+            if (shouldCommit(event)) await flushCommit()
           }
           await emitLine(line)
         }
@@ -1477,24 +1535,53 @@ async function streamGoWorkerRaw({
           if (piece && piece !== '[DONE]') {
             dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
             const event = observeSseEvent(takeSseEvent())
-            if (isDownstreamCommitEvent(event)) await flushCommit()
+            buffer = publicSseLine(buffer, event)
+            if (shouldCommit(event)) await flushCommit()
           }
         }
         await emitLine(buffer)
       }
       if (dataBuf) {
         const event = observeSseEvent(takeSseEvent())
-        if (isDownstreamCommitEvent(event)) await flushCommit()
+        if (shouldCommit(event)) await flushCommit()
       }
       const trailers = mergeRateLimitHeaders(publicHeaders(response.trailers))
       handoff?.observeHeaders(response.trailers)
       const meta = streamMetaFromHeaders({ ...headers, ...trailers })
       const assembled = assembler.message
-      const stopReason = meta.stopReason || sseStop || assembled?.stop_reason || null
-      const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason, sawMessageStop })
+      const incomplete = responsesTerminal?.type === 'response.incomplete'
+      const stopReason =
+        responsesTerminal?.response.incomplete_details?.reason ||
+        meta.stopReason ||
+        sseStop ||
+        assembled?.stop_reason ||
+        null
+      if (codexResponses && !responsesTerminal && !lastError) {
+        lastError = {
+          type: 'error',
+          error: {
+            type: 'upstream_error',
+            code: 'upstream_stream_incomplete',
+            message: 'Upstream closed the stream without a terminal Responses event',
+          },
+        }
+        if (committed && onEvent) {
+          const failed = { ...(responsesId ? { id: responsesId } : {}), status: 'failed', error: lastError.error }
+          await onEvent(`data: ${JSON.stringify({ type: 'response.failed', response: failed })}`)
+          await onEvent('')
+        }
+      }
+      const complete =
+        !lastError &&
+        (codexResponses
+          ? !!responsesTerminal
+          : isCompleteAssistantMessage({ body: assembled, stopReason, sawMessageStop }))
       if (!committed && complete) await flushCommit()
-      const terminalState = complete ? 'verified' : 'incomplete'
+      const terminalState = complete && !incomplete ? 'verified' : 'incomplete'
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
+      const responseBody = lastError ||
+        responsesTerminal?.response ||
+        assembled || { type: 'message', role: 'assistant', content: [] }
       // A native activity timeout can follow HTTP/SSE metadata but precede
       // visible output. It is neither an empty hop nor a transport failure.
       const nativeTimeout = managedCrag && lastError?.error?.type === 'timeout_error'
@@ -1509,14 +1596,12 @@ async function streamGoWorkerRaw({
         upstreamStatus: response.statusCode ?? null,
         via: 'go-worker-stream',
 
-        body: handoff
-          ? handoff.finish(lastError || assembled || { type: 'message', role: 'assistant', content: [] })
-          : lastError || assembled || { type: 'message', role: 'assistant', content: [] },
+        body: handoff ? handoff.finish(responseBody) : responseBody,
         headers: rateHeaders,
         // Trailer stays authoritative, but it may carry totals only (Codex/Responses hops).
         // Merge so SSE `input_tokens_details` / cache breakdown survives instead of being short-circuited.
         usage: mergeUsage(mergeUsage(assembled?.usage || null, sseUsage), meta.usage),
-        model: meta.model || sseModel || assembled?.model || null,
+        model: meta.model || responsesTerminal?.response.model || sseModel || assembled?.model || null,
         stopReason,
         // Keep provider diagnostics even when a later error replaces the assembled body.
         stopDetails: assembled?.stop_details ?? null,
@@ -2123,8 +2208,15 @@ export function recoverThinkingOnlyMaxTokens(result, { onEvent, onCommit, downst
       const events = [
         ...(started
           ? []
-          : [{ type: 'message_start', message: { ...body, stop_reason: null, stop_sequence: null, usage: startUsage } }]),
-        ...(started ? [...downstream.open].sort((a, b) => a - b).map((index) => ({ type: 'content_block_stop', index })) : []),
+          : [
+              {
+                type: 'message_start',
+                message: { ...body, stop_reason: null, stop_sequence: null, usage: startUsage },
+              },
+            ]),
+        ...(started
+          ? [...downstream.open].sort((a, b) => a - b).map((index) => ({ type: 'content_block_stop', index }))
+          : []),
         { type: 'message_delta', delta: { stop_reason: 'max_tokens', stop_sequence: body.stop_sequence }, usage },
         { type: 'message_stop' },
       ]
@@ -2151,11 +2243,15 @@ export function recoverThinkingOnlyMaxTokens(result, { onEvent, onCommit, downst
 }
 
 export async function callGoWorker(opts = {}) {
-  return recoverThinkingOnlyMaxTokens(restoreCragPolicyBlock(await callGoWorkerRaw(opts)), {})
+  const result = restoreInferenceFailure(await callGoWorkerRaw(opts), opts.requestPath)
+  return recoverThinkingOnlyMaxTokens(result, {})
 }
 
 export async function streamGoWorker(opts = {}) {
   const tracked = trackDownstreamEvents(opts.onEvent)
-  const result = restoreCragPolicyBlock(await streamGoWorkerRaw({ ...opts, onEvent: tracked.onEvent }))
+  const result = restoreInferenceFailure(
+    await streamGoWorkerRaw({ ...opts, onEvent: tracked.onEvent }),
+    opts.requestPath,
+  )
   return recoverThinkingOnlyMaxTokens(result, { ...opts, onEvent: opts.onEvent, downstream: tracked.state })
 }

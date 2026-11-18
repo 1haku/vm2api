@@ -3,6 +3,7 @@ import type { CragLicenseStatus, Vm } from '@/types/panel-vm'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/lib/api'
 import type { CragHostStatus } from '@/features/vm/queries'
 import { WrapSamplePage } from './index'
 import { installKernelTargets, type KernelInstallation } from './queries'
@@ -125,12 +126,13 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }))
 
-function render(vm: Partial<Vm> = {}) {
+function render(vm: Partial<Vm> = {}, otherVms: Vm[] = []) {
   state.cursor = 0
   state.buttons.length = 0
   state.confirm = undefined
   state.vms = [
     { id: 'vm-old', resolved_dataplane: 'wrap', runtime_type: 'kvm', ...vm },
+    ...otherVms,
   ]
   return renderToStaticMarkup(<WrapSamplePage />)
 }
@@ -269,6 +271,35 @@ it('shows deferred CRAG reclamation after a cli-node install and refreshes the h
   expect(render(vm)).toContain('重启完成，原调度限制保留；CRAG 绑定待回收')
 })
 
+it('pauses a bulk installation when the first slot result is unconfirmed', async () => {
+  vi.mocked(installKernelTargets).mockRejectedValueOnce(
+    new ApiError('无法确认安装结果', 0, 'kernel_install_unconfirmed')
+  )
+  const otherVms: Vm[] = [
+    { id: 'vm-next', resolved_dataplane: 'crag', runtime_type: 'docker' },
+  ]
+  render({}, otherVms)
+  const button = state.buttons.find(
+    (entry) => entry['aria-label'] === '把 CRAG 更新到全部槽位'
+  )
+  expect(button?.disabled).toBe(false)
+  button?.onClick?.({} as Parameters<NonNullable<ButtonProps['onClick']>>[0])
+  render({}, otherVms)
+  expect(state.confirm?.open).toBe(true)
+  state.confirm?.handleConfirm?.()
+  await vi.waitFor(() =>
+    expect(render({}, otherVms)).toContain('当前槽位结果未确认')
+  )
+  expect(installKernelTargets).toHaveBeenCalledExactlyOnceWith([
+    {
+      id: 'vm-old',
+      kernel: 'crag',
+      payload_tag: 'payload-2026.11.16-crag-3.0.8',
+    },
+  ])
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
 it.each(['license_required', 'license_payload_key_mismatch'])(
   'does not gate installation or recommend reissue based on the cached %s hint',
   (code) => {
@@ -384,17 +415,18 @@ describe('CRAG runtime on the kernel page', () => {
     const html = render({ status: 'stopped' })
     expect(state.hostEnabled).toBe(true)
     expect(state.hostInterval).toBe(10_000)
-    expect(html).toMatch(/剩余可绑定槽位：(?:<!-- -->)?0/)
-    expect(html).toMatch(/运行中的订阅槽：(?:<!-- -->)?2/)
+    expect(html).toMatch(/使用中的槽位<\/span><span[^>]*>2<\/span>/)
     expect(html).not.toContain('可用运行名额')
-    expect(html).toContain('宿主订阅超额，仅超额槽暂停调度')
+    // 超额现在拆成「徽章=状态」+「文字=后果」两段，不再是一句连续文案。
+    expect(html).toContain('宿主订阅超额')
+    expect(html).toContain('仅超额槽暂停调度')
     expect(html).toContain('兑换槽位')
     expect(html).toContain('超出订阅额度 / 暂停调度')
     expect(html).toContain('版本 3.0.8 · 处理中 0 · 排队 0 · 就绪处理槽 0')
 
     state.role = 'user'
     const userHtml = render()
-    expect(userHtml).not.toContain('剩余可绑定槽位')
+    expect(userHtml).not.toContain('使用中的槽位')
     expect(userHtml).not.toContain('超出订阅额度 / 暂停调度')
     expect(userHtml).not.toContain('兑换槽位')
     expect(state.hostEnabled).toBe(false)
@@ -409,13 +441,13 @@ describe('CRAG runtime on the kernel page', () => {
       status: 'running',
     } as const
     const html = render(cragVm)
-    expect(html).toMatch(/剩余可绑定槽位：(?:<!-- -->)?待核对/)
+    expect(html).toMatch(/使用中的槽位<\/span><span[^>]*>待核对<\/span>/)
     expect(html).toContain('CRAG：运行状态未知')
 
     state.hostError = true
     const errorHtml = render(cragVm)
     expect(errorHtml).toContain('重装 vm-old 的 CRAG 并重启')
     expect(errorHtml).toContain('CRAG：运行状态未知')
-    expect(errorHtml).toMatch(/剩余可绑定槽位：(?:<!-- -->)?待核对/)
+    expect(errorHtml).toMatch(/使用中的槽位<\/span><span[^>]*>待核对<\/span>/)
   })
 })

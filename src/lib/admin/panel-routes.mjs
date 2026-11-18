@@ -189,7 +189,7 @@ import {
   SESSION_SLOT_MIN,
   validateInferenceRoutingPatch,
 } from '../vm/slot-engine.mjs'
-import { validateTelemetryRoutingPatch } from '../vm/native-telemetry.mjs'
+import { telemetryDefaultEnabled, validateTelemetryRoutingPatch } from '../vm/native-telemetry.mjs'
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
 import * as panel from './panel-api.mjs'
 import { GATEWAY_CAPABILITIES } from '../vm/execution-context.mjs'
@@ -207,10 +207,12 @@ import {
   startHostUpgrade,
 } from './release.mjs'
 import { downloadReleaseKernel, kernelReleaseHttpStatus, listKernelReleaseVersions } from './release-kernel.mjs'
-import { describeKernelCatalog, pullKernelRelease } from './kernel-catalog.mjs'
+import { describeKernelCatalog, listKernelReleases, pullKernelRelease, selectKernelRelease } from './kernel-catalog.mjs'
 import {
   hasKernelInstallSafetyHold,
   installKernelTargets,
+  cancelKernelInstall,
+  listActiveKernelInstalls,
   releaseKernelInstallSafetyHold,
   retainKernelInstallSafetyHold,
   validateKernelTargets,
@@ -723,6 +725,13 @@ export function createPanelHandler(ctx) {
   })
   // A checkout can change under a live Node process; report its boot version.
   const runningVersion = readLocalVersion(ctx.cfg?.paths?.project)
+  const kernelInstallJobs = new Map()
+  const pruneKernelInstallJobs = () => {
+    const now = Date.now()
+    for (const [id, job] of kernelInstallJobs) {
+      if (job.expiresAt <= now) kernelInstallJobs.delete(id)
+    }
+  }
   const json = (...args) => ctx.json(...args)
   const hostUnsupported = (res, vm, cap) => {
     if (slotHost(vm).supports(cap)) return false
@@ -3138,6 +3147,32 @@ export function createPanelHandler(ctx) {
           })
         }
       }
+      // Several cached releases side by side.
+      if (req.method === 'GET' && p === '/api/panel/kernels/cached') {
+        const result = listKernelReleases(cfg.paths.project, url.searchParams.get('kernel') || 'crag')
+        if (!result.ok)
+          return json(res, 400, {
+            ok: false,
+            error: { code: result.code, message: result.error },
+          })
+        return json(res, 200, panel.ok({ releases: result.releases }))
+      }
+      if (req.method === 'POST' && p === '/api/panel/kernels/select') {
+        const body = await readBody(req, 8 * 1024)
+        const result = selectKernelRelease(cfg.paths.project, {
+          kernel: body?.kernel,
+          tag: body?.tag,
+        })
+        if (!result.ok) {
+          const status =
+            result.code === 'kernel_pull_busy' ? 409 : result.code === 'kernel_release_not_cached' ? 404 : 400
+          return json(res, status, {
+            ok: false,
+            error: { code: result.code, message: result.error },
+          })
+        }
+        return json(res, 200, panel.ok({ kernel: result.kernel, release: result.release }))
+      }
       if (req.method === 'POST' && p === '/api/panel/kernels/pull') {
         const body = await readBody(req, 8 * 1024)
         if (
@@ -3184,17 +3219,72 @@ export function createPanelHandler(ctx) {
         if (body.targets.some((target) => userMissesVmId(req, cfg.paths.project, target.id))) {
           return json(res, 403, { ok: false, error: { code: 'forbidden', message: '无权管理所选虚拟机' } })
         }
-        const report = await installKernelTargets({
-          projectRoot: cfg.paths.project,
-          targets: body.targets,
-          routing: ctx.routingConfig,
-          watchdog: ctx.kernelWatchdog,
-          poolScheduler: ctx.poolScheduler,
-          ops: ctx.kernelInstallOps,
-          cragSubscription: mayBindSubscription ? ctx.cragSubscription : undefined,
-          releaseStoppedBinding: ctx.cragSubscription?.releaseStoppedBinding?.bind(ctx.cragSubscription),
-        })
-        return json(res, 200, panel.ok(report))
+        const install = () =>
+          installKernelTargets({
+            projectRoot: cfg.paths.project,
+            targets: body.targets,
+            routing: ctx.routingConfig,
+            watchdog: ctx.kernelWatchdog,
+            poolScheduler: ctx.poolScheduler,
+            ops: ctx.kernelInstallOps,
+            cragSubscription: mayBindSubscription ? ctx.cragSubscription : undefined,
+            releaseStoppedBinding: ctx.cragSubscription?.releaseStoppedBinding?.bind(ctx.cragSubscription),
+          })
+        if (body.background === true) {
+          pruneKernelInstallJobs()
+          if (kernelInstallJobs.size >= 256)
+            return json(res, 429, {
+              ok: false,
+              error: { code: 'kernel_install_queue_full', message: '内核安装任务过多，请稍后再试。' },
+            })
+          const jobId = randomUUID()
+          const targets = body.targets.map(({ id, kernel }) => ({ id, kernel }))
+          const job = { targets, state: 'running', expiresAt: Infinity }
+          kernelInstallJobs.set(jobId, job)
+          install()
+            .then((report) => {
+              job.state = 'completed'
+              job.report = report
+              for (const item of report.items || [])
+                console.log(
+                  `[kernel-install] background ${item.id} ${item.kernel} ${item.ok ? 'ok' : `failed ${item.code || ''}`}`,
+                )
+            })
+            .catch(() => {
+              job.state = 'unknown'
+              console.warn(`[kernel-install] background job ${jobId} did not return a result`)
+            })
+            .finally(() => {
+              job.expiresAt = Date.now() + 15 * 60_000
+            })
+          return json(res, 202, panel.ok({ background: true, job_id: jobId, targets }))
+        }
+        return json(res, 200, panel.ok(await install()))
+      }
+      if (req.method === 'GET' && p === '/api/panel/kernels/install') {
+        const jobId = url.searchParams.get('job_id')
+        if (jobId !== null) {
+          pruneKernelInstallJobs()
+          const job = kernelInstallJobs.get(jobId)
+          if (!job || job.targets.some(({ id }) => userMissesVmId(req, cfg.paths.project, id)))
+            return json(res, 404, {
+              ok: false,
+              error: { code: 'kernel_install_job_missing', message: '未找到安装结果，请核对槽位后再操作。' },
+            })
+          return json(res, 200, panel.ok({ state: job.state, ...(job.report && { report: job.report }) }))
+        }
+        const items = listActiveKernelInstalls().filter((item) => !userMissesVmId(req, cfg.paths.project, item.id))
+        return json(res, 200, panel.ok({ items }))
+      }
+      if (req.method === 'POST' && p === '/api/panel/kernels/install/cancel') {
+        const body = await readBody(req, 8 * 1024).catch(() => ({}))
+        const id = typeof body?.id === 'string' ? body.id : ''
+        if (!id) return json(res, 400, { ok: false, error: { code: 'vm_id_required', message: '请选择虚拟机' } })
+        if (userMissesVmId(req, cfg.paths.project, id))
+          return json(res, 403, { ok: false, error: { code: 'forbidden', message: '无权管理所选虚拟机' } })
+        const result = cancelKernelInstall(id)
+        if (!result.ok) return json(res, 404, { ok: false, error: { code: result.code, message: result.error } })
+        return json(res, 200, panel.ok(result))
       }
       if (req.method === 'GET' && p === '/api/panel/wrap-cli') {
         const sample = describeWrapSample(cfg.paths.project)
@@ -5161,6 +5251,7 @@ export function createPanelHandler(ctx) {
           owner: { role: ident.role, userId: req.panelUserId },
           proxyPool,
           occupied: historic,
+          telemetryDefaultEnabled: telemetryDefaultEnabled(ctx.routingConfig),
         })
         if (!result.ok) return json(res, result.status, { ok: false, error: result.error })
         await fillTimezoneFromExit(result.vm.id)
@@ -5471,7 +5562,7 @@ export function createPanelHandler(ctx) {
           unschedulable: { reason: 'no_credential', detail: null, at: new Date().toISOString() },
           proxy_cli_enabled: body.proxy_cli_enabled === true,
           proxy_required: false,
-          seed_policy: standardSeedPolicy(),
+          seed_policy: standardSeedPolicy({}, { defaultEnabled: telemetryDefaultEnabled(ctx.routingConfig) }),
           runtime: { type: runtime },
           machine,
         }
@@ -6102,7 +6193,15 @@ export function createPanelHandler(ctx) {
               proxyPool,
             })
           }
-          if (looksLikeOfficialSetupToken(code) || oauth.flavor === SETUP_TOKEN_FLAVOR) {
+          // The paste-code mint is the CLI's own setup token: inference-only,
+          // one year, no refresh. That is `official-setup-token`; the converted
+          // setup-token mode is the one that still carries a refresh token.
+          const mintedSetupToken =
+            (normalizeOauthFlavor(flavor) === 'setup_token' ||
+              oauth.flavor === 'setup_token' ||
+              oauth.flavor === 'setup-token') &&
+            !String(oauth.refresh_token || '').trim()
+          if (looksLikeOfficialSetupToken(code) || oauth.flavor === SETUP_TOKEN_FLAVOR || mintedSetupToken) {
             oauth.type = 'official-setup-token'
             oauth.mode = 'official-setup-token'
           } else if (
@@ -6143,12 +6242,17 @@ export function createPanelHandler(ctx) {
             }),
           )
         } catch (e) {
-          const status =
-            e.code === 'session_expired' || e.code === 'session_vm_mismatch' || e.code === 'code_required' ? 400 : 502
-          return json(res, status, {
-            ok: false,
-            error: { code: e.code || 'exchange_code_failed', message: String(e.message || e).slice(0, 240) },
-          })
+          if (e.code === 'session_expired' || e.code === 'session_vm_mismatch' || e.code === 'code_required') {
+            return json(res, 400, {
+              ok: false,
+              error: { code: e.code, message: String(e.message || e).slice(0, 240) },
+            })
+          }
+          // An exchange failure carries an upstream class — throttled (429),
+          // blocked exit, refused origin — so report it like the cookie import
+          // does instead of flattening every one of them into a 502.
+          const failure = panelImportErrorPayload(e)
+          return json(res, failure.status === 500 ? 502 : failure.status, { ok: false, error: failure.error })
         }
       }
 
@@ -6724,6 +6828,7 @@ export function createPanelHandler(ctx) {
             applied_rpm: applied.rpm,
             applied_session_slots: applied.session_slots,
             kernel_persona: applied.kernel_persona || null,
+            telemetry_sync: applied.telemetry_sync || null,
             inference_runtime: publicEngineRuntime,
           }),
         )

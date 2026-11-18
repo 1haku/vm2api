@@ -25,6 +25,8 @@ import { normalizeRedaction } from '../../src/lib/redaction/policy.mjs'
 import { publishRedactionForTests } from '../../src/lib/redaction/runtime.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 import { classifyUpstreamResult } from '../../src/lib/pool/upstream-error-policy.mjs'
+import { mapUpstreamError } from '../../src/lib/core/errors.mjs'
+import { createAnthropicSseErrorRemapper } from '../../src/lib/protocol/stream-truncation.mjs'
 
 test('restoreUncommittedHop keeps a structured upstream code', () => {
   const restored = restoreUncommittedHop({
@@ -505,6 +507,204 @@ async function fixture(handler) {
 function writeData(res, event) {
   res.write(`data: ${JSON.stringify(event)}\n\n`)
 }
+
+const noClaudeAccount = { error: 'No signed-in Claude account found', code: 'NO_ACCOUNT' }
+
+for (const [status, stream] of [
+  [200, false],
+  [502, false],
+  [200, true],
+]) {
+  unixTest(`Claude slot login failure in HTTP ${status} JSON (stream=${stream}) is not a caller error`, async (t) => {
+    const fx = await fixture((_req, res) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(noClaudeAccount))
+    })
+    t.after(() => fx.close())
+    const lines = []
+    const result = await (stream ? streamGoWorker : callGoWorker)({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.status, 503)
+    assert.equal(result.body.error.code, 'slot_oauth_unavailable')
+    const policy = classifyUpstreamResult(result)
+    assert.equal(policy.action, 'continue')
+    assert.equal(policy.retrySameAccount, false)
+    assert.equal(policy.cooldownUntil, null)
+    const mapped = mapUpstreamError(result.status, result.body, result.headers)
+    assert.equal(mapped.body.error.code, 'pool_unavailable')
+    assert.doesNotMatch(JSON.stringify(mapped), /NO_ACCOUNT|No signed-in Claude account found|slot_oauth_unavailable/)
+    assert.deepEqual(lines, [])
+  })
+}
+
+for (const committed of [false, true]) {
+  unixTest(`Claude SSE login error stays private (committed=${committed})`, async (t) => {
+    const fx = await fixture((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      writeData(res, { type: 'message_start', message: { content: [] } })
+      if (committed)
+        writeData(res, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'partial' } })
+      res.write('event: error\n')
+      writeData(
+        res,
+        committed
+          ? {
+              type: 'error',
+              error: { type: 'api_error', message: `provider error: ${JSON.stringify(noClaudeAccount)}` },
+            }
+          : noClaudeAccount,
+      )
+      res.end()
+    })
+    t.after(() => fx.close())
+    const lines = []
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.committed, committed)
+    assert.equal(result.status, 503)
+    assert.equal(result.body.error.code, 'slot_oauth_unavailable')
+    assert.equal(classifyUpstreamResult(result).action, committed ? 'stop' : 'continue')
+    if (committed) {
+      assert.match(lines.join('\n'), /partial/)
+      const remapper = createAnthropicSseErrorRemapper()
+      assert.match(lines.map((line) => remapper.remapLine(line)).join('\n'), /pool_unavailable/)
+    } else assert.deepEqual(lines, [])
+    assert.doesNotMatch(lines.join('\n'), /NO_ACCOUNT|No signed-in Claude account found|slot_oauth_unavailable/)
+  })
+}
+
+unixTest('native handoff keeps flat slot login errors off the public stream', async (t) => {
+  const fx = await fixture((_req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('event: error\n')
+    writeData(res, noClaudeAccount)
+    res.end()
+  })
+  t.after(() => fx.close())
+  fx.exec.workerStatus = { runtime_variant: 'crag-v2', capabilities: ['native_handoff_v1'] }
+  const lines = []
+  const body = { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }] }
+  const result = await streamGoWorker({
+    exec: fx.exec,
+    managedCrag: true,
+    cragPrint: false,
+    envelope: { body, headers: {}, stream: true },
+    onEvent: (line) => lines.push(line),
+  })
+  assert.equal(result.nativeHandoff, true)
+  assert.equal(result.committed, false)
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error.code, 'slot_oauth_unavailable')
+  assert.deepEqual(lines, [])
+})
+
+for (const eventType of ['response.completed', 'response.incomplete']) {
+  unixTest(`Codex delivers ${eventType} without any assistant deltas`, async (t) => {
+    const incomplete = eventType === 'response.incomplete'
+    const response = {
+      id: 'resp_test',
+      status: incomplete ? 'incomplete' : 'completed',
+      output: [],
+      ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
+      usage: { input_tokens: 20000, output_tokens: 0 },
+    }
+    const events = [
+      { type: 'response.created', response: { id: response.id } },
+      { type: eventType, response },
+    ]
+    const fx = await fixture((req, res) => {
+      req.resume()
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      for (const event of events) writeData(res, event)
+      res.end()
+    })
+    t.after(() => fx.close())
+    fx.exec.vm.runtime.codex_kernel_socket = fx.exec.vm.runtime.worker_socket
+    const received = []
+    const result = await streamCodexKernel({
+      exec: fx.exec,
+      envelope: { body: { model: 'gpt-6.2-sol', input: [] } },
+      onEvent(line) {
+        if (line.startsWith('data:')) received.push(JSON.parse(line.slice(5)))
+      },
+    })
+    assert.deepEqual(received, events)
+    assert.equal(result.ok, true)
+    assert.equal(result.status, 200)
+    assert.equal(result.terminalState, incomplete ? 'incomplete' : 'verified')
+    assert.deepEqual(result.body, response)
+    assert.deepEqual(result.usage, response.usage)
+  })
+}
+
+unixTest('Codex EOF without a terminal event is a failure even with reported usage', async (t) => {
+  const fx = await fixture((req, res) => {
+    req.resume()
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    writeData(res, { type: 'response.in_progress', response: { usage: { input_tokens: 20000, output_tokens: 0 } } })
+    res.end()
+  })
+  t.after(() => fx.close())
+  fx.exec.vm.runtime.codex_kernel_socket = fx.exec.vm.runtime.worker_socket
+  const result = await streamCodexKernel({ exec: fx.exec, envelope: { body: { input: [] } } })
+  assert.equal(result.ok, false)
+  assert.equal(result.status, 502)
+  assert.equal(result.upstreamStatus, 200)
+  assert.equal(result.body.error.code, 'upstream_stream_incomplete')
+  assert.equal(result.usage.input_tokens, 20000)
+})
+
+unixTest('Codex EOF after visible output sends a failed event, not an implicit success', async (t) => {
+  const fx = await fixture((req, res) => {
+    req.resume()
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    writeData(res, { type: 'response.created', response: { id: 'resp_truncated' } })
+    writeData(res, { type: 'response.output_text.delta', delta: 'Partial' })
+    res.end()
+  })
+  t.after(() => fx.close())
+  fx.exec.vm.runtime.codex_kernel_socket = fx.exec.vm.runtime.worker_socket
+  const frames = []
+  const result = await streamCodexKernel({
+    exec: fx.exec,
+    envelope: { body: { input: [] } },
+    onEvent(line) {
+      if (line.startsWith('data:')) frames.push(JSON.parse(line.slice(5)))
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.equal(result.committed, true)
+  assert.deepEqual(
+    frames.map((frame) => frame.type),
+    ['response.created', 'response.output_text.delta', 'response.failed'],
+  )
+  assert.equal(frames.at(-1).response.id, 'resp_truncated')
+  assert.equal(frames.at(-1).response.error.code, 'upstream_stream_incomplete')
+})
+
+unixTest('Codex response.failed before commitment keeps its provider error', async (t) => {
+  const error = { type: 'invalid_request_error', code: 'invalid_tool', message: 'Invalid tool', param: 'tools' }
+  const fx = await fixture((req, res) => {
+    req.resume()
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    writeData(res, { type: 'response.failed', response: { status: 'failed', error } })
+    res.end()
+  })
+  t.after(() => fx.close())
+  fx.exec.vm.runtime.codex_kernel_socket = fx.exec.vm.runtime.worker_socket
+  const result = await streamCodexKernel({ exec: fx.exec, envelope: { body: { input: [] } } })
+  assert.equal(result.ok, false)
+  assert.equal(result.committed, false)
+  assert.equal(result.status, 400)
+  assert.deepEqual(result.body.error, error)
+})
 
 function gate() {
   let release

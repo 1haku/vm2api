@@ -71,6 +71,7 @@ export const ErrorCode = {
   UPSTREAM_EMPTY_STREAM: 'upstream_empty_stream',
   CLI_ERROR: 'cli_error',
   KERNEL_UNAVAILABLE: 'kernel_unavailable',
+  SLOT_OAUTH_UNAVAILABLE: 'slot_oauth_unavailable',
   CLUSTER_SLOT_RECONNECTING: 'cluster_slot_reconnecting',
   CLUSTER_DELIVERY_UNCONFIRMED: 'cluster_delivery_unconfirmed',
   KERNEL_ERROR: 'kernel_error',
@@ -143,11 +144,27 @@ const POOL_OVERLOADED_CODES = new Set([
 const POOL_RATE_LIMITED_CODES = new Set(['pool_rate_limited'])
 /** Nothing eligible to wait for: configuration, quota, credentials, or model gates. */
 const POOL_UNAVAILABLE_CODES = new Set([
+  ErrorCode.POOL_UNAVAILABLE,
+  ErrorCode.SLOT_OAUTH_UNAVAILABLE,
   'account_pool_exhausted',
   'api_pool_exhausted',
   'no_available_accounts',
   'no_eligible_accounts',
 ])
+
+export function isClaudeSlotOAuthError(body) {
+  if (!body?.error && body?.type !== 'error') return false
+  const error = body.error
+  if (
+    [body.code, error?.code, error?.upstream_code].some(
+      (code) => code === 'NO_ACCOUNT' || code === ErrorCode.SLOT_OAUTH_UNAVAILABLE,
+    )
+  ) {
+    return true
+  }
+  const message = typeof error === 'string' ? error : error?.message || body.message
+  return typeof message === 'string' && /\bNo signed-in Claude account found\b/i.test(message)
+}
 
 const POOL_CAPACITY_MESSAGE = /no eligible|no ready api|account pool|号池没有|无可用账号|eligible claude/i
 const WRAP_CONNECTION_MESSAGE = /provider error:.*connection error/i
@@ -538,7 +555,16 @@ export function mapUpstreamError(status, body, headers = {}) {
   }
   // Kernel slot busy on the last hop is capacity, same as a full pool queue.
   if (inboundCode === 'slot_busy' || /rust kernel has no free slot/i.test(String(msg || ''))) {
-    return poolClientError('overloaded')
+    const out = poolClientError('overloaded')
+    // Name the local CRAG queue so a 529 here is not read as provider overload (#1213).
+    const queue = /runtime queue (timeout|is full)/i.exec(String(msg || ''))
+    if (queue) {
+      out.body.error.details = {
+        source: 'local_kernel_queue',
+        reason: queue[1].toLowerCase() === 'timeout' ? 'runtime_queue_timeout' : 'runtime_queue_full',
+      }
+    }
+    return out
   }
   if (
     inboundCode === 'wrap_connection_error' ||

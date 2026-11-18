@@ -15,7 +15,13 @@ import {
   resetAuthUrlSessions,
 } from '../../src/lib/oauth/oauth-auth-url.mjs'
 import { sessionKeyToOAuth } from '../../src/lib/oauth/cookie-auth.mjs'
-import { CLIENT_ID, FULL_OAUTH_SCOPE, REDIRECT_URI } from '../../src/lib/oauth/oauth-contract.mjs'
+import {
+  CLIENT_ID,
+  FULL_OAUTH_SCOPE,
+  INFERENCE_ONLY_SCOPE,
+  REDIRECT_URI,
+  SETUP_TOKEN_TTL_SECONDS,
+} from '../../src/lib/oauth/oauth-contract.mjs'
 import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
 import { prepareSlotOAuth, runGuestOAuthAuthService } from '../../src/lib/oauth/guest-oauth-helper.mjs'
 import { slotExec } from '../../src/lib/vm/slot-runtime.mjs'
@@ -107,6 +113,34 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
           },
         }),
       )
+      return
+    }
+    if (req.method === 'GET' && req.url === '/api/oauth/profile') {
+      res.end(
+        JSON.stringify({
+          account: { uuid: 'account-exchange', email: 'exchange@example.test', email_address: 'exchange@example.test' },
+          organization: {
+            uuid: org,
+            organization_type: 'claude_pro',
+            rate_limit_tier: 'default',
+            subscription_created_at: '2020-01-01T00:00:00.000Z',
+          },
+        }),
+      )
+      return
+    }
+    if (req.method === 'GET' && req.url === '/api/oauth/claude_cli/roles') {
+      res.end(
+        JSON.stringify({ organization_role: 'admin', workspace_role: 'workspace_admin', organization_name: 'fixture' }),
+      )
+      return
+    }
+    if (req.method === 'GET' && req.url === '/api/organization/claude_code_first_token_date') {
+      res.end(JSON.stringify({ first_token_date: null }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/api/eval/sdk-zAZezfDKGoZuXXKe') {
+      res.end('{}')
       return
     }
     if (req.method === 'PATCH' && req.url === '/api/oauth/account/settings') {
@@ -264,6 +298,10 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
     await t.test(`${scenario.flavor}: ${scenario.returnedState || 'no state suffix'}`, async () => {
       const generated = generateAuthUrl({ vmId: vm.id, proxyUrl, flavor: scenario.flavor })
       const url = new URL(generated.auth_url)
+      assert.equal(
+        url.searchParams.get('scope'),
+        scenario.flavor === 'setup_token' ? INFERENCE_ONLY_SCOPE : FULL_OAUTH_SCOPE,
+      )
       const session = peekAuthUrlSession(generated.session_id)
       const state = scenario.returnedState === 'session' ? url.searchParams.get('state') : scenario.returnedState
       expectedExchange = {
@@ -287,19 +325,39 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
       assert.equal(credential.org_uuid, org)
       assert.equal(credential.scope, FULL_OAUTH_SCOPE)
       assert.equal(credential.mode, scenario.flavor === 'setup_token' ? 'setup-token' : 'oauth')
-      const [token, bootstrap] = requests.slice(requestStart)
+      const flow = requests.slice(requestStart)
+      const token = flow[0]
+      const profile = flow.find((item) => item.url === '/api/oauth/profile')
+      const evals = flow.filter((item) => item.url === '/api/eval/sdk-zAZezfDKGoZuXXKe')
+      const bootstrap = flow.find((item) => String(item.url).startsWith('/api/claude_cli/bootstrap?'))
+      const setup = scenario.flavor === 'setup_token'
       assert.equal(token.payload.grant_type, 'authorization_code')
       assert.equal(token.payload.client_id, CLIENT_ID)
       assert.equal(token.headers.cookie, undefined)
-      assert.equal(Object.hasOwn(token.payload, 'expires_in'), false)
+      assert.equal(token.payload.expires_in, setup ? SETUP_TOKEN_TTL_SECONDS : undefined)
+      assert.equal(token.headers['user-agent'], 'axios/1.15.2')
+      assert.equal(token.headers['sec-ch-ua'], undefined)
+      assert.equal(profile.headers.authorization, `Bearer ${accessToken}`)
+      assert.equal(profile.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
+      assert.equal(evals.length, 2)
+      assert.equal(evals[0].payload.attributes.entrypoint, 'sdk-cli')
+      assert.match(evals[0].payload.attributes.sdkCachePartition, /^served-to-bearer:/)
+      assert.equal(evals[1].payload.attributes.sdkCachePartition, undefined)
+      assert.equal(evals[1].payload.attributes.subscriptionType, 'pro')
+      assert.equal(evals[1].payload.attributes.rateLimitTier, 'default')
+      assert.equal(evals[1].payload.attributes.organizationRole, 'admin')
+      assert.equal(evals[1].payload.attributes.accountUUID, 'account-exchange')
+      assert.equal(evals[1].payload.attributes.organizationUUID, org)
+      assert.equal(evals[1].payload.attributes.subscriptionCreatedAt, Date.parse('2020-01-01T00:00:00.000Z'))
+      assert.equal(evals[1].payload.forcedFeatures.length, 0)
+      assert.equal(evals[1].payload.url, '')
       assert.equal(bootstrap.headers.authorization, `Bearer ${accessToken}`)
-      assert.equal(bootstrap.headers.cookie, undefined)
-      // Both token-bearing stages are the CLI itself: the version follows
-      // OFFICIAL_CLI_VERSION, and the entrypoint is the TUI one (`sdk-cli` is
-      // `--print`, which an OAuth exchange never is).
-      for (const request of [token, bootstrap]) {
-        assert.equal(request.headers['user-agent'], `claude-cli/${OFFICIAL_CLI_VERSION} (external, cli)`)
-      }
+      assert.equal(bootstrap.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
+      assert.match(bootstrap.url, /^\/api\/claude_cli\/bootstrap\?entrypoint=sdk-cli&model=claude-opus-5-5$/)
+      assert.equal(
+        flow.some((item) => item.url === '/api/oauth/account/settings'),
+        false,
+      )
     })
   }
   assert.equal(tokenRequests, 3)
@@ -321,24 +379,48 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
       assert.equal(credential.account_uuid, 'account-exchange')
       assert.equal(credential.org_uuid, org)
       const flow = requests.slice(requestStart)
+      const setup = runtimeMode === 'setup-token'
       assert.deepEqual(
         flow.map(({ method, url }) => [method, url.split('?')[0]]),
         [
           ['GET', '/api/organizations'],
           ['POST', `/v1/oauth/${org}/authorize`],
           ['POST', '/v1/oauth/token'],
+          ['GET', '/api/oauth/profile'],
+          ['POST', '/api/eval/sdk-zAZezfDKGoZuXXKe'],
+          ['GET', '/api/oauth/claude_cli/roles'],
+          ['GET', '/api/organization/claude_code_first_token_date'],
+          ['POST', '/api/eval/sdk-zAZezfDKGoZuXXKe'],
           ['GET', '/api/claude_cli/bootstrap'],
         ],
       )
-      const [orgs, authorize, token, bootstrap] = flow
+      const [orgs, authorize, token, profile, evalBefore, roles, firstToken, evalAfter, bootstrap] = flow
       for (const request of [orgs, authorize]) {
         assert.equal(request.headers.cookie, `sessionKey=${sessionKey}`)
         assert.match(request.headers['user-agent'], /Chrome\/146\.0\.0\.0/)
+        assert.match(request.headers['sec-ch-ua'], /Google Chrome/)
       }
-      // The cookie stages pass as a browser; the token-bearing ones as the CLI.
-      for (const request of [token, bootstrap]) {
-        assert.equal(request.headers['user-agent'], `claude-cli/${OFFICIAL_CLI_VERSION} (external, cli)`)
-      }
+      assert.equal(orgs.headers.host, 'claude.ai')
+      assert.equal(authorize.headers.host, setup ? 'platform.claude.com' : 'claude.ai')
+      assert.equal(orgs.headers.origin, 'https://claude.ai')
+      assert.equal(authorize.headers.origin, 'https://claude.ai')
+      assert.equal(
+        authorize.headers.referer,
+        setup ? 'https://platform.claude.com/oauth/authorize?code=true' : 'https://claude.ai/new',
+      )
+      assert.equal(token.headers['user-agent'], 'axios/1.15.2')
+      assert.equal(token.headers['sec-ch-ua'], undefined)
+      assert.equal(Object.hasOwn(token.payload, 'expires_in'), false)
+      assert.equal(profile.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
+      assert.match(evalBefore.payload.attributes.sdkCachePartition, /^served-to-bearer:/)
+      assert.equal(roles.headers['content-type'], undefined)
+      assert.equal(firstToken.headers['user-agent'], `claude-cli/${OFFICIAL_CLI_VERSION} (external, sdk-cli)`)
+      assert.equal(evalAfter.payload.attributes.organizationRole, 'admin')
+      assert.equal(evalAfter.payload.attributes.subscriptionType, 'pro')
+      assert.equal(evalAfter.payload.attributes.accountUUID, 'account-exchange')
+      assert.equal(evalAfter.payload.attributes.organizationUUID, org)
+      assert.equal(bootstrap.headers['user-agent'], `claude-code/${OFFICIAL_CLI_VERSION}`)
+      assert.match(bootstrap.url, /entrypoint=sdk-cli&model=claude-opus-5-5$/)
       assert.equal(authorize.payload.response_type, 'code')
       assert.equal(authorize.payload.client_id, CLIENT_ID)
       assert.equal(authorize.payload.redirect_uri, REDIRECT_URI)
@@ -353,6 +435,10 @@ test('guest OAuth helper preserves provider state, PKCE and cookie authorization
       assert.equal(token.headers.cookie, undefined)
       assert.equal(bootstrap.headers.authorization, `Bearer ${accessToken}`)
       assert.equal(bootstrap.headers.cookie, undefined)
+      assert.equal(
+        flow.some((item) => item.method === 'PATCH'),
+        false,
+      )
     })
   }
   for (const mode of ['stale', 'state_mismatch']) {

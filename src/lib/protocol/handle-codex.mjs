@@ -7,10 +7,10 @@ import { upstreamRiskClientError } from './intercept-gate.mjs'
 import { buildAnthropicSseError } from './stream-truncation.mjs'
 import { isClientStream, fromClaudeToOpenAIChat, fromClaudeToOpenAICompletions } from './convert.mjs'
 import { getVm, listVms, persistCodexUsage, syncCodexQuotaSchedule } from '../vm/vm-registry.mjs'
-import { isValidVmId, listVmRecordFiles, readJsonCached } from '../vm/vm-file.mjs'
+import { listVmRecordFiles, readJsonCached } from '../vm/vm-file.mjs'
 import { isCodexProtocolAllowed, isCodexVm, normalizeCodexRouting } from './codex-route.mjs'
 import { keyAllowsVm, keyScopeFromRequest, vmPoolDenial } from '../admin/key-scope.mjs'
-import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { ownerScopeFromRequest, pinnedVmIdFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
 import { restrictCodexClient } from './codex-restriction.mjs'
 import {
@@ -217,12 +217,6 @@ export function applyCodexRebuildBody(body, sessionId, mode) {
   return out
 }
 
-function pinnedVmId(req) {
-  const pinVmRaw = String(req?.headers?.['x-kin-vm'] || '').trim()
-  if (req?.apiKeyKind !== 'master') return null
-  return isValidVmId(pinVmRaw) ? pinVmRaw : null
-}
-
 /**
  * Current OpenAI candidates, re-read on every admission. A busy home keeps
  * its pin; only a home that left the pool for good releases the session.
@@ -240,9 +234,11 @@ export function pickCodexCandidates(
     routing = {},
     ownerScope = null,
     keyScope = null,
+    pinVmId = undefined,
   } = {},
 ) {
-  const pin = pinnedVmId(req)
+  // The caller resolves the pin when it knows the key owner's role; alone, only the master key pins.
+  const pin = pinVmId === undefined ? pinnedVmIdFromRequest(req) : pinVmId
   const owner = ownerScope || ownerScopeFromRequest(req)
   const model = body?.model || null
   const routingPolicy = normalizeCodexRouting(routing.codex || routing).quota
@@ -430,17 +426,6 @@ function disabledImageTool(body, logBag) {
   return null
 }
 
-function usageTokens(usage) {
-  const normalized = disjointOpenaiUsage(usage)
-  if (!normalized) return 0
-  return (
-    (normalized.input_tokens || 0) +
-    (normalized.output_tokens || 0) +
-    (normalized.cache_read_input_tokens || normalized.cache_read_tokens || 0) +
-    (normalized.cache_creation_input_tokens || normalized.cache_creation_tokens || 0)
-  )
-}
-
 const WAIT_TIMEOUT_MIN_MS = 1000
 const WAIT_TIMEOUT_MAX_MS = 120000
 const DEFAULT_WAIT_TIMEOUT_MS = 30000
@@ -604,6 +589,7 @@ export async function handleCodexProtocol({
   keyScope = null,
   afterHop = null,
   ownerScope = null,
+  pinVmId = undefined,
   cfg = null,
 }) {
   const codex = normalizeCodexRouting(routing.codex)
@@ -700,6 +686,7 @@ export async function handleCodexProtocol({
     excluded: new Set(),
     routing,
     ownerScope,
+    pinVmId,
   }
   const deadline = Date.now() + codexWaitTimeoutMs(routing)
   const gone = clientGoneSignal(req, res)
@@ -1002,12 +989,7 @@ export async function handleCodexProtocol({
         const hopUsage = result.usage || result.body?.usage || result.body?.response?.usage || null
         const preferredUsage = preferUsage(hopUsage, streamedUsage)
         const usage = mergeUsage(preferredUsage === hopUsage ? streamedUsage : hopUsage, preferredUsage)
-        // Responses SSE is not a Claude assistant message, so the stream client
-        // reports ok:false / incomplete. A 200 hop that carried tokens still billed.
-        const delivered =
-          !policyRefusal &&
-          !conversionError &&
-          (result?.ok || (Number(result?.status) === 200 && usageTokens(usage) > 0))
+        const delivered = !policyRefusal && !conversionError && result?.ok
         if (delivered) {
           attemptKind = 'succeeded'
           bindSticky(outboundSessionId)
@@ -1025,11 +1007,14 @@ export async function handleCodexProtocol({
           logBag.cache_read_tokens = logged?.cache_read_input_tokens ?? logged?.cache_read_tokens ?? null
           logBag.cache_creation_tokens = logged?.cache_creation_input_tokens ?? logged?.cache_creation_tokens ?? null
           reportOpenAIAttempt(vm.id, 'succeeded', result.ttftMs ?? null)
-          logBag.final_state = result?.ok ? result.terminalState || 'verified' : 'verified'
+          logBag.final_state = result.terminalState || 'verified'
+          logBag.stop_reason = result.body?.incomplete_details?.reason || null
           logBag.upstream_model = converted.body.model
           onUsage?.()
           if (hops > 1) logBag.codex_failed_over = true
           if (!stream) {
+            if (protocol === 'openai.responses' && result.body?.status === 'incomplete')
+              return json(res, 200, result.body)
             let body
             try {
               const assembled = assembleCodexBodyFromSse(chunks, result.body || {})
@@ -1074,7 +1059,9 @@ export async function handleCodexProtocol({
           stats.errors++
           logBag.error_code = result?.body?.error?.code || 'codex_upstream'
           logBag.upstream_status = result?.status || 0
-          return res.end()
+          logBag.final_state = result?.terminalState || 'incomplete'
+          if (stream) return res.end()
+          return json(res, result?.status >= 400 ? result.status : 502, result?.body)
         }
         if (!policyRefusal && isCodexFailoverError(result)) {
           pickOpts.excluded.add(vm.id)

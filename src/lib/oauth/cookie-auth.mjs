@@ -7,7 +7,15 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CAI_AUTHORIZE_URL, CLIENT_ID, FULL_OAUTH_SCOPE, REDIRECT_URI } from './oauth-contract.mjs'
+import {
+  CAI_AUTHORIZE_URL,
+  CLIENT_ID,
+  FULL_OAUTH_SCOPE,
+  INFERENCE_ONLY_SCOPE,
+  OAUTH_REQUEST_TIMEOUT_MS,
+  REDIRECT_URI,
+  SETUP_TOKEN_TTL_SECONDS,
+} from './oauth-contract.mjs'
 import { carryOAuthAttempt, runGuestOAuthAuthService } from './guest-oauth-helper.mjs'
 
 export { CLIENT_ID, REDIRECT_URI }
@@ -74,9 +82,14 @@ async function loadLocalAuthForTest() {
   return import('./auth.js')
 }
 
+/**
+ * The setup-token consent link. `claude setup-token` authorizes `inferenceOnly`,
+ * so the mint asks for `user:inference` alone — the full login set belongs to
+ * the cookie import, which does not use this helper.
+ */
 export function buildSetupTokenAuthorizeURL(state, codeChallenge) {
   const encodedRedirectURI = encodeURIComponent(REDIRECT_URI)
-  const encodedScope = encodeURIComponent(FULL_OAUTH_SCOPE).replace(/%20/g, '+')
+  const encodedScope = encodeURIComponent(INFERENCE_ONLY_SCOPE)
   return `${CAI_AUTHORIZE_URL}?code=true&client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodedRedirectURI}&scope=${encodedScope}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${state}`
 }
 
@@ -139,12 +152,31 @@ function isSessionStale(s) {
   return /session_stale/i.test(t) || /not fresh enough/i.test(t) || /session is not fresh/i.test(t) || /不够新/.test(t)
 }
 
+/** The authorize endpoint allowlists the calling origin; a moved app domain looks like this. */
+function isOriginRejected(s) {
+  return /origin not allowed/i.test(String(s || ''))
+}
+
+/** The token endpoint throttles per exit IP; retrying the same second only extends it. */
+function isRateLimited(s) {
+  const t = String(s || '')
+  return /_rate_limited|rate_limit_error|\b429\b/i.test(t)
+}
+
+/** `403 Request not allowed` on the token hop is a region-blocked exit, not a bad code. */
+function isTokenForbidden(s) {
+  return /token_exchange_forbidden|request not allowed/i.test(String(s || ''))
+}
+
 export function classifyImportHelperOutput(stderr) {
   const t = String(stderr || '')
   if (isSessionStale(t)) return 'session_stale_relogin'
   if (/state_mismatch/i.test(t)) return 'state_mismatch'
   if (/authorize_no_code/i.test(t)) return 'authorize_no_code'
   if (/proxy_auth_rejected|user was rejected by the socks5 server/i.test(t)) return 'proxy_auth_rejected'
+  if (isOriginRejected(t)) return 'origin_rejected'
+  if (isRateLimited(t)) return 'token_exchange_rate_limited'
+  if (isTokenForbidden(t)) return 'token_exchange_forbidden'
   if (/bootstrap/i.test(t)) return 'bootstrap_failed'
   if (/grove_settings|grove/i.test(t)) return 'grove_settings_failed'
   if (isCloudflareChallenge(t)) return 'cloudflare_challenge'
@@ -171,6 +203,15 @@ export function publicImportError(raw, code = '') {
     return 'sessionKey 不够新，Anthropic 拒绝授权（Session is not fresh enough）。请重新登录 claude.ai 后立刻复制最新 sessionKey，不要用旧 cookie。'
   }
   if (/state_mismatch/i.test(s)) return 'OAuth state 校验失败，请重新生成授权链接后再导入。'
+  if (isOriginRejected(s)) {
+    return '授权端点拒绝了来源头（Origin not allowed）：claude.ai 与 claude.com 两套来源都被拒。上游前端域名可能再次变更，请更新 src/lib/oauth/oauth-contract.mjs 里的授权来源常量。'
+  }
+  if (isRateLimited(s)) {
+    return 'Anthropic 换票接口限流（429 Ratelimited）。这不是授权码的问题：等 1 分钟后再提交同一个码，连续点击只会继续被拒；持续出现说明该槽位出口 IP 被上游限速，换一条出口再试。'
+  }
+  if (isTokenForbidden(s)) {
+    return 'Anthropic 拒绝了该出口的换票请求（403 Request not allowed）：通常是出口 IP 所在地区不被支持，请更换槽位出口后再导入。'
+  }
   if (/authorize_no_code/i.test(s)) {
     return '官方 CAI 授权页没有返回 code。sessionKey 可能未完成 claude.ai SSO，请重新登录 claude.ai 后立刻复制最新 sessionKey。'
   }
@@ -199,27 +240,29 @@ export function panelImportErrorPayload(err) {
   // An exit the resolver refused is the operator's to fix, like a rejected
   // SOCKS5 login: 400, and never reported as an upstream fault.
   const exitPolicy = code === 'proxy_unavailable' || code === 'ipv6_disabled' || code === 'proxy_required'
-  const cf =
-    !stale &&
-    !proxyAuth &&
-    !exitPolicy &&
-    (code === 'cloudflare_challenge' || /just a moment|cloudflare|doctype html/i.test(raw))
+  const settled = stale || proxyAuth || exitPolicy
+  const cf = !settled && (code === 'cloudflare_challenge' || /just a moment|cloudflare|doctype html/i.test(raw))
+  // Edge refusals: a refused Origin, or a token hop blocked by region, is the
+  // upstream moving under us — not a bad authorization code.
+  const upstreamProtocol = !settled && (code === 'origin_rejected' || code === 'token_exchange_forbidden')
+  // A throttle is the one failure worth retrying unchanged, after a wait.
+  const throttled = !settled && (code === 'token_exchange_rate_limited' || isRateLimited(raw))
+  const reported = stale
+    ? code === 'authorize_no_code' || code === 'state_mismatch'
+      ? code
+      : 'session_stale_relogin'
+    : proxyAuth
+      ? 'proxy_auth_rejected'
+      : cf
+        ? 'cloudflare_challenge'
+        : upstreamProtocol
+          ? code
+          : throttled
+            ? 'token_exchange_rate_limited'
+            : code || 'import_failed'
   return {
-    status: stale || proxyAuth || exitPolicy ? 400 : cf ? 502 : 500,
-    error: {
-      code: stale
-        ? code === 'authorize_no_code'
-          ? 'authorize_no_code'
-          : code === 'state_mismatch'
-            ? 'state_mismatch'
-            : 'session_stale_relogin'
-        : proxyAuth
-          ? 'proxy_auth_rejected'
-          : cf
-            ? 'cloudflare_challenge'
-            : code || 'import_failed',
-      message: publicImportError(raw, code),
-    },
+    status: settled ? 400 : throttled ? 429 : cf || upstreamProtocol ? 502 : 500,
+    error: { code: reported, message: publicImportError(raw, code) },
   }
 }
 
@@ -256,8 +299,9 @@ export async function exchangeTokenViaCookieAuth({
   // exit at the point of use (prepareSlotOAuth), never from a caller's value.
   proxyUrl = null,
   redirectUri = null,
+  runtimeMode = 'oauth',
   fetchImpl = null,
-  timeoutMs = 15000,
+  timeoutMs = OAUTH_REQUEST_TIMEOUT_MS,
   exec,
   projectRoot,
   routing,
@@ -272,22 +316,27 @@ export async function exchangeTokenViaCookieAuth({
         code_verifier: codeVerifier,
         state: parsed.state,
         redirect_uri: redirectUri || REDIRECT_URI,
+        runtime_mode: runtimeMode,
         timeout_ms: timeoutMs,
       },
       { exec, projectRoot, routing, timeoutMs, proxyPool, runNative: runNativeOAuthAuthService },
     )
   }
   const auth = await loadLocalAuthForTest()
+  const profile = runtimeMode === 'setup-token' ? 'setup-token' : 'sub2api'
   const token = await auth.exchangeAuthorizationCode({
     code: parsed.code,
     codeVerifier,
     state: parsed.state,
+    profile,
+    // The mint is the CLI's year-long setup token; a CAI login code is not.
+    expiresIn: profile === 'setup-token' ? SETUP_TOKEN_TTL_SECONDS : undefined,
     proxyUrl,
     redirectUri: redirectUri || REDIRECT_URI,
     fetchImpl,
     timeoutMs,
   })
-  return auth.completeAuthorizedToken({ token, proxyUrl, fetchImpl, timeoutMs })
+  return auth.completeAuthorizedToken({ token, profile, proxyUrl, fetchImpl, timeoutMs })
 }
 
 export async function sessionKeyToOAuth(
@@ -297,7 +346,7 @@ export async function sessionKeyToOAuth(
     // see exchangeTokenViaCookieAuth: test seam only
     proxyUrl = null,
     fetchImpl = null,
-    timeoutMs = 15000,
+    timeoutMs = OAUTH_REQUEST_TIMEOUT_MS,
     exec,
     projectRoot,
     routing,
@@ -332,6 +381,7 @@ export async function sessionKeyToOAuth(
           return auth.sessionKeyToAuthorizedOAuth({
             sessionKey: sk,
             scope: requestedScope,
+            profile: setup ? 'setup-token' : 'sub2api',
             proxyUrl,
             fetchImpl,
             timeoutMs,

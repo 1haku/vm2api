@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { describeKernelCatalog, reserveKernelInstallCache } from '../admin/kernel-catalog.mjs'
 import { isCragPayloadTag } from '../admin/release-kernel.mjs'
 import { isReleaseTag } from '../admin/release.mjs'
-import { writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
+import { cancelRustKernelStart, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import {
   applyHold,
   applyClearHold,
@@ -37,7 +37,7 @@ import { pushKernelSelection } from '../cluster/remote-slot-files.mjs'
 import { accountIdOf } from '../pool/pool-scheduler.mjs'
 import { unitCircuit } from '../pool/unit-circuit.mjs'
 import { clearRustHealthCache } from '../transport/kernel-router.mjs'
-import { rustKernelHealth, rustKernelProcessUp } from '../transport/rust-kernel-client.mjs'
+import { rustKernelHealth, rustKernelReachable } from '../transport/rust-kernel-client.mjs'
 
 const PRODUCTS = new Set(['cli-node', 'crag'])
 const INTERRUPTED_COMMAND =
@@ -200,11 +200,8 @@ async function restoreCragRollback({ projectRoot, vm, rollback, routing, ops, bo
       const health = await (ops.rustKernelHealth || rustKernelHealth)(exec, { requireInternalToken: true })
       if (
         health?.internalTokenAuthenticated === true &&
-        rustKernelProcessUp(health) &&
-        health.healthy !== false &&
-        health.license_valid !== false &&
-        health.recovering !== true &&
-        Number(health.cli_pid) > 0
+        rustKernelReachable(health) &&
+        (health.execution_mode === 'v2_process_pool' || Number(health.cli_pid) > 0)
       ) {
         const running = patchVmRecord(projectRoot, vm.id, (record) => markRunning(record, boot, projectRoot))
         if (running) return running
@@ -304,6 +301,34 @@ export function validateKernelTargets(projectRoot, targets) {
   return { ok: true }
 }
 
+const CANCELLED = 'kernel_install_cancelled'
+/** vmId → in-flight install, so an operator can abandon one without waiting on it. */
+const activeInstalls = new Map()
+
+/**
+ * Force-cancel one VM's install. Frees the kernel cache reservation at once so other
+ * VMs can install, aborts a pending kernel start, and stops the installer at its next
+ * checkpoint. A slot already stopped is left stopped under maintenance for review.
+ */
+export function cancelKernelInstall(vmId) {
+  const active = activeInstalls.get(String(vmId || ''))
+  if (!active) return { ok: false, code: 'kernel_install_not_running', error: '该虚拟机没有进行中的安装' }
+  active.control.cancelled = true
+  active.releaseCache?.()
+  cancelRustKernelStart(vmId)
+  return { ok: true, id: vmId, kernel: active.kernel, phase: active.phase() }
+}
+
+export function listActiveKernelInstalls() {
+  return [...activeInstalls.entries()].map(([id, active]) => ({
+    id,
+    kernel: active.kernel,
+    phase: active.phase(),
+    started_at: active.started_at,
+    cancelled: active.control.cancelled,
+  }))
+}
+
 /** Installation owns stop, replacement and verified restart under one record lock. */
 export async function installKernelTargets({
   projectRoot,
@@ -342,6 +367,16 @@ export async function installKernelTargets({
         let releaseCache
         const inheritedSafetyHold = !!watchdog && safetyHolds.get(file) === watchdog
         let phase = 'kernel_preflight_failed'
+        const control = { cancelled: false }
+        const active = {
+          control,
+          kernel: target.kernel,
+          started_at: new Date().toISOString(),
+          phase: () => phase,
+          releaseCache: null,
+        }
+        activeInstalls.set(target.id, active)
+        const cancelled = () => (control.cancelled ? failure(target, CANCELLED, '安装已被强制取消', stopped) : null)
         try {
           // Hold inside the VM lock: another installer cannot release this hold early.
           // Drain a watchdog restart already past admission before touching the slot.
@@ -365,8 +400,9 @@ export async function installKernelTargets({
             releaseCache = reserveKernelInstallCache(projectRoot, target.kernel)
             if (!releaseCache) {
               interrupted = Boolean(resumeId)
-              return failure(target, 'kernel_pull_busy', '正在重装同类内核，请稍后重试')
+              return failure(target, 'kernel_pull_busy', '正在重装同类内核，请稍后重试或强制取消进行中的安装')
             }
+            active.releaseCache = releaseCache
           }
           const desired = desiredVm(vm, target.kernel)
           const catalog = (ops.describeKernelCatalog || describeKernelCatalog)(projectRoot)
@@ -433,6 +469,7 @@ export async function installKernelTargets({
             operationPersisted = true
             phase = 'kernel_drain_failed'
             const drained = await waitForSlotDrain(poolScheduler, [target.id])
+            if (cancelled()) return cancelled()
             if (!drained.ok) return failure(target, phase, '在途请求未结束，未重启内核')
 
             const currentProduct = () =>
@@ -494,6 +531,7 @@ export async function installKernelTargets({
                 })
               }
             }
+            if (cancelled()) return cancelled()
             phase = 'kernel_stop_failed'
             const halt = await (ops.stopSlot || stopSlot)(vm)
             if (!halt?.ok) {
@@ -583,6 +621,7 @@ export async function installKernelTargets({
               }
             })
             if (!saved) return failure(target, 'vm_not_found', '虚拟机记录已移除', true)
+            if (cancelled()) return cancelled()
             phase = 'kernel_start_failed'
             bootAttempted = true
             const boot = await (ops.startSlotReady || startSlotReady)(saved, projectRoot, {
@@ -592,6 +631,7 @@ export async function installKernelTargets({
                 ...(!baked && { useInstalledCrag: true }),
               }),
             })
+            if (cancelled()) return cancelled()
             if (!healthy(boot) || (target.kernel === 'crag' && boot.rust?.skipped === true)) {
               interrupted = baked && INTERRUPTED_COMMAND.test(boot?.code || '')
               return failure(target, boot?.code || phase, boot?.error || '内核重启或健康检查失败', true)
@@ -667,7 +707,9 @@ export async function installKernelTargets({
             stopped,
           )
         } finally {
+          if (activeInstalls.get(target.id) === active) activeInstalls.delete(target.id)
           releaseCache?.()
+          if (control.cancelled) phase = CANCELLED
           if (rollback && !stopped) {
             try {
               fs.rmSync(rollback.backup, { recursive: true, force: true })

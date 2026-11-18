@@ -5,6 +5,7 @@
 
 import { getDb, isDbOpen } from '../db/database.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
+import { isValidVmId } from '../vm/vm-file.mjs'
 
 export const VM_ORIGIN = {
   platform: 'platform',
@@ -13,6 +14,13 @@ export const VM_ORIGIN = {
 }
 
 export const PLATFORM_SCOPE = Object.freeze({ type: 'platform' })
+
+const isAdminRole = (role) => {
+  const name = String(role || '')
+    .trim()
+    .toLowerCase()
+  return name === 'admin' || name === 'super'
+}
 
 export function normalizeOwnerId(id) {
   const s = String(id || '').trim()
@@ -45,10 +53,7 @@ export function ownerScopeFromApiKey(record, { apiKeyKind = null, ownerRole = nu
   if (apiKeyKind === 'master') return PLATFORM_SCOPE
   const userId = normalizeOwnerId(record?.user_id)
   if (!userId) return PLATFORM_SCOPE
-  const role = String(ownerRole || '')
-    .trim()
-    .toLowerCase()
-  if (role === 'admin' || role === 'super') return PLATFORM_SCOPE
+  if (isAdminRole(ownerRole)) return PLATFORM_SCOPE
   return { type: 'user', userId }
 }
 
@@ -78,6 +83,24 @@ export function ownerScopeFromRequest(req, usersRepo = null) {
     }
   }
   return ownerScopeFromApiKey(rec, { apiKeyKind: req?.apiKeyKind, ownerRole })
+}
+
+/**
+ * Slot an operator pinned with `x-kin-vm`. The master key may pin, and so may a managed key
+ * whose owner is an admin, so operator test traffic can carry a user in the usage log.
+ * Any other caller's header is ignored. The pin never widens what the key can reach.
+ */
+export function pinnedVmIdFromRequest(req, usersRepo = null) {
+  const pin = String(req?.headers?.['x-kin-vm'] || '').trim()
+  if (!isValidVmId(pin)) return null
+  if (req?.apiKeyKind === 'master') return pin
+  const userId = normalizeOwnerId(req?.apiKeyRecord?.user_id)
+  if (req?.apiKeyKind !== 'managed' || !userId || !usersRepo?.getById) return null
+  try {
+    return isAdminRole(usersRepo.getById(userId)?.role) ? pin : null
+  } catch {
+    return null
+  }
 }
 
 export function vmMatchesOwnerScope(vm, scope = PLATFORM_SCOPE) {

@@ -78,7 +78,7 @@ import { agentSummarySession } from './agent-summary.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
 import { loggedReasoningEffort } from './thinking.mjs'
 import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
-import { ownerScopeFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
+import { ownerScopeFromRequest, pinnedVmIdFromRequest, vmMatchesOwnerScope } from '../admin/resource-owner.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { applyVmPool, keyAllowsVm, keyScopeFromRequest, vmPoolDenial } from '../admin/key-scope.mjs'
 import { keyModelError } from '../admin/key-models.mjs'
@@ -88,7 +88,7 @@ import {
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
 } from '../vm/slot-engine.mjs'
-import { isValidVmId, readJsonParsedCached } from '../vm/vm-file.mjs'
+import { readJsonParsedCached } from '../vm/vm-file.mjs'
 import {
   makeError,
   mapUpstreamError,
@@ -167,9 +167,11 @@ import {
 } from '../http/json-keepalive.mjs'
 import {
   buildAnthropicSseError,
+  buildRetryableTruncationError,
   createAnthropicSseErrorRemapper,
   createAnthropicStreamTracker,
   isRecoverableTruncation,
+  truncationReason,
 } from './stream-truncation.mjs'
 import {
   hidePersonaUsageInSseLine,
@@ -805,9 +807,11 @@ export function createHandleProtocol(deps) {
     // probe-shaped third-party traffic, and with the switch on no probe is answered at all.
     // Official Claude Code only ever speaks Messages, so other inbound protocols on a Claude
     // model are third-party by construction. Master-key pinned calls are the panel's own
-    // test chat and health monitor, not inbound clients.
+    // test chat and health monitor, not inbound clients. An admin's key may pin a slot too,
+    // but it stays an inbound client: same client gate, same owner and key scope.
     const routingNow = getRouting()
-    const panelDiagnostics = req.apiKeyKind === 'master' && isValidVmId(String(req.headers['x-kin-vm'] || '').trim())
+    const pinVmId = pinnedVmIdFromRequest(req, apiKeyStore?.users)
+    const panelDiagnostics = req.apiKeyKind === 'master' && !!pinVmId
     if (
       claudeCodeOnlyFromRouting(routingNow) &&
       !panelDiagnostics &&
@@ -1197,8 +1201,8 @@ export function createHandleProtocol(deps) {
       }
       if (route.kind === 'pool') {
         const narrowed = applyVmPool({ ...keyScope, vm_pool_id: route.target })
-        const pin = panelDiagnostics ? req.headers['x-kin-vm'] : ''
-        const owner = pin ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
+        const pin = pinVmId || ''
+        const owner = panelDiagnostics ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
         const eligible = narrowed.allowed_vms.filter((id) => {
           const vm = getVm(cfg.paths.project, id)
           return (
@@ -1271,6 +1275,7 @@ export function createHandleProtocol(deps) {
         sessions: accountQuota?.sessions || null,
         body: ctx.body,
         ownerScope: ownerScopeFromRequest(req, apiKeyStore?.users),
+        pinVmId,
         keyScope,
         afterHop,
       }
@@ -1806,10 +1811,8 @@ export function createHandleProtocol(deps) {
     // Worker hop stays realtime unless the caller asked for verified.
     // stream:false only changes the client response shape (assembled JSON).
     const deliveryMode = requestedDelivery === 'verified' ? 'verified' : 'realtime'
-    const pinVmRaw = String(req.headers['x-kin-vm'] || '').trim()
-    const pinVmId = req.apiKeyKind === 'master' && isValidVmId(pinVmRaw) ? pinVmRaw : null
-    // Pin is panel test-chat / diagnostics (manage). Unpinned /v1 is dispatch.
-    const ownerScope = pinVmId ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
+    // A master-key pin is panel test-chat / diagnostics (manage). Everything else is dispatch.
+    const ownerScope = panelDiagnostics ? { type: 'any' } : ownerScopeFromRequest(req, apiKeyStore?.users)
     // Cache bypass is a client hint; only authenticated master-key probes may skip accounting.
     const healthReal = req.apiKeyKind === 'master' && isHealthRealBypass(req.headers)
     // Cache lives per account; a failover to another account starts cold by design.
@@ -2515,7 +2518,11 @@ export function createHandleProtocol(deps) {
           res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', code, message, param })}\n\n`)
           return res.end()
         }
-        if (logBag.error_code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED && !res.writableEnded) {
+        if (
+          (logBag.error_code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED ||
+            logBag.error_code === ErrorCode.SLOT_OAUTH_UNAVAILABLE) &&
+          !res.writableEnded
+        ) {
           const { body } = mapProtocolClientError(result, logBag, logBag.error_code)
           if (protocol === 'anthropic.messages') {
             if (!streamTracker?.isFinished()) res.write(buildAnthropicSseError(body.error))
@@ -2536,6 +2543,12 @@ export function createHandleProtocol(deps) {
           // content. Legacy queue pings still receive the mapped SSE error.
           const mapped = mapProtocolClientError(result, logBag, logBag.error_code)
           res.write(buildAnthropicSseError(mapped.body?.error || {}))
+        } else if (protocol === 'anthropic.messages' && !res.writableEnded && !streamTracker?.isFinished()) {
+          // Started but not closable: ask the client to retry instead of
+          // dropping the connection. error_code/error_message keep the cause.
+          logBag.client_error_type = 'rate_limit_error'
+          logBag.truncation_reason = truncationReason(result, streamTracker)
+          res.write(buildRetryableTruncationError())
         }
       }
       return res.end()

@@ -11,6 +11,7 @@ import { hasBoundExit } from '../vm/egress.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { postRustKernelTelemetryEvent, rustKernelHealth, rustKernelPaths } from '../transport/rust-kernel-client.mjs'
 import { runSlotProcess } from '../transport/slot-oauth.mjs'
+import { OAUTH_REQUEST_TIMEOUT_MS } from './oauth-contract.mjs'
 
 const pendingAttempt = Symbol('guestOAuthAttempt')
 const safeCode = (value, fallback) => (/^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : fallback)
@@ -93,7 +94,7 @@ export async function runGuestOAuthAuthService(
     exec,
     projectRoot = exec?.projectRoot,
     routing,
-    timeoutMs = 15000,
+    timeoutMs = OAUTH_REQUEST_TIMEOUT_MS,
     proxyPool,
     prepare = prepareSlotOAuth,
     runDocker = runSlotProcess,
@@ -162,7 +163,9 @@ export async function runGuestOAuthAuthService(
     // unreachable from inside the guest. The env above is cleared for the same reason.
     const result = await runDocker(argv, {
       env: host.dockerEnv(),
-      timeoutMs: Math.max(timeoutMs * 8, 45000),
+      // Token plus the native follow-ups (profile, two evals, roles,
+      // first-token date, bootstrap) at the per-request ceiling, plus startup.
+      timeoutMs: Math.max(timeoutMs * 8, 120_000),
       stdin:
         JSON.stringify({
           ...payload,
