@@ -120,6 +120,8 @@ async function runUpgrade({ source = true, arch = 'amd64', override, env = {} } 
           env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH}`,
+            // The local fixture has no rate limiter. Exercise failed probe retries within the test deadline.
+            KIN_RATE_REFILL: '1000',
             TEST_LOG: log,
             BOOT_VERSION: bootVersion,
             PORT: String(server.address().port),
