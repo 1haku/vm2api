@@ -9,6 +9,7 @@ import {
   rememberRustHealth,
   clearRustHealthCache,
 } from '../../src/lib/transport/kernel-router.mjs'
+import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import { bindPlacement, unbindPlacement } from '../../src/lib/cluster/placement.mjs'
 import { unitCircuit } from '../../src/lib/pool/unit-circuit.mjs'
@@ -723,6 +724,7 @@ test('recovery clears only the old watchdog fault after all repaired services pa
 
 test('the first request after CRAG cutover uses the new kernel capabilities, not the old health cache', async (t) => {
   const { root, vm } = fixture(t, { dataplane: 'crag' })
+  writeWorkerCredentialFile(path.join(root, 'vms', vm.id, 'cli-home'), { access_token: 'fixture-access' })
   t.after(() => clearRustHealthCache(vm.id))
   rememberRustHealth(
     { vmId: vm.id },

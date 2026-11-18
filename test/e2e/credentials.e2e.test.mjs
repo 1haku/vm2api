@@ -1,3 +1,4 @@
+import '../fixtures/kin-computer-test-env.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -80,7 +81,8 @@ test('reset destroys home and recreates the same slot without oauth', async () =
     assert.equal(rec.schedulable, false)
     assert.ok(
       rec.schedule_disabled_reason === 'no_credential' ||
-        /worker binary not found|runtime start failed/i.test(rec.schedule_disabled_reason || ''),
+        rec.schedule_disabled_reason === 'runtime_start_failed',
+      String(rec.schedule_disabled_reason),
     )
     assert.equal(rec.proxy?.url, before.proxy?.url)
     assert.notEqual(rec.fingerprint?.device_id, before.fingerprint?.device_id)
@@ -93,7 +95,7 @@ test('reset destroys home and recreates the same slot without oauth', async () =
 })
 
 test('panel exports and replaces slot credential as sub2api JSON', async () => {
-  const gw = await startGateway()
+  const gw = await startGateway({ oauth: false })
   try {
     const empty = await api(gw, 'GET', '/api/panel/vms/vm-sim-01/oauth/credential')
     assert.equal(empty.status, 200, empty.text)
