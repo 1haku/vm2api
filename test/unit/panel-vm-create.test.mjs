@@ -22,7 +22,15 @@ function makeCreateHandler(project, body, proxyPool, accountQuota, extra = {}) {
     ...(accountQuota ? { accountQuota } : {}),
     ...(extra.routingConfig ? { routingConfig: extra.routingConfig } : {}),
     ...(extra.probeLocalKvm ? { probeLocalKvm: extra.probeLocalKvm } : {}),
+    ...(extra.panelUsers ? { panelUsers: extra.panelUsers } : {}),
     requireAuth(req) {
+      if (extra.role && extra.role !== 'admin') {
+        req.panelUser = 'tenant'
+        req.apiKeyKind = 'session'
+        req.panelRole = extra.role
+        req.panelUserId = 'u-1'
+        return true
+      }
       req.apiKeyKind = 'master'
       req.panelRole = 'admin'
       return true
@@ -546,5 +554,31 @@ test('ARM control rejects native CRAG selection and keeps standard slots indepen
     assert.equal(response.status, dataplane === 'crag' ? 409 : 200, JSON.stringify(response.body))
     if (dataplane === 'crag') assert.equal(response.body.error.code, 'crag_v2_unsupported_placement')
     else assert.equal(response.body.data.vm.status, 'stopped')
+  }
+})
+
+test('create enables the browser desktop only for an admin docker slot', async () => {
+  const cases = [
+    { role: 'admin', expect: true },
+    { role: 'user', expect: false },
+  ]
+  for (const { role, expect } of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-desktop-'))
+    try {
+      const { handlePanel, response } = makeCreateHandler(
+        root,
+        { runtime_type: 'docker', start: false, auto_allocate_proxy: false, desktop: true },
+        null,
+        null,
+        { role, panelUsers: { getById: () => ({ vm_create_quota: 5 }), getByUsername: () => null } },
+      )
+      await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/vms/create'))
+      assert.equal(response.status, 200, `${role}: ${JSON.stringify(response.body)}`)
+      const vm = response.body.data.vm
+      const saved = JSON.parse(fs.readFileSync(path.join(root, 'vms', `${vm.id}.json`), 'utf8'))
+      assert.equal(saved.desktop?.enabled === true, expect, `${role} desktop`)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   }
 })

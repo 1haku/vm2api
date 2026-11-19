@@ -163,6 +163,27 @@ function hostRedemptionError(error: unknown) {
       return '此码与当前宿主机或订阅不匹配'
     case 'crag_subscription_host_package_unready':
       return '请先在内核页拉取可信 CRAG 发行包'
+    case 'auth_forbidden': {
+      const details = isApiError(error) ? error.details : undefined
+      const id = (details as { authority_request_id?: unknown } | undefined)
+        ?.authority_request_id
+      const validId =
+        typeof id === 'string' &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+          id
+        )
+      return `授权服务拒绝了这台宿主机的兑换请求。请联系管理员核对，不要重置宿主凭据。${validId ? `请求 ID：${id}` : ''}`
+    }
+    case 'crag_subscription_sync_pending':
+      return '上一笔兑换待同步。请点「继续同步」核对原码，不要提交新码。'
+    case 'crag_subscription_busy':
+      return '另一项宿主订阅操作正在处理，请稍后再试。'
+    case 'crag_subscription_authority_unavailable':
+      return '未收到授权服务的确认。若显示待同步，请点「继续同步」核对原码，不要重新购买。'
+    case 'crag_subscription_host_identity_changed':
+      return '本机身份与已保存的订阅不一致。请恢复原实例的身份配置，不要重置凭据。'
+    case 'crag_subscription_invalid_entitlement':
+      return '未能验证返回的订阅权益。请保留原码并继续同步，不要重新购买。'
     default:
       return '兑换尚未确认，请刷新或继续同步'
   }
@@ -294,7 +315,10 @@ function HostOverview({ host }: { host: UseQueryResult<CragHostStatus> }) {
                 : '订阅状态已同步',
         })
       } else if (next.state !== 'sync_pending') {
-        setNotice({ text: hostRedemptionError(undefined), error: true })
+        setNotice({
+          text: '授权结果尚未安装，请刷新本机订阅并核对状态。',
+          error: true,
+        })
       }
     } catch (error) {
       setNotice({ text: hostRedemptionError(error), error: true })
@@ -437,7 +461,7 @@ function HostOverview({ host }: { host: UseQueryResult<CragHostStatus> }) {
       ) : null}
       <p className='text-sm text-muted-foreground empty:sr-only'>
         {syncPending
-          ? '如果继续同步后仍在等待，请核对原订单。订阅使用券只在本页兑换。'
+          ? '继续同步会核对原码；新码请等原兑换确认后再提交。'
           : host.isError || status?.state === 'unavailable'
             ? '无法确认本机权益，请刷新后重试。'
             : probeFailed
@@ -616,6 +640,10 @@ function ShopOrders({
   const intent = useRef<Intent | null>(null)
   const operating = useRef(false)
   const [targetVmId, setTargetVmId] = useState('')
+  // A cancelled or expired checkout is history, not work. It stays reachable, but the
+  // order the buyer came for should not have to be found among closed ones.
+  const activeOrders = orders?.filter((order) => order.status !== 'cancelled')
+  const closedOrders = orders?.filter((order) => order.status === 'cancelled')
   const targets = useQuery({
     queryKey: ['panel', 'crag-shop', 'activation-targets', owner],
     queryFn: ({ signal }) =>
@@ -783,8 +811,12 @@ function ShopOrders({
       await action()
     } catch (error) {
       setProblem(
-        isApiError(error) && error.code === 'shop_order_cannot_cancel'
-          ? '商城可能已收到此订单，不能在面板取消。请刷新订单核对状态。'
+        isApiError(error) &&
+          (error.code === 'shop_order_paid' ||
+            error.code === 'shop_order_cannot_cancel')
+          ? error.code === 'shop_order_paid'
+            ? '此订单已完成支付，不能取消。请刷新查看交付状态。'
+            : '订单状态已变化，无法取消。请刷新订单核对状态。'
           : isApiError(error) && error.code === 'shop_device_package_unready'
             ? '本机缺少可用的 CRAG 发行包。请让管理员从内核页拉取后，重试应用原订单。'
             : isApiError(error) &&
@@ -1024,7 +1056,7 @@ function ShopOrders({
           item.order_id === updated.order_id ? updated : item
         )
       )
-      setNotice('已取消订单，释放本地预留。')
+      setNotice('已关闭该订单。')
     }, '未能确认取消，请刷新历史订单。')
   }
 
@@ -1142,9 +1174,9 @@ function ShopOrders({
           onOpenChange={(open) => {
             if (!open && !busy) setCancelTarget(undefined)
           }}
-          title='取消预留订单？'
-          desc='仅取消尚未发送到商城的订单，释放本地预留。此操作不退款，也不会关闭已打开的收银台。'
-          confirmText='取消并释放'
+          title='取消这笔订单？'
+          desc='未支付的订单会在核对商城状态后关闭。已支付的订单不会被取消。此操作不退款，也不会关闭已打开的收银台。'
+          confirmText='取消订单'
           cancelBtnText='返回'
           destructive
           isLoading={busy}
@@ -1282,24 +1314,17 @@ function ShopOrders({
                   部分订单暂未同步，显示上次确认的状态。付款后请先刷新，不要重复支付。
                 </p>
               ) : null}
-              {orders?.some(
-                (order) =>
-                  !order.cancelable &&
-                  (order.status === 'pending' || order.status === 'reserved')
-              ) ? (
-                <p className='text-xs text-muted-foreground'>
-                  仅尚未发送至商城的预留订单可取消。已发送或状态未确认的订单不支持在面板关单。
-                </p>
-              ) : null}
-              {orders?.length === 0 ? (
+              {activeOrders?.length === 0 ? (
                 <p className='text-sm text-muted-foreground'>
-                  {presentation?.empty_orders_text ??
-                    '还没有订阅订单。下单后可以在这里查看支付和激活状态。'}
+                  {closedOrders?.length
+                    ? '没有进行中的订单。已关闭的订单在下方。'
+                    : (presentation?.empty_orders_text ??
+                      '还没有订阅订单。下单后可以在这里查看支付和激活状态。')}
                 </p>
               ) : null}
-              {orders?.length ? (
+              {activeOrders?.length ? (
                 <ul className='divide-y rounded-md border'>
-                  {orders.map((order) => (
+                  {activeOrders.map((order) => (
                     <li
                       key={order.order_id}
                       className='space-y-3 px-4 py-4 text-sm'
@@ -1331,7 +1356,7 @@ function ShopOrders({
                             disabled={busy || loading}
                             onClick={() => setCancelTarget(order)}
                           >
-                            取消预留订单
+                            取消订单
                           </Button>
                         ) : null}
                         {order.status === 'fulfilled' &&
@@ -1607,6 +1632,36 @@ function ShopOrders({
                     </li>
                   ))}
                 </ul>
+              ) : null}
+              {closedOrders?.length ? (
+                <details className='rounded-md border px-3 text-sm'>
+                  <summary className='cursor-pointer py-2 text-muted-foreground'>
+                    显示 {closedOrders.length} 笔已关闭订单
+                  </summary>
+                  <ul className='divide-y border-t text-muted-foreground'>
+                    {closedOrders.map((order) => (
+                      <li
+                        key={order.order_id}
+                        className='flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-xs'
+                      >
+                        <span className='font-medium'>
+                          {termLabel(order.term, order.sku, order.months)}
+                        </span>
+                        <span>· {methods[order.payment_method]}</span>
+                        <span>
+                          · 下单 <SubscriptionTime seconds={order.created_at} />
+                        </span>
+                        <StatusMark
+                          tone={orderTones[order.status]}
+                          variant='pill'
+                        />
+                        <span className='w-full truncate'>
+                          订单号 {order.order_id}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               ) : null}
               {offset > 0 || typeof nextOffset === 'number' ? (
                 <div className='flex justify-end gap-2'>

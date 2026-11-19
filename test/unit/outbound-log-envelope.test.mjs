@@ -16,7 +16,7 @@ const unixTest = process.platform === 'win32' ? test.skip : test
  * 假槽位 kernel：/internal/health 报告就绪，推理路由记下收到的 envelope 并回一段完整 SSE。
  * Body remains the worker envelope; headers must come from the CLI send boundary.
  */
-async function fakeKernel({ health = {} } = {}) {
+async function fakeKernel({ health = {}, tool } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-outbound-log-'))
   const runDir = path.join(root, 'vm-01', 'run')
   const homeDir = path.join(root, 'vm-01', 'cli-home')
@@ -63,10 +63,23 @@ async function fakeKernel({ health = {} } = {}) {
         usage: { input_tokens: 1, output_tokens: 0 },
       },
     })
-    send({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
-    send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } })
+    const issued = posted.length === 1 && tool
+    if (issued) {
+      send({ type: 'content_block_start', index: 0, content_block: { ...issued, input: {} } })
+      const input = JSON.stringify(issued.input)
+      for (const partial_json of [input.slice(0, 3), input.slice(3)]) {
+        send({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json } })
+      }
+    } else {
+      send({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+      send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } })
+    }
     send({ type: 'content_block_stop', index: 0 })
-    send({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } })
+    send({
+      type: 'message_delta',
+      delta: { stop_reason: issued ? 'tool_use' : 'end_turn' },
+      usage: { output_tokens: 1 },
+    })
     send({ type: 'message_stop' })
     res.end()
   })
@@ -322,8 +335,8 @@ const trustedCwd = '/synthetic/trusted-workspace'
 const publicCwd = '/synthetic/public-cwd-must-not-win'
 const cwdTag = (cwd) => `<cwd>\n${cwd}\n</cwd>`
 
-async function protocolKernelFixture(t, { health, staleHealth, preset = 'official_full', interceptRules }) {
-  const kernel = await fakeKernel({ health })
+async function protocolKernelFixture(t, { health, staleHealth, preset = 'official_full', interceptRules, tool }) {
+  const kernel = await fakeKernel({ health, tool })
   const previous = process.env.KIN_KERNEL_BIN
   t.after(async () => {
     if (previous === undefined) delete process.env.KIN_KERNEL_BIN
@@ -355,7 +368,7 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
     async send(
       body,
       candidateHealth = staleHealth,
-      { protocol = 'anthropic.messages', headers = {}, status = 200 } = {},
+      { protocol = 'anthropic.messages', headers = {}, status = 200, keyId = 'key-1' } = {},
     ) {
       kernel.selected.exec.workerStatus = structuredClone(candidateHealth)
       const postedBefore = kernel.posted.length
@@ -363,6 +376,7 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
       const requestsBefore = kernel.requests.length
       const response = fakeResponse()
       const req = request(body)
+      req.apiKeyRecord.id = keyId
       Object.assign(req.headers, headers)
       if (protocol === 'openai.responses') req.url = '/v1/responses'
       if (protocol === 'openai.chat') req.url = '/v1/chat/completions'
@@ -394,7 +408,7 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
       assert.equal(Object.hasOwn(extra.outbound_body, 'caller_cwd'), false)
       assert.equal(JSON.stringify(envelope).includes(publicCwd), false)
       assert.equal(JSON.stringify(extra.outbound_body).includes(publicCwd), false)
-      return { envelope, extra }
+      return { envelope, extra, publicBody: response.writes.join('') }
     },
   }
 }
@@ -767,4 +781,75 @@ for (const phase of ['before_convert', 'before_upstream']) {
       assert.deepEqual(envelope.body.crag_prompt, { mode: 'append', text: replacementText })
     }
   })
+}
+
+for (const stream of [false, true]) {
+  unixTest(
+    `CRAG print replays public ${stream ? 'SSE' : 'JSON'} tool history after client normalization`,
+    async (t) => {
+      const tool = {
+        type: 'tool_use',
+        id: 'call-issued',
+        name: 'lookup',
+        input: { term: 'item' },
+        caller: { type: 'direct' },
+        extension: { trace: 'one' },
+      }
+      const fixture = await protocolKernelFixture(t, {
+        health: {
+          ...printHealth,
+          capabilities: [...printCapabilities, 'generation_controls_v3', 'system_text_cache_v3'],
+        },
+        staleHealth: ordinaryHealth,
+        tool: stream ? tool : { ...tool, extension: { trace: 'upstream-only' } },
+        interceptRules: stream
+          ? []
+          : [
+              {
+                phase: 'before_client',
+                action: {
+                  replace_body_json: { type: 'message', role: 'assistant', content: [tool], stop_reason: 'tool_use' },
+                },
+              },
+            ],
+      })
+      const session = '22222222-2222-4222-8222-222222222222'
+      const base = {
+        model: 'claude-sonnet-5-5',
+        max_tokens: 128,
+        metadata: { user_id: JSON.stringify({ device_id: 'a'.repeat(64), session_id: session }) },
+        tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+      }
+      const prefix = [{ role: 'user', content: 'look up an item' }]
+      const first = await fixture.send({ ...base, stream, messages: prefix })
+      assert.match(first.publicBody, /call-issued/)
+      assert.match(first.publicBody, /"caller":\{"type":"direct"\}/)
+      assert.equal(first.extra.official_cc_inference, 'crag-print')
+      assert.notEqual(JSON.parse(first.envelope.body.metadata.user_id).session_id, session)
+      const echo = stream
+        ? { type: 'tool_use', id: 'client-id', name: 'lookup', input: { term: 'item' } }
+        : { type: 'tool_use', id: tool.id, name: 'changed', input: { term: 'wrong' } }
+      const result = { type: 'tool_result', tool_use_id: echo.id, content: 'no item', is_error: true }
+      const continuation = {
+        ...base,
+        stream: false,
+        messages: [...prefix, { role: 'assistant', content: [echo] }, { role: 'user', content: [result] }],
+      }
+      const { envelope } = await fixture.send(continuation)
+      const history = envelope.body.messages.flatMap((m) => m.content)
+      assert.deepEqual(
+        history.find((b) => b.type === 'tool_use'),
+        tool,
+      )
+      assert.deepEqual(
+        history.find((b) => b.type === 'tool_result'),
+        { ...result, tool_use_id: tool.id },
+      )
+      const other = await fixture.send(continuation, ordinaryHealth, { keyId: 'key-2' })
+      assert.deepEqual(
+        other.envelope.body.messages.flatMap((m) => m.content).find((b) => b.type === 'tool_use'),
+        echo,
+      )
+    },
+  )
 }
