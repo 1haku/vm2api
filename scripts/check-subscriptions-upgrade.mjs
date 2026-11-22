@@ -33,6 +33,8 @@ try {
         '047 upstream service tier is nullable; historical prices and sent tiers are preserved',
         '049 API channel binding is nullable; existing key scope is preserved',
         '059 audit fields retain legacy device subjects and historical unknown status',
+        '063 defaults older API endpoint bodies to persona and preserves existing endpoint fields',
+        '064 inherits the DNS override on each proxy and preserves existing proxy fields',
       ],
       tables: before,
     }),

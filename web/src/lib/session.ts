@@ -15,6 +15,7 @@ function clearClientCookie(name: string) {
 }
 
 export function sessionToken(): string {
+  if (typeof localStorage === 'undefined') return ''
   return (localStorage.getItem(LS_TOKEN) || '').trim()
 }
 
@@ -57,5 +58,6 @@ export function clearSession() {
 }
 
 export function storedUser(): string {
+  if (typeof localStorage === 'undefined') return ''
   return localStorage.getItem(LS_USER) || ''
 }

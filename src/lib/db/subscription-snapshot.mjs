@@ -25,6 +25,15 @@ export function subscriptionSnapshot(db) {
   )
   const rewrite = migration.match(/UPDATE usage_logs\s+SET input_tokens = ([\s\S]+?)\s+WHERE ([\s\S]+?);/)
   if (!rewrite) throw new Error('Cannot verify migration 037 input normalization')
+  // Upstream 064 carries the old global DNS setting onto each existing proxy.
+  const legacyProxyDnsOverride = db
+    .prepare(
+      `SELECT EXISTS (
+        SELECT 1 FROM settings
+        WHERE key = 'proxy_pool_config' AND json_extract(value, '$.dns_disable_svcb_https') = 1
+      ) AS enabled`,
+    )
+    .get().enabled
   const tables = ['users', 'api_keys', 'groups', 'vms', 'usage_logs', 'proxies']
   const state = {}
   for (const table of tables) {
@@ -76,7 +85,12 @@ export function subscriptionSnapshot(db) {
           }
         }
         if (table === 'proxies') {
-          const normalized = { ...row, label: row.label ?? null, domain_forward: row.domain_forward ?? 0 }
+          const normalized = {
+            ...row,
+            label: row.label ?? null,
+            domain_forward: row.domain_forward ?? 0,
+            dns_disable_svcb_https: row.dns_disable_svcb_https ?? legacyProxyDnsOverride,
+          }
           // Upstream 033: newly added IPv6 geo fields are nullable, not rewritten data.
           for (const field of [
             'ip',
@@ -136,17 +150,19 @@ export function subscriptionSnapshot(db) {
               violations: row.violations ?? 1,
               expires_at: row.expires_at ?? null,
             }))
-          : table === 'api_endpoint_keys'
-            ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
-            : table === 'request_attempts'
-              ? rows.map((row) => ({
-                  ...row,
-                  queue_wait_ms: row.queue_wait_ms ?? null,
-                  scheduling_ms: row.scheduling_ms ?? null,
-                }))
-              : table === 'cluster_nodes'
-                ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
-                : rows
+          : table === 'api_endpoints'
+            ? rows.map((row) => ({ ...row, body_policy: row.body_policy ?? 'persona' }))
+            : table === 'api_endpoint_keys'
+              ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
+              : table === 'request_attempts'
+                ? rows.map((row) => ({
+                    ...row,
+                    queue_wait_ms: row.queue_wait_ms ?? null,
+                    scheduling_ms: row.scheduling_ms ?? null,
+                  }))
+                : table === 'cluster_nodes'
+                  ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))
+                  : rows
     state[table] = { count: rows.length, hash: digest(normalized) }
   }
   for (const name of [

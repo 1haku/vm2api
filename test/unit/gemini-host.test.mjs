@@ -732,7 +732,9 @@ test('Gemini public routes schedule one plain-text turn and reject other keys', 
   assert.equal(rejected.body.error.code, 'gemini_unsupported_turn')
 })
 
-test('the public scheduler completes one turn through the host socket', async () => {
+test('the public scheduler uses the host on supported architectures', {
+  skip: process.platform !== 'linux',
+}, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gemini-public-'))
   const socketPath = path.join(directory, 'control.sock')
   const account = {
@@ -793,6 +795,11 @@ test('the public scheduler completes one turn through the host socket', async ()
       },
       { setHeader() {}, once() {} },
     )
+    if (process.arch !== 'x64') {
+      assert.equal(result.status, 503)
+      assert.equal(result.body.error.code, 'gemini_host_unavailable')
+      return
+    }
     assert.equal(result.status, 200)
     assert.equal(result.body.output_text, 'ready')
     assert.equal(result.body.account_id, account.id)

@@ -413,3 +413,34 @@ test('modified legacy migration fails closed and retains the legacy stamp', (t) 
   assert.throws(() => applyMigrations(db), /checksum mismatch/)
   assert.equal(db.prepare("SELECT checksum FROM schema_migrations WHERE version='027'").get().checksum, 'invalid')
 })
+
+test('063/064 preserve API endpoint and proxy settings while inheriting their previous behavior', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'endpoint-proxy-migrations-'))
+  const db = createDatabase({ dataDir: dir })
+  t.after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  db.exec("INSERT INTO api_endpoints(id,name,base_url) VALUES('ep','fixture','https://example.invalid')")
+  db.exec("INSERT INTO proxies(id,name,host,port) VALUES('proxy','fixture','192.0.2.1',1080)")
+  db.prepare("INSERT INTO settings(key,value,updated_at) VALUES('proxy_pool_config',?,datetime('now'))").run(
+    JSON.stringify({ dns_disable_svcb_https: true }),
+  )
+  db.exec('ALTER TABLE api_endpoints DROP COLUMN body_policy')
+  db.exec('ALTER TABLE proxies DROP COLUMN dns_disable_svcb_https')
+  db.exec("DELETE FROM schema_migrations WHERE version IN ('063','064')")
+
+  const before = subscriptionSnapshot(db)
+  applyMigrations(db)
+  assertSubscriptionSnapshot(before, subscriptionSnapshot(db))
+  assert.equal(db.prepare("SELECT body_policy FROM api_endpoints WHERE id='ep'").get().body_policy, 'persona')
+  assert.equal(
+    db.prepare("SELECT dns_disable_svcb_https FROM proxies WHERE id='proxy'").get().dns_disable_svcb_https,
+    1,
+  )
+  db.exec("UPDATE api_endpoints SET body_policy='caller' WHERE id='ep'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /api_endpoints/)
+  db.exec("UPDATE api_endpoints SET body_policy='persona' WHERE id='ep'")
+  db.exec("UPDATE proxies SET dns_disable_svcb_https=0 WHERE id='proxy'")
+  assert.throws(() => assertSubscriptionSnapshot(before, subscriptionSnapshot(db)), /proxies/)
+})
