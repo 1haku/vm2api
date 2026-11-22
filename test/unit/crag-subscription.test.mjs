@@ -269,7 +269,12 @@ test('host identity comes from the NIC, so machines cloned from one image do not
   })
   const only = fs.readdirSync(unusable)
   assert.equal(only.length, 3, 'the fixture really does contain three interfaces')
-  assert.notEqual(connect({ machineIdFile: null, netDirectory: unusable }).deviceIdentity().source, 'mac')
+  try {
+    assert.notEqual(connect({ machineIdFile: null, netDirectory: unusable }).deviceIdentity().source, 'mac')
+  } catch (error) {
+    // A container without a valid host identity mount cannot fall back to machine-id.
+    assert.equal(error.code, 'crag_subscription_host_identity_unavailable')
+  }
 })
 
 test('a stored identity survives maintenance, and its UUID is backfilled then verified', (t) => {

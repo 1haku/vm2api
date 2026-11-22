@@ -335,7 +335,10 @@ const trustedCwd = '/synthetic/trusted-workspace'
 const publicCwd = '/synthetic/public-cwd-must-not-win'
 const cwdTag = (cwd) => `<cwd>\n${cwd}\n</cwd>`
 
-async function protocolKernelFixture(t, { health, staleHealth, preset = 'official_full', interceptRules, tool }) {
+async function protocolKernelFixture(
+  t,
+  { health, staleHealth, preset = 'official_full', interceptRules, tool, diagnostic = true },
+) {
   const kernel = await fakeKernel({ health, tool })
   const previous = process.env.KIN_KERNEL_BIN
   t.after(async () => {
@@ -357,6 +360,7 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
     compatibility: {
       persona_preset: preset,
       crag_persona_preset: preset,
+      claude_code_only: diagnostic,
       overlay_preset: 'off',
       persona_env_presets: { [preset]: false },
     },
@@ -376,7 +380,14 @@ async function protocolKernelFixture(t, { health, staleHealth, preset = 'officia
       const requestsBefore = kernel.requests.length
       const response = fakeResponse()
       const req = request(body)
-      req.apiKeyRecord.id = keyId
+      if (diagnostic) {
+        // These assertions target slot rendering after client admission.
+        req.apiKeyKind = 'master'
+        delete req.apiKeyRecord
+        req.headers['x-kin-vm'] = kernel.selected.vmId
+      } else {
+        req.apiKeyRecord.id = keyId
+      }
       Object.assign(req.headers, headers)
       if (protocol === 'openai.responses') req.url = '/v1/responses'
       if (protocol === 'openai.chat') req.url = '/v1/chat/completions'
@@ -802,6 +813,7 @@ for (const stream of [false, true]) {
         },
         staleHealth: ordinaryHealth,
         tool: stream ? tool : { ...tool, extension: { trace: 'upstream-only' } },
+        diagnostic: false,
         interceptRules: stream
           ? []
           : [

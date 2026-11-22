@@ -88,7 +88,7 @@ async function runCase(t, fixture, { switchAfterRepair = false, repeatWithCached
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-retry-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const routing = {
-    compatibility: { persona_preset: 'official', overlay_preset: 'off' },
+    compatibility: { persona_preset: 'official', overlay_preset: 'off', claude_code_only: false },
     failover: { signature_repair: true },
   }
   const routingFile = path.join(root, 'routing.json')
@@ -178,14 +178,16 @@ async function runCase(t, fixture, { switchAfterRepair = false, repeatWithCached
     assert.equal(JSON.stringify(hop.body).split(rule).length - 1, 1)
     assert.equal(hop.repaired, index > 0 && !(repeatWithCachedSearchRepair && index === 2))
     assert.equal(hop.body.system[0].text.includes('prompt_version=<'), hop.preset === 'zero')
-    if (hop.preset === 'zero') assert.ok(hop.body.system.some((block) => block.text === rule))
+    const firstUser = hop.body.messages.find((message) => message.role === 'user')
+    assert.ok(firstUser.content.some((block) => block.type === 'text' && block.text === rule))
+    assert.ok(!hop.body.system.some((block) => block.text === rule))
     if (index > 0) fixture.check(hop.body)
     validateCacheBreakpoints(hop.body)
   }
 }
 
 for (const fixture of cases) {
-  test(`slot zero keeps caller system and the ${fixture.name} repair through the real handler and runner`, (t) =>
+  test(`slot zero keeps the relocated caller prompt and the ${fixture.name} repair through the real handler and runner`, (t) =>
     runCase(t, fixture))
 }
 test('a repaired request uses the next slot preset when failover switches accounts', (t) =>

@@ -32,7 +32,14 @@ async function outbound(
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const routing = {
     sticky: { outbound_session: 'passthrough' },
-    compatibility: { persona_preset: preset, overlay_preset: 'off', cache_ttl: '1h', ...compatibility },
+    compatibility: {
+      // Template/cache assertions exercise the panel's diagnostic path through Claude Code-only mode.
+      claude_code_only: backend === 'cli',
+      persona_preset: preset,
+      overlay_preset: 'off',
+      cache_ttl: '1h',
+      ...compatibility,
+    },
   }
   const routingFile = path.join(root, 'routing.json')
   fs.writeFileSync(routingFile, JSON.stringify(routing))
@@ -133,9 +140,15 @@ async function outbound(
     {
       method: 'POST',
       url,
-      headers: { authorization: 'Bearer fixture', 'user-agent': 'test-client', ...headers },
-      apiKeyKind: 'managed',
-      apiKeyRecord: { id: 'fixture', ...(backend === 'api' ? { category: 'api' } : {}) },
+      headers: {
+        authorization: 'Bearer fixture',
+        'user-agent': 'test-client',
+        ...(backend === 'cli' ? { 'x-kin-vm': vm.id } : {}),
+        ...headers,
+      },
+      ...(backend === 'api'
+        ? { apiKeyKind: 'managed', apiKeyRecord: { id: 'fixture', category: 'api' } }
+        : { apiKeyKind: 'master' }),
       once() {},
       off() {},
     },
