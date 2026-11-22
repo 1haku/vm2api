@@ -6,8 +6,15 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-query')>()
   return {
     ...actual,
-    useQuery: () => ({
-      data: { items: [{ id: 'u1', role: 'user', concurrency: 0 }] },
+    useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => ({
+      data:
+        queryKey[0] === 'subscription-overview'
+          ? { subscriptions: [], users: [] }
+          : {
+              items: [
+                { id: 'u1', username: 'tenant', role: 'user', concurrency: 0 },
+              ],
+            },
       isLoading: false,
     }),
   }

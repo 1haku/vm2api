@@ -213,7 +213,7 @@ export function UsersPage() {
                         </span>
                       ) : null}
                       <p className='mt-1 text-xs font-normal text-muted-foreground'>
-                        并发 {u.concurrency || '不限'} · RPM{' '}
+                        用户并发上限 {u.concurrency || '不限'} · RPM{' '}
                         {u.rpm_limit || '不限'}
                       </p>
                     </TableCell>

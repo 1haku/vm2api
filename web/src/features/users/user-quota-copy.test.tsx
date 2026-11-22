@@ -18,14 +18,10 @@ describe('user quota wording', () => {
         setEnabled={() => {}}
         quota={0}
         setQuota={() => {}}
-        concurrency='0'
-        setConcurrency={() => {}}
-        concurrencyInvalid={false}
         setRole={() => {}}
       />
     )
     expect(html).toContain('aria-describedby="user-quota-help"')
     expect(html).toContain('仅租户受此配额限制；0 表示禁止自建 VM')
-    expect(html).toContain('0 为不限')
   })
 })
