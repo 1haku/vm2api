@@ -41,7 +41,13 @@ function success() {
 
 function harness({ mode = 'rebuild', capacity = 2, agentId = '', crag = false, compatibility = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-summary-'))
-  const routing = { compatibility, failover: {}, sticky: { enabled: true, outbound_session: mode } }
+  const routing = {
+    compatibility,
+    failover: {},
+    // This fixture supplies discovery and bypasses the kernel call itself.
+    inference: { kernel_down_reprobe_ms: 0 },
+    sticky: { enabled: true, outbound_session: mode },
+  }
   const routingFile = path.join(root, 'routing.json')
   fs.writeFileSync(routingFile, JSON.stringify(routing))
   const sticky = new StickyRouter({ dataDir: root, config: routing })
