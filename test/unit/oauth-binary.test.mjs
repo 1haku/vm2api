@@ -17,7 +17,6 @@ import {
 import {
   CLIENT_ID,
   FULL_OAUTH_SCOPE,
-  INFERENCE_ONLY_SCOPE,
   REDIRECT_URI,
   SETUP_TOKEN_TTL_SECONDS,
 } from '../../src/lib/oauth/oauth-contract.mjs'
@@ -31,6 +30,33 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
   const binary =
     process.env.KIN_TEST_OAUTH_AUTH_BIN || fileURLToPath(new URL('../../bin/kin-oauth-auth', import.meta.url))
   fs.accessSync(binary, fs.constants.X_OK)
+  // A released helper advertises what it implements; a PR that changes policy
+  // must not turn CI red before the binary carrying it exists. Probed straight
+  // from the binary: runGuestOAuthAuthService only returns credential payloads.
+  const capabilities = await new Promise((resolve) => {
+    const child = spawn(binary, [], { env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 })
+    let out = ''
+    child.stdout.on('data', (chunk) => {
+      out += chunk.toString('utf8')
+    })
+    child.on('error', () => resolve([]))
+    child.on('close', () => {
+      try {
+        const line = out
+          .split(/\r?\n/)
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .at(-1)
+        resolve(JSON.parse(line || '{}')?.credential?.capabilities || [])
+      } catch {
+        resolve([])
+      }
+    })
+    child.stdin.end('{"operation":"capabilities"}\n')
+  })
+  // Two binary generations are in the wild: the released one still asks for a
+  // one-year mint, the current source asks for nothing (short-lived oauth).
+  const mintsYear = capabilities.includes('setup-token-long-lived')
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-authorize-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   t.after(resetAuthUrlSessions)
@@ -68,9 +94,10 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
   let tokenRequests = 0
   const accessToken = 'fixture-access-token'
   const refreshToken = 'fixture-refresh-token'
-  const sessionKey = 'sk-ant-sid-unit-cookie'
   const requests = []
-  let authorizeMode = 'success'
+  // The token response echoes the scope the authorize request named, so a
+  // narrowed mint is observable end-to-end instead of always granting FULL.
+  let grantedScope = null
   const upstream = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -92,11 +119,13 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
         res.end(JSON.stringify({ error: 'invalid_grant' }))
         return
       }
+      const scope = grantedScope || FULL_OAUTH_SCOPE
+      grantedScope = null
       const token = JSON.stringify({
         access_token: accessToken,
         refresh_token: refreshToken,
         expires_in: 28800,
-        scope: FULL_OAUTH_SCOPE,
+        scope,
       })
       res.write(token.slice(0, 20))
       res.end(token.slice(20))
@@ -144,49 +173,6 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
     }
     if (req.method === 'PATCH' && req.url === '/api/oauth/account/settings') {
       res.end('{}')
-      return
-    }
-    if (req.method === 'GET' && req.url === '/api/organizations') {
-      res.end(JSON.stringify([{ uuid: org, raven_type: 'team' }]))
-      return
-    }
-    if (req.method === 'POST' && req.url === `/v1/oauth/${org}/authorize`) {
-      if (payload.organization_uuid !== org || req.headers.cookie !== `sessionKey=${sessionKey}`) {
-        res.writeHead(400)
-        res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Invalid request format' } }))
-        return
-      }
-      if (authorizeMode === 'stale') {
-        res.writeHead(403)
-        res.end(
-          JSON.stringify({
-            error: { type: 'permission_error', message: 'Session is not fresh enough to authorize' },
-          }),
-        )
-        return
-      }
-      if (authorizeMode === 'attestation') {
-        res.writeHead(400)
-        res.end(
-          JSON.stringify({
-            type: 'error',
-            error: {
-              type: 'invalid_request_error',
-              message: "This request couldn't be completed.",
-              details: { error_code: 'missing_client_attestation' },
-            },
-          }),
-        )
-        return
-      }
-      expectedExchange = {
-        code: 'cookie-auth-code',
-        challenge: payload.code_challenge,
-        redirectUri: payload.redirect_uri,
-        state: payload.state,
-      }
-      const state = authorizeMode === 'state_mismatch' ? 'wrong-provider-state' : payload.state
-      res.end(JSON.stringify({ redirect_uri: `${payload.redirect_uri}?code=cookie-auth-code&state=${state}` }))
       return
     }
     res.writeHead(404)
@@ -313,10 +299,8 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
     await t.test(`${scenario.flavor}: ${scenario.returnedState || 'no state suffix'}`, async () => {
       const generated = generateAuthUrl({ vmId: vm.id, proxyUrl, flavor: scenario.flavor })
       const url = new URL(generated.auth_url)
-      assert.equal(
-        url.searchParams.get('scope'),
-        scenario.flavor === 'setup_token' ? INFERENCE_ONLY_SCOPE : FULL_OAUTH_SCOPE,
-      )
+      // Both flavors ask for the login scope; only the lifetime differs.
+      assert.equal(url.searchParams.get('scope'), FULL_OAUTH_SCOPE)
       const session = peekAuthUrlSession(generated.session_id)
       const state = scenario.returnedState === 'session' ? url.searchParams.get('state') : scenario.returnedState
       expectedExchange = {
@@ -349,7 +333,7 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
       assert.equal(token.payload.grant_type, 'authorization_code')
       assert.equal(token.payload.client_id, CLIENT_ID)
       assert.equal(token.headers.cookie, undefined)
-      assert.equal(token.payload.expires_in, setup ? SETUP_TOKEN_TTL_SECONDS : undefined)
+      assert.equal(token.payload.expires_in, mintsYear && setup ? SETUP_TOKEN_TTL_SECONDS : undefined)
       assert.equal(token.headers['user-agent'], 'axios/1.15.2')
       assert.equal(token.headers['sec-ch-ua'], undefined)
       assert.equal(profile.headers.authorization, `Bearer ${accessToken}`)
@@ -376,41 +360,38 @@ test('guest OAuth helper preserves provider state, PKCE for browser authorizatio
     })
   }
   assert.equal(tokenRequests, 3)
-  await t.test(
-    'legacy kernel authorization-link exchange uses the real helper and bound SOCKS exit',
-    async (t) => {
-      const previousCert = process.env.NODE_EXTRA_CA_CERTS
-      const previousHelper = process.env.KIN_OAUTH_AUTH_BIN
-      process.env.NODE_EXTRA_CA_CERTS = cert
-      process.env.KIN_OAUTH_AUTH_BIN = binary
-      t.after(() => {
-        if (previousCert === undefined) delete process.env.NODE_EXTRA_CA_CERTS
-        else process.env.NODE_EXTRA_CA_CERTS = previousCert
-        if (previousHelper === undefined) delete process.env.KIN_OAUTH_AUTH_BIN
-        else process.env.KIN_OAUTH_AUTH_BIN = previousHelper
-      })
-      const generated = generateAuthUrl({ vmId: vm.id, proxyUrl: 'socks5h://127.0.0.1:1' })
-      const url = new URL(generated.auth_url)
-      expectedExchange = {
-        code: 'legacy-auth-code',
-        challenge: url.searchParams.get('code_challenge'),
-        redirectUri: url.searchParams.get('redirect_uri'),
-        state: 'legacy-provider-state',
-      }
-      const before = tokenRequests
-      const vmFile = path.join(root, 'vms', `${vm.id}.json`)
-      const vmBefore = fs.readFileSync(vmFile, 'utf8')
-      const linked = await exchangeAuthCode({
-        sessionId: generated.session_id,
-        code: `${expectedExchange.code}#${expectedExchange.state}`,
-        vmId: vm.id,
-        exec,
-      })
-      assert.equal(linked.access_token, accessToken)
-      assert.equal(linked.email, 'exchange@example.test')
-      assert.equal(peekAuthUrlSession(generated.session_id), null)
-      assert.equal(tokenRequests, before + 1)
-      assert.equal(fs.readFileSync(vmFile, 'utf8'), vmBefore)
-    },
-  )
+  await t.test('legacy kernel authorization-link exchange uses the real helper and bound SOCKS exit', async (t) => {
+    const previousCert = process.env.NODE_EXTRA_CA_CERTS
+    const previousHelper = process.env.KIN_OAUTH_AUTH_BIN
+    process.env.NODE_EXTRA_CA_CERTS = cert
+    process.env.KIN_OAUTH_AUTH_BIN = binary
+    t.after(() => {
+      if (previousCert === undefined) delete process.env.NODE_EXTRA_CA_CERTS
+      else process.env.NODE_EXTRA_CA_CERTS = previousCert
+      if (previousHelper === undefined) delete process.env.KIN_OAUTH_AUTH_BIN
+      else process.env.KIN_OAUTH_AUTH_BIN = previousHelper
+    })
+    const generated = generateAuthUrl({ vmId: vm.id, proxyUrl: 'socks5h://127.0.0.1:1' })
+    const url = new URL(generated.auth_url)
+    expectedExchange = {
+      code: 'legacy-auth-code',
+      challenge: url.searchParams.get('code_challenge'),
+      redirectUri: url.searchParams.get('redirect_uri'),
+      state: 'legacy-provider-state',
+    }
+    const before = tokenRequests
+    const vmFile = path.join(root, 'vms', `${vm.id}.json`)
+    const vmBefore = fs.readFileSync(vmFile, 'utf8')
+    const linked = await exchangeAuthCode({
+      sessionId: generated.session_id,
+      code: `${expectedExchange.code}#${expectedExchange.state}`,
+      vmId: vm.id,
+      exec,
+    })
+    assert.equal(linked.access_token, accessToken)
+    assert.equal(linked.email, 'exchange@example.test')
+    assert.equal(peekAuthUrlSession(generated.session_id), null)
+    assert.equal(tokenRequests, before + 1)
+    assert.equal(fs.readFileSync(vmFile, 'utf8'), vmBefore)
+  })
 })

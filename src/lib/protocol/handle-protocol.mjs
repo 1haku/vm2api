@@ -106,6 +106,7 @@ import {
 import { resolveWorkspaceMode, isOfficialClaudeClient } from './workspace-mode.mjs'
 import { officialMessagesBody } from './anthropic-messages.mjs'
 import { canReuseCanonicalHistory } from './sanitize.mjs'
+import { hasForeignSystemBlock, relocateThirdPartySystem, thirdPartyRelocateEnabled } from './third-party-system.mjs'
 import { prepareOutboundEnvelope, prepareCliHopBody, prepareCliPersonaInput } from './outbound-attempt.mjs'
 import {
   callerCwdDeclaration,
@@ -205,6 +206,7 @@ import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { formatPoolSelectionSummary } from '../pool/pool-scheduler.mjs'
 import { extraHeadersFromLimitError, isAccountQuotaExhausted } from '../pool/quota-window.mjs'
 import {
+  dropForeignThinkingForCrag,
   filterThinkingForAccount,
   recordThinkingOwners,
   thinkingOwners as defaultThinkingOwners,
@@ -777,6 +779,14 @@ export function createHandleProtocol(deps) {
     if (!resume && req.apiKeyRecord) {
       logCtx.request_id = crypto.randomUUID()
       res._kinRequestId = logCtx.request_id
+    }
+
+    if (
+      !resume &&
+      req.apiKeyRecord?.group_type === 'gemini' &&
+      ['anthropic.messages', 'openai.chat', 'openai.responses'].includes(protocol)
+    ) {
+      return deps.handleGeminiRequest(req, res)
     }
 
     let inbound
@@ -1393,6 +1403,13 @@ export function createHandleProtocol(deps) {
     // Recognition alone is not passthrough. Only the protocol-tab switch keeps
     // the Claude Code family body; every other inbound is rewritten below.
     const officialPassthrough = officialFamilyBodyPassthrough(officialInbound, getRouting())
+    // Operator opt-in, per API endpoint: forward the caller's own identity and
+    // billing blocks instead of preparing them for the configured persona (#1321).
+    // Evaluated here on purpose -- after the risk/route pass may have re-picked
+    // `apiPicked`, so the policy always comes from the endpoint actually used.
+    // Never derived from caller input.
+    const preserveApiCallerBody =
+      inferenceBackend === 'api' && !apiOpenAI && apiPicked?.endpoint?.body_policy === 'caller'
     let converted
     try {
       converted =
@@ -1464,7 +1481,7 @@ export function createHandleProtocol(deps) {
     const cragSystem = projectCallerSystem(ctx.body.system, callerEnvironment)
     const hasCragSystem = cragSystem !== ctx.body.system
     try {
-      if (!apiOpenAI && !requestContext && !officialPassthrough) {
+      if (!preserveApiCallerBody && !apiOpenAI && !requestContext && !officialPassthrough) {
         const standard = toStandardAnthropicBody(ctx.body, {
           official: officialTraffic === true,
           rewriteTools: getRouting()?.compatibility?.tool_name_rewrite !== false,
@@ -1560,8 +1577,8 @@ export function createHandleProtocol(deps) {
       )
     }
     const isProbe = isParentSessionCompanion(inbound) || isParentSessionCompanion(ctx.body)
-    // One-shot test calls (sub2api account test, new-api channel test) keep their
-    // sticky identity but never hold a session seat the main conversation needs.
+    // One-shot account and channel tests keep their sticky identity without
+    // holding a session seat the main conversation needs.
     const seatless = isProbe || isShortProbeRequest(inbound)
     // Seat = this client session. Same device, other session = other slot.
     const seatKey = seatless
@@ -1635,6 +1652,34 @@ export function createHandleProtocol(deps) {
     if (!apiOpenAI && !requestContext && !officialPassthrough) {
       ctx.body = enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
     }
+    // Anthropic 400s a subscription request whose system field carries a third-party
+    // agent prompt; the same text in the first user message is accepted.
+    let cragRelocated = null
+    if (
+      !apiOpenAI &&
+      inferenceBackend !== 'api' &&
+      !requestContext &&
+      !officialPassthrough &&
+      (!officialTraffic || hasForeignSystemBlock(ctx.body.system)) &&
+      thirdPartyRelocateEnabled(getRouting())
+    ) {
+      // Official traffic only gets here because the gate found a positively
+      // foreign block, so move just that block: the real official envelope has
+      // standalone harness/boundary/guidance blocks that the greedy predicate
+      // would strip along with it.
+      const relocated = relocateThirdPartySystem(ctx.body, { onlyForeign: officialTraffic === true })
+      if (relocated.moved) {
+        // A CRAG hop sends cragSystem (the caller system without its <cwd>
+        // declaration) instead of personaIn.system. Relocate that projection
+        // too, or the hop would put the third-party prompt back into system.
+        if (hasCragSystem)
+          cragRelocated = relocateThirdPartySystem(
+            { ...ctx.body, system: cragSystem },
+            { onlyForeign: officialTraffic === true },
+          ).body
+        ctx.body = relocated.body
+      }
+    }
     const personaIn = ctx.body
     // Capture ownership before rendering supplies gateway markers or projects
     // the caller's automatic cache policy onto a CLI message block.
@@ -1647,7 +1692,7 @@ export function createHandleProtocol(deps) {
         personaIn.messages.some(
           (message) => Array.isArray(message?.content) && message.content.some((block) => block?.cache_control != null),
         ))
-    if (!apiOpenAI && !requestContext)
+    if (!preserveApiCallerBody && !apiOpenAI && !requestContext)
       ctx.body = applyCrsUnofficialPersona(ctx.body, {
         officialClient: officialPassthrough,
         forceConfigured: !officialPassthrough,
@@ -1660,7 +1705,7 @@ export function createHandleProtocol(deps) {
       })
     if (!officialPassthrough && !requestContext) ctx.body = enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
     let personaHideTokens =
-      requestContext || apiOpenAI
+      requestContext || apiOpenAI || preserveApiCallerBody
         ? 0
         : personaHideForUnofficial(personaIn, ctx.body, {
             officialClient: officialPassthrough,
@@ -1969,6 +2014,10 @@ export function createHandleProtocol(deps) {
           }
           const entrypointNow = ccEntrypointFromRouting(routingNow)
           const repaired = extra.repaired === true
+          // An upstream that refused the sampling fields themselves gets a retry
+          // with none of them; the assembly rebuilds from caller input after the
+          // repairs replay, so the decision has to ride along to it.
+          const dropSampling = (extra.repairs || []).some((policy) => policy?.reason === 'sampling_repairable')
           const preserveThinkingBlocks =
             !repaired &&
             routingNow?.failover?.signature_repair !== true &&
@@ -2005,13 +2054,14 @@ export function createHandleProtocol(deps) {
               const cragPersona = resolveCragPrintPersona(selected.vm, routingNow)
               const caps = preparedHop.ready.health?.capabilities
               const preserveToolNames = deferToolNameRewrite && caps?.includes('generation_controls_v3')
-              const cragInput = hasCragSystem ? { ...personaIn, system: cragSystem } : personaIn
+              const cragInput = cragRelocated || (hasCragSystem ? { ...personaIn, system: cragSystem } : personaIn)
               const reuseHistory = !officialPassthrough && !repaired && !extra.repairs?.length
               const reuseIngress =
                 reuseHistory &&
                 preserveToolNames &&
                 caps.includes('linux_tui_native_queue') &&
                 !hasCragSystem &&
+                !cragRelocated &&
                 !summarySession &&
                 !toolPruneAttempt &&
                 personaIn.thread == null &&
@@ -2037,6 +2087,30 @@ export function createHandleProtocol(deps) {
               // The CRAG kernel fingerprints the public stream it already sent,
               // including thinking. Rewriting an unrecorded signature into text
               // makes the tool continuation fail with tool_result history mismatch.
+              // routing.compatibility.crag_drop_foreign_thinking (default off): signed
+              // blocks this account did not mint (another account's, or never
+              // recorded) never came from this kernel; drop them before the hop
+              // instead of waiting for the 400.
+              const cragOwned =
+                routingNow?.compatibility?.crag_drop_foreign_thinking === true
+                  ? dropForeignThinkingForCrag(source, selected.accountId, thinkingOwnerStore)
+                  : { body: source }
+              source = cragOwned.body
+              if (cragOwned.dropped || cragOwned.bailed) {
+                const { kept, dropped, droppedTurns, openLoop, thinkingOff, bailed } = cragOwned
+                logBag.hop_meta = {
+                  ...logBag.hop_meta,
+                  thinking_owner_crag: {
+                    account_id: selected.accountId,
+                    kept,
+                    dropped,
+                    dropped_turns: droppedTurns,
+                    open_loop: openLoop,
+                    thinking_off: thinkingOff,
+                    bailed,
+                  },
+                }
+              }
               for (const policy of extra.repairs || []) source = repairAnthropicRequest(source, policy)
               hopBody = prepareCragPrintBody(source, {
                 preset: cragPersona,
@@ -2100,7 +2174,10 @@ export function createHandleProtocol(deps) {
                   preparedHop,
                   transportRouting,
                   requestContext,
-                  repaired,
+                  // thinking was dropped for this hop: skip ensureOfficialPrintThinking, which
+                  // would otherwise re-add adaptive thinking to a body whose loop lost its blocks.
+                  repaired: repaired || cragOwned.thinkingOff === true,
+                  dropSampling,
                 },
               }
             }
@@ -2189,6 +2266,7 @@ export function createHandleProtocol(deps) {
               vmId: selected.vmId,
               accountId: selected.accountId,
               requestId: logCtx.request_id,
+              ctx: bodyCtx,
             })
             logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(hopBody) || attemptSessionId)
             return {
@@ -2202,6 +2280,7 @@ export function createHandleProtocol(deps) {
                 transportRouting,
                 requestContext,
                 repaired,
+                dropSampling,
               },
             }
           }
@@ -2265,6 +2344,7 @@ export function createHandleProtocol(deps) {
             credentialMode: credMode,
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
+            dropSampling,
           })
           const outbound = noteCachePrefix(selected, attemptSessionId, prepared.body)
           logBag.outbound_summary = summarizeBody(outbound)
@@ -2277,6 +2357,7 @@ export function createHandleProtocol(deps) {
             vmId: selected.vmId,
             accountId: selected.accountId,
             requestId: logCtx.request_id,
+            ctx: bodyCtx,
           })
           logBag.outbound_session_id = sessionIdForLog(sessionIdFromOutboundBody(outbound) || attemptSessionId)
           return {
@@ -2285,6 +2366,7 @@ export function createHandleProtocol(deps) {
               toolNames: composeToolNames(inboundToolReverse, prepared.toolNames),
               sessionId: attemptSessionId,
               repaired,
+              dropSampling,
             },
           }
         },
@@ -2307,6 +2389,7 @@ export function createHandleProtocol(deps) {
               callerCwd: attemptMeta?.callerCwd,
               preparedHop: attemptMeta?.preparedHop,
               repaired: attemptMeta?.repaired === true,
+              dropSampling: attemptMeta?.dropSampling === true,
               requestContext: attemptMeta?.requestContext || requestContext,
               want1m,
               routing: attemptMeta?.transportRouting ?? getRouting(),
@@ -2351,6 +2434,7 @@ export function createHandleProtocol(deps) {
               callerCwd: attemptMeta?.callerCwd,
               preparedHop: attemptMeta?.preparedHop,
               repaired: attemptMeta?.repaired === true,
+              dropSampling: attemptMeta?.dropSampling === true,
               requestContext: attemptMeta?.requestContext || requestContext,
               body,
               reqHeaders: req.headers,

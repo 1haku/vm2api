@@ -125,6 +125,7 @@ describe('pages each role can open', () => {
   it('super opens monitoring and the VM pages', () => {
     expect(openPages(ROLE_VIEWS.super)).toEqual([
       '/',
+      '/account',
       '/cluster',
       '/logs',
       '/overview',
@@ -137,6 +138,7 @@ describe('pages each role can open', () => {
   it('user opens its tenant pages only', () => {
     expect(openPages(ROLE_VIEWS.user)).toEqual([
       '/',
+      '/account',
       '/keys',
       '/statistics',
       '/subscriptions',
@@ -158,7 +160,7 @@ describe('pages each role can open', () => {
 
   it('treats a missing view list as unrestricted and an empty one as none', () => {
     expect(openPages(null)).toEqual(PAGE_PATHS)
-    expect(openPages([])).toEqual(['/'])
+    expect(openPages([])).toEqual(['/', '/account'])
     expect(hasPanelView(['/keys'], 'keys')).toBe(true)
   })
 })

@@ -38,6 +38,9 @@ export function ProfileDropdown() {
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <Link to='/account'>账号安全</Link>
+          </DropdownMenuItem>
           {role === 'admin' && (
             <>
               <DropdownMenuItem asChild>

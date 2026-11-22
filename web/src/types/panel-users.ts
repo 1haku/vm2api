@@ -9,6 +9,8 @@ export type PanelUser = {
   concurrency?: number
   rpm_limit?: number
   image_generation_enabled?: boolean
+  /** 该账号是否已开启两步验证（只读，管理员可重置）。 */
+  two_factor?: boolean
   created_at?: string
   last_login_at?: string
 }

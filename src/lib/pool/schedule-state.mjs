@@ -325,10 +325,30 @@ const AVAILABILITY_RESTRICTED = new Set(['quota', 'cool', 'rest'])
  * @param {{ used?: number, max?: number }|null} [input.seats]     Claude seat book
  * @param {{ active?: number, max?: number }|null} [input.sessions] GPT conversation windows
  */
+/**
+ * A proxy hold tagged for an exit this slot no longer uses.
+ *
+ * Re-binding and a successful probe each reconcile an automatic proxy hold away
+ * (#1395), so a tag that is not the current binding means no automatic path will
+ * lift this one -- a manual disable, or a message the reconcile does not treat as
+ * automatic. Reporting it as 代理异常 sends the operator to inspect an exit that
+ * is healthy, which is how one slot sat restricted for six days.
+ */
+function staleProxyHoldText(vm) {
+  const hold = vm.schedule_hold
+  if (hold?.reason !== HOLD_PROXY) return null
+  const tag = String(hold.detail?.tag || '').trim()
+  const bound = String(vm.proxy?.id || '').trim()
+  // No tag is a pre-migration hold, and no binding is a different fault.
+  if (!tag || !bound || tag === bound) return null
+  return '历史代理遗留'
+}
+
 export function resolveSlotState({
   vm = {},
   availability = {},
   restrictionReason = null,
+  kernelFaulted = false,
   restrictionUntil = null,
   circuit = null,
   seats = null,
@@ -382,7 +402,11 @@ export function resolveSlotState({
     restriction_scope: scope,
     restriction_soft: soft,
   })
-  if (vm.schedule_hold?.reason) return restricted(vm.schedule_hold.reason, null)
+  if (vm.schedule_hold?.reason) {
+    const stale = staleProxyHoldText(vm)
+    const held = restricted(vm.schedule_hold.reason, null)
+    return stale ? { ...held, restriction_text: stale } : held
+  }
   const until = Number(restrictionUntil) || Number(availability?.until) || 0
   const live = until > now
   if (!live && availability?.key === 'rest') {
@@ -395,6 +419,11 @@ export function resolveSlotState({
   if (availability?.key === 'drain') {
     return restricted(availability.reason || 'gate_5h_draining', null, 'new_session', true)
   }
+  // A spent kernel-recovery budget parks the slot in memory only. It wins over
+  // the final 开 so the panel shows what the scheduler already enforces, but it
+  // stays 受限 (self-clearing): the watchdog keeps a low-frequency retry and
+  // clears the fault once the kernel is healthy again.
+  if (kernelFaulted) return restricted('kernel_faulted', null)
   const seatMax = Number(seats?.max) || 0
   if (seatMax > 0 && (Number(seats?.used) || 0) >= seatMax) return restricted('seats_full', null, 'new_session')
   const sessionMax = Number(sessions?.max) || 0

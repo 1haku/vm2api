@@ -623,9 +623,12 @@ test('tenant key create/patch vm_pool_id guard; admin can set pool', async (t) =
 
 function usersFixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tenant-guards-users-'))
-  const db = createDatabase({ dataDir: dir })
+  // The user routes read the 2FA flag through a bare `SettingsRepo()`, which
+  // resolves the process-wide handle, so a detached `createDatabase()` is not
+  // enough here. Close it afterwards so the handle does not outlive the test.
+  const db = openDatabase({ dataDir: dir })
   t.after(() => {
-    db.close()
+    closeDatabase()
     fs.rmSync(dir, { recursive: true, force: true })
   })
   const panelUsers = new PanelUserStore({ db })

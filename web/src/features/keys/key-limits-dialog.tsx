@@ -391,7 +391,10 @@ export function KeyLimitsDialog({
                         ...d,
                         group_type: group,
                         allowed_vms:
-                          isApi || group === 'all' || group === 'pool'
+                          isApi ||
+                          group === 'all' ||
+                          group === 'pool' ||
+                          group === 'gemini'
                             ? []
                             : d.allowed_vms.filter((id) => keep.has(id)),
                         ...(pools
@@ -452,6 +455,10 @@ export function KeyLimitsDialog({
                       </SelectContent>
                     </Select>
                   </Field>
+                ) : draft.group_type === 'gemini' ? (
+                  <p className='text-xs text-muted-foreground sm:col-span-2'>
+                    请求在已授权并已拉取模型的 Gemini 宿主机账号之间调度。
+                  </p>
                 ) : draft.group_type === 'all' ? (
                   <p className='text-xs text-muted-foreground sm:col-span-2'>
                     使用账户或订阅已授权的槽位；指定平台和槽位可进一步收窄范围。

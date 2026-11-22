@@ -11,9 +11,7 @@ import { WebSocket } from 'ws'
 import { createSlotShell } from '../../src/lib/vm/slot-shell.mjs'
 import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { LOCAL_CRAG_CLAUDE } from '../../src/lib/vm/slot-engine.mjs'
-import { activateCragLicense } from '../../src/lib/vm/crag-license.mjs'
-import { materializeCragV2 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
-import { issueUniversalCode, seedEncryptedPackage } from '../fixtures/crag-license.mjs'
+import { seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 
 for (const runtime of ['kvm', 'docker']) {
   test(`${runtime} panel shell sends its home and working directory to the correct runtime`, async (t) => {
@@ -38,9 +36,17 @@ for (const runtime of ['kvm', 'docker']) {
     )
     const previousPath = process.env.PATH
     process.env.PATH = `${binDir}:${previousPath}`
+    const previousCragRoot = process.env.KIN_CRAG_V2_ROOT
     t.after(() => {
       process.env.PATH = previousPath
+      if (previousCragRoot === undefined) delete process.env.KIN_CRAG_V2_ROOT
+      else process.env.KIN_CRAG_V2_ROOT = previousCragRoot
     })
+    // Opening the terminal resolves the CRAG v2 package, which is a payload
+    // asset and never in the checkout. Seed the fixture tree under this test's
+    // own project root so the manual full sweep does not need a staged payload.
+    delete process.env.KIN_CRAG_V2_ROOT
+    seedEncryptedPackage(root)
     const shell = createSlotShell({ projectRoot: root, logger: { warn() {} } })
     const sockets = new Set()
     const shellId = 'a'.repeat(64)

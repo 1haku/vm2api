@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { createPanelLoginProtection } from '../../src/lib/admin/panel-login-protection.mjs'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
+import { PanelUserStore } from '../../src/lib/admin/panel-users.mjs'
+import { beginTwoFactorSetup, confirmTwoFactorSetup } from '../../src/lib/core/panel-2fa.mjs'
+import { attachPanelAuth, revokePanelSession } from '../../src/lib/core/security.mjs'
+import { generateCode } from '../../src/lib/core/totp.mjs'
+import { closeDatabase, openDatabase } from '../../src/lib/db/database.mjs'
 
 const env = {
   TURNSTILE_ENABLED: '1',
@@ -176,4 +184,83 @@ test('login route gates password authentication, creates no session on rejection
     if (oldAdmin === undefined) delete process.env.KIN_ADMIN_PASSWORD
     else process.env.KIN_ADMIN_PASSWORD = oldAdmin
   }
+})
+
+test('Turnstile gates the password step before a second factor can grant a session', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-login-mfa-'))
+  const prevEnv = new Map(
+    Object.keys({ ...env, KIN_DATA_DIR: '', VM2API_DB_SECRET: '' }).map((key) => [key, process.env[key]]),
+  )
+  Object.assign(process.env, env, { KIN_DATA_DIR: dataDir })
+  t.after(() => {
+    attachPanelAuth()
+    closeDatabase()
+    for (const [key, value] of prevEnv) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  })
+  const db = openDatabase({ dataDir })
+  const panelUsers = new PanelUserStore({ db })
+  const username = 'turnstile-mfa-test'
+  const password = 'fixture password only'
+  panelUsers.create({ username, password, role: 'user' })
+  attachPanelAuth({
+    authenticate: (name, pass) => panelUsers.authenticate(name, pass),
+    lookupRole: (name) => panelUsers.getByUsername(name)?.role,
+  })
+  const { secret } = beginTwoFactorSetup(username)
+  const { recovery_codes } = confirmTwoFactorSetup(username, generateCode(secret, new Date()))
+  let response
+  let input
+  const headers = {}
+  const res = { setHeader: (key, value) => (headers[key] = value) }
+  let verificationCalls = 0
+  const handler = createPanelHandler({
+    cfg: { paths: { project: process.cwd() } },
+    panelUsers,
+    readBody: async () => input,
+    json: (_res, status, payload) => {
+      response = { status, ...payload }
+    },
+    turnstileFetch: async () => {
+      verificationCalls++
+      return reply(verified)()
+    },
+  })
+  const post = async (route, payload) => {
+    delete headers['Set-Cookie']
+    input = payload
+    await handler({ ...req, method: 'POST' }, res, new URL('http://localhost/api/panel/login' + route))
+    return response
+  }
+
+  const denied = await post('', { username, password, code: recovery_codes[0] })
+  assert.equal(denied.status, 403)
+  assert.equal(denied.error.code, 'turnstile_required')
+  assert.equal(denied.challenge, undefined)
+  assert.equal(headers['Set-Cookie'], undefined)
+  assert.equal(verificationCalls, 0)
+
+  const challenge = await post('', { username, password, 'cf-turnstile-response': 'fixture-token' })
+  assert.equal(challenge.status, 401)
+  assert.equal(challenge.totp_required, true)
+  assert.equal(typeof challenge.challenge, 'string')
+  assert.equal(headers['Set-Cookie'], undefined)
+  assert.equal(verificationCalls, 1)
+
+  const loggedIn = await post('/totp', { challenge: challenge.challenge, code: recovery_codes[0] })
+  assert.equal(loggedIn.status, 200)
+  assert.equal(loggedIn.user, username)
+  assert.equal(loggedIn.role, 'user')
+  assert.match(headers['Set-Cookie'], /^kin_panel_token=/)
+  assert.equal(headers['Cache-Control'], 'no-store')
+  assert.equal(verificationCalls, 1)
+  revokePanelSession(loggedIn.token)
+
+  const replay = await post('/totp', { challenge: challenge.challenge, code: recovery_codes[0] })
+  assert.equal(replay.status, 400)
+  assert.equal(replay.error.code, 'totp_invalid_code')
+  assert.equal(headers['Set-Cookie'], undefined)
 })

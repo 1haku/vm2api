@@ -80,8 +80,7 @@ test('reset destroys home and recreates the same slot without oauth', async () =
     assert.deepEqual(rec.claude, {})
     assert.equal(rec.schedulable, false)
     assert.ok(
-      rec.schedule_disabled_reason === 'no_credential' ||
-        rec.schedule_disabled_reason === 'runtime_start_failed',
+      rec.schedule_disabled_reason === 'no_credential' || rec.schedule_disabled_reason === 'runtime_start_failed',
       String(rec.schedule_disabled_reason),
     )
     assert.equal(rec.proxy?.url, before.proxy?.url)
@@ -94,7 +93,7 @@ test('reset destroys home and recreates the same slot without oauth', async () =
   }
 })
 
-test('panel exports and replaces slot credential as sub2api JSON', async () => {
+test('panel exports and replaces slot credentials using account JSON', async () => {
   const gw = await startGateway({ oauth: false })
   try {
     const empty = await api(gw, 'GET', '/api/panel/vms/vm-sim-01/oauth/credential')

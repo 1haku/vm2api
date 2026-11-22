@@ -32,14 +32,14 @@ commitImportedOauth → 仅完整 OAuth 运行模式排队官方 Claude Code 初
 |------|------|------|
 | 已有 OAuth → Setup Token | `POST /api/panel/vms/:id/oauth/to-setup-token` | 读 worker 活票，仅切换运行模式；保留 access、refresh、真实过期时间和全部实际 scope。不会凭空增加权限，也不会删 scope。官方一年期 token（`official-setup-token`）不能转。 |
 | 官方 `claude setup-token` | 槽内 PTY / 粘贴一年期 oat | 只有 `user:inference`、无 refresh。落盘 `credential_mode=official-setup-token`，与面板转换的完整 Setup Token 区分。 |
-| Claude Code OAuth（默认） | 账号面板 → OAuth → Claude Code 授权 | 打开专用终端，VM 内原生 `claude auth login` 生成链接并处理回调；面板保存并同步结果。 |
-| 通用授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | CAI 与 Setup Token 都走面板 PKCE 的 CAI 授权链接（`claude.com/cai/oauth/authorize`）；CAI 用完整 OAuth scope，Setup Token 用 `user:inference` 的一年期 mint（与 `claude setup-token` 一致）。要求绑定可用出口。 |
+| Claude Code OAuth（默认） | 账号面板 → OAuth → Claude Code 授权 | 打开专用终端，VM 内原生 `claude auth login` 生成链接并处理回调；面板保存并同步结果。登录本身不再设 wall-clock 上限（用户节奏），凭证落盘由 180 秒 commit deadline 兜底（`KIN_LOGIN_COMMIT_DEADLINE_MS`）。 |
+| 通用授权链接 | `POST /api/panel/vms/:id/oauth/generate-auth-url` | CAI 与 Setup Token 都走面板 PKCE 的 CAI 授权链接（`claude.com/cai/oauth/authorize`）；两个 flavor 都用完整 OAuth scope（身份信息需要 `user:profile`），换票都不请求 `expires_in`，拿到的是上游短效票。要求绑定可用出口。 |
 
 正式凭证的 access/refresh 写入 `credentials.json`；导入时文档顶层和 `claudeAiOauth` 都写 `kinGeneration`，文件仍是 `0444`。`vm.json` / DB 只留 `has_access` / `has_refresh` / email / expiry / generation。
 
 远端 Claude 槽以节点上的 `credentials.json` 为准。官方 CLI 的 `.credentials.json` 使用同目录相对软链接；即使轮换通过原子替换更新文件，下次打开也会读到最新版。节点凭据回拉（包括启动、重载）会修正丢失或指向旧副本的链接，不会把旧副本写回凭据。对已运行的槽，启用的 `credential_refresh` 巡检也会检查链接（默认每 300 秒），不等令牌到期，不读取令牌内容、不额外换票、不重启槽。巡检快照的 `link_failures` 单列未修复的槽，与换票结果分开。
 
-CAI 粘贴码按 sub2api 规则换票：`code#state` 只将 `#` 后的上游返回值作为 token 请求的 `state`；只有 code 时不发送 `state`。Claude Code 由原生客户端保存 PKCE，面板将完整授权码交给原进程处理。Setup Token 和 Cookie 流程不变。
+CAI 粘贴码换票规则：`code#state` 只将 `#` 后的上游返回值作为 token 请求的 `state`；只有 code 时不发送 `state`。Claude Code 由原生客户端保存 PKCE，面板将完整授权码交给原进程处理。Setup Token 和 Cookie 流程不变。
 
 ### 换票传输
 
@@ -59,7 +59,6 @@ CAI 粘贴码按 sub2api 规则换票：`code#state` 只将 `#` 后的上游返�
 不发 Grove PATCH。
 
 - 每次请求 60 秒上限（`OAUTH_REQUEST_TIMEOUT_MS`），不是整条流程 60 秒；helper 的整体超时按 token 加 6 跳留余量。
-- 浏览器阶段发 Chrome 的 HTTP 头（`sec-ch-ua`、`sec-fetch-*`、`accept-language`）。TLS/HTTP2 指纹伪装需要 libcurl/utls 客户端，Node helper 做不到，别把它当已实现。
 - profile / roles / eval / first-token / bootstrap 都是尽力而为：票据已经绑定该账号，不因为后续一跳失败丢掉一次换票。profile 和 bootstrap 都空时身份留空。
 - 出口仍是 fail closed：`proxy_url=""` 是本地出口（直连），`null` 是未绑定（`proxy_required`），不因为上游直连就放开。
 - token 端点两种边缘拒绝单独归类，不再和授权码问题混在一起：`429 rate_limit_error` → `token_exchange_rate_limited`（面板 429，提示等 1 分钟再交同一个码，别连点；持续出现说明该出口 IP 被限速）；`403 Request not allowed` → `token_exchange_forbidden`（面板 502，提示换出口，通常是地区不支持）。
@@ -147,7 +146,7 @@ SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交�
 - `five_hour` / `seven_day` utilization 0–100
 - 成功且完整的官方 `/usage`：有 5h、7d，且能确定 Fable 7d 是否存在；有 Fable 即 Max，没有即 Pro。失败、scope 不足、只有 5h 或 CLI 文本不完整都不改套餐
 - Fable `weekly_scoped` → `7d_oi`
-- 同包可带 Sub2API 对照；旧 KIN「窗口滚过后仍 100%」刻度已废弃
+- 旧 KIN「窗口滚过后仍 100%」刻度已废弃
 
 已判定 Pro（完整 usage 无 Fable 模型）的槽只探 5h/7d，不再 hop Fable。完整 usage 一旦列出 Fable，即使 hop 403/401 或落盘 pro 也改判 Max。Fable 不可用、7d_oi、家族冷却 **不**把账号标成整号限制。探测早于 `refreshed_at` 不算整号吊销。
 

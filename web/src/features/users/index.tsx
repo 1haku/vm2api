@@ -3,10 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { VIEW_TITLES } from '@/config/nav'
 import type { PanelRole } from '@/types/panel-auth'
 import type { PanelUser } from '@/types/panel-users'
-import { KeyRound, Pencil, Plus, Trash2, MoreHorizontal } from 'lucide-react'
+import {
+  KeyRound,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  ShieldOff,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
-import { api } from '@/lib/api'
+import { api, resetUserTwoFactorRequest } from '@/lib/api'
 import { fmtUsd } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -100,6 +107,7 @@ export function UsersPage() {
   const [edit, setEdit] = useState<PanelUser | null>(null)
   const [pwTarget, setPwTarget] = useState<PanelUser | null>(null)
   const [del, setDel] = useState<PanelUser | null>(null)
+  const [twoFaReset, setTwoFaReset] = useState<PanelUser | null>(null)
   const refresh = () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: usersQueryOptions().queryKey }),
@@ -163,7 +171,7 @@ export function UsersPage() {
       <QueryGate
         loading={q.isLoading}
         error={q.error}
-        skeleton={<TableSkeleton rows={8} columns={6} />}
+        skeleton={<TableSkeleton rows={8} columns={7} />}
       >
         <div className='overflow-x-auto rounded-md border'>
           <Table>
@@ -174,6 +182,7 @@ export function UsersPage() {
                 <TableHead>状态</TableHead>
                 <TableHead>订阅 / 最近到期</TableHead>
                 <TableHead>今日用量</TableHead>
+                <TableHead>两步验证</TableHead>
                 <TableHead className='text-end'>操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -181,7 +190,7 @@ export function UsersPage() {
               {items.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className='h-24 text-center text-muted-foreground'
                   >
                     暂无用户
@@ -259,6 +268,15 @@ export function UsersPage() {
                         '—'
                       )}
                     </TableCell>
+                    <TableCell>
+                      {u.two_factor ? (
+                        <Badge variant='secondary'>已开启</Badge>
+                      ) : (
+                        <span className='text-xs text-muted-foreground'>
+                          未开启
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className='space-x-1 text-end whitespace-nowrap'>
                       {u.role !== 'super' && (
                         <Button
@@ -295,6 +313,13 @@ export function UsersPage() {
                           <DropdownMenuItem onClick={() => setPwTarget(u)}>
                             <KeyRound />
                             修改密码
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={!u.two_factor}
+                            onClick={() => setTwoFaReset(u)}
+                          >
+                            <ShieldOff />
+                            重置两步验证
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             disabled={isSelf}
@@ -349,6 +374,25 @@ export function UsersPage() {
         isSelf={!!pwTarget && pwTarget.username === me?.user}
         onClose={() => setPwTarget(null)}
         onDone={refresh}
+      />
+      <ConfirmDialog
+        open={!!twoFaReset}
+        onOpenChange={() => setTwoFaReset(null)}
+        title={`重置 ${twoFaReset?.username} 的两步验证`}
+        desc='清掉该账号的验证器密钥和全部恢复码，下次登录只要密码；该账号的现有会话会被登出。用于用户同时丢失手机和恢复码的情况。'
+        confirmText='重置'
+        cancelBtnText='取消'
+        destructive
+        handleConfirm={() => {
+          if (!twoFaReset) return
+          resetUserTwoFactorRequest(twoFaReset.id)
+            .then(() => {
+              toast.success('两步验证已重置')
+              setTwoFaReset(null)
+              return refresh()
+            })
+            .catch((e: Error) => toast.error(e.message))
+        }}
       />
       <ConfirmDialog
         open={!!del}
@@ -796,7 +840,7 @@ function PasswordFields({
   )
 }
 
-function RoleFields({
+export function RoleFields({
   role,
   setRole,
   enabled,
@@ -834,16 +878,22 @@ function RoleFields({
         </Select>
       </Field>
       <Field id='user-quota' label='自建 VM 配额 (0–100)'>
-        <Input
-          id='user-quota'
-          type='number'
-          min={0}
-          max={100}
-          value={quota}
-          onChange={(e) =>
-            setQuota(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
-          }
-        />
+        <div className='space-y-1'>
+          <Input
+            id='user-quota'
+            aria-describedby='user-quota-help'
+            type='number'
+            min={0}
+            max={100}
+            value={quota}
+            onChange={(e) =>
+              setQuota(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
+            }
+          />
+          <p id='user-quota-help' className='text-xs text-muted-foreground'>
+            仅租户受此配额限制；0 表示禁止自建 VM
+          </p>
+        </div>
       </Field>
       <div className='flex items-center justify-between'>
         <Label htmlFor='user-enabled'>启用</Label>
