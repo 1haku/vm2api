@@ -337,14 +337,12 @@ test('the identity rebuild escape hatch is never taken by the ordinary path', (t
   const viaDmi = connect({ machineIdFile: null, netDirectory: path.join(root, 'absent'), dmiUuidFile: dmi })
   assert.equal(viaDmi.rebuildDeviceIdentity({ reason: 'host_id_collision' }).source, 'dmi')
 
-  // With the per-instance sources gone it keeps descending rather than failing.
-  // `/etc/machine-id` and `/proc/cpuinfo` are not injectable and exist on any
-  // ordinary Linux host, so "every source unavailable" is not reachable from
-  // here -- which is what the CPU fallback is for: a weak identity beats none,
-  // because without one the request fails outright. The descent is asserted
-  // instead of a refusal that can no longer be provoked.
+  // Minimal containers may have neither a machine-id nor model fields in /proc/cpuinfo.
+  const cpuInfoFile = path.join(root, 'cpuinfo')
+  fs.writeFileSync(cpuInfoFile, 'processor: 0\nmodel name: fixture cpu\n')
   const descended = connect({
     machineIdFile: null,
+    cpuInfoFile,
     netDirectory: path.join(root, 'absent'),
     dmiUuidFile: path.join(root, 'absent-dmi'),
   }).rebuildDeviceIdentity({ reason: 'host_id_collision' })

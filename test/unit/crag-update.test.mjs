@@ -308,8 +308,8 @@ test('native systemd update reads only existing service key/port when .env is ab
 
 test('mixed-arch dormant non-CRAG cache is skipped instead of failing with crag_v2_arch_mismatch', async (t) => {
   const f = fixture(t)
-  const otherArch = process.arch === 'arm64' ? 'amd64' : 'arm64'
-  const activeArch = process.arch === 'arm64' ? 'arm64' : 'amd64'
+  const activeArch = path.basename(f.pkg)
+  const otherArch = activeArch === 'arm64' ? 'amd64' : 'arm64'
   for (const id of ['vm-live', 'vm-stop']) {
     const file = path.join(f.root, 'vms', `${id}.json`)
     const record = JSON.parse(fs.readFileSync(file, 'utf8'))

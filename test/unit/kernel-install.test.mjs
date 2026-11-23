@@ -587,12 +587,7 @@ for (const state of ['unlicensed', 'expired', 'wrong-vm', 'package-tamper', 'dif
         fs.writeFileSync(codeFile, issueFixtureCode(root, active.machine_code, { vm_id: 'vm-other' }).code)
       if (state === 'different-payload') seedEncryptedPackage(root, { payloadKey: randomBytes(32) })
       if (state === 'package-tamper') {
-        const pkg = path.join(
-          root,
-          'share/crag/kernels/v2',
-          process.arch === 'arm64' ? 'arm64' : 'amd64',
-          'crag-v2.payload.enc',
-        )
+        const pkg = path.join(cragV2PackageRoot(root), 'crag-v2.payload.enc')
         fs.appendFileSync(pkg, 'tampered')
       }
     }
