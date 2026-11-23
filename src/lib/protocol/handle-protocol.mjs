@@ -123,6 +123,7 @@ import { profileForPreset } from '../identity/official-profiles.mjs'
 import { loadVmIdentity, OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import {
   applyCrsIdentityReplace,
+  subagentRootSession,
   extractCallerSession,
   extractFirstUserIdentity,
   outboundSessionMode,
@@ -138,7 +139,15 @@ import {
   explicitParentSessionId,
   isParentSessionCompanion,
   isShortProbeRequest,
+  scopeStickyKey,
 } from '../pool/sticky-router.mjs'
+import {
+  BatchGroups,
+  batchGroupAppliesToKey,
+  batchGroupKey,
+  batchMemberSeatKey,
+  mergeBatchGroupConfig,
+} from '../pool/batch-group.mjs'
 import {
   applyCrsUnofficialPersona,
   detectProxiedOfficialCcFromRoutingFile,
@@ -225,7 +234,7 @@ import {
   restoreToolNamesInSSELine,
   wantsFastMode,
 } from './anthropic-policy.mjs'
-import { materializeRemoteImageSources } from './images.mjs'
+import { materializeRemoteImageSources, validateImageDimensions } from './images.mjs'
 import { applyMinMaxTokens } from './min-max-tokens.mjs'
 import { detectWarmupIntercept, formatWarmupSse, warmupMockMessage } from './warmup-intercept.mjs'
 import { queueAllowedByHeaders } from './queue-hint.mjs'
@@ -260,6 +269,10 @@ export function createHandleProtocol(deps) {
   const cfg = deps.cfg
   const requestLog = deps.requestLog
   const stickyRouter = deps.stickyRouter
+  const getBatchGroups = () =>
+    (deps.batchGroups ||= new BatchGroups({
+      onExpire: (memberKey) => stickyRouter?.unbind?.(scopeStickyKey(memberKey, 'anthropic')),
+    }))
   const accountQuota = deps.accountQuota
   const apiKeyStore = deps.apiKeyStore
   const apiScheduler = deps.apiScheduler
@@ -299,7 +312,7 @@ export function createHandleProtocol(deps) {
         rateMultiplier,
         officialCost: priced.total_cost,
       })
-    } catch {}
+    } catch { }
   }
 
   function keyGateErrorBody(gate) {
@@ -372,9 +385,12 @@ export function createHandleProtocol(deps) {
     const mapped = policyRefusal
       ? upstreamRiskClientError(logBag.risk_upstream_reason, logBag.risk_request_id)
       : rewritePoolErrorForClient(
-          mapUpstreamError(result?.status || 503, result?.body, result?.headers || {}),
-          result?.body,
-        )
+        mapUpstreamError(result?.status || 503, result?.body, result?.headers || {}),
+        result?.body,
+      )
+    if (mapped.body.error.code === ErrorCode.POOL_OVERLOADED && result?.poolReason === 'subagent_limit') {
+      mapped.body.error.details = { reason: result.poolReason }
+    }
     // Do not turn this opaque rejection into advice to wait or switch accounts.
     if (opaqueCrag429) mapped.body.error.message = originalMessage
     const summary = formatPoolSelectionSummary(details)
@@ -1146,6 +1162,19 @@ export function createHandleProtocol(deps) {
       return json(res, 403, errorResult.body)
     }
     if (imageModel) return serveImageModelTurn({ req, res, protocol, body: ctx.body, logBag })
+    if (platform.platform === 'anthropic') {
+      try {
+        validateImageDimensions(ctx.body)
+      } catch (error) {
+        if (!error.body?.error) throw error
+        stats.errors++
+        logBag.attempt_count = 0
+        logBag.final_state = 'invalid_request'
+        logBag.error_code = error.body.error.code
+        logBag.error_message = error.body.error.message
+        return json(res, error.status, error.body)
+      }
+    }
     // Codex returns before conversion. Distill does not apply to OpenAI platform models; the rest
     // of the gate scans them only when jev.openai_platform_enabled is on.
     if (
@@ -1322,12 +1351,12 @@ export function createHandleProtocol(deps) {
       const accountGate = !scopedRiskGate
         ? null
         : (account) =>
-            applyProtocolIntercept({
-              ...gateArgs,
-              body: auditBody,
-              account,
-              skipMandatory: true,
-            })
+          applyProtocolIntercept({
+            ...gateArgs,
+            body: auditBody,
+            account,
+            skipMandatory: true,
+          })
       if (protocol === 'anthropic.messages') {
         const codex = normalizeCodexRouting(routing.codex)
         return runWithCodexKey(req, res, logBag, () =>
@@ -1433,16 +1462,19 @@ export function createHandleProtocol(deps) {
         apiOpenAI && protocol === 'openai.responses'
           ? { claude: ctx.body, mode: 'passthrough' }
           : toClaudeMessages(protocol, ctx.body, {
-              rewrite: rewriteEnabled,
-              model_map: false,
-              preserve_content_shape: officialPassthrough,
-              onSystemBlock:
-                inferenceBackend !== 'api' && !officialPassthrough
-                  ? trackCallerSystemBlock(ctx.body?.system, callerEnvironment)
-                  : undefined,
-            })
+            rewrite: rewriteEnabled,
+            model_map: false,
+            preserve_content_shape: officialPassthrough,
+            onSystemBlock:
+              inferenceBackend !== 'api' && !officialPassthrough
+                ? trackCallerSystemBlock(ctx.body?.system, callerEnvironment)
+                : undefined,
+          })
     } catch (error) {
-      if (!['invalid_responses_conversion', 'invalid_messages_conversion'].includes(error.code)) throw error
+      if (
+        !['invalid_responses_conversion', 'invalid_messages_conversion', 'thinking_incompatible'].includes(error.code)
+      )
+        throw error
       stats.errors++
       logBag.error_code = error.code
       logBag.error_message = error.body.error.message
@@ -1598,7 +1630,7 @@ export function createHandleProtocol(deps) {
     // holding a session seat the main conversation needs.
     const seatless = isProbe || isShortProbeRequest(inbound)
     // Seat = this client session. Same device, other session = other slot.
-    const seatKey = seatless
+    let seatKey = seatless
       ? null
       : summarySession
         ? `seat:sess:${summarySession}`
@@ -1609,16 +1641,46 @@ export function createHandleProtocol(deps) {
       ? { stickyKey: null, stickyKeys: [] }
       : stickyRouter?.sessionPoolKeys
         ? stickyRouter.sessionPoolKeys(req, inbound, {
-            sessionId: inboundIdentity.sessionId,
-            deviceId: stickyDeviceId,
-            migrate: !isProbe,
-          })
+          sessionId: inboundIdentity.sessionId,
+          deviceId: stickyDeviceId,
+          migrate: !isProbe,
+        })
         : {
-            stickyKey: stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null,
-            stickyKeys: stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || [],
-          }
-    const stickyKey = sessionKeys.stickyKey || null
-    const stickyKeys = sessionKeys.stickyKeys || []
+          stickyKey: stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null,
+          stickyKeys: stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || [],
+        }
+    // Sessionless batch traffic: stick (key, workload) to a small elastic group
+    // of accounts instead of fanning out over the pool. See pool/batch-group.mjs.
+    let batchPick = null
+    let batchApplied = false
+    const batchCfg = mergeBatchGroupConfig(getRouting()?.batch_group)
+    if (
+      batchGroupAppliesToKey(batchCfg, req.apiKeyRecord?.id) &&
+      !seatless &&
+      !summarySession &&
+      !callerSession &&
+      !stickyDeviceId &&
+      seatKey
+    ) {
+      const workload = String(req.headers['x-heyroute-user'] || '').trim()
+      const groupKey = batchGroupKey({
+        keyId: req.apiKeyRecord?.id,
+        seatKey,
+        workloadId: /^[A-Za-z0-9_-]{8,128}$/.test(workload) ? workload : '',
+      })
+      if (groupKey) {
+        batchPick = getBatchGroups().acquire(groupKey, batchCfg)
+        res.once('close', batchPick.release)
+        logBag.batch_member = `${groupKey}#${batchPick.index}${batchCfg.observe ? ' (observe)' : ''}`
+        if (!batchCfg.observe) {
+          batchApplied = true
+          seatKey = batchMemberSeatKey(groupKey, batchPick.index)
+        }
+      }
+    }
+    const batchStickyKey = batchApplied ? scopeStickyKey(batchPick.memberKey, 'anthropic') : null
+    const stickyKey = batchStickyKey || sessionKeys.stickyKey || null
+    const stickyKeys = batchStickyKey ? [batchStickyKey] : sessionKeys.stickyKeys || []
     const deviceKey = stickyDeviceId ? stickyRouter?.canonicalDeviceKey?.(stickyDeviceId, req) || null : null
     const parentSession = explicitParentSessionId(inbound, req.headers)
     const familySession = parentSession || callerSession
@@ -1725,11 +1787,11 @@ export function createHandleProtocol(deps) {
       requestContext || apiOpenAI || preserveApiCallerBody
         ? 0
         : personaHideForUnofficial(personaIn, ctx.body, {
-            officialClient: officialPassthrough,
-            mode: personaMode,
-            hides: personaHidesUsageFromRoutingFile(routingConfigPath),
-            standing: standingUsageFromRoutingFile(routingConfigPath),
-          })
+          officialClient: officialPassthrough,
+          mode: personaMode,
+          hides: personaHidesUsageFromRoutingFile(routingConfigPath),
+          standing: standingUsageFromRoutingFile(routingConfigPath),
+        })
 
     if (inferenceBackend === 'api') {
       const managedKey = req.apiKeyRecord || null
@@ -1956,10 +2018,14 @@ export function createHandleProtocol(deps) {
         model: canonicalBody.model,
         stickyKey: isProbe ? null : stickyKey,
         stickyKeys: isProbe ? [] : stickyKeys,
+        // Set only when a group member actually supplied the sticky key.
+        batchMember: !isProbe && batchApplied,
         stickyDeviceId,
         deviceKey,
         skipSessionSeat: seatless,
         familyKey: summarySession ? null : familyKey,
+        summarySession,
+        rootSessionId: seatless && !summarySession ? null : subagentRootSession(inbound, req.headers, !!summarySession),
         seatKey,
         familyVmId,
         pinVmId,
@@ -2138,7 +2204,11 @@ export function createHandleProtocol(deps) {
                 agentSummary: !!summarySession,
                 foldSystemMessages: routingNow?.compatibility?.crag_fold_history_system !== false,
               })
-              hopBody = await materializeRemoteImageSources(hopBody)
+              const materialized = await materializeRemoteImageSources(hopBody)
+              if (materialized !== hopBody) {
+                validateImageDimensions(materialized)
+                hopBody = materialized
+              }
               if (identity) {
                 hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
                   officialClient: officialTraffic,
@@ -2241,7 +2311,11 @@ export function createHandleProtocol(deps) {
                 passthrough: officialPassthrough,
               })
             }
-            hopBody = await materializeRemoteImageSources(hopBody)
+            const materialized = await materializeRemoteImageSources(hopBody)
+            if (materialized !== hopBody) {
+              validateImageDimensions(materialized)
+              hopBody = materialized
+            }
             if (identity) {
               hopBody = applyCrsIdentityReplace(hopBody, identity, inbound, req.headers, {
                 officialClient: officialTraffic,
@@ -2545,14 +2619,14 @@ export function createHandleProtocol(deps) {
           usage_complete: provider?.usage_complete === true,
           ...(provider?.schema_version === 2
             ? {
-                provider_complete: provider.provider_complete,
-                handoff_complete: provider.handoff_complete ?? null,
-                delivery_complete: provider.delivery_complete ?? null,
-                response_valid: provider.response_valid ?? null,
-                source: provider.source ?? null,
-                http_status: provider.http_status ?? null,
-                public_status: provider.public_status ?? null,
-              }
+              provider_complete: provider.provider_complete,
+              handoff_complete: provider.handoff_complete ?? null,
+              delivery_complete: provider.delivery_complete ?? null,
+              response_valid: provider.response_valid ?? null,
+              source: provider.source ?? null,
+              http_status: provider.http_status ?? null,
+              public_status: provider.public_status ?? null,
+            }
             : {}),
         },
       }
@@ -2616,7 +2690,7 @@ export function createHandleProtocol(deps) {
           const vm = getVm(cfg.paths.project, result.vmId)
           if (vm) pool.syncQuotaSchedule(vm)
         }
-      } catch {}
+      } catch { }
       attachPricing(logBag, {
         managedKey,
         rateMultiplier: deps.groupsRepo.rateMultiplier(managedKey?.group_id ?? 1),
@@ -2672,7 +2746,7 @@ export function createHandleProtocol(deps) {
           // A strict handoff failure must remain an error even after partial
           // content. Legacy queue pings still receive the mapped SSE error.
           const mapped = mapProtocolClientError(result, logBag, logBag.error_code)
-          res.write(buildAnthropicSseError(mapped.body?.error || {}))
+          res.write(buildAnthropicSseError(mapped.body?.error || {}, result?.poolReason))
         } else if (protocol === 'anthropic.messages' && !res.writableEnded && !streamTracker?.isFinished()) {
           // Started but not closable: ask the client to retry instead of
           // dropping the connection. error_code/error_message keep the cause.
@@ -2855,14 +2929,14 @@ export function createHandleProtocol(deps) {
     const keepalive =
       stream && streamKeepaliveMs > 0
         ? createDownstreamKeepalive({
-            intervalMs: streamKeepaliveMs,
-            protocol,
-            write: (chunk) => {
-              if (responseClosed(res)) return
-              if (!res.headersSent) writeSSEHeaders(res)
-              res.write(chunk)
-            },
-          })
+          intervalMs: streamKeepaliveMs,
+          protocol,
+          write: (chunk) => {
+            if (responseClosed(res)) return
+            if (!res.headersSent) writeSSEHeaders(res)
+            res.write(chunk)
+          },
+        })
         : null
     let reply = null
     try {
