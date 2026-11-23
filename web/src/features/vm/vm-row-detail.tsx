@@ -319,6 +319,7 @@ function CostCard({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
     tokens: number
     cost: number
     total?: boolean
+    note?: string
   }> = [
     {
       label: '今日 · 北京时间',
@@ -340,6 +341,7 @@ function CostCard({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
     },
     {
       label: ledger[2].label,
+      note: ledger[2].note,
       req: null,
       tokens: ledger[2].tokens,
       cost: ledger[2].cost,
@@ -371,7 +373,9 @@ function CostCard({ vm, accounts }: { vm: Vm; accounts?: UsageAccountRow[] }) {
                 r.total && 'font-bold'
               )}
             >
-              <td className='py-1 font-sans'>{r.label}</td>
+              <td className='py-1 font-sans' title={r.note}>
+                {r.label}
+              </td>
               <td className='py-1 text-right'>
                 {r.req == null ? '—' : fmtNum(r.req)}
               </td>

@@ -1134,9 +1134,28 @@ export function createCragSubscription({
         ...runtime,
       }
     } catch {
+      // Report this machine's identity even when nothing above succeeded. It is
+      // derived from local files and never needs the Authority, so withholding it
+      // here only hides it from the hosts that need it most: the panel drops the
+      // whole device-identity block -- and with it the only migration entry --
+      // whenever `device_uuid` is missing, and a host whose credential the
+      // Authority rejects lands in this branch on every single refresh. That is
+      // exactly the host whose way back in is to claim by order id.
+      //
+      // Re-read rather than hoisted out of the `try`: the read itself can throw,
+      // and hoisting it would take the whole status response down with it instead
+      // of degrading to the shape this returned before.
+      let identity
+      try {
+        identity = deviceIdentity()
+      } catch {
+        identity = undefined
+      }
       return {
         ready: false,
         state: 'unavailable',
+        ...(identity?.uuid && { device_uuid: identity.uuid }),
+        ...(identity && { identity_source: identity.source }),
         available_seats: null,
         ...(target_probe_failed && { target_probe_failed }),
         ...inventory,
@@ -1327,11 +1346,12 @@ export function createCragSubscription({
   // migrate it by order id -- the only handle that survives losing this machine.
   //
   // Degrades instead of failing: the Authority's redeem request rejects unknown
-  // fields, so an instance newer than the Authority would have every redemption die
-  // on `order_id` alone. Worse, that 400 is not in `authorityErrors` and so arrives
-  // as `crag_subscription_authority_unavailable`, which reads as "result unconfirmed,
-  // retry" and would never resolve. Recording the order only matters for a migration
-  // that has not happened yet; it must never block the redemption in front of us.
+  // fields with `invalid_request` (400), so an instance newer than the Authority
+  // would have every redemption die on `order_id` alone. Mapping `invalid_request`
+  // in `authorityErrors` lets us tell that shape rejection apart from a 502
+  // transport/availability failure and retry once without `order_id`. Recording
+  // the order only matters for a migration that has not happened yet; it must
+  // never block the redemption in front of us.
   async function redeemAtAuthority(hostId, intent, enrollment) {
     const body = { redemption_code: intent.redemption_code, ...enrollment }
     // Both paths carry a real shop order id: `order_id` on an order-driven activation
