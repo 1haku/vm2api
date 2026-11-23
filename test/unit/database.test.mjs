@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
+import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 import {
   openDatabase,
   closeDatabase,
@@ -513,6 +514,7 @@ test('migration 067 upgrades pre-067 crag_shop_orders in place with NULL activat
   const db = new DatabaseSync(':memory:')
   try {
     applyMigrations(db, { migrationsDir: oldDir })
+    applyCustomMigrations(db)
     db.prepare(`INSERT INTO crag_shop_orders
       (order_id, owner, request_id, sku, payment_method, reserved_at, status, created_at, term, amount_minor, slot_limit,
        activation_vm_id, activation_fingerprint)
