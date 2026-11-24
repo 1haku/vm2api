@@ -28,6 +28,7 @@ import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.
 import { RefusalSessionBlocksRepo } from '../db/repos/refusal-session-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { findAccount } from '../admin/panel-api.mjs'
+import { makeApiKeyGateError } from '../admin/api-keys.mjs'
 import { readJevConfig, scopeAccountFromVm } from './jev-intercept.mjs'
 import { observeUpstreamRisk, runProtocolIntercept, upstreamRiskClientError } from './intercept-gate.mjs'
 import {
@@ -202,6 +203,7 @@ import {
 import {
   applyCacheTtlToUsage,
   enforceCacheTtlOrder,
+  fillMissingCacheTtl,
   cacheBreakpointsFromRoutingFile,
   pinConversationCacheTtl,
   resolveCacheTtl,
@@ -324,14 +326,14 @@ export function createHandleProtocol(deps) {
     } catch {}
   }
 
-  function keyGateErrorBody(gate) {
-    return makeError({
-      type: gate.status === 429 ? ErrorType.RATE_LIMIT : ErrorType.PERMISSION,
-      code: gate.code,
-      message: gate.message,
-      status: gate.status,
-      details: gate.detail || undefined,
-    }).body
+  function respondKeyGateError(res, gate) {
+    const err = makeApiKeyGateError(gate)
+    if (err.headers) {
+      for (const [header, value] of Object.entries(err.headers)) {
+        if (value != null) res.setHeader?.(header, value)
+      }
+    }
+    return json(res, err.status, err.body)
   }
 
   /** Key allowlist on the model the client named, before any mapping: 400 in the caller's protocol. */
@@ -722,9 +724,13 @@ export function createHandleProtocol(deps) {
       req.releaseManagedKey?.()
       delete req.releaseManagedKey
       req.subscriptionAdmission = null
-      if (error.status === 429) res.setHeader('Retry-After', String(error.retry_after || 1))
       logBag.error_code = error.code || 'subscription_invalid'
       logBag.error_message = error.message
+      if (error.ok === false) {
+        respondKeyGateError(res, error)
+        return false
+      }
+      if (error.status === 429) res.setHeader('Retry-After', String(error.retry_after || 1))
       json(res, error.status || 400, {
         error: {
           type: error.status === 429 ? 'rate_limit_error' : 'permission_error',
@@ -1665,7 +1671,7 @@ export function createHandleProtocol(deps) {
     let inboundToolReverse = {}
     const deferToolNameRewrite =
       (protocol === 'anthropic.messages' && inferenceBackend !== 'api') || protocol === 'openai.responses'
-    const cragSystem = projectCallerSystem(ctx.body.system, callerEnvironment)
+    let cragSystem = projectCallerSystem(ctx.body.system, callerEnvironment)
     const hasCragSystem = cragSystem !== ctx.body.system
     try {
       if (!preserveApiCallerBody && !apiNonAnthropic && !requestContext && !officialPassthrough) {
@@ -1843,9 +1849,19 @@ export function createHandleProtocol(deps) {
       vmId: stickyBound?.vmId || '',
       epoch: 'pending',
     })
+    let routingForCacheTtl = getRouting()
+    try {
+      const disk = routingConfigPath ? readJsonParsedCached(routingConfigPath) : null
+      if (disk) routingForCacheTtl = disk
+    } catch {}
     const requestedCacheTtl = pinConversationCacheTtl(
       stickyKey || callerSession || outboundSessionId,
-      resolveCacheTtl({ headers: req.headers, body: inbound, routing: getRouting(), routingFile: routingConfigPath }),
+      resolveCacheTtl({
+        headers: req.headers,
+        body: apiNonAnthropic ? inbound : ctx.body,
+        routing: routingForCacheTtl,
+        routingFile: routingConfigPath,
+      }),
     )
     let cacheTtl = requestedCacheTtl
     let preserveCacheBreakpoints = false
@@ -1866,10 +1882,21 @@ export function createHandleProtocol(deps) {
     // After OpenAI→Anthropic conversion so function tools already have input_schema;
     // leftover OpenAI-shaped tools are still marked (rewrite / mixed inbound).
     if (!apiNonAnthropic) ctx.body = applyEagerToolStreaming(ctx.body, getRouting())
-    // Repair TTL order before rendering, retaining valid caller omissions and
-    // mixed TTLs. The session default only governs platform-created markers.
+    // Fill omitted TTLs from the resolved Web/session default before rendering,
+    // retaining explicit caller 5m/1h (and legal 1h → 5m). Official passthrough
+    // and caller-policy API endpoints leave caller omissions untouched.
     if (!apiNonAnthropic && !requestContext && !officialPassthrough) {
-      ctx.body = enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
+      if (!preserveApiCallerBody) {
+        ctx.body = enforceCacheTtlOrder(fillMissingCacheTtl(ctx.body, requestedCacheTtl), requestedCacheTtl)
+        if (hasCragSystem) {
+          cragSystem = enforceCacheTtlOrder(
+            fillMissingCacheTtl({ tools: ctx.body.tools, system: cragSystem }, requestedCacheTtl),
+            requestedCacheTtl,
+          ).system
+        }
+      } else {
+        ctx.body = enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
+      }
     }
     // Anthropic 400s a subscription request whose system field carries a third-party
     // agent prompt; the same text in the first user message is accepted.
@@ -1926,7 +1953,9 @@ export function createHandleProtocol(deps) {
         })
       }
       if (!officialPassthrough && !requestContext && !apiGemini) {
-        ctx.body = enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
+        ctx.body = preserveApiCallerBody
+          ? enforceCacheTtlOrder(ctx.body, requestedCacheTtl)
+          : enforceCacheTtlOrder(fillMissingCacheTtl(ctx.body, requestedCacheTtl), requestedCacheTtl)
       }
       personaHideTokens =
         requestContext || apiNonAnthropic || preserveApiCallerBody
@@ -2415,7 +2444,7 @@ export function createHandleProtocol(deps) {
                 // Carry the resolved session/menu default separately from usage accounting.
                 hopBody.cache_ttl = requestedCacheTtl
               }
-              preserveCacheBreakpoints = true
+              preserveCacheBreakpoints = officialPassthrough
               cacheTtl = null
               personaHideTokens = 0
               logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
@@ -2477,6 +2506,7 @@ export function createHandleProtocol(deps) {
               cacheTtl: requestedCacheTtl,
               requestContext,
               preserveSystem: false,
+              preserveCacheTtl: officialPassthrough,
               preserveThinkingBlocks: preserveCliHopThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
@@ -2560,22 +2590,26 @@ export function createHandleProtocol(deps) {
             }
           }
 
+          preserveCacheBreakpoints = officialPassthrough
           cacheTtl = requestedCacheTtl
           if (!requestContext && !officialPassthrough) {
             const configuredMode = modeOverride || resolveSlotPersonaPreset(selected.vm, routingNow)
             const rewritten = enforceCacheTtlOrder(
-              applyCrsUnofficialPersona(shallowCopyBody(personaIn), {
-                officialClient: false,
-                forceConfigured: true,
-                routingFile: routingConfigPath,
-                cacheTtl: requestedCacheTtl,
-                mode: configuredMode,
-                headers: req.headers,
-                sessionId: attemptSessionId,
-                model: personaIn?.model,
-                cliVersion: OFFICIAL_CLI_VERSION,
-                identity,
-              }),
+              fillMissingCacheTtl(
+                applyCrsUnofficialPersona(shallowCopyBody(personaIn), {
+                  officialClient: false,
+                  forceConfigured: true,
+                  routingFile: routingConfigPath,
+                  cacheTtl: requestedCacheTtl,
+                  mode: configuredMode,
+                  headers: req.headers,
+                  sessionId: attemptSessionId,
+                  model: personaIn?.model,
+                  cliVersion: OFFICIAL_CLI_VERSION,
+                  identity,
+                }),
+                requestedCacheTtl,
+              ),
               requestedCacheTtl,
             )
             hopBody = officialMessagesBody(rewritten)
@@ -2858,10 +2892,15 @@ export function createHandleProtocol(deps) {
           .join('\n')
         const headers = extraHeadersFromLimitError(limitText, result.headers || {})
         const exhausted = isAccountQuotaExhausted(result, limitText)
+        const headerTiming = {
+          requestStartedAt: result.attemptStartedAt ?? logCtx.t0,
+          ...(result.attemptResetGenerations ? { resetGenerations: result.attemptResetGenerations } : {}),
+        }
         accountQuota.ingestHeaders(result.accountId, headers, healthReal ? null : logBag.usage, {
           exhausted,
           status: result.status,
           countRequest: !healthReal,
+          ...headerTiming,
         })
         const pool = typeof deps.getPoolScheduler === 'function' ? deps.getPoolScheduler() : deps.poolScheduler
         // Live `5h-status` on every response; `allowed` is the only early unblock.
@@ -2870,6 +2909,7 @@ export function createHandleProtocol(deps) {
             accountId: result.accountId,
             vmId: result.vmId || null,
             headers: result.headers || {},
+            ...headerTiming,
           })
         }
         if (pool?.syncQuotaSchedule && result.vmId && cfg?.paths?.project) {
