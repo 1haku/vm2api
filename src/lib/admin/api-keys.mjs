@@ -249,8 +249,10 @@ export class ApiKeyStore {
     const cacheKey = this._cacheKey(hash)
     const apiKeyCache = getCacheRuntime().apiKeys
     const cached = apiKeyCache.getSync(cacheKey)
-    if (cached.hit) {
-      if (!cached.value) return { ok: false, reason: 'invalid' }
+    if (cached.hit && !cached.value) return { ok: false, reason: 'invalid' }
+    // SQLite admins can change ownership through another connection with no cache event.
+    // Read the indexed key row before using its owner, scope, or limits in an admission decision.
+    if (cached.hit && this.db.engine === 'postgres') {
       if (!this._ownerActive(cached.value)) return { ok: false, reason: 'user_disabled' }
       return { ok: true, record: cached.value }
     }

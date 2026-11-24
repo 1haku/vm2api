@@ -365,7 +365,8 @@ test('two subscribers share a slot, cannot see each other, and revocation invali
       headers: users[2],
       body: { name: 'forged', group_id },
     })
-    assert.equal(noAccess.status, 400, noAccess.text)
+    assert.equal(noAccess.status, 403, noAccess.text)
+    assert.equal(noAccess.json.error.code, 'subscription_inactive')
     const forbidden = await api(gw, 'POST', '/api/panel/subscriptions', {
       headers: users[0],
       body: { group_id, user_ids: [ids[2]] },
