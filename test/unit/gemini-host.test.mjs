@@ -1641,6 +1641,7 @@ test('warmGeminiEnvironments proactively warms authorized licensed OAuth envs an
   assert.equal(warmedCalls[1][1].proxy_sha256, createHash('sha256').update(proxyUrl).digest('hex'))
 })
 test('a host error code the control plane knows survives, and only an unknown one collapses (#1622)', async (t) => {
+  if (process.platform !== 'linux' || process.arch !== 'x64') return t.skip('Gemini host socket requires Linux x64')
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gemini-authcode-'))
   const socketPath = path.join(directory, 'control.sock')
   const previous = process.env.KIN_GEMINI_HOST_SOCKET

@@ -116,10 +116,19 @@ test('explicit API channels intersect subscription bindings and cannot widen the
   assert.equal(scheduler.pick('claude-sonnet-4-6', Date.now(), { ...scope, endpointId: 'private' }).ok, false)
   assert.deepEqual(scheduler.catalog({ ...scope, endpointId: 'private' }).data, [])
   assert.equal(scheduler.pick('claude-opus-4-6', Date.now(), scope).ok, false)
-  assert.deepEqual(apiScheduleScope({ apiKeyRecord: { api_endpoint_id: 'standalone' } }, 'anthropic'), {
-    endpointId: 'standalone',
-    groupType: 'all',
-  })
+  const restricted = {
+    apiKeyRecord: { ...req.apiKeyRecord, category: 'all', permission_tier: 'resource', allowed_endpoints: ['b'] },
+  }
+  assert.equal(selectSubscriptionResource(restricted, db, scheduler, 'claude-sonnet-4-6').picked.endpoint.id, 'b')
+  restricted.apiKeyRecord.allowed_endpoints = ['private']
+  assert.throws(
+    () => selectSubscriptionResource(restricted, db, scheduler, 'claude-sonnet-4-6', { forceApi: true }),
+    /no api endpoint/,
+  )
+  assert.deepEqual(
+    apiScheduleScope({ apiKeyRecord: { category: 'api', api_endpoint_id: 'standalone' } }, 'anthropic'),
+    { endpointId: 'standalone', groupType: 'all', ownerScope: { type: 'platform' }, allowedEndpointIds: ['standalone'] },
+  )
 })
 
 test('fallback reprices the same reservation atomically without a second concurrency seat or charge', (t) => {

@@ -118,6 +118,11 @@ export function subscriptionSnapshot(db) {
             // Upstream 054 leaves existing keys unrestricted; explicit lists remain hash-checked.
             allowed_models: row.allowed_models ?? '[]',
             api_endpoint_id: row.api_endpoint_id ?? null,
+            // Upstream 068 adds explicit permissions while leaving existing keys at platform scope.
+            permission_tier: row.permission_tier ?? 'platform',
+            owner_id: row.owner_id ?? null,
+            allowed_endpoints: row.allowed_endpoints ?? '[]',
+            allowed_gemini_envs: row.allowed_gemini_envs ?? '[]',
           }
         return row
       })
@@ -133,6 +138,7 @@ export function subscriptionSnapshot(db) {
     'custom_subscription_api_endpoints',
     'api_endpoint_keys',
     'api_endpoint_models',
+    'gemini_environment_owners',
     'cluster_nodes',
     'cluster_node_direct_links',
     'request_attempts',
@@ -151,7 +157,7 @@ export function subscriptionSnapshot(db) {
               expires_at: row.expires_at ?? null,
             }))
           : table === 'api_endpoints'
-            ? rows.map((row) => ({ ...row, body_policy: row.body_policy ?? 'persona' }))
+            ? rows.map((row) => ({ ...row, body_policy: row.body_policy ?? 'persona', owner_user_id: row.owner_user_id ?? null }))
             : table === 'api_endpoint_keys'
               ? rows.map((row) => ({ ...row, proxy_id: row.proxy_id ?? '' }))
               : table === 'request_attempts'
