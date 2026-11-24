@@ -255,10 +255,7 @@ for (const backend of ['cli', 'api']) {
               ['1h', shortTtl ?? '1h'],
             )
             for (const source of system) assert.equal(JSON.stringify(out).split(source.text).length - 1, 1)
-            if (backend === 'cli') {
-              // Relocated in caller order, so the template placements do not apply.
-              assert.deepEqual(leadingUserBlocks(out, system.length), sent(system))
-            } else if (placement === 'agent-first') {
+            if (placement === 'agent-first') {
               assert.ok(
                 out.system.findIndex((block) => block.text === system[1].text) <
                   out.system.findIndex((block) => block.text === system[0].text),
@@ -364,7 +361,7 @@ for (const backend of ['cli', 'api']) {
       })
       const markers = listCacheMarkers(out)
       assert.equal(markers.length, 1)
-      assert.equal(markers[0].section, backend === 'cli' ? 'messages' : 'system')
+      assert.equal(markers[0].section, 'system')
       assert.equal(markers[0].ttl, ttl ?? '1h')
       assert.ok(JSON.stringify(out).includes('BUSINESS_RULE'))
     })
@@ -390,7 +387,7 @@ for (const backend of ['cli', 'api']) {
             input: { messages },
           })
           assert.deepEqual(
-            backend === 'cli' ? leadingUserBlocks(out, 1)[0] : out.system.find((item) => item.text === block.text),
+            out.system.find((item) => item.text === block.text),
             sent([block])[0],
           )
           assert.equal(listCacheMarkers(out).length, 1)
@@ -737,7 +734,7 @@ test('zero without billing preserves caller boundary text and fills omitted tool
     input: { system, tools: [tool] },
     compatibility: { persona_block_presets: { zero: { billing: false } } },
   })
-  assert.deepEqual(leadingUserBlocks(out, system.length), system)
+  assert.deepEqual(out.system.slice(1), system)
   assert.deepEqual(out.tools[0].cache_control, control('1h'))
   assert.equal(listCacheMarkers(out).length, 1)
 })
