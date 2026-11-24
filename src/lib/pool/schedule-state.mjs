@@ -90,6 +90,8 @@ const RESTRICTED_NEW_SESSION = [
  * request waits, and local transport errors.
  */
 const STATELESS = [
+  // A discarded quota observation does not affect the slot's scheduling state.
+  /^(pre_reset_generation|pre_reset_started_at|pre_reset_probed_at|missing_reset_timing)$/,
   /^(distill_blocked|policy_blocked|crag_policy_blocked|crag_opaque_429|refusal_guard|hard_regex.*|jev.*|decision_model.*)$/,
   /^(content_filter_refusal|content_policy_refusal|usage_policy_refusal|third_party_client|invalid_request|thinking_incompatible|entitlement_required|http_\d+)$/,
   /_repairable$/,

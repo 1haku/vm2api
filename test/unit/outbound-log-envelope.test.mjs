@@ -467,7 +467,9 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
   assert.deepEqual(envelope.body.tools, tools)
   assert.deepEqual(envelope.body.system, system)
   assert.equal(envelope.body.crag_prompt, undefined)
-  assert.deepEqual(envelope.body.messages, messages)
+  const expectedMessages = structuredClone(messages)
+  expectedMessages[2].content[1].cache_control = anchor
+  assert.deepEqual(envelope.body.messages, expectedMessages)
   assert.deepEqual(envelope.body.tool_choice, { type: 'auto' })
   assert.equal(envelope.body.max_tokens, 32000)
 })
