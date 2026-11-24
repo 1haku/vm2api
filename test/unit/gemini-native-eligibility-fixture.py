@@ -117,6 +117,8 @@ class Fixture:
             run.native_dir = root / "turn"
             run.native_dir.mkdir(mode=0o700)
             run.uid = os.getuid()
+            run.pool_mode = False
+            run._network_lease = None
             run.native_diagnostic = native.EligibilityDiagnostic(
                 run.native_dir, run.uid
             )
