@@ -22,9 +22,13 @@ VM2API_DB_SECRET='再一串'
 
 | 容器 | 说明 |
 |---|---|
-| `vm2api` | 控制面。Compose **只起这一个** |
+| `vm2api` | 控制面（`network_mode: host`） |
+| `vm2api-postgres` | PostgreSQL 18 主库（仅绑定 `127.0.0.1:5432`，全新安装默认启用；使用外部云库时可 `--no-deps` 跳过） |
+| `vm2api-redis` | Redis 8 L2 缓存（仅绑定 `127.0.0.1:6379`，可选，不可用时自动降级 L1） |
 | `kin-<槽>` | 每个**已启动**的槽 1 个 |
-| 没有 | 未启动的槽；同机其它项目的 postgres 等 |
+| 没有 | 未启动的槽；同机其它项目的独立数据库 |
+
+> **PostgreSQL 一键安装与存量 SQLite 无缝迁移**：支持使用 `curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install-pg.sh | sudo bash` 自动补装缺失的 Docker / `postgresql-client` / Node(`pg`,`ioredis`) 依赖并完成全新部署或存量无缝迁移；普通 `upgrade` 与面板更新均会自动保留未迁移的 `data/kin.db`（不会误启空 PG 或抢占已有 5432/6379 端口），详情见 [PostgreSQL 迁移指南](POSTGRES_MIGRATION.md)。
 
 不是一个父容器里多个子进程。
 

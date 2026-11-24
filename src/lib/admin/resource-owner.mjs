@@ -49,11 +49,38 @@ export function proxyOwnerId(proxy) {
   return normalizeOwnerId(proxy?.owner_user_id)
 }
 
+export function endpointOwnerId(endpoint) {
+  return normalizeOwnerId(endpoint?.owner_user_id)
+}
+
+export function ownerMatchesScope(owner, scope = PLATFORM_SCOPE) {
+  const type = scope?.type || 'platform'
+  if (type === 'any') return true
+  const normalized = normalizeOwnerId(owner)
+  if (type === 'platform') return !normalized
+  if (type === 'user') {
+    const target = normalizeOwnerId(scope.userId)
+    return !!target && normalized === target
+  }
+  return false
+}
+
 export function ownerScopeFromApiKey(record, { apiKeyKind = null, ownerRole = null } = {}) {
   if (apiKeyKind === 'master') return PLATFORM_SCOPE
+  const explicitOwner = normalizeOwnerId(record?.owner_id)
+  if (explicitOwner) return { type: 'user', userId: explicitOwner }
+  const tier = String(record?.permission_tier || '')
+    .trim()
+    .toLowerCase()
   const userId = normalizeOwnerId(record?.user_id)
-  if (!userId) return PLATFORM_SCOPE
-  if (isAdminRole(ownerRole)) return PLATFORM_SCOPE
+  if (!userId) {
+    if (tier === 'tenant') return { type: 'none' }
+    return PLATFORM_SCOPE
+  }
+  if (isAdminRole(ownerRole)) {
+    if (tier === 'tenant') return { type: 'none' }
+    return PLATFORM_SCOPE
+  }
   return { type: 'user', userId }
 }
 
@@ -62,7 +89,10 @@ export function ownerScopeFromRequest(req, usersRepo = null) {
   const db = usersRepo?.db || (isDbOpen() ? getDb() : null)
   if (rec && db) {
     const sub = new SubscriptionsRepo(db).entitlement(rec)
-    if (sub) return { type: 'subscription', vmIds: sub.vmIds, groupId: sub.group_id, key: rec }
+    if (sub) {
+      if (normalizeOwnerId(rec.owner_id) || rec.permission_tier === 'tenant') return { type: 'none' }
+      return { type: 'subscription', vmIds: sub.vmIds, groupId: sub.group_id, key: rec }
+    }
   }
   // 面板会话没有 apiKeyRecord，必须按会话角色收窄，否则租户会落到平台池
   if (!rec && req?.panelUser && req?.apiKeyKind !== 'master') {
@@ -72,6 +102,9 @@ export function ownerScopeFromRequest(req, usersRepo = null) {
     if (role === 'admin' || role === 'super') return PLATFORM_SCOPE
     const userId = normalizeOwnerId(req.panelUserId)
     return userId ? { type: 'user', userId } : { type: 'none' }
+  }
+  if (req?.apiKeyKind !== 'master' && normalizeOwnerId(rec?.owner_id)) {
+    return ownerScopeFromApiKey(rec, { apiKeyKind: req?.apiKeyKind })
   }
   let ownerRole = null
   const userId = normalizeOwnerId(rec?.user_id)
@@ -118,10 +151,15 @@ export function vmMatchesOwnerScope(vm, scope = PLATFORM_SCOPE) {
     return true
   }
   if (isDbOpen() && getDb().prepare('SELECT 1 FROM custom_subscription_slots WHERE vm_id=?').get(vm.id)) return false
-  const owner = vmOwnerId(vm)
-  if (type === 'platform') return !owner
-  if (type === 'user') return owner === normalizeOwnerId(scope.userId)
-  return false
+  return ownerMatchesScope(vmOwnerId(vm), scope)
+}
+
+export function endpointMatchesOwnerScope(endpoint, scope = PLATFORM_SCOPE) {
+  return ownerMatchesScope(endpointOwnerId(endpoint), scope)
+}
+
+export function geminiEnvMatchesOwnerScope(envOwnerId, scope = PLATFORM_SCOPE) {
+  return ownerMatchesScope(envOwnerId, scope)
 }
 
 export function filterVmsForPanel(vms, { role, userId } = {}) {

@@ -631,7 +631,9 @@ export function prepareWorkerPayload({
 } = {}) {
   const health = exec?.workerStatus
   const print = nativeCragRequest(exec, cragPrint)
-  const canonicalBody = print ? prepareCragRequest(body, health) : prepareCliNodeRequest(body)
+  const canonicalBody = print
+    ? prepareCragRequest(body, health, { requestContext })
+    : prepareCliNodeRequest(body, { requestContext })
   const displayed =
     requestContext?.purpose === 'auto_mode_classifier' || repaired
       ? canonicalBody
@@ -768,7 +770,9 @@ async function preparePrebuiltEnvelope(envelope, redaction, messages, exec, crag
     delete out.gateway_policy
     const print = nativeCragRequest(exec, cragPrint)
     out.body = gateCragBody(
-      print ? prepareCragRequest(out.body, exec?.workerStatus) : prepareCliNodeRequest(out.body),
+      print
+        ? prepareCragRequest(out.body, exec?.workerStatus, { requestContext: out.request_context || null })
+        : prepareCliNodeRequest(out.body, { requestContext: out.request_context || null }),
       print,
       exec?.workerStatus,
       out.request_context?.purpose === 'auto_mode_classifier',
@@ -1068,7 +1072,8 @@ async function callGoWorkerRaw({
   } catch (error) {
     const blocked = redactionResult(error)
     if (blocked) return { ...blocked, ...nativeMetadata() }
-    if (error.code === 'invalid_kernel_request') return { ...invalidKernelResult(error), ...nativeMetadata() }
+    if (error.code === 'invalid_kernel_request' || error.code === 'unsupported_capability')
+      return { ...invalidKernelResult(error), ...nativeMetadata() }
     if (hopSignal.signal?.aborted) return clientCancelledResult({ via: 'go-worker', ...nativeMetadata() })
     if (error instanceof InferencePostDenied) return error.result
     return {
@@ -1667,7 +1672,7 @@ async function streamGoWorkerRaw({
   } catch (error) {
     const blocked = redactionResult(error)
     if (blocked) return { ...blocked, ...timing.snapshot(), committed, ...nativeMetadata() }
-    if (error.code === 'invalid_kernel_request')
+    if (error.code === 'invalid_kernel_request' || error.code === 'unsupported_capability')
       return { ...invalidKernelResult(error), ...timing.snapshot(), committed, ...nativeMetadata() }
     if (hopSignal.signal?.aborted) {
       return clientCancelledResult({

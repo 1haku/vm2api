@@ -64,9 +64,12 @@ export function denyIfUserCannotDeleteVm(req, res, vm, json) {
   return true
 }
 
-/** Administrators manage shared-subscription keys; tenants must match a nonempty owner. */
+const INTEGRATION_DELEGATED_SYM = Symbol.for('vm2api.integrationDelegated')
+
+/** Panel administrators manage shared-subscription keys. */
 export function panelOwnsKey(req, rec) {
   if (!rec) return false
+  if (req?.[INTEGRATION_DELEGATED_SYM]) return true
   if (panelIdentity(req).role === 'admin') return true
   const owner = normalizeOwnerId(rec.user_id)
   const userId = normalizeOwnerId(req.panelUserId)

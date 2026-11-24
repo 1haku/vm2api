@@ -364,7 +364,9 @@ export function KeyLimitsDialog({
                   <p className='text-xs text-muted-foreground'>
                     {selectedChannel
                       ? selectedChannel.models?.length
-                        ? `已保存 ${selectedChannel.models.length} 个模型；此密钥只调用所选渠道。`
+                        ? selectedChannel.protocol === 'gemini'
+                        ? `已保存 ${selectedChannel.models.length} 个模型；支持原生 Gemini、OpenAI 和 Anthropic 调用。`
+                        : `已保存 ${selectedChannel.models.length} 个模型；此密钥只调用所选渠道。`
                         : '此渠道尚未保存模型。请先到 API 页面获取模型。'
                       : channelsError
                         ? '无法加载 API 渠道。请重试。'

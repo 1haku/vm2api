@@ -58,6 +58,10 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer)
     daemon_threads = True
 
 
+cancelled_requests = []
+hang_release = threading.Event()
+
+
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         request_line = self.rfile.readline().decode("ascii").strip()
@@ -82,7 +86,11 @@ class Handler(socketserver.StreamRequestHandler):
             assert headers.get("x-kin-internal-token") == "a" * 64
             length = int(headers["content-length"])
             cancel_req = json.loads(self.rfile.read(length))
-            body = json.dumps({"cancelled": cancel_req.get("request_id") == "turn-cancel-01"}).encode("utf-8")
+            req_id = cancel_req.get("request_id")
+            cancelled_requests.append(req_id)
+            if req_id == "turn-hang-diag":
+                hang_release.set()
+            body = json.dumps({"cancelled": req_id in ("turn-cancel-01", "turn-hang-diag")}).encode("utf-8")
             self.wfile.write(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
                 + str(len(body)).encode()
@@ -95,6 +103,9 @@ class Handler(socketserver.StreamRequestHandler):
         assert headers.get("x-kin-internal-token") == "a" * 64
         length = int(headers["content-length"])
         request = json.loads(self.rfile.read(length))
+        if request["request_id"] == "turn-hang-diag":
+            hang_release.wait(timeout=3.0)
+            return
         if request["request_id"] == "turn-err-429":
             body = json.dumps(
                 {"error": "rate limited", "code": "upstream_http", "upstream_status": 429}
@@ -231,6 +242,66 @@ with tempfile.TemporaryDirectory(prefix="gemini-native-fixture-") as temporary:
             assert err.code == expected_code, (err.code, expected_code)
         else:
             raise AssertionError(f"expected NativeFailure for run_request {req_id}")
+    # open_worker_stream() must fast-fail on EligibilityDiagnostic before or while awaiting headers.
+    with tempfile.TemporaryDirectory(prefix="gemini-stream-diag-") as sdiag_tmp:
+        sdiag = native.EligibilityDiagnostic(Path(sdiag_tmp), os.getuid())
+        try:
+            verify_line = (
+                b"W1124 02:15:09.215562     504 server_oauth.go:133] Account ineligible: "
+                b"Your current account is not eligible for Antigravity. Verify your account to continue.\n"
+            )
+            hang_release.clear()
+            cancelled_requests.clear()
+
+            def _emit_late():
+                time.sleep(0.1)
+                sdiag._consume(verify_line)
+
+            emitter = threading.Thread(target=_emit_late, daemon=True)
+            emitter.start()
+            t0 = time.monotonic()
+            try:
+                native.open_worker_stream(
+                    socket_path,
+                    "a" * 64,
+                    "gemini-test",
+                    "turn-hang-diag",
+                    {"model": "gemini-test", "contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+                    startup_timeout=2,
+                    turn_timeout=5,
+                    diagnostic=sdiag,
+                )
+            except native.NativeFailure as err:
+                elapsed = time.monotonic() - t0
+                assert (err.code, err.status) == ("gemini_account_verification_required", 403), (
+                    err.code,
+                    err.status,
+                )
+                assert elapsed < 1.5, f"expected fast-fail <1.5s, took {elapsed:.2f}s"
+                assert "turn-hang-diag" in cancelled_requests, cancelled_requests
+            else:
+                raise AssertionError("expected NativeFailure for turn-hang-diag")
+            emitter.join(timeout=2)
+
+            # Already-latched diagnostic fails immediately before opening any HTTP stream.
+            t1 = time.monotonic()
+            try:
+                native.open_worker_stream(
+                    socket_path,
+                    "a" * 64,
+                    "gemini-test",
+                    "turn-stream-01",
+                    {"model": "gemini-test", "contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+                    startup_timeout=2,
+                    diagnostic=sdiag,
+                )
+            except native.NativeFailure as err:
+                assert (err.code, err.status) == ("gemini_account_verification_required", 403)
+                assert time.monotonic() - t1 < 0.5
+            else:
+                raise AssertionError("expected immediate NativeFailure for latched diagnostic")
+        finally:
+            sdiag.close()
     server.shutdown()
     server.server_close()
     thread.join(timeout=2)
@@ -277,6 +348,8 @@ try:
     fake_host = host_mod.Host.__new__(host_mod.Host)
     fake_host.lock = threading.Lock()
     fake_host.native_sessions = {}
+    fake_host.runtime_policy = {"accounts_per_daemon": 1}
+    fake_host.payload_mode = "legacy_release"
 
     class FakeDiag:
         def poll(self, *, final=False):
@@ -360,6 +433,12 @@ with tempfile.TemporaryDirectory(prefix="gemini-multiproc-host-") as mp_tmp:
     mp_host.terminals = {}
     mp_host.runs = {}
     mp_host.native_sessions = {}
+    mp_host.daemon_shards = {}
+    mp_host._shard_locks = {}
+    mp_host._shard_faults = {}
+    mp_host._account_shard_map = {}
+    mp_host._runtime_proxies = {}
+    mp_host.runtime_policy = {"accounts_per_daemon": 1}
     mp_host._session_locks = {}
     mp_host.active_infers = {}
     mp_host.last_inference = {}
@@ -447,6 +526,73 @@ with tempfile.TemporaryDirectory(prefix="gemini-multiproc-host-") as mp_tmp:
         assert mp_host.active_infers[mp_env_id]["req-slot-3"]["cancel_event"].is_set() is True
         assert mp_host.active_infers[mp_env_id]["req-slot-0"]["cancel_event"].is_set() is False
         assert mp_host.cancel_infer(mp_env_id, "req-missing") is False
+
+        # _extract_native_turn_body defense-in-depth minimal CRAGGemini whitelist checks
+        cleaned = host_mod.Host._extract_native_turn_body(
+            "gemini-test",
+            {
+                "model": "ignored-model",
+                "stream": True,
+                "system_instruction": {"parts": [{"text": "sys"}]},
+                "conversationId": "conv_py_1",
+                "safetySettings": [{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"}],
+                "cachedContent": "cachedContents/x",
+                "generationConfig": {
+                    "temperature": 0.5,
+                    "maxOutputTokens": 512,
+                    "thinkingConfig": {"thinkingBudget": 1024},
+                    "imageConfig": {"aspectRatio": "99:99", "imageSize": "8K"},
+                },
+                "tools": [
+                    {"functionDeclarations": [{"name": "get_weather"}]},
+                    {"googleSearch": {}},
+                    {"codeExecution": {}},
+                ],
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": "hi"},
+                            {"fileData": {"mimeType": "application/pdf", "fileUri": "https://example.test/a.pdf"}},
+                        ],
+                    },
+                    {
+                        "role": "model",
+                        "parts": [
+                            {"thought": True, "text": "hidden"},
+                            {"text": "ok", "thoughtSignature": "skip_thought_signature_validator"},
+                        ],
+                    },
+                ],
+            },
+        )
+        assert cleaned is not None
+        assert set(cleaned.keys()) == {"model", "contents", "systemInstruction", "tools", "conversation_id"}, cleaned.keys()
+        assert cleaned["model"] == "gemini-test"
+        assert cleaned["conversation_id"] == "conv_py_1"
+        assert "generationConfig" not in cleaned
+        assert cleaned["tools"] == [{"functionDeclarations": [{"name": "get_weather"}]}, {"googleSearch": {}}]
+        assert cleaned["contents"][0]["parts"][1] == {"text": "[Attached application/pdf: https://example.test/a.pdf]"}
+        assert cleaned["contents"][1]["parts"] == [{"text": "ok"}]
+
+        # Valid image generationConfig is preserved while non-image params are stripped
+        img_cleaned = host_mod.Host._extract_native_turn_body(
+            "gemini-test",
+            {
+                "contents": [{"role": "user", "parts": [{"text": "draw"}]}],
+                "generationConfig": {
+                    "temperature": 0.9,
+                    "responseModalities": ["TEXT", "IMAGE"],
+                    "imageConfig": {"aspectRatio": "16:9", "imageSize": "2K"},
+                    "candidateCount": 2,
+                },
+            },
+        )
+        assert img_cleaned["generationConfig"] == {
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {"aspectRatio": "16:9", "imageSize": "2K"},
+            "candidateCount": 2,
+        }
     finally:
         host_mod.profile_secrets = orig_secrets
 

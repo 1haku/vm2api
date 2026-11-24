@@ -133,6 +133,7 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
 export const CLIENT_POOL_BUSY_MESSAGE = '号池负载过高，稍后再试'
 export const CLIENT_POOL_UNAVAILABLE_MESSAGE = '号池当前没有可用账号'
 export const CLIENT_POOL_RATE_LIMITED_MESSAGE = '号池账号均被上游限流，稍后再试'
+export const CLIENT_POOL_FABLE_RATE_LIMITED_MESSAGE = '号池中暂无可用 Fable 额度，请等待额度重置'
 
 /**
  * Capacity: every eligible seat stayed busy until the bounded wait ran out, the
@@ -280,6 +281,7 @@ export function makeRefusalGuardError({
  */
 export function poolErrorKind(code, message = '') {
   const key = String(code || '').trim()
+  if (key === 'pool_fable_rate_limited') return 'fable_rate_limited'
   if (POOL_OVERLOADED_CODES.has(key)) return 'overloaded'
   if (POOL_RATE_LIMITED_CODES.has(key)) return 'rate_limited'
   if (POOL_UNAVAILABLE_CODES.has(key)) return 'unavailable'
@@ -303,12 +305,13 @@ function poolClientError(kind) {
       retryAfterSec: 1,
     }
   }
-  if (kind === 'rate_limited') {
+  if (kind === 'rate_limited' || kind === 'fable_rate_limited') {
     return {
       ...makeError({
         type: ErrorType.RATE_LIMIT,
         code: ErrorCode.UPSTREAM_RATE_LIMIT,
-        message: CLIENT_POOL_RATE_LIMITED_MESSAGE,
+        message:
+          kind === 'fable_rate_limited' ? CLIENT_POOL_FABLE_RATE_LIMITED_MESSAGE : CLIENT_POOL_RATE_LIMITED_MESSAGE,
         status: 429,
       }),
       // The caller raises it to the earliest rate-limit reset.
@@ -523,17 +526,47 @@ export function incompleteAssistantClientError(result = {}) {
  * reached the client (#1215). Capacity errors are excluded on purpose: a 429/529
  * carries the panel's own Retry-After and a client is meant to come back.
  */
+const PARTIAL_CONTINUATION_DETAIL_KEYS = [
+  'prior_reason',
+  'interrupted_at',
+  'retry_after_sec',
+  'recovery_attempts',
+  'max_recoveries',
+  'recovery_exhausted',
+]
+
+function partialContinuationRelayDetails(body) {
+  const src = body?.error?.details
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return {}
+  const picked = {}
+  for (const key of PARTIAL_CONTINUATION_DETAIL_KEYS) {
+    const value = src[key]
+    if (
+      typeof value === 'string' ||
+      (typeof value === 'number' && Number.isFinite(value)) ||
+      typeof value === 'boolean'
+    ) {
+      picked[key] = value
+    }
+  }
+  return picked
+}
+
 function terminalRelayDetails(status, body) {
+  // CRAG names a submission whose partial output cannot be replayed with this
+  // exact type. The verdict is the kernel's own, so the 409 carrying it is as
+  // terminal as a 410 even when the body omits the flag (#1518). Forward safe
+  // diagnostic metadata (cooldown, prior reason, recovery budget) while keeping
+  // retryable: false so SDK auto-retries stay disabled. Other 409s stay
+  // untouched: a conflict the panel has not declared terminal may well clear.
+  if (status === 409 && body?.error?.type === 'partial_provider_output_nonretryable') {
+    return { ...partialContinuationRelayDetails(body), retryable: false }
+  }
   if (body?.error?.details?.retryable === false) return { retryable: false }
   // 410 Gone is terminal by definition. An expired tool continuation cannot be
   // revived, so every retry of the same hop can only answer 410 again; saying so
   // does not infer *why* it expired, which stays the kernel's to report.
   if (status === 410) return { retryable: false }
-  // CRAG names a submission whose partial output cannot be replayed with this
-  // exact type. The verdict is the kernel's own, so the 409 carrying it is as
-  // terminal as a 410 even when the body omits the flag (#1518). Other 409s stay
-  // untouched: a conflict the panel has not declared terminal may well clear.
-  if (status === 409 && body?.error?.type === 'partial_provider_output_nonretryable') return { retryable: false }
   return {}
 }
 
@@ -547,6 +580,7 @@ export function mapUpstreamError(status, body, headers = {}) {
       'classifier_invalid_cache',
       'invalid_request_context',
       'invalid_kernel_request',
+      'unsupported_capability',
       'thinking_incompatible',
       ErrorCode.IMAGE_TOO_LARGE,
     ].includes(inboundCode)
@@ -556,10 +590,12 @@ export function mapUpstreamError(status, body, headers = {}) {
       code: inboundCode,
       message: body.error.message,
       status: 400,
-      ...(['thinking_incompatible', ErrorCode.IMAGE_TOO_LARGE].includes(inboundCode) && body?.error?.param
+      ...(['thinking_incompatible', 'unsupported_capability', ErrorCode.IMAGE_TOO_LARGE].includes(inboundCode) &&
+      body?.error?.param
         ? { param: body.error.param }
         : {}),
-      ...(['thinking_incompatible', ErrorCode.IMAGE_TOO_LARGE].includes(inboundCode) && body?.error?.details
+      ...(['thinking_incompatible', 'unsupported_capability', ErrorCode.IMAGE_TOO_LARGE].includes(inboundCode) &&
+      body?.error?.details
         ? { details: body.error.details }
         : {}),
     })
@@ -785,8 +821,8 @@ export function mapUpstreamError(status, body, headers = {}) {
       message: String(msg),
       status:
         (inboundCode === ErrorCode.UPSTREAM_INVALID || upType === 'invalid_request_error') &&
-          status >= 400 &&
-          status < 500
+        status >= 400 &&
+        status < 500
           ? status
           : 400,
       param: body?.error?.param || undefined,

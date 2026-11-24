@@ -466,6 +466,37 @@ test('a terminal upstream verdict survives the relay so clients stop retrying (#
     assert.equal(nonretryable.body.error.details.retryable, false)
   }
 
+  // Safe diagnostic metadata from CRAG's partial-continuation 409 is preserved
+  // while unknown/nested fields are dropped and retryable stays false.
+  const detailedPartial = mapUpstreamError(409, {
+    error: {
+      type: 'partial_provider_output_nonretryable',
+      message:
+        'Provider output for this continuation was interrupted and cannot be replayed immediately. Wait 20s before retrying.',
+      details: {
+        retryable: true,
+        prior_reason: 'client_cancelled',
+        interrupted_at: 1795495209,
+        retry_after_sec: 20,
+        recovery_attempts: 1,
+        max_recoveries: 2,
+        recovery_exhausted: false,
+        internal_secret: 'must_not_leak',
+        nested: { nope: true },
+      },
+    },
+  })
+  assert.equal(detailedPartial.status, 409)
+  assert.equal(detailedPartial.body.error.details.retryable, false)
+  assert.equal(detailedPartial.body.error.details.prior_reason, 'client_cancelled')
+  assert.equal(detailedPartial.body.error.details.interrupted_at, 1795495209)
+  assert.equal(detailedPartial.body.error.details.retry_after_sec, 20)
+  assert.equal(detailedPartial.body.error.details.recovery_attempts, 1)
+  assert.equal(detailedPartial.body.error.details.max_recoveries, 2)
+  assert.equal(detailedPartial.body.error.details.recovery_exhausted, false)
+  assert.equal(detailedPartial.body.error.details.internal_secret, undefined)
+  assert.equal(detailedPartial.body.error.details.nested, undefined)
+
   // Capacity errors keep the panel's own Retry-After policy: a client must still
   // retry a 429/529, so no terminal hint is attached there.
   const limited = mapUpstreamError(429, {
@@ -496,6 +527,15 @@ test('pool-wide cooldowns: 529 overload cooldown is capacity, 429 cooldown is a 
   assert.equal(limited.status, 429)
   assert.equal(limited.body.error.type, 'rate_limit_error')
   assert.equal(limited.body.error.code, 'upstream_rate_limit')
+  assert.ok(limited.retryAfterSec >= 1)
+})
+
+test('Fable pool quota keeps its 429 and model-specific message at the client boundary', () => {
+  const limited = rewritePoolErrorForClient(null, { error: { code: 'pool_fable_rate_limited' } })
+  assert.equal(limited.status, 429)
+  assert.equal(limited.body.error.type, 'rate_limit_error')
+  assert.equal(limited.body.error.code, 'upstream_rate_limit')
+  assert.match(limited.body.error.message, /Fable/)
   assert.ok(limited.retryAfterSec >= 1)
 })
 

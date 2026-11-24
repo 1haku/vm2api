@@ -1,12 +1,24 @@
 import { SubscriptionsRepo, subscriptionError } from '../db/repos/subscriptions-repo.mjs'
+import { keyTierPolicyFromRecord } from './key-scope.mjs'
+import { PLATFORM_SCOPE } from './resource-owner.mjs'
 import { detectInboundPlatform } from '../protocol/platform-detect.mjs'
 import { isUpstreamRefusal } from '../core/refusal-guard.mjs'
 
 // Server-owned state: never inferred from caller headers or body flags.
 export const subscriptionRoute = Symbol('subscriptionRoute')
 
-export function subscriptionApiOptions(sub) {
+export function keyUsesSubscription(key, db) {
+  return Boolean(key && db && new SubscriptionsRepo(db).group(key.group_id ?? 1)?.subscription_enabled)
+}
+
+export function subscriptionApiOptions(sub, key = null) {
+  const policy = keyTierPolicyFromRecord(key)
+  const owner = policy.owner_id || (policy.permission_tier === 'tenant' ? key?.user_id : null)
   return {
+    endpointId: policy.api_endpoint_id,
+    allowedEndpointIds:
+      policy.permission_tier === 'resource' || policy.allowed_endpoints.length ? policy.allowed_endpoints : null,
+    ownerScope: owner ? { type: 'user', userId: owner } : PLATFORM_SCOPE,
     groupType: sub.group.platform === 'openai' ? 'openai' : 'anthropic',
     endpointBindings: sub.apiEndpoints,
     allowedModels: JSON.parse(sub.group.resource_models || '[]'),
@@ -16,7 +28,7 @@ export function subscriptionApiOptions(sub) {
 export function selectSubscriptionResource(req, db, scheduler, model, { forceApi = false } = {}) {
   const sub = req.apiKeyRecord && db ? new SubscriptionsRepo(db).entitlement(req.apiKeyRecord) : null
   if (!sub) return null
-  const options = subscriptionApiOptions(sub)
+  const options = subscriptionApiOptions(sub, req.apiKeyRecord)
   if (options.allowedModels.length && !options.allowedModels.includes(model))
     throw subscriptionError('此模型不在套餐授权范围内', 403, 'subscription_model_forbidden')
   const platform = detectInboundPlatform(model)

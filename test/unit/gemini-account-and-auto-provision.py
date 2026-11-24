@@ -61,7 +61,17 @@ def test_account_antigravity_ua_and_auto_onboard():
             assert body == {"project": "proj-onboarded-1"}
             return 200, {
                 "models": {
-                    "gemini-3-pro": {"quotaInfo": {"remainingFraction": 0.8, "resetTime": "2030-01-01T00:00:00Z"}}
+                    "gemini-3-pro": {
+                        "modelProvider": "MODEL_PROVIDER_GOOGLE",
+                        "quotaInfo": {"remainingFraction": 0.8, "resetTime": "2030-01-01T00:00:00Z"},
+                    },
+                    "claude-sonnet-4-6-high": {
+                        "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+                        "quotaInfo": {"remainingFraction": 0.6, "resetTime": "2030-01-01T00:00:00Z"},
+                    },
+                    "gpt-oss-120b-medium": {
+                        "modelProvider": "MODEL_PROVIDER_OPENAI",
+                    },
                 }
             }
         if url.endswith("retrieveUserQuotaSummary"):
@@ -88,8 +98,13 @@ def test_account_antigravity_ua_and_auto_onboard():
     assert result["email"] == "fresh@example.test"
     assert result["project_id"] == "proj-onboarded-1"
     assert result["plan"] == "Google AI Pro"
-    assert result["models"] == ["gemini-3-pro"]
-    assert len(result["quotas"]) == 1
+    assert result["models"] == ["claude-sonnet-4-6-high", "gemini-3-pro", "gpt-oss-120b-medium"]
+    assert result["model_catalog"] == [
+        {"id": "claude-sonnet-4-6-high", "provider": "anthropic", "quota_group": "3p"},
+        {"id": "gemini-3-pro", "provider": "google", "quota_group": "gemini"},
+        {"id": "gpt-oss-120b-medium", "provider": "openai", "quota_group": "3p"},
+    ]
+    assert len(result["quotas"]) == 2
     assert len(result["quota_groups"]) == 1
     assert result["credits"] == [{"type": "GOOGLE_ONE_AI", "amount": "1000"}]
     assert any(url.endswith("onboardUser") for url, _, _ in calls)
@@ -129,6 +144,20 @@ def test_account_skips_onboard_when_validation_required():
     assert result["validation_url"] == valid_url
     assert not any(url.endswith("onboardUser") for url in calls)
     assert account_mod.safe_google_validation_url("https://evil.example/phish") is None
+
+    # Active paidTier / currentTier accounts must NOT be flagged by other ineligibleTiers entries.
+    assert account_mod.parse_ineligibility(
+        {
+            "currentTier": {"id": "free-tier", "name": "Google AI Standard"},
+            "ineligibleTiers": [
+                {
+                    "reasonCode": "VALIDATION_REQUIRED",
+                    "tierId": "enterprise-tier",
+                    "validationUrl": valid_url,
+                }
+            ],
+        }
+    ) == (None, None)
 
 
 def test_realistic_login_settlement_hostname_and_headless_device_inheritance():
