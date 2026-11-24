@@ -52,6 +52,7 @@ test('risk-audit and request-level codes never change the slot state', () => {
     'usage_policy_refusal',
     ErrorCode.THIRD_PARTY_CLIENT,
     'invalid_request',
+    'thinking_incompatible',
     'entitlement_required',
     'signature_repairable',
     'http_404',
