@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
+import { cragV2Arch } from '../../src/lib/vm/wrap-cli-runtime.mjs'
 import { seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 
 const GiB = 1024 ** 3
@@ -47,7 +48,7 @@ function withProject(fn, { packages = true } = {}) {
   return async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-place-'))
     try {
-      if (packages && process.platform === 'linux' && process.arch === 'x64') {
+      if (packages && process.platform === 'linux' && cragV2Arch() === 'amd64') {
         const wrap = path.join(root, 'share/wrap-cli')
         fs.mkdirSync(wrap, { recursive: true })
         for (const file of ['kin-kernel.bin', 'cli-node']) fs.writeFileSync(path.join(wrap, file), 'fixture')
@@ -131,7 +132,7 @@ test(
 )
 
 test('auto placement releases its reservation when required packages are missing', async (t) => {
-  if (process.platform !== 'linux' || process.arch !== 'x64') return t.skip('requires Linux amd64')
+  if (process.platform !== 'linux' || cragV2Arch() !== 'amd64') return t.skip('requires Linux amd64')
   await withProject(
     async (root) => {
       let released = 0

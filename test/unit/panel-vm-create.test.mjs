@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createPanelHandler } from '../../src/lib/admin/panel-routes.mjs'
 import { ProxyPool } from '../../src/lib/vm/proxy-pool.mjs'
-import { verifyCragV2Tree } from '../../src/lib/vm/wrap-cli-runtime.mjs'
+import { cragV2Arch, verifyCragV2Tree } from '../../src/lib/vm/wrap-cli-runtime.mjs'
 import { seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 
 function makeCreateHandler(project, body, proxyPool, accountQuota, extra = {}) {
@@ -393,7 +393,7 @@ test('create kvm persists runtime and preinstalls original Claude Code when prob
 })
 
 test('both Anthropic choices install both packages with a cold standard wrapper', {
-  skip: process.platform !== 'linux' || process.arch !== 'x64',
+  skip: process.platform !== 'linux' || cragV2Arch() !== 'amd64',
 }, async (t) => {
   for (const dataplane of [undefined, 'crag']) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-crag-'))
@@ -425,7 +425,7 @@ test('both Anthropic choices install both packages with a cold standard wrapper'
 })
 
 test('create rejects missing required packages before persisting a slot', {
-  skip: process.platform !== 'linux' || process.arch !== 'x64',
+  skip: process.platform !== 'linux' || cragV2Arch() !== 'amd64',
 }, async (t) => {
   for (const [missing, code] of [
     ['wrap', 'kernel_package_missing'],
@@ -536,10 +536,16 @@ test('GET /vms/create-options is available to a tenant user', async () => {
   assert.deepEqual(response.body.data.kvm, { ok: true, accel: 'tcg', error: null })
 })
 
-// Upstream only preinstalls both kernels on native Linux x64 placements.
-test('ARM control rejects native CRAG selection and keeps standard slots independent', {
+// Native ARM slots do not consume the AMD64 CRAG package.
+test('native ARM slots reject CRAG selection and keep standard slots independent', {
   skip: process.arch !== 'arm64',
 }, async (t) => {
+  const previous = process.env.DOCKER_DEFAULT_PLATFORM
+  process.env.DOCKER_DEFAULT_PLATFORM = 'linux/arm64'
+  t.after(() => {
+    if (previous === undefined) delete process.env.DOCKER_DEFAULT_PLATFORM
+    else process.env.DOCKER_DEFAULT_PLATFORM = previous
+  })
   for (const dataplane of ['crag', 'wrap']) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-create-arm-'))
     t.after(() => fs.rmSync(root, { recursive: true, force: true }))
