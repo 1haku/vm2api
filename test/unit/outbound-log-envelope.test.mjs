@@ -837,7 +837,7 @@ for (const stream of [false, true]) {
       assert.match(first.publicBody, /call-issued/)
       assert.match(first.publicBody, /"caller":\{"type":"direct"\}/)
       assert.equal(first.extra.official_cc_inference, 'crag-print')
-      assert.notEqual(JSON.parse(first.envelope.body.metadata.user_id).session_id, session)
+      assert.equal(first.envelope.body.metadata, undefined)
       const echo = stream
         ? { type: 'tool_use', id: 'client-id', name: 'lookup', input: { term: 'item' } }
         : { type: 'tool_use', id: tool.id, name: 'changed', input: { term: 'wrong' } }
@@ -849,10 +849,8 @@ for (const stream of [false, true]) {
       }
       const { envelope } = await fixture.send(continuation)
       const history = envelope.body.messages.flatMap((m) => m.content)
-      assert.deepEqual(
-        history.find((b) => b.type === 'tool_use'),
-        tool,
-      )
+      const { extension: _extension, ...allowedTool } = tool
+      assert.deepEqual(history.find((b) => b.type === 'tool_use'), allowedTool)
       assert.deepEqual(
         history.find((b) => b.type === 'tool_result'),
         { ...result, tool_use_id: tool.id },
