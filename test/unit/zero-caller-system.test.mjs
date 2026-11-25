@@ -43,7 +43,7 @@ test('zero retains caller system text and whitespace at system priority', () => 
   assert.deepEqual(out.messages, base.messages)
 })
 
-test('zero preserves system block order, metadata and explicit or implicit cache TTL', () => {
+test('zero preserves system block order, metadata and legal cache TTL order', () => {
   const system = [
     { type: 'text', text: 'First rule.', cache_control: { type: 'ephemeral', ttl: '1h' } },
     { type: 'text', text: 'Second rule.', cache_control: { type: 'ephemeral', ttl: '5m' } },
@@ -52,7 +52,9 @@ test('zero preserves system block order, metadata and explicit or implicit cache
   ]
   const before = structuredClone(system)
   const out = prepareCliHopBody(render(system), { cacheTtl: '1h' })
-  assert.deepEqual(out.system.slice(1), before)
+  const expected = structuredClone(before)
+  expected[2].cache_control.ttl = '5m'
+  assert.deepEqual(out.system.slice(1), expected)
   assert.deepEqual(system, before)
   assert.deepEqual(out.messages, [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
   validateCacheBreakpoints(out)
