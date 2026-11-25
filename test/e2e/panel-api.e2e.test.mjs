@@ -528,7 +528,7 @@ test('global engine PUT restores routing when persistence fails', async () => {
       body: { inference: { engine: targetEngine } },
     })
     assert.equal(update.status, 503, update.text)
-    assert.equal(update.json.error.code, 'routing_persist_failed')
+    assert.equal(update.json.error.code, 'EISDIR')
 
     const after = await api(gw, 'GET', '/api/panel/routing')
     assert.equal(after.status, 200, after.text)

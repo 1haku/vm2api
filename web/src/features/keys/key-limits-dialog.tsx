@@ -5,6 +5,7 @@ import type { ApiKeyItem, VmPool } from '@/types/panel-keys'
 import type { Vm } from '@/types/panel-vm'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
+import { slotDisplayTitle, slotRawEmail } from '@/lib/vm-kind'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -137,8 +138,15 @@ export function KeyLimitsDialog({
       setDraft({
         name: initial.name || '',
         group_id: initial.group_id,
-        category: initial.category === 'api' ? 'api' : 'oauth',
+        category:
+          initial.category === 'api'
+            ? 'api'
+            : initial.category === 'all'
+              ? 'all'
+              : 'oauth',
         api_endpoint_id: initial.api_endpoint_id || '',
+        permission_tier: initial.permission_tier,
+        owner_id: initial.owner_id,
         max_concurrency: Number(initial.max_concurrency ?? 20),
         quota_requests: Number(initial.quota_requests ?? 0),
         quota_usd: Number(initial.quota_usd ?? 0),
@@ -240,37 +248,44 @@ export function KeyLimitsDialog({
               />
             </Field>
           ) : null}
-          <Field label='分类'>
-            <Select
-              value={draft.category}
-              onValueChange={(v) =>
-                setDraft((d) => ({
-                  ...d,
-                  category: v === 'api' ? 'api' : 'oauth',
-                  api_endpoint_id: v === 'api' ? d.api_endpoint_id : '',
-                  group_type:
-                    v === 'api' &&
-                    (d.group_type === 'pool' || d.group_type === 'gemini')
-                      ? 'all'
-                      : d.group_type,
-                  allowed_vms: v === 'api' ? [] : d.allowed_vms,
-                  vm_pool_id: v === 'api' ? '' : d.vm_pool_id,
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='oauth'>
-                  {isSubscription ? '订阅资源（自动选择）' : 'OAuth 槽位'}
-                </SelectItem>
-                {user?.role === 'admin' && !draft.group_id && (
+          {isSubscription ? (
+            <Field label='分类'>
+              <p className='py-2 text-sm text-muted-foreground'>订阅资源（自动选择）</p>
+            </Field>
+          ) : pools ? (
+            <Field label='分类'>
+              <Select
+                value={draft.category}
+                onValueChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    category:
+                      v === 'api' ? 'api' : v === 'all' ? 'all' : 'oauth',
+                    api_endpoint_id:
+                      v === 'api' || v === 'all' ? d.api_endpoint_id : '',
+                    group_type:
+                      v === 'api' &&
+                      (d.group_type === 'pool' || d.group_type === 'gemini')
+                        ? 'all'
+                        : d.group_type,
+                    allowed_vms: v === 'api' ? [] : d.allowed_vms,
+                    vm_pool_id: v === 'api' ? '' : d.vm_pool_id,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='oauth'>OAuth 槽位</SelectItem>
                   <SelectItem value='api'>API 直连</SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-          </Field>
+                  {draft.category === 'all' || initial?.category === 'all' ? (
+                    <SelectItem value='all'>全部（OAuth + API）</SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
           <Field label='并发'>
             <NumSelect
               kind='conc'
@@ -511,8 +526,8 @@ export function KeyLimitsDialog({
                                   }))
                                 }}
                               />
-                              <span className='truncate'>
-                                {vm.name || vm.email || vm.id}
+                              <span className='truncate' title={slotRawEmail(vm) || vm.name || vm.id}>
+                                {slotDisplayTitle(vm)}
                               </span>
                               <span className='font-mono text-xs text-muted-foreground'>
                                 {vm.id}

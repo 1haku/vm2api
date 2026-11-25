@@ -23,6 +23,8 @@ RUN cd worker && go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/kin
     && CGO_ENABLED=0 GOARCH=amd64 go build -buildvcs=false -trimpath -o /out/amd64/kin-slot-gate ./cmd/kin-slot-gate \
     && cd ../api-kernel && go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/kin-api-kernel ./cmd/kin-api-kernel \
     && cd ../redact && go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/kin-redact ./cmd/kin-redact
+COPY protofront/ ./protofront/
+RUN cd protofront && go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/kin-proto-front ./cmd/kin-proto-front
 
 FROM --platform=linux/arm64 ${NODE_IMAGE} AS web
 RUN npm install -g pnpm@10
@@ -90,7 +92,7 @@ RUN mkdir -p /usr/lib64 \
     && { test -e /lib64 || ln -s usr/lib64 /lib64; }
 COPY deploy/check-x86-deps.py ./deploy/check-x86-deps.py
 # The standard entrypoint refreshes bind-mounted helpers from image-bin on boot.
-COPY --from=helpers /out/kin-egress /out/kin-worker /out/kin-api-kernel /out/kin-redact /opt/vm2api/image-bin/
+COPY --from=helpers /out/kin-egress /out/kin-worker /out/kin-api-kernel /out/kin-redact /out/kin-proto-front /opt/vm2api/image-bin/
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
     /opt/vm2api/image-wrap-cli/cli-node \

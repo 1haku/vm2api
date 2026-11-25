@@ -464,7 +464,7 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
   })
   assert.equal(Object.hasOwn(envelope, 'headers'), false)
   assert.equal(extra.worker_envelope_headers, null)
-  assert.deepEqual(envelope.body.tools, tools)
+  assert.deepEqual(envelope.body.tools, tools.map((tool) => ({ ...tool, eager_input_streaming: true })))
   assert.deepEqual(envelope.body.system, system)
   assert.equal(envelope.body.crag_prompt, undefined)
   const expectedMessages = structuredClone(messages)

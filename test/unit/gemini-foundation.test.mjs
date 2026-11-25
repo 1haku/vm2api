@@ -760,7 +760,7 @@ test('Google Gemini native auth headers (x-goog-api-key and /v1beta ?key=) extra
   assert.match(redacted, /key=\*\*\*REDACTED\*\*\*/)
 })
 
-test('Google account verification ineligibility returns 403 without tripping circuit breaker', async () => {
+test('Google account verification ineligibility returns 403 and counts toward circuit breaker', async () => {
   const tracker = makeCircuitTracker()
   const scheduler = createGeminiScheduler({
     callHost: async (op) => {
@@ -802,8 +802,109 @@ test('Google account verification ineligibility returns 403 without tripping cir
   )
   assert.equal(res.statusCode, 403)
   assert.equal(res.jsonBody().error.code, 'gemini_account_verification_required')
-  assert.equal(tracker.calls.failure.length, 0)
+  assert.equal(tracker.calls.failure.length, 1)
+  assert.equal(tracker.calls.probe.length, 0)
+})
+
+test('Gemini upstream 400 counts toward circuit breaker without failover while local unsupported turn and license 403 do not', async () => {
+  const tracker = makeCircuitTracker()
+  let mode = 'http400'
+  let inferCalls = 0
+  const scheduler = createGeminiScheduler({
+    callHost: async (op, input) => {
+      if (op === 'list') {
+        return {
+          payload_state: 'installed',
+          environments: [
+            {
+              id: 'env-a',
+              proxy_id: 'proxy-1',
+              auth_state: 'authorized',
+              auth_method: 'oauth',
+              models_discovered: true,
+              models: ['gemini-3-flash'],
+              capabilities: [...NATIVE_TUI_CAPABILITIES],
+            },
+            {
+              id: 'env-b',
+              proxy_id: 'proxy-1',
+              auth_state: 'authorized',
+              auth_method: 'oauth',
+              models_discovered: true,
+              models: ['gemini-3-flash'],
+              capabilities: [...NATIVE_TUI_CAPABILITIES],
+            },
+          ],
+        }
+      }
+      if (op === 'get') return { id: input.id, proxy_id: 'proxy-1', auth_method: 'oauth' }
+      throw new Error(`unexpected op: ${op}`)
+    },
+    callHostStream: async () => {
+      inferCalls += 1
+      if (mode === 'http400') {
+        return sseResponse([JSON.stringify({ code: 'gemini_invalid_request', message: 'bad upstream request' })], {
+          statusCode: 400,
+          contentType: 'application/json',
+        })
+      }
+      if (mode === 'unsupported') {
+        return sseResponse([JSON.stringify({ code: 'gemini_unsupported_turn' })], {
+          statusCode: 400,
+          contentType: 'application/json',
+        })
+      }
+      return sseResponse([JSON.stringify({ code: 'license_required' })], {
+        statusCode: 403,
+        contentType: 'application/json',
+      })
+    },
+    resolveProxy: () => 'socks5h://1.2.3.4:1080',
+    poolScheduler: tracker,
+  })
+  const handler = createGeminiPublicHandler({ json: jsonResponder, readBody: async () => ({}), scheduler })
+
+  // 1. Upstream 400 returns 400 without failover and records circuit failure.
+  const res400 = makeRes()
+  await handler(
+    makeReq({
+      url: '/v1/chat/completions',
+      body: { model: 'gemini-3-flash', messages: [{ role: 'user', content: 'hello' }] },
+    }),
+    res400,
+  )
+  assert.equal(res400.statusCode, 400)
+  assert.equal(res400.jsonBody().error.code, 'gemini_invalid_request')
+  assert.equal(inferCalls, 1)
+  assert.equal(tracker.calls.failure.length, 1)
+
+  // 2. Local unsupported turn 400 does NOT record circuit failure.
+  mode = 'unsupported'
+  const resUnsupported = makeRes()
+  await handler(
+    makeReq({
+      url: '/v1/chat/completions',
+      body: { model: 'gemini-3-flash', messages: [{ role: 'user', content: 'hello' }] },
+    }),
+    resUnsupported,
+  )
+  assert.equal(resUnsupported.statusCode, 400)
+  assert.equal(tracker.calls.failure.length, 1)
   assert.equal(tracker.calls.probe.length, 1)
+
+  // 3. Local license 403 does NOT record circuit failure.
+  mode = 'license'
+  const resLicense = makeRes()
+  await handler(
+    makeReq({
+      url: '/v1/chat/completions',
+      body: { model: 'gemini-3-flash', messages: [{ role: 'user', content: 'hello' }] },
+    }),
+    resLicense,
+  )
+  assert.equal(resLicense.statusCode, 403)
+  assert.equal(tracker.calls.failure.length, 1)
+  assert.equal(tracker.calls.probe.length, 2)
 })
 
 test('Gemini public ports support /v1 native generateContent, single-model GET, /v1/models ?key= auth, and CORS headers', async () => {
@@ -2077,4 +2178,853 @@ test('Gemini scheduler fails over pre-output 502/504, falls back to reactive-coo
     'must try uncooled env-b first, then fall back to reactive-cooled env-a, never touching 0% env-zero',
   )
   assert.equal(t4.attempts[1].selection_reason, 'cooldown_fallback')
+})
+
+test('429 failover: pre-content SSE meta/start error switches accounts, preserves earliest-expiry order in all_cooled_probe, honors retry_after_ms, and scopes cooldown per model', async () => {
+  let clock = 1_750_000_000_000
+  const envs = [
+    {
+      id: 'env-a',
+      proxy_id: 'px-a',
+      auth_state: 'authorized',
+      auth_method: 'oauth',
+      models_discovered: true,
+      models: ['gemini-4-neon-xhigh', 'gemini-4-hydrogen-high'],
+      capabilities: [...NATIVE_TUI_CAPABILITIES],
+      account: { state: 'ok', quotas: [], quota_groups: [] },
+    },
+    {
+      id: 'env-b',
+      proxy_id: 'px-b',
+      auth_state: 'authorized',
+      auth_method: 'oauth',
+      models_discovered: true,
+      models: ['gemini-4-neon-xhigh', 'gemini-4-hydrogen-high'],
+      capabilities: [...NATIVE_TUI_CAPABILITIES],
+      account: { state: 'ok', quotas: [], quota_groups: [] },
+    },
+    {
+      id: 'env-c',
+      proxy_id: 'px-c',
+      auth_state: 'authorized',
+      auth_method: 'oauth',
+      models_discovered: true,
+      models: ['gemini-4-neon-xhigh', 'gemini-4-hydrogen-high'],
+      capabilities: [...NATIVE_TUI_CAPABILITIES],
+      account: { state: 'ok', quotas: [], quota_groups: [] },
+    },
+  ]
+
+  // Pool scheduler with biased lastUsed (env-c used most recently, env-a never used)
+  const tracker = makeCircuitTracker()
+  tracker.lastUsed.set('gemini:env-c', clock - 1_000)
+  tracker.lastUsed.set('gemini:env-b', clock - 2_000)
+  tracker.lastUsed.set('gemini:env-a', 0)
+  tracker.reserveExternalCandidates = (candidates, { excluded }) => {
+    const avail = candidates
+      .filter((c) => !excluded.has(c.accountId))
+      .sort(
+        (l, r) =>
+          (tracker.lastUsed.get(l.accountId) || 0) - (tracker.lastUsed.get(r.accountId) || 0) ||
+          l.accountId.localeCompare(r.accountId),
+      )
+    return avail[0] ? { selected: avail[0], reservation: { release() {} } } : null
+  }
+
+  let mode = 'preContentSse429OnA'
+  const calls = []
+  const scheduler = createGeminiScheduler({
+    now: () => clock,
+    quotaCooldownMs: 60_000,
+    poolScheduler: tracker,
+    callHost: async (op, payload) => {
+      if (op === 'list') return { payload_state: 'installed', environments: envs }
+      if (op === 'get') return envs.find((e) => e.id === payload.id)
+      if (op === 'infer-cancel') return { cancelled: true }
+      throw new Error(`unexpected op ${op}`)
+    },
+    callHostStream: async (_op, payload) => {
+      calls.push({ id: payload.id, model: payload.model })
+      if (mode === 'preContentSse429OnA' && payload.id === 'env-a') {
+        // Upstream emits a metadata-only SSE chunk (triggers decoder `start` + `meta` without any
+        // content bytes written to downstream google.gemini stream) followed by SSE 429 error!
+        return sseResponse([
+          `data: ${JSON.stringify({
+            responseId: 'r-pre-429',
+            modelVersion: 'gemini-4-neon-xhigh',
+            craggeminiMeta: { conversation_id: payload.body?.conversation_id || 'gc_1' },
+            candidates: [],
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'model capacity' },
+          })}\n\n`,
+        ])
+      }
+      if (mode === 'all429WithRetryAfter') {
+        const retryMs = payload.id === 'env-a' ? 90_000 : payload.id === 'env-b' ? 15_000 : 45_000
+        return sseResponse(
+          [JSON.stringify({ code: 'gemini_quota_exhausted', message: '429', retry_after_ms: retryMs })],
+          { statusCode: 429, contentType: 'application/json' },
+        )
+      }
+      if (mode === 'probeOrderCheck') {
+        return sseResponse([JSON.stringify({ code: 'gemini_quota_exhausted', message: 'still 429' })], {
+          statusCode: 429,
+          contentType: 'application/json',
+        })
+      }
+      return sseResponse([
+        `data: ${JSON.stringify({
+          candidates: [
+            { content: { role: 'model', parts: [{ text: `ok-from-${payload.id}` }] }, finishReason: 'STOP' },
+          ],
+        })}\n\n`,
+      ])
+    },
+    resolveProxy: () => 'socks5h://192.0.2.10:1080',
+  })
+
+  const handler = createGeminiPublicHandler({
+    json: jsonResponder,
+    readBody: async () => ({}),
+    scheduler,
+  })
+
+  // 1. Streaming /v1beta/...:streamGenerateContent where env-a emits start+meta then SSE 429 MUST switch to env-b!
+  const res1 = makeRes()
+  await handler(
+    makeReq({
+      url: '/v1beta/models/gemini-4-neon-xhigh:streamGenerateContent',
+      body: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] },
+    }),
+    res1,
+  )
+  assert.equal(res1.statusCode, 200)
+  assert.match(res1.bodyText(), /ok-from-env-b/)
+  assert.deepEqual(
+    calls.map((c) => c.id),
+    ['env-a', 'env-b'],
+    'pre-content start/meta SSE 429 must seamlessly switch from env-a to env-b',
+  )
+
+  // 2. Sibling Gemini model (gemini-4-hydrogen-high) on env-a MUST NOT be poisoned by gemini-4-neon-xhigh 429!
+  const snapAfter429 = scheduler.cooldownSnapshot()
+  assert.equal(Object.keys(snapAfter429.groups).length, 0, 'reactive 429 must not poison entire quota group')
+  assert.ok(snapAfter429.models['env-a:gemini-4-neon-xhigh'] > clock)
+
+  const beforeSibling = calls.length
+  const sibTurn = await scheduler.stream({
+    model: 'gemini-4-hydrogen-high',
+    geminiBody: { contents: [{ role: 'user', parts: [{ text: 'sibling ok' }] }] },
+    apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+  })
+  assert.equal(sibTurn.account_id, 'env-c', 'uncooled env-c/env-a remain eligible for sibling model')
+  assert.equal(calls.length, beforeSibling + 1)
+
+  // 3. When all accounts 429 with distinct retry_after_ms, all_cooled_probe MUST try earliest-expiry first
+  // (env-b @ +15s, then env-c @ +45s, then env-a @ +90s) even when poolScheduler.lastUsed prefers another order!
+  clock += 70_000
+  mode = 'all429WithRetryAfter'
+  await assert.rejects(
+    () =>
+      scheduler.stream({
+        model: 'gemini-4-neon-xhigh',
+        geminiBody: { contents: [{ role: 'user', parts: [{ text: 'cool all' }] }] },
+        apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+      }),
+    (err) => err.code === 'gemini_quota_exhausted' && err.attemptCount === 3,
+  )
+  const snapAll = scheduler.cooldownSnapshot()
+  assert.equal(snapAll.models['env-b:gemini-4-neon-xhigh'], clock + 15_000)
+  assert.equal(snapAll.models['env-c:gemini-4-neon-xhigh'], clock + 45_000)
+  assert.equal(snapAll.models['env-a:gemini-4-neon-xhigh'], clock + 90_000)
+
+  // Bias poolScheduler.lastUsed heavily toward env-a; all_cooled_probe must STILL probe earliest expiry first!
+  tracker.lastUsed.set('gemini:env-a', 1)
+  tracker.lastUsed.set('gemini:env-b', clock + 100)
+  tracker.lastUsed.set('gemini:env-c', clock + 50)
+  clock += 5_000
+  mode = 'probeOrderCheck'
+  const beforeProbe = calls.length
+  await assert.rejects(
+    () =>
+      scheduler.stream({
+        model: 'gemini-4-neon-xhigh',
+        geminiBody: { contents: [{ role: 'user', parts: [{ text: 'probe order' }] }] },
+        apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+      }),
+    (err) => err.code === 'gemini_quota_exhausted' && err.attemptCount === 3,
+  )
+  assert.deepEqual(
+    calls.slice(beforeProbe).map((c) => c.id),
+    ['env-b', 'env-c', 'env-a'],
+    'all_cooled_probe must preserve earliest cooldown expiry order instead of stale lastUsed/alphabetical order',
+  )
+})
+
+test('CRAGGemini gemini-4-carbon-high forwards high thinkingConfig and returns detailed thinking by default across all 4 protocols', async () => {
+  const inferCalls = []
+  const scheduler = createGeminiScheduler({
+    callHost: async (op, payload) => {
+      if (op === 'list') {
+        return {
+          payload_state: 'installed',
+          environments: [
+            {
+              id: 'env-carbon',
+              proxy_id: 'proxy-carbon',
+              auth_state: 'authorized',
+              auth_method: 'oauth',
+              models_discovered: true,
+              // Only untiered `gemini-4-carbon` in catalog: `gemini-4-carbon-high` must resolve and forward `thinkingLevel: 'high'`!
+              models: ['gemini-4-carbon'],
+              capabilities: [...NATIVE_TUI_CAPABILITIES],
+            },
+          ],
+        }
+      }
+      if (op === 'get') return { id: payload.id, proxy_id: 'proxy-carbon', auth_method: 'oauth' }
+      throw new Error(`unexpected op: ${op}`)
+    },
+    callHostStream: async (_op, payload) => {
+      inferCalls.push(payload)
+      return sseResponse([
+        `data: ${JSON.stringify({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{ thought: true, text: 'Detailed agy thinking trace.' }],
+              },
+            },
+          ],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  { thought: true, text: '', thoughtSignature: 'sig_carbon_high_1' },
+                  { text: 'Verified answer.' },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 4,
+            thoughtsTokenCount: 8,
+            totalTokenCount: 22,
+          },
+        })}\n\n`,
+      ])
+    },
+    resolveProxy: () => 'socks5h://1.2.3.4:1080',
+  })
+
+  const handler = createGeminiPublicHandler({
+    json: jsonResponder,
+    readBody: async () => ({}),
+    scheduler,
+  })
+
+  const cases = [
+    {
+      name: 'gemini',
+      url: '/v1beta/models/gemini-4-carbon-high:generateContent',
+      body: { contents: [{ role: 'user', parts: [{ text: 'Check carbon high' }] }] },
+      verify: (out) => {
+        assert.equal(out.candidates[0].content.parts[0].thought, true)
+        assert.equal(out.candidates[0].content.parts[0].text, 'Detailed agy thinking trace.')
+        assert.equal(out.candidates[0].content.parts[0].thoughtSignature, 'sig_carbon_high_1')
+        assert.equal(out.candidates[0].content.parts[1].text, 'Verified answer.')
+      },
+    },
+    {
+      name: 'openai-chat',
+      url: '/v1/chat/completions',
+      body: {
+        model: 'gemini-4-carbon-high',
+        messages: [{ role: 'user', content: 'Check carbon high' }],
+      },
+      verify: (out) => {
+        assert.equal(out.model, 'gemini-4-carbon-high')
+        assert.equal(out.choices[0].message.reasoning_content, 'Detailed agy thinking trace.')
+        assert.equal(out.choices[0].message.content, 'Verified answer.')
+        assert.equal(out.usage.completion_tokens_details.reasoning_tokens, 8)
+      },
+    },
+    {
+      name: 'openai-responses',
+      url: '/v1/responses',
+      body: {
+        model: 'gemini-4-carbon-high',
+        include: ['reasoning.encrypted_content'],
+        input: 'Check carbon high',
+      },
+      verify: (out) => {
+        assert.equal(out.model, 'gemini-4-carbon-high')
+        assert.equal(out.output[0].type, 'reasoning')
+        assert.equal(out.output[0].summary[0].text, 'Detailed agy thinking trace.')
+        assert.equal(out.output[0].encrypted_content, 'sig_carbon_high_1')
+        assert.equal(out.output[1].content[0].text, 'Verified answer.')
+      },
+    },
+    {
+      name: 'anthropic',
+      url: '/v1/messages',
+      body: {
+        model: 'gemini-4-carbon-high',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: 'Check carbon high' }],
+      },
+      verify: (out) => {
+        assert.equal(out.model, 'gemini-4-carbon-high')
+        assert.deepEqual(out.content[0], {
+          type: 'thinking',
+          thinking: 'Detailed agy thinking trace.',
+          signature: 'sig_carbon_high_1',
+        })
+        assert.deepEqual(out.content[1], {
+          type: 'text',
+          text: 'Verified answer.',
+        })
+      },
+    },
+  ]
+
+  for (const c of cases) {
+    const res = makeRes()
+    await handler(makeReq({ method: 'POST', url: c.url, body: c.body }), res)
+    assert.equal(res.statusCode, 200, `[${c.name}] HTTP 200`)
+    const sent = inferCalls[inferCalls.length - 1]
+    assert.deepEqual(
+      sent.body.generationConfig,
+      {
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingLevel: 'high',
+        },
+      },
+      `[${c.name}] CRAGGemini receives high thinkingConfig`,
+    )
+    c.verify(res.jsonBody())
+  }
+})
+
+test('429 classification & perf: catalogSnapshot avoids double list, content_rejected skips cooldown/failover, QUOTA_EXHAUSTED cools group with Google retryDelay, short RPM retries same account once', async () => {
+  const mockSseResponse = (statusCode, contentType, chunks) => ({
+    statusCode,
+    headers: { 'content-type': contentType },
+    destroy() {},
+    async *[Symbol.asyncIterator]() {
+      for (const c of chunks) yield Buffer.from(c)
+    },
+  })
+  let clock = 1_800_000_000_000
+  let listCalls = 0
+  const inferCalls = []
+  let scenario = 'content_rejected'
+  let shortAttempts = 0
+
+  const envs = [
+    {
+      id: 'env-1',
+      name: 'Env 1',
+      proxy_id: 'px-1',
+      auth_state: 'authorized',
+      auth_method: 'oauth',
+      models_discovered: true,
+      models: ['gemini-3-pro', 'gemini-3-flash'],
+      capabilities: ['streaming', 'multi_turn'],
+      account: { state: 'ok', quotas: [], quota_groups: [] },
+    },
+    {
+      id: 'env-2',
+      name: 'Env 2',
+      proxy_id: 'px-2',
+      auth_state: 'authorized',
+      auth_method: 'oauth',
+      models_discovered: true,
+      models: ['gemini-3-pro', 'gemini-3-flash'],
+      capabilities: ['streaming', 'multi_turn'],
+      account: { state: 'ok', quotas: [], quota_groups: [] },
+    },
+  ]
+
+  const callHost = async (op, payload) => {
+    if (op === 'list') {
+      listCalls += 1
+      return { payload_state: 'installed', environments: envs }
+    }
+    if (op === 'get') return envs.find((e) => e.id === payload.id)
+    if (op === 'infer-cancel') return { cancelled: true }
+    throw new Error(`unexpected op ${op}`)
+  }
+
+  const callHostStream = async (_op, payload) => {
+    inferCalls.push({ id: payload.id, model: payload.model })
+    if (scenario === 'content_rejected') {
+      return mockSseResponse(429, 'application/json', [
+        JSON.stringify({
+          code: 'gemini_content_rejected',
+          content_rejected: true,
+          message: 'prompt rejected by upstream',
+        }),
+      ])
+    }
+    if (scenario === 'quota_exhausted_group') {
+      if (payload.id === 'env-1') {
+        return mockSseResponse(429, 'application/json', [
+          JSON.stringify({
+            code: 'gemini_quota_exhausted',
+            upstream_reason: 'QUOTA_EXHAUSTED',
+            error: {
+              details: [{ reason: 'QUOTA_EXHAUSTED', metadata: { quotaResetDelay: '2m30s' } }],
+            },
+          }),
+        ])
+      }
+      return mockSseResponse(200, 'text/event-stream', [
+        `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok-env-2' }] }, finishReason: 'STOP' }] })}\n\n`,
+      ])
+    }
+    if (scenario === 'short_rpm_backoff') {
+      shortAttempts += 1
+      if (shortAttempts === 1) {
+        return mockSseResponse(429, 'application/json', [
+          JSON.stringify({
+            code: 'gemini_quota_exhausted',
+            upstream_reason: 'RATE_LIMIT_EXCEEDED',
+            retry_after_ms: 20,
+          }),
+        ])
+      }
+      return mockSseResponse(200, 'text/event-stream', [
+        `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok-after-short-wait' }] }, finishReason: 'STOP' }] })}\n\n`,
+      ])
+    }
+    throw new Error(`unknown scenario ${scenario}`)
+  }
+
+  const scheduler = createGeminiScheduler({
+    callHost,
+    callHostStream,
+    resolveProxy: (id) => `socks5h://198.51.100.10:${id === 'px-1' ? 1080 : 1081}`,
+    now: () => clock,
+  })
+
+  // 1. Preloaded catalogSnapshot prevents duplicate callHost('list') AND content_rejected does NOT cool or failover.
+  const preloaded = await scheduler.catalog()
+  assert.equal(listCalls, 1)
+  await assert.rejects(
+    () =>
+      scheduler.stream({
+        model: 'gemini-3-pro',
+        geminiBody: { contents: [{ role: 'user', parts: [{ text: 'trigger' }] }] },
+        apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+        catalogSnapshot: preloaded,
+      }),
+    (err) => err.code === 'gemini_content_rejected' && err.status === 429 && err.attemptCount === 1,
+  )
+  assert.equal(listCalls, 1, 'passing catalogSnapshot must avoid redundant callHost(list)')
+  assert.deepEqual(scheduler.cooldownSnapshot(), { groups: {}, models: {}, accounts: {} })
+
+  // 2. Explicit QUOTA_EXHAUSTED with Google quotaResetDelay cools both model & quotaGroup for 150s and fails over.
+  scenario = 'quota_exhausted_group'
+  const res2 = await scheduler.stream({
+    model: 'gemini-3-pro',
+    geminiBody: { contents: [{ role: 'user', parts: [{ text: 'quota test' }] }] },
+    apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    catalogSnapshot: preloaded,
+  })
+  assert.equal(res2.account_id, 'env-2')
+  const snap2 = scheduler.cooldownSnapshot()
+  assert.equal(snap2.models['env-1:gemini-3-pro'], clock + 150_000)
+  assert.equal(snap2.groups['env-1:gemini'], clock + 150_000)
+
+  // 3. Short non-quota RPM 429 (<= 5s) retries the same account once before switching.
+  clock += 200_000
+  scenario = 'short_rpm_backoff'
+  inferCalls.length = 0
+  const res3 = await scheduler.stream({
+    model: 'gemini-3-pro',
+    geminiBody: { contents: [{ role: 'user', parts: [{ text: 'short wait' }] }] },
+    apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    catalogSnapshot: preloaded,
+  })
+  assert.equal(res3.text, 'ok-after-short-wait')
+  assert.equal(inferCalls.length, 2)
+  assert.equal(inferCalls[0].id, inferCalls[1].id, 'short RPM backoff must retry the same account once')
+})
+
+test('Phase 2 perf: catalog TTL cache, single-flight dedup, zero hot-path get, and copy-on-write geminiCamelCase', async () => {
+  const { geminiCamelCase } = await import('../../src/lib/protocol/gemini-convert.mjs')
+  const alreadyCamel = {
+    model: 'gemini-3-pro',
+    contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+    generationConfig: { maxOutputTokens: 256 },
+  }
+  assert.equal(geminiCamelCase(alreadyCamel), alreadyCamel, 'already camelCase tree must avoid cloning')
+  const mixedSnake = {
+    model: 'gemini-3-pro',
+    generation_config: { max_output_tokens: 128 },
+    contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+  }
+  const converted = geminiCamelCase(mixedSnake)
+  assert.equal(converted.generationConfig.maxOutputTokens, 128)
+  assert.equal(converted.contents, mixedSnake.contents, 'unchanged subtrees stay shared')
+
+  let clock = 1_750_000_000_000
+  let listCalls = 0
+  let getCalls = 0
+  const env = {
+    id: 'env-fast',
+    proxy_id: 'px-fast',
+    auth_state: 'authorized',
+    auth_method: 'oauth',
+    models_discovered: true,
+    models: ['gemini-3-pro'],
+    capabilities: [...NATIVE_TUI_CAPABILITIES],
+    account: { state: 'ok', quotas: [] },
+  }
+  const callHost = async (op) => {
+    if (op === 'list') {
+      listCalls += 1
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return { payload_state: 'installed', environments: [env] }
+    }
+    if (op === 'get') {
+      getCalls += 1
+      return env
+    }
+    throw new Error(`unexpected op ${op}`)
+  }
+  const callHostStream = async () =>
+    sseResponse([
+      `data: ${JSON.stringify({
+        candidates: [{ index: 0, content: { role: 'model', parts: [{ text: 'fast-ok' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 2, totalTokenCount: 4 },
+      })}\n\n`,
+    ])
+
+  const scheduler = createGeminiScheduler({
+    callHost,
+    callHostStream,
+    resolveProxy: () => 'socks5h://198.51.100.10:1080',
+    listCacheTtlMs: 2000,
+    now: () => clock,
+  })
+
+  // Concurrent catalog calls coalesce into 1 single-flight host 'list' IPC.
+  const [c1, c2, c3] = await Promise.all([scheduler.catalog(), scheduler.catalog(), scheduler.catalog()])
+  assert.equal(listCalls, 1, 'concurrent catalog calls must coalesce via single-flight')
+  assert.equal(c1.accounts.length, 1)
+  assert.equal(c2.accounts.length, 1)
+  assert.equal(c3.accounts.length, 1)
+
+  // Streaming within TTL hits cached catalog AND skips redundant host 'get'.
+  const res = await scheduler.stream({
+    model: 'gemini-3-pro',
+    geminiBody: { contents: [{ role: 'user', parts: [{ text: 'ping' }] }] },
+    apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+  })
+  assert.equal(res.text, 'fast-ok')
+  assert.equal(listCalls, 1, 'stream within TTL must reuse cached list')
+  assert.equal(getCalls, 0, 'stream hot path must not call redundant host get when catalog has proxy_id')
+
+  // Explicit invalidation forces next catalog read to refresh.
+  scheduler.invalidateCatalogCache()
+  await scheduler.catalog()
+  assert.equal(listCalls, 2)
+
+  // TTL expiration also refreshes.
+  clock += 2500
+  await scheduler.catalog()
+  assert.equal(listCalls, 3)
+})
+
+test('P2-B direct Unix socket data plane streams 1-hop from Node to CRAGGemini and falls back transparently', async () => {
+  const http = await import('node:http')
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { createDirectCragClient } = await import('../../src/lib/gemini/direct-client.mjs')
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vm2api-direct-'))
+  const sockPath = path.join(tmpDir, 'kernel.sock')
+  const secretToken = 'd'.repeat(40)
+  const receivedPaths = []
+  let mode = 'ok'
+
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      receivedPaths.push({
+        method: req.method,
+        url: req.url,
+        token: req.headers['x-kin-internal-token'],
+        body: chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null,
+      })
+      if (req.headers['x-kin-internal-token'] !== secretToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ code: 'unauthorized' }))
+        return
+      }
+      if (req.url.endsWith('/cancel')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ cancelled: true }))
+        return
+      }
+      if (mode === '429_content_rejected') {
+        res.writeHead(429, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            code: 'gemini_content_rejected',
+            upstream_status: 429,
+            content_rejected: true,
+            error: 'Prompt rejected by upstream filter',
+          }),
+        )
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+      res.end(
+        `data: ${JSON.stringify({
+          candidates: [
+            { index: 0, content: { role: 'model', parts: [{ text: 'direct-1hop-ok' }] }, finishReason: 'STOP' },
+          ],
+          usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, totalTokenCount: 7 },
+        })}\n\n`,
+      )
+    })
+  })
+  await new Promise((resolve) => server.listen(sockPath, resolve))
+
+  let clock = 10_000
+  let targetCalls = 0
+  let pythonInferCalls = 0
+  let target404 = false
+  const env = {
+    id: 'env-direct-1',
+    proxy_id: 'px-direct',
+    auth_state: 'authorized',
+    auth_method: 'oauth',
+    models_discovered: true,
+    models: ['gemini-3-pro'],
+    capabilities: [...NATIVE_TUI_CAPABILITIES],
+    account: { state: 'ok', quotas: [] },
+  }
+
+  const callHost = async (op) => {
+    if (op === 'list') return { payload_state: 'installed', environments: [env] }
+    if (op === 'infer-target') {
+      targetCalls += 1
+      if (target404) {
+        const e = new Error('not_found')
+        e.status = 404
+        e.code = 'gemini_environment_not_found'
+        throw e
+      }
+      return {
+        direct: true,
+        kind: 'shard',
+        socket_path: sockPath,
+        token: secretToken,
+        message_path: `/internal/v1/accounts/${env.id}/messages`,
+        cancel_path: `/internal/v1/accounts/${env.id}/cancel`,
+        account_id: env.id,
+        epoch: 'ep-1',
+        ttl_ms: 30_000,
+      }
+    }
+    if (op === 'infer-cancel') return { cancelled: true }
+    throw new Error(`unexpected op ${op}`)
+  }
+
+  const callHostStream = async () => {
+    pythonInferCalls += 1
+    return sseResponse([
+      `data: ${JSON.stringify({
+        candidates: [
+          { index: 0, content: { role: 'model', parts: [{ text: 'python-fallback-ok' }] }, finishReason: 'STOP' },
+        ],
+        usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 2, totalTokenCount: 4 },
+      })}\n\n`,
+    ])
+  }
+
+  const directClient = createDirectCragClient({ callHost, now: () => clock })
+  const scheduler = createGeminiScheduler({
+    callHost,
+    callHostStream,
+    directClient,
+    resolveProxy: () => 'socks5h://198.51.100.10:1080',
+    listCacheTtlMs: 2000,
+    now: () => clock,
+  })
+
+  try {
+    // Turn 1 & Turn 2 both stream 1-hop directly over kernel.sock with 0 Python /infer calls,
+    // and Turn 2 reuses the cached target with 0 extra /infer-target calls.
+    const r1 = await scheduler.stream({
+      model: 'gemini-3-pro',
+      geminiBody: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hidden', thought: true }, { text: 'hello direct' }],
+          },
+        ],
+      },
+      apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    })
+    assert.equal(r1.text, 'direct-1hop-ok')
+    assert.equal(targetCalls, 1)
+    assert.equal(pythonInferCalls, 0)
+    assert.equal(receivedPaths[0].url, `/internal/v1/accounts/${env.id}/messages`)
+    assert.equal(receivedPaths[0].body.body.contents[0].parts.length, 1)
+    assert.equal(receivedPaths[0].body.body.contents[0].parts[0].text, 'hello direct')
+
+    const r2 = await scheduler.stream({
+      model: 'gemini-3-pro',
+      geminiBody: { contents: [{ role: 'user', parts: [{ text: 'second warm turn' }] }] },
+      apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    })
+    assert.equal(r2.text, 'direct-1hop-ok')
+    assert.equal(targetCalls, 1, 'second warm turn must reuse cached direct target')
+    assert.equal(pythonInferCalls, 0)
+
+    // Structured 429 content_rejected from direct socket maps identically without falling back.
+    mode = '429_content_rejected'
+    await assert.rejects(
+      () =>
+        scheduler.stream({
+          model: 'gemini-3-pro',
+          geminiBody: { contents: [{ role: 'user', parts: [{ text: 'blocked prompt' }] }] },
+          apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+        }),
+      (err) => err?.code === 'gemini_content_rejected' && err?.contentRejected === true && err?.status === 429,
+    )
+    assert.equal(pythonInferCalls, 0)
+
+    // When kernel.sock disappears (e.g. maintenance quiesce / shard restart), transparent fallback to Python /infer.
+    mode = 'ok'
+    await new Promise((resolve) => server.close(resolve))
+    try {
+      fs.unlinkSync(sockPath)
+    } catch {}
+    const rFallback = await scheduler.stream({
+      model: 'gemini-3-pro',
+      geminiBody: { contents: [{ role: 'user', parts: [{ text: 'after socket gone' }] }] },
+      apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    })
+    assert.equal(rFallback.text, 'python-fallback-ok')
+    assert.equal(pythonInferCalls, 1, 'missing direct socket must transparently fall back to Python /infer')
+
+    // Older Python host returning 404 on /infer-target disables direct briefly and falls back cleanly.
+    target404 = true
+    scheduler.invalidateCatalogCache()
+    const r404 = await scheduler.stream({
+      model: 'gemini-3-pro',
+      geminiBody: { contents: [{ role: 'user', parts: [{ text: 'older host' }] }] },
+      apiKeyRecord: { id: 'k1', group_type: 'gemini' },
+    })
+    assert.equal(r404.text, 'python-fallback-ok')
+    assert.equal(pythonInferCalls, 2)
+  } finally {
+    directClient.close()
+    try {
+      server.close()
+    } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test('open unitCircuit surfaces gemini_native_worker_unavailable while genuine slot saturation surfaces pool-busy 503 message', async () => {
+  const { PoolScheduler } = await import('../../src/lib/pool/pool-scheduler.mjs')
+  const { mapCragWorkerError } = await import('../../src/lib/gemini/direct-client.mjs')
+
+  assert.equal(mapCragWorkerError(503, { code: 'account_circuit_open' }).code, 'gemini_native_worker_unavailable')
+  assert.equal(mapCragWorkerError(503, { code: 'queue_full' }).code, 'gemini_operation_busy')
+
+  const env = {
+    id: 'gemini-circuit-check-0001',
+    proxy_id: 'px-1',
+    auth_state: 'authorized',
+    auth_method: 'oauth',
+    max_concurrency: 1,
+    models_discovered: true,
+    models: ['gemini-3-pro'],
+    capabilities: [...FULL_GEMINI_CAPABILITIES],
+  }
+  const accountId = `gemini:${env.id}`
+  const pool = new PoolScheduler()
+  let nowMs = 10_000
+  pool.unitCircuit.now = () => nowMs
+  pool.unitCircuit.configure({ failureThreshold: 2, openMs: 30_000 })
+  pool.unitCircuit.recordFailure(accountId)
+  pool.unitCircuit.recordFailure(accountId)
+  assert.equal(pool.unitCircuit.inspect(accountId).ok, false)
+
+  const scheduler = createGeminiScheduler({
+    poolScheduler: pool,
+    now: () => nowMs,
+    resolveProxy: () => 'socks5h://127.0.0.1:1080',
+    callHost: async (op) => {
+      if (op === 'list') return { payload_state: 'installed', environments: [env] }
+      if (op === 'get') return env
+      throw new Error(`unexpected host op: ${op}`)
+    },
+  })
+
+  const handle = createGeminiPublicHandler({
+    json: (_res, status, body) => ({ status, body }),
+    readBody: async (req) => req.body,
+    scheduler,
+  })
+
+  const circuitRes = await handle(
+    {
+      method: 'POST',
+      url: '/v1beta/models/gemini-3-pro:generateContent',
+      body: { contents: [{ role: 'user', parts: [{ text: 'health probe' }] }] },
+      apiKeyKind: 'managed',
+      apiKeyRecord: { group_type: 'gemini' },
+      once() {},
+    },
+    { setHeader() {}, once() {} },
+  )
+  assert.equal(circuitRes.status, 503)
+  assert.doesNotMatch(JSON.stringify(circuitRes.body), /此 Gemini 环境正在执行其他操作/)
+  assert.match(JSON.stringify(circuitRes.body), /CRAGGemini 原生常驻内核未就绪/)
+
+  // Advance past openMs, complete probe -> circuit closed, then occupy max_concurrency=1 slot -> genuine pool-busy 503.
+  nowMs += 30_001
+  pool.unitCircuit.admit(accountId)
+  pool.unitCircuit.recordSuccess(accountId)
+  assert.equal(pool.unitCircuit.inspect(accountId).ok, true)
+  const held = pool.reserveExternalCandidates([{ accountId, vmId: accountId, maxConcurrency: 1, priority: 0 }])
+  assert.ok(held?.reservation)
+  try {
+    const busyRes = await handle(
+      {
+        method: 'POST',
+        url: '/v1/chat/completions',
+        body: { model: 'gemini-3-pro', messages: [{ role: 'user', content: 'busy check' }] },
+        apiKeyKind: 'managed',
+        apiKeyRecord: { group_type: 'gemini' },
+        once() {},
+      },
+      { setHeader() {}, once() {} },
+    )
+    assert.equal(busyRes.status, 503)
+    assert.equal(busyRes.body.error.code, 'gemini_operation_busy')
+    assert.equal(busyRes.body.error.message, '当前可用 Gemini 账号并发繁忙，请稍后重试')
+  } finally {
+    held.reservation.release()
+  }
 })

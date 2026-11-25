@@ -817,7 +817,7 @@ fetch_file() {
 # 镜像安装：只落部署文件，不 clone 仓库，不在本机构建。
 fetch_release_files() {
   local tag="$1"
-  mkdir -p "${INSTALL_DIR}/deploy"
+  mkdir -p "${INSTALL_DIR}/deploy" "${INSTALL_DIR}/scripts"
   info "下载部署文件 ${tag} → ${INSTALL_DIR}"
   fetch_file "$tag" docker-compose.yml "${INSTALL_DIR}/docker-compose.yml"
   fetch_file "$tag" docker-compose.local.yml "${INSTALL_DIR}/docker-compose.local.yml" 1
@@ -827,6 +827,7 @@ fetch_release_files() {
   fetch_file "$tag" deploy/install.sh "${INSTALL_DIR}/deploy/install.sh" 1
   fetch_file "$tag" deploy/install-pg.sh "${INSTALL_DIR}/deploy/install-pg.sh" 1
   fetch_file "$tag" deploy/replace-db-to-pg.sh "${INSTALL_DIR}/deploy/replace-db-to-pg.sh" 1
+  fetch_file "$tag" scripts/migrate-sqlite-to-pg.mjs "${INSTALL_DIR}/scripts/migrate-sqlite-to-pg.mjs" 1
   chmod +x "${INSTALL_DIR}/deploy/install.sh" "${INSTALL_DIR}/deploy/install-pg.sh" "${INSTALL_DIR}/deploy/replace-db-to-pg.sh" 2>/dev/null || true
   if [ "$HOST_ARCH" = arm64 ]; then
     fetch_file "$tag" deploy/prepare-arm64.py "${INSTALL_DIR}/deploy/prepare-arm64.py" 1
@@ -882,6 +883,211 @@ prepare_gemini_dependencies() {
       return 1
     fi
   fi
+}
+
+gemini_apparmor_userns_restricted() {
+  local root="${1:-/}" enabled restricted enabled_val restricted_val
+  enabled="${root%/}/sys/module/apparmor/parameters/enabled"
+  restricted="${root%/}/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+  [ -f "$enabled" ] && [ -f "$restricted" ] || return 1
+  enabled_val="$(tr -d '[:space:]' < "$enabled" 2>/dev/null)" || return 1
+  restricted_val="$(tr -d '[:space:]' < "$restricted" 2>/dev/null)" || return 1
+  case "$enabled_val" in
+    Y|1|yes) ;;
+    *) return 1 ;;
+  esac
+  [ "$restricted_val" = "1" ]
+}
+
+check_gemini_unit_apparmor_profile() {
+  local unit_path="${1:-/etc/systemd/system/vm2api-gemini.service}"
+  local line trimmed val live_profile
+  if [ -L "$unit_path" ]; then
+    err "拒绝覆盖符号链接形式的 Gemini unit 文件: $unit_path"
+    return 1
+  fi
+  if [ -e "$unit_path" ]; then
+    if [ ! -f "$unit_path" ]; then
+      err "拒绝覆盖非常规文件的 Gemini unit: $unit_path"
+      return 1
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+      trimmed="${line#"${line%%[![:space:]]*}"}"
+      trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+      case "$trimmed" in
+        ""|\#*|";"*) continue ;;
+        AppArmorProfile=*)
+          val="${trimmed#AppArmorProfile=}"
+          val="${val#"${val%%[![:space:]]*}"}"
+          val="${val%"${val##*[![:space:]]}"}"
+          if [ "$val" != "vm2api-gemini" ]; then
+            err "检测到管理员自定义的 AppArmorProfile=${val}，拒绝覆盖: $unit_path"
+            return 1
+          fi
+          ;;
+      esac
+    done < "$unit_path"
+  fi
+  if command -v systemctl >/dev/null; then
+    live_profile="$(systemctl show --property=AppArmorProfile --value vm2api-gemini.service 2>/dev/null || true)"
+    live_profile="${live_profile#"${live_profile%%[![:space:]]*}"}"
+    live_profile="${live_profile%"${live_profile##*[![:space:]]}"}"
+    if [ -n "$live_profile" ] && [ "$live_profile" != "vm2api-gemini" ]; then
+      err "检测到管理员自定义的 AppArmorProfile=${live_profile}，拒绝覆盖"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+render_gemini_unit_apparmor() {
+  local unit_file="$1" tmp line trimmed section="" has_unit=0 has_service=0
+  local has_after=0 has_requires=0 has_profile=0 val
+  [ -f "$unit_file" ] && [ ! -L "$unit_file" ] || { err "Gemini unit 模板文件无效: $unit_file"; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    case "$trimmed" in
+      \[Unit\]) section="Unit"; has_unit=1; continue ;;
+      \[Service\]) section="Service"; has_service=1; continue ;;
+      \[*\]) section="Other"; continue ;;
+      ""|\#*|";"*) continue ;;
+    esac
+    if [ "$section" = "Unit" ]; then
+      case "$trimmed" in
+        After=*)
+          case " ${trimmed#After=} " in *" apparmor.service "*) has_after=1 ;; esac
+          ;;
+        Requires=*)
+          case " ${trimmed#Requires=} " in *" apparmor.service "*) has_requires=1 ;; esac
+          ;;
+      esac
+    elif [ "$section" = "Service" ]; then
+      case "$trimmed" in
+        AppArmorProfile=*)
+          val="${trimmed#AppArmorProfile=}"
+          val="${val#"${val%%[![:space:]]*}"}"
+          val="${val%"${val##*[![:space:]]}"}"
+          if [ "$val" != "vm2api-gemini" ]; then
+            err "检测到自定义 AppArmorProfile=${val}，拒绝覆盖: $unit_file"
+            return 1
+          fi
+          has_profile=1
+          ;;
+      esac
+    elif [[ "$trimmed" == AppArmorProfile=* ]]; then
+      err "检测到非常规位置的 AppArmorProfile 配置，拒绝覆盖: $unit_file"
+      return 1
+    fi
+  done < "$unit_file"
+  if [ "$has_unit" != 1 ] || [ "$has_service" != 1 ]; then
+    err "Gemini unit 缺少 [Unit] 或 [Service] 段: $unit_file"
+    return 1
+  fi
+  if [ "$has_after" = 1 ] && [ "$has_requires" = 1 ] && [ "$has_profile" = 1 ]; then
+    return 0
+  fi
+  tmp="$(mktemp "${unit_file}.XXXXXX")" || return 1
+  section=""
+  local emitted_unit=0 emitted_service=0 blanks=0
+  {
+    while IFS= read -r line || [ -n "$line" ]; do
+      trimmed="${line#"${line%%[![:space:]]*}"}"
+      trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+      if [ -z "$trimmed" ]; then
+        blanks=$((blanks + 1))
+        continue
+      fi
+      case "$trimmed" in
+        \[*\])
+          if [ "$section" = "Unit" ] && [ "$emitted_unit" = 0 ]; then
+            [ "$has_after" = 1 ] || printf '%s\n' 'After=apparmor.service'
+            [ "$has_requires" = 1 ] || printf '%s\n' 'Requires=apparmor.service'
+            emitted_unit=1
+          elif [ "$section" = "Service" ] && [ "$emitted_service" = 0 ]; then
+            [ "$has_profile" = 1 ] || printf '%s\n' 'AppArmorProfile=vm2api-gemini'
+            emitted_service=1
+          fi
+          while [ "$blanks" -gt 0 ]; do
+            printf '\n'
+            blanks=$((blanks - 1))
+          done
+          case "$trimmed" in
+            \[Unit\]) section="Unit" ;;
+            \[Service\]) section="Service" ;;
+            *) section="Other" ;;
+          esac
+          printf '%s\n' "$line"
+          continue
+          ;;
+      esac
+      while [ "$blanks" -gt 0 ]; do
+        printf '\n'
+        blanks=$((blanks - 1))
+      done
+      printf '%s\n' "$line"
+    done < "$unit_file"
+    if [ "$section" = "Unit" ] && [ "$emitted_unit" = 0 ]; then
+      [ "$has_after" = 1 ] || printf '%s\n' 'After=apparmor.service'
+      [ "$has_requires" = 1 ] || printf '%s\n' 'Requires=apparmor.service'
+    elif [ "$section" = "Service" ] && [ "$emitted_service" = 0 ]; then
+      [ "$has_profile" = 1 ] || printf '%s\n' 'AppArmorProfile=vm2api-gemini'
+    fi
+    while [ "$blanks" -gt 0 ]; do
+      printf '\n'
+      blanks=$((blanks - 1))
+    done
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f "$tmp" "$unit_file" || { rm -f -- "$tmp"; return 1; }
+}
+
+# Prepare a scoped, unattached AppArmor profile for vm2api-gemini.service when
+# the host restricts unprivileged user namespaces (e.g. Ubuntu 24.04).
+# Never modifies kernel sysctls or attaches globally to /usr/bin/bwrap.
+prepare_gemini_apparmor() {
+  local root="${1:-/}" unit_path="${2:-}" directory profile candidate marker load_state
+  [ -n "$unit_path" ] || unit_path="${root%/}/etc/systemd/system/vm2api-gemini.service"
+  gemini_apparmor_userns_restricted "$root" || return 0
+  command -v apparmor_parser >/dev/null || { err "Gemini 沙箱需要 apparmor_parser（请安装 apparmor 后重试）"; return 1; }
+  directory="${root%/}/etc/apparmor.d"
+  [ -f "$directory/abi/4.0" ] || { err "Gemini 沙箱 userns 需要 AppArmor ABI 4.0（缺少 $directory/abi/4.0）"; return 1; }
+  command -v systemctl >/dev/null || { err "Gemini AppArmor 准备需要 systemctl"; return 1; }
+  load_state="$(systemctl show --property=LoadState --value apparmor.service 2>/dev/null || true)"
+  load_state="${load_state#"${load_state%%[![:space:]]*}"}"
+  load_state="${load_state%"${load_state##*[![:space:]]}"}"
+  [ "$load_state" = loaded ] || { err "apparmor.service 未加载（LoadState=${load_state:-unknown}），无法持久化 vm2api-gemini profile"; return 1; }
+  check_gemini_unit_apparmor_profile "$unit_path" || return 1
+  profile="$directory/vm2api-gemini"
+  marker='# Managed by vm2api Gemini host userns preparation.'
+  if [ -L "$profile" ] || { [ -e "$profile" ] && { [ ! -f "$profile" ] || [ "$(head -n 1 "$profile")" != "$marker" ]; }; }; then
+    err "拒绝覆盖非 vm2api 管理的 AppArmor profile: $profile"
+    return 1
+  fi
+  candidate="$(mktemp "$directory/.vm2api-gemini.XXXXXX")" || return 1
+  if ! printf '%s\n' \
+    "$marker" \
+    'abi <abi/4.0>,' \
+    'profile vm2api-gemini flags=(unconfined) {' \
+    '  userns,' \
+    '}' > "$candidate" || ! chmod 644 "$candidate"; then
+    rm -f -- "$candidate"
+    return 1
+  fi
+  if ! apparmor_parser -Q -K "$candidate"; then
+    rm -f -- "$candidate"
+    err "Gemini AppArmor profile 检查失败: $profile"
+    return 1
+  fi
+  if ! apparmor_parser -r -K "$candidate"; then
+    rm -f -- "$candidate"
+    err "Gemini AppArmor profile 加载失败: $profile"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$profile"; then
+    rm -f -- "$candidate"
+    return 1
+  fi
+  ok "Gemini AppArmor userns profile 已加载并保存: $profile"
 }
 
 prepare_gemini_maintenance() (
@@ -996,7 +1202,7 @@ PY
     atomic_maintenance_file "$bundle/scripts/gemini-maintenance.py" "$root/scripts/gemini-maintenance.py" 644 &&
     atomic_maintenance_file "$bundle/deploy/gemini-maintenance.service.example" "$unit" 644 &&
     systemctl daemon-reload && systemctl enable vm2api-gemini-maintenance.service && systemctl restart vm2api-gemini-maintenance.service; then
-    ok "Gemini 维护服务已就绪，可在设置 → Gemini 操作"
+    ok "Gemini 维护服务已就绪，可在设置 → Gemini 维护 操作"
     return 0
   fi
   systemctl stop vm2api-gemini-maintenance.service || warn "无法停止未就绪的维护服务"
@@ -1113,6 +1319,11 @@ prepare_gemini_host() (
     err "Gemini 需要 python3 和支持 parseArgs 的 Node.js（Ubuntu 24.04：python3、nodejs）"
     return 1
   fi
+  local use_apparmor=0
+  if gemini_apparmor_userns_restricted /; then
+    prepare_gemini_apparmor / "$unit" || return 1
+    use_apparmor=1
+  fi
 
   local -a files=(deploy/gemini-host.service.example scripts/gemini-host.py scripts/gemini_host_account.py
     scripts/gemini_host_inference.py scripts/gemini_host_native.py
@@ -1184,6 +1395,9 @@ prepare_gemini_host() (
     -e "s|@DEFAULT_PAYLOAD_ARGS@|${default_args}|g" \
     -e "s|--public-key /etc/vm2api/gemini-ed25519.pub|--public-key ${public_key_path}|g" \
     "${staging}/${files[0]}" > "${staging}/vm2api-gemini.service" || return 1
+  if [ "$use_apparmor" = 1 ]; then
+    render_gemini_unit_apparmor "${staging}/vm2api-gemini.service" || return 1
+  fi
   install -m 644 "${staging}/vm2api-gemini.service" "$unit" || return 1
   if ! (systemctl daemon-reload && systemctl enable vm2api-gemini.service && systemctl restart vm2api-gemini.service); then
     err "Gemini 宿主服务未就绪，请检查 journalctl -u vm2api-gemini.service"
@@ -1962,24 +2176,26 @@ cmd_uninstall() {
 
 ensure_migrate_script() {
   local script="${INSTALL_DIR}/deploy/replace-db-to-pg.sh"
-  if [ -f "$script" ]; then
-    echo "$script"
-    return 0
-  fi
   local self_dir=""
   if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [ -f "${self_dir}/replace-db-to-pg.sh" ]; then
-      mkdir -p "${INSTALL_DIR}/deploy"
-      cp -f "${self_dir}/replace-db-to-pg.sh" "$script"
-      chmod +x "$script" 2>/dev/null || true
+      if [ "${self_dir}/replace-db-to-pg.sh" != "$script" ]; then
+        mkdir -p "${INSTALL_DIR}/deploy"
+        cp -f "${self_dir}/replace-db-to-pg.sh" "$script"
+        chmod +x "$script" 2>/dev/null || true
+      fi
       echo "$script"
       return 0
     fi
   fi
+  if [ -f "$script" ] && grep -q -- '--preflight' "$script" 2>/dev/null; then
+    echo "$script"
+    return 0
+  fi
   local ref="${TARGET_VERSION:-main}"
   mkdir -p "${INSTALL_DIR}/deploy"
-  info "未检测到本地迁移脚本，正在自动获取 ${ref}/deploy/replace-db-to-pg.sh ..."
+  info "未检测到最新版迁移脚本，正在自动获取 ${ref}/deploy/replace-db-to-pg.sh ..."
   fetch_file "$ref" deploy/replace-db-to-pg.sh "$script" 0
   chmod +x "$script" 2>/dev/null || true
   echo "$script"

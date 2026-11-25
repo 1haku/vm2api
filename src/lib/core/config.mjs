@@ -199,6 +199,12 @@ function snapshotVm(vm, project) {
   }
 }
 
+function parseNonNegativeEnv(raw, fallback) {
+  if (raw == null || String(raw).trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
 export function loadConfig() {
   const keyFile = path.join(ROOT, 'config', 'test.key')
   const apiKey =
@@ -241,8 +247,9 @@ export function loadConfig() {
       // Experimental JSON padding; 0 keeps ordinary non-streaming HTTP semantics.
       json_keepalive_delay_ms: Math.max(0, Math.min(90_000, Number(process.env.KIN_JSON_KEEPALIVE_DELAY_MS) || 0)),
       queue_keepalive_delay_ms: queueKeepaliveDelayMs(null),
-      rate_capacity: Number(process.env.KIN_RATE_CAP || 60),
-      rate_refill: Number(process.env.KIN_RATE_REFILL || 1),
+      rate_capacity: parseNonNegativeEnv(process.env.KIN_RATE_CAP, 60),
+      rate_refill: parseNonNegativeEnv(process.env.KIN_RATE_REFILL, 1),
+      rate_capacity_explicit: process.env.KIN_RATE_CAP != null && String(process.env.KIN_RATE_CAP).trim() !== '',
     },
     // Admin/status snapshot of the *active* VM only.
     // Inference must use buildExecutionContext() — never this object.

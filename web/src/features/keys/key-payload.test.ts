@@ -131,6 +131,40 @@ describe('API key limit payload', () => {
       group_type: 'openai',
       allowed_vms: [],
     })
+    expect(
+      keyLimitsPayload(
+        {
+          ...draft,
+          category: 'all',
+          api_endpoint_id: 'ep_tenant',
+          group_type: 'anthropic',
+          allowed_vms: [],
+        },
+        'edit'
+      )
+    ).toMatchObject({
+      category: 'all',
+      api_endpoint_id: 'ep_tenant',
+      group_type: 'anthropic',
+      allowed_vms: [],
+    })
+    expect(
+      keyLimitsPayload(
+        {
+          ...draft,
+          category: 'oauth',
+          permission_tier: 'tenant',
+          owner_id: 'u_alice',
+          group_type: 'anthropic',
+          allowed_vms: [],
+        },
+        'edit'
+      )
+    ).toMatchObject({
+      category: 'oauth',
+      group_type: 'anthropic',
+      allowed_vms: [],
+    })
   })
 
   it('keeps a subscriber plan selection in create and edit payloads', () => {

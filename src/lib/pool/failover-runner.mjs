@@ -12,13 +12,16 @@ import {
   CLIENT_POOL_FABLE_RATE_LIMITED_MESSAGE,
   CLIENT_POOL_RATE_LIMITED_MESSAGE,
   clientCancelledResult,
+  extractErrorLogFields,
   isClientCancelledResult,
   isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
   incompleteAssistantClientError,
+  resolveLoggedErrorCode,
   ErrorCode,
   KERNEL_FAILURE_STATUS,
 } from '../core/errors.mjs'
+import { extractProviderCorrelation } from '../protocol/log-fields.mjs'
 import { hasRefreshPresence, readWorkerCredentialFile } from '../oauth/oauth-credentials.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { kernelFaults } from '../transport/rust-kernel-client.mjs'
@@ -97,7 +100,7 @@ export const vmTimeoutTracker = {
 export const TIMEOUT_FAULT_PREFIX = 'consecutive_timeouts:'
 
 const DEFAULTS = {
-  max_account_switches: 10,
+  max_account_switches: 3,
   max_total_attempts: 12,
   max_accounts_per_request: 0,
   total_retry_deadline_ms: 120000,
@@ -113,6 +116,7 @@ const DEFAULTS = {
   // Different sessions that must go silent on one VM before requests that large are kept off it.
   poison_request_vm_sessions: 2,
   delivery_mode: 'realtime',
+  // Conservative programmatic fallback (shipped src/config/routing.json sets 3).
   max_same_account_retries: 1,
   same_account_retry_delay_ms: 500,
   same_account_retry_max_hop_ms: 10_000,
@@ -141,6 +145,28 @@ function searchRepairKey(stickyKey, model, selected) {
 
 function usageOf(result) {
   return result?.usage || result?.body?.usage || null
+}
+
+function attemptDiagnostics(result, { includeError = true } = {}) {
+  const corr = extractProviderCorrelation(result)
+  const errFields = includeError && result && !result.ok ? extractErrorLogFields(result) : null
+  const errorCode =
+    includeError && result && !result.ok
+      ? resolveLoggedErrorCode({
+          explicitCode: result?.body?.error?.code,
+          upstreamType: errFields?.upstream_type,
+        })
+      : null
+  return {
+    errorCode,
+    upstreamType: errFields?.upstream_type ?? null,
+    errorDetails: errFields?.error_details ?? null,
+    hopRequestId: corr.hop_request_id,
+    providerRunId: corr.run_id,
+    providerTurnId: corr.turn_id,
+    providerAttemptId: corr.attempt_id,
+    providerRequestId: corr.request_id,
+  }
 }
 
 function verifiedSuccess(result) {
@@ -758,7 +784,11 @@ export class FailoverRunner {
     const after = readWorkerCredentialFile(exec.homeDir)
     const afterRefresh = String(after?.refresh_token || '')
     const blob = `${refreshed?.error?.code || ''} ${refreshed?.error?.message || ''} ${refreshed?.refresh_class || ''}`
-    const grantDead = /invalid_grant|token has been revoked|oauth_revoked/i.test(blob)
+    // codex token endpoint answers revocation as code "token_revoked" /
+    // "Encountered invalidated oauth token for user" — grant death for OpenAI slots too.
+    const grantDead = /invalid_grant|token has been revoked|token_revoked|invalidated oauth token|oauth_revoked/i.test(
+      blob,
+    )
     if (!refreshed?.ok && grantDead && afterRefresh === beforeRefresh) return permanentOAuthRevoke(policy)
     if (refreshed?.ok || (beforeRefresh && afterRefresh && afterRefresh !== beforeRefresh)) {
       return { ...policy, retrySameAccount: true, action: 'continue', cooldownUntil: null }
@@ -876,10 +906,10 @@ export class FailoverRunner {
     if (typeof callAttempt !== 'function') throw new Error('FailoverRunner requires callAttempt')
     const startedAt = Date.now()
     const budget = new AttemptCoordinator({
-      maxSameUnitRetries: Number(this.config.max_same_account_retries ?? 1),
-      maxUnitSwitches: Number(this.config.max_account_switches ?? 10),
-      maxTotalAttempts: Number(this.config.max_total_attempts ?? 12),
-      deadlineMs: Number(this.config.total_retry_deadline_ms || 120000),
+      maxSameUnitRetries: Number(this.config.max_same_account_retries ?? DEFAULTS.max_same_account_retries),
+      maxUnitSwitches: Number(this.config.max_account_switches ?? DEFAULTS.max_account_switches),
+      maxTotalAttempts: Number(this.config.max_total_attempts ?? DEFAULTS.max_total_attempts),
+      deadlineMs: Number(this.config.total_retry_deadline_ms || DEFAULTS.total_retry_deadline_ms),
       startedAt,
     })
     const deadline = budget.deadline
@@ -1323,6 +1353,7 @@ export class FailoverRunner {
             downstreamCommitted: !!(result?.committed || committed),
             terminalState: 'cancelled',
             latencyMs: Date.now() - attemptStarted,
+            ...attemptDiagnostics(result, { includeError: false }),
           })
           releaseStickySlots()
           return { ...clientCancelledResult(result), via: result?.via || 'pool-failover', ...attribution() }
@@ -1378,7 +1409,7 @@ export class FailoverRunner {
         if (knownSearchRepair && policy.reason === 'search_repairable') {
           // Repeating the identical flatten cannot fix a second rejection.
           this.searchRepairs.delete(repairKey)
-          policy = { ...policy, action: 'stop' }
+          policy = { ...policy, action: 'stop', circuit: true }
         }
         // The rate limit service is the sole writer of rate_limit_reset_at / overload_until.
         const hardBlock =
@@ -1404,10 +1435,14 @@ export class FailoverRunner {
         ) {
           const targetWindow =
             policy.reason === 'fable_rate_limited' ? '7d_oi' : inferRateLimitWindow(result, Date.now())
-          preResetRateLimitIgnored = !!this.scheduler.accountQuota.isPreResetResponse(selected.accountId, targetWindow, {
-            requestStartedAt: attemptStarted,
-            resetGenerations: attemptResetGenerations,
-          })
+          preResetRateLimitIgnored = !!this.scheduler.accountQuota.isPreResetResponse(
+            selected.accountId,
+            targetWindow,
+            {
+              requestStartedAt: attemptStarted,
+              resetGenerations: attemptResetGenerations,
+            },
+          )
         }
         if (preResetRateLimitIgnored && policy.action === 'continue-and-cooldown') {
           policy = { ...policy, action: 'continue', cooldownUntil: null }
@@ -1450,6 +1485,7 @@ export class FailoverRunner {
           usage: usageOf(result),
           ttftMs: result?.ttftMs ?? null,
           latencyMs: Date.now() - attemptStarted,
+          ...attemptDiagnostics(result, { includeError: !result?.ok }),
         })
         if (typeof onAttempt === 'function') {
           await onAttempt({ attemptNo, selected, result, policy })
@@ -1599,6 +1635,7 @@ export class FailoverRunner {
             downstreamCommitted: false,
             terminalState: 'invalid_request',
             latencyMs: Date.now() - attemptStarted,
+            ...attemptDiagnostics({ ok: false, status: 400, body: error.body }),
           })
           releaseStickySlots()
           return {
@@ -1661,6 +1698,7 @@ export class FailoverRunner {
           downstreamCommitted: committed,
           terminalState: result.terminalState,
           latencyMs: Date.now() - attemptStarted,
+          ...attemptDiagnostics(result),
         })
         if (committed || !shouldContinue(policy)) {
           releaseStickySlots()

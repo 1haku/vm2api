@@ -75,6 +75,8 @@ export function subscriptionSnapshot(db) {
             jev_state: row.jev_state ?? null,
             upstream_service_tier: row.upstream_service_tier ?? null,
             upstream_status: row.upstream_status ?? null,
+            upstream_type: row.upstream_type ?? null,
+            error_details: row.error_details ?? null,
             upstream_400_message: row.upstream_400_message ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,
@@ -165,6 +167,14 @@ export function subscriptionSnapshot(db) {
                     ...row,
                     queue_wait_ms: row.queue_wait_ms ?? null,
                     scheduling_ms: row.scheduling_ms ?? null,
+                    error_code: row.error_code ?? null,
+                    upstream_type: row.upstream_type ?? null,
+                    error_details_json: row.error_details_json ?? null,
+                    hop_request_id: row.hop_request_id ?? null,
+                    provider_run_id: row.provider_run_id ?? null,
+                    provider_turn_id: row.provider_turn_id ?? null,
+                    provider_attempt_id: row.provider_attempt_id ?? null,
+                    provider_request_id: row.provider_request_id ?? null,
                   }))
                 : table === 'cluster_nodes'
                   ? rows.map((row) => ({ ...row, platform: row.platform ?? 'linux' }))

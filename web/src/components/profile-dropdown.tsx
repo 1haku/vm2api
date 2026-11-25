@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { hasPanelView } from '@/config/nav'
 import { useAuthStore } from '@/stores/auth-store'
 import { getDisplayNameInitials } from '@/lib/utils'
 import useDialogState from '@/hooks/use-dialog-state'
@@ -18,6 +19,9 @@ export function ProfileDropdown() {
   const [open, setOpen] = useDialogState()
   const user = useAuthStore((s) => s.user) || 'admin'
   const role = useAuthStore((s) => s.me?.role) || ''
+  const views = useAuthStore((s) => s.me?.views)
+  const canSettings = hasPanelView(views, 'settings')
+  const canUsers = hasPanelView(views, 'users')
   return (
     <>
       <DropdownMenu modal={false}>
@@ -41,7 +45,7 @@ export function ProfileDropdown() {
           <DropdownMenuItem asChild>
             <Link to='/account'>账号安全</Link>
           </DropdownMenuItem>
-          {role === 'admin' && (
+          {canSettings && (
             <>
               <DropdownMenuItem asChild>
                 <Link to='/settings/$tab' params={{ tab: 'sticky' }}>
@@ -53,10 +57,12 @@ export function ProfileDropdown() {
                   关于 / 更新
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to='/users'>用户</Link>
-              </DropdownMenuItem>
             </>
+          )}
+          {canUsers && (
+            <DropdownMenuItem asChild>
+              <Link to='/users'>用户</Link>
+            </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant='destructive' onClick={() => setOpen(true)}>

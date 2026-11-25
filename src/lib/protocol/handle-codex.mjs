@@ -64,7 +64,7 @@ import {
 import { CLIENT_POOL_BUSY_MESSAGE, CLIENT_POOL_UNAVAILABLE_MESSAGE, ErrorCode } from '../core/errors.mjs'
 import { applyOpenaiWashLog } from './openai-wash.mjs'
 import { canonicalImageToolModel, imageGenerationTools } from './image-tool-models.mjs'
-import { isImageToolModelEnabled } from './gpt-model-policy.mjs'
+import { isImageToolModelEnabled, resolveGptFastAlias } from './gpt-model-policy.mjs'
 import { sessionIdForLog } from './log-fields.mjs'
 import { redactHeaders } from '../admin/request-log.mjs'
 import {
@@ -77,6 +77,7 @@ import {
 import { clientIp } from '../pool/sticky-router.mjs'
 import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { imagePermissionError } from '../admin/image-permission.mjs'
+import { compileWithProtoFront, protoFrontMode, transcodeWithProtoFront } from '../transport/proto-front-client.mjs'
 
 // Official Codex client headers for ChatGPT Responses. Auth is attached by the kernel.
 const CODEX_KERNEL_HEADER_ALLOWLIST = Object.freeze([
@@ -734,8 +735,10 @@ export async function handleCodexProtocol({
   pinVmId = undefined,
   cfg = null,
 }) {
+  const pfMode = protoFrontMode()
   const codex = normalizeCodexRouting(routing.codex)
-  const allowed = isCodexProtocolAllowed(protocol, { codex })
+  const allowed =
+    pfMode === 'go' && protocol === 'google.gemini' ? { ok: true } : isCodexProtocolAllowed(protocol, { codex })
   if (!allowed.ok) {
     stats.errors++
     logBag.via = 'codex-kernel'
@@ -757,7 +760,89 @@ export async function handleCodexProtocol({
       error: { type: 'permission_error', code: restriction.code, message: restriction.message },
     })
   }
-  const converted = toCodexResponses(protocol, ctx.body, codex.convert)
+  let pfCompile = null
+  if (pfMode === 'go') {
+    try {
+      pfCompile = await compileWithProtoFront({
+        cfg: cfg || { paths: { project: projectRoot } },
+        inboundProtocol: protocol,
+        targetFamily: 'codex_kernel',
+        reqPath: ctx.path,
+        headers: req.headers,
+        body: ctx.body,
+        routing,
+        routeModel: ctx.body?.model || '',
+        routeStream:
+          protocol === 'google.gemini' ? String(ctx?.path || '').includes(':streamGenerateContent') : undefined,
+      })
+      if (pfCompile) {
+        logBag.hop_meta = {
+          ...logBag.hop_meta,
+          proto_front: {
+            mode: pfCompile.mode || null,
+            decision: pfCompile.decision || null,
+            stripped_fields: pfCompile.stripped_fields || [],
+          },
+        }
+      }
+    } catch (err) {
+      logBag.hop_meta = { ...logBag.hop_meta, proto_front_error: err?.code || err?.message || 'error' }
+    }
+  } else if (pfMode === 'shadow') {
+    void compileWithProtoFront({
+      cfg: cfg || { paths: { project: projectRoot } },
+      inboundProtocol: protocol,
+      targetFamily: 'codex_kernel',
+      reqPath: ctx.path,
+      headers: req.headers,
+      body: ctx.body,
+      routing,
+      routeModel: ctx.body?.model || '',
+    })
+      .then((shadowRes) => {
+        logBag.hop_meta = {
+          ...logBag.hop_meta,
+          proto_front_shadow: { ok: shadowRes?.ok === true, mode: shadowRes?.mode, decision: shadowRes?.decision },
+        }
+      })
+      .catch(() => {})
+  }
+  let converted
+  if (pfMode === 'go' && pfCompile) {
+    const fast = resolveGptFastAlias(ctx.body?.model)
+    if (fast.kind === 'unavailable') {
+      converted = { ok: false, code: fast.reason === 'base_disabled' ? 'model_disabled' : 'model_fast_unavailable' }
+    } else if (!pfCompile.ok) {
+      stats.errors++
+      logBag.via = 'codex-kernel'
+      logBag.error_code = pfCompile.code || 'codex_convert_failed'
+      return json(
+        res,
+        pfCompile.status || 400,
+        pfCompile.error_body || {
+          error: {
+            type: 'invalid_request_error',
+            code: logBag.error_code,
+            message: 'request could not be converted to Codex Responses',
+          },
+        },
+      )
+    } else {
+      const goBody = pfCompile.outbound_body
+      if (fast.kind === 'fast') {
+        const parts = String(goBody.model || '')
+          .trim()
+          .split('/')
+          .filter(Boolean)
+        if (parts.length) parts[parts.length - 1] = fast.base
+        goBody.model = parts.join('/')
+        goBody.service_tier = fast.service_tier
+      }
+      converted = { ok: true, converted: pfCompile.mode !== 'passthrough', body: goBody }
+    }
+  } else {
+    converted = toCodexResponses(protocol, ctx.body, codex.convert)
+  }
   if (!converted.ok) {
     stats.errors++
     logBag.via = 'codex-kernel'
@@ -801,7 +886,13 @@ export async function handleCodexProtocol({
     })
   }
   // Upstream Codex always streams; the caller still chooses JSON versus SSE.
-  const stream = isClientStream(inbound || ctx.body, req.headers) && ctx.body?.stream !== false
+  const stream =
+    protocol === 'google.gemini'
+      ? String(ctx?.path || '').includes(':streamGenerateContent')
+      : isClientStream(inbound || ctx.body, req.headers) && ctx.body?.stream !== false
+  const useGoEgress =
+    pfMode === 'go' &&
+    (protocol === 'anthropic.messages' || protocol === 'google.gemini' || (protocol === 'openai.completions' && stream))
   const inboundSession = sessionFrom(req, converted.body)
   const sessionMode = outboundSessionMode(routing)
   const callerSession = extractCallerSession({
@@ -975,7 +1066,19 @@ export async function handleCodexProtocol({
           firstUserIdentity,
           clientIp: clientIp(req),
           userAgent: req.headers?.['user-agent'] || '',
-          epoch: `${attemptStartedAt}:${vm.id}:${hops}`,
+          // Borrowing does not move the home pin, so the attempt clock cannot
+          // identify the borrower's session. Scope it to this home generation.
+          epoch:
+            picked.home === stickyBound?.vmId && stickyBound?.sessionId && vm.id !== picked.home
+              ? JSON.stringify([
+                  'codex-borrow',
+                  picked.sessionKey,
+                  stickyBound.vmId,
+                  stickyBound.sessionId,
+                  stickyBound.generation,
+                  vm.id,
+                ])
+              : `${attemptStartedAt}:${vm.id}:${hops}`,
         }
         // passthrough forwards an explicit inbound session verbatim; without
         // one it still derives the deterministic seed instead of sending null.
@@ -1012,6 +1115,7 @@ export async function handleCodexProtocol({
               routing,
               redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
               redactionSession: String(req.headers?.['x-session-id'] || inboundSession.session_id || ''),
+              gatewayRequestId: res?._kinRequestId || null,
               body: outboundBody,
               envelope: {
                 body: outboundBody,
@@ -1046,7 +1150,7 @@ export async function handleCodexProtocol({
               if (seen) streamedUsage = mergeUsage(streamedUsage, seen)
               const imageGen = imageGenUsageFromSseLine(line)
               if (imageGen) streamedImageUsage = imageGen
-              if (!stream) {
+              if (!stream || useGoEgress) {
                 chunks.push(line)
                 return
               }
@@ -1127,6 +1231,9 @@ export async function handleCodexProtocol({
             req.apiKeyRecord,
             vm.id,
           )
+        if (result?.hopRequestId) {
+          logBag.hop_meta = { ...logBag.hop_meta, hop_request_id: result.hopRequestId }
+        }
         if (result?.transport_retried) logBag.transport_retried = true
         if (result?.reasoning_history_retried) {
           logBag.attempt_count += 1
@@ -1160,6 +1267,17 @@ export async function handleCodexProtocol({
           onUsage?.()
           if (hops > 1) logBag.codex_failed_over = true
           if (!stream) {
+            if (useGoEgress) {
+              const tc = await transcodeWithProtoFront({
+                cfg: cfg || { paths: { project: projectRoot } },
+                upstreamProtocol: 'openai.responses',
+                inboundProtocol: protocol,
+                model: converted.body.model,
+                stream: false,
+                payload: chunks.join(''),
+              })
+              if (tc?.ok && tc.body) return json(res, 200, JSON.parse(tc.body))
+            }
             if (protocol === 'openai.responses' && result.body?.status === 'incomplete')
               return json(res, 200, result.body)
             let body
@@ -1185,6 +1303,19 @@ export async function handleCodexProtocol({
               })
             }
             return json(res, 200, body)
+          }
+          if (useGoEgress) {
+            const tc = await transcodeWithProtoFront({
+              cfg: cfg || { paths: { project: projectRoot } },
+              upstreamProtocol: 'openai.responses',
+              inboundProtocol: protocol,
+              model: converted.body.model,
+              stream: true,
+              payload: chunks.join(''),
+            })
+            if (!res.headersSent) writeSSEHeaders(res)
+            if (tc?.ok && tc.body) res.write(tc.body)
+            return res.end()
           }
           if (!res.headersSent) writeSSEHeaders(res)
           return res.end()

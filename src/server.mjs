@@ -33,6 +33,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { loadConfig, reloadActiveVm, routingConfigFile } from './lib/core/config.mjs'
 import { createGeminiCragSubscription } from './lib/gemini/subscription.mjs'
 import { createGeminiScheduler } from './lib/gemini/scheduler.mjs'
+import { createGeminiSlotPrefs } from './lib/gemini/slot-prefs.mjs'
 import {
   createGeminiPublicHandler,
   createGeminiTerminal,
@@ -57,6 +58,7 @@ import {
   getPanelAdmin,
 } from './lib/core/security.mjs'
 import { loadModelPolicy } from './lib/protocol/model-policy.mjs'
+import { loadGeminiModelPolicy } from './lib/protocol/gemini-model-policy.mjs'
 import { gatewayModelCatalog } from './lib/protocol/models.mjs'
 import {
   createCredentialRefreshMonitor,
@@ -96,6 +98,7 @@ import { ApiEndpointStore } from './lib/admin/api-endpoints.mjs'
 import { ApiScheduler } from './lib/pool/api-scheduler.mjs'
 import { apiScheduleScope, resolveInferenceBackend } from './lib/pool/api-protocol.mjs'
 import { bootApiKernel, apiKernelPaths, apiKernelSnapshot } from './lib/transport/api-kernel-client.mjs'
+import { bootProtoFront } from './lib/transport/proto-front-client.mjs'
 import { PanelUserStore } from './lib/admin/panel-users.mjs'
 import { RequestLogStore } from './lib/admin/request-log.mjs'
 import {
@@ -125,7 +128,8 @@ import { ensureProxyEgress, proxyEgressReady } from './lib/vm/egress.mjs'
 import { syncIpv6ProxyEgress } from './lib/vm/proxy-policy-runtime.mjs'
 import { GATEWAY_CAPABILITIES } from './lib/vm/execution-context.mjs'
 import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/telemetry-rewrite.mjs'
-import { openDatabaseAsync, closeDatabaseAsync, getDb, getDbEngine } from './lib/db/database.mjs'
+import { openDatabaseAsync, closeDatabaseAsync, getDb, getDbEngine, getPgPool } from './lib/db/database.mjs'
+import { startDashboardAggregator, stopDashboardAggregator } from './lib/db/pg/dashboard-aggregator.mjs'
 import { snapshotCacheMetrics } from './lib/cache/index.mjs'
 import { armWriteBehind } from './lib/db/write-behind.mjs'
 import { JevUsageRepo } from './lib/db/repos/jev-usage-repo.mjs'
@@ -133,6 +137,7 @@ import { installJevUsageRecorder } from './lib/protocol/jev-usage.mjs'
 import { runLegacyImport } from './lib/db/legacy-import.mjs'
 import { initVmDbSync, stopVmWatch } from './lib/vm/vm-db-sync.mjs'
 import { BackupService } from './lib/admin/backup-service.mjs'
+import { ensureRedaction } from './lib/redaction/runtime.mjs'
 import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createHostMemoryPressure, installHostMemoryPressure } from './lib/cluster/host-memory-pressure.mjs'
@@ -342,7 +347,7 @@ const allowRate = createRateLimiter({
 
 // --- Persistent store (PostgreSQL or SQLite) ---
 const dataDir = cfg.paths.data || path.join(cfg.paths.root, 'data')
-await openDatabaseAsync({ dataDir, pooled: true })
+await openDatabaseAsync({ dataDir, pooled: true, enableAggregator: false })
 armWriteBehind(getDb())
 const jevUsageRepo = new JevUsageRepo()
 installJevUsageRecorder((event) => jevUsageRepo.record(event))
@@ -350,6 +355,11 @@ try {
   loadModelPolicy()
 } catch (e) {
   console.warn('[model-policy] boot load failed', e?.message || e)
+}
+try {
+  loadGeminiModelPolicy()
+} catch (e) {
+  console.warn('[gemini-model-policy] boot load failed', e?.message || e)
 }
 // one-time migration of legacy JSON files (data/*.json + request-logs) into the DB
 const legacyImport = runLegacyImport({ dataDir, projectRoot: cfg.paths.project })
@@ -676,6 +686,42 @@ healthMonitor = createHealthProbeMonitor({
       unofficial: false,
       extraHeaders: { [HEALTH_REAL_HEADER]: '1' },
     }),
+  listGeminiTargets: async () => {
+    if (!geminiScheduler?.catalog) return { models: [], accounts: [] }
+    return geminiScheduler.catalog()
+  },
+  runGeminiProbe: async ({ model, prompt, timeout_ms }) => {
+    if (!geminiScheduler?.complete) return { ok: false, error: 'gemini_scheduler_unavailable' }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout_ms || 60_000)
+    try {
+      const turn = await geminiScheduler.complete({
+        model,
+        text: prompt || 'hello',
+        startedAt: Date.now(),
+        signal: controller.signal,
+        allowUnprefixedNonGemini: false,
+      })
+      return {
+        ok: true,
+        status: turn?.upstream_status ?? 200,
+        text: turn?.text || 'ok',
+        vm_id: turn?.account_id ? `gemini:${turn.account_id}` : 'gemini',
+        account_id: turn?.account_id || null,
+        model: turn?.response_model || turn?.model || model,
+        stop_reason: turn?.stopReason || 'end_turn',
+        usage: turn?.usage || { input_tokens: 0, output_tokens: 0 },
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        status: error?.upstreamStatus || error?.status || 0,
+        error: error?.message || error?.code || String(error),
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  },
 })
 const vmTestSchedule = new VmTestScheduleRunner({
   projectRoot: cfg.paths.project,
@@ -825,6 +871,13 @@ usageProbeMonitor = createUsageProbeMonitor({
 catalogMonitor = createCatalogMonitor({
   projectRoot: cfg.paths.project,
   codexCatalogVersion: () => routingConfig.codex?.catalog_client_version || 'auto',
+  callGeminiHost,
+  resolveGeminiProxy: (proxyId, envId) => {
+    const ownerUserId = geminiOwnersRepo?.getOwner?.(envId) ?? null
+    return geminiProxyFor(proxyPool, proxyId, { ownerUserId })
+  },
+  getApiEndpointStore: () => apiEndpointStore,
+  cfg,
   log: (event) => console.log(JSON.stringify(event)),
 })
 notifyMonitor = createNotifyMonitor({
@@ -860,7 +913,7 @@ const backupService = new BackupService({
   projectRoot: cfg.paths.project,
   configDir: path.dirname(routingConfigPath),
 })
-backupService.onRestored((db) => {
+backupService.onRestored(async (db) => {
   // A restore swaps the DatabaseSync instance and routing files. Rebuild every
   // holder before reporting success; otherwise requests keep stale snapshots
   // or silently write through statements owned by the closed connection.
@@ -902,6 +955,11 @@ backupService.onRestored((db) => {
   initPoolRuntime()
   reloadActiveVm(cfg)
   vmTestSchedule.reload()
+  try {
+    await ensureRedaction(routingConfig, { projectRoot: cfg.paths.project })
+  } catch (err) {
+    console.warn('[backup] redaction resync after restore failed:', String(err?.message || err))
+  }
 })
 // A just-activated leader waits for the draining controller to exit before its catch-up backup:
 // that one may still be mid-run, and two full snapshots of a large DB would run side by side.
@@ -1015,7 +1073,7 @@ function rejectAuth(req, res, error) {
   return false
 }
 
-/** `keyGate: false` (key self-service) skips the managed key's quota / RPM / concurrency gate and the gateway bucket. */
+/** `keyGate: false` (key self-service) skips the managed key's quota / RPM / concurrency gate. */
 function requireAuth(req, res, { keyGate = true, buyer = false, optionalBuyer = false } = {}) {
   req.presentedApiKey = extractApiKey(req)
   const token = extractPanelToken(req) || req.presentedApiKey
@@ -1076,9 +1134,9 @@ function requireAuth(req, res, { keyGate = true, buyer = false, optionalBuyer = 
     })
     return false
   }
-  // Master env API key — unlimited admin
+  // Master env API key — unlimited admin unless KIN_RATE_CAP is explicitly configured
   if (timingSafeEqualStr(token, cfg.api_key)) {
-    if (!allowRate(token)) {
+    if (cfg.limits.rate_capacity_explicit && !allowRate(token)) {
       return rejectAuth(
         req,
         res,
@@ -1128,18 +1186,6 @@ function requireAuth(req, res, { keyGate = true, buyer = false, optionalBuyer = 
   const gate = keyGate ? apiKeyStore.canAccept(managed.record) : { ok: true }
   if (!gate.ok) {
     return rejectAuth(req, res, makeApiKeyGateError(gate))
-  }
-  if (keyGate && !allowRate(token)) {
-    return rejectAuth(
-      req,
-      res,
-      makeError({
-        type: ErrorType.RATE_LIMIT,
-        code: ErrorCode.GATEWAY_RATE_LIMIT,
-        message: 'Gateway rate limit exceeded. Retry later.',
-        status: 429,
-      }),
-    )
   }
   req.apiKeyKind = 'managed'
   req.apiKeyRecord = managed.record
@@ -1460,6 +1506,12 @@ const geminiCragSubscription = createGeminiCragSubscription({
   callHost: callGeminiHost,
 })
 const geminiTerminal = createGeminiTerminal({ proxyPool: () => proxyPool })
+const geminiSlotPrefs = createGeminiSlotPrefs({
+  settingsRepo: {
+    get: (key, fallback) => new SettingsRepo().get(key, fallback),
+    set: (key, value) => new SettingsRepo().set(key, value),
+  },
+})
 const geminiScheduler = createGeminiScheduler({
   callHost: callGeminiHost,
   resolveProxy: (proxyId, envOwnerId) => geminiProxyFor(proxyPool, proxyId, { ownerUserId: envOwnerId }),
@@ -1467,9 +1519,11 @@ const geminiScheduler = createGeminiScheduler({
   apiKeyStore,
   groupsRepo: { rateMultiplier: (id) => groupsRepo.rateMultiplier(id) },
   geminiOwnersRepo: geminiOwnersProxy,
+  slotPrefs: geminiSlotPrefs,
   cragSubscription: geminiCragSubscription,
   getRoutingConfig: () => routingConfig,
   getAttemptsRepo: () => attemptsRepo,
+  listCacheTtlMs: 2000,
 })
 const handleGeminiPublic = createGeminiPublicHandler({
   json,
@@ -1479,6 +1533,7 @@ const handleGeminiPublic = createGeminiPublicHandler({
   groupsRepo: { rateMultiplier: (id) => groupsRepo.rateMultiplier(id) },
   apiKeyStore,
   getRoutingConfig: () => routingConfig,
+  getHealthMonitor: () => healthMonitor,
 })
 const integrationTokenStore = new IntegrationTokenStore()
 const handlePanel = createPanelHandler({
@@ -1487,6 +1542,8 @@ const handlePanel = createPanelHandler({
   cragSubscription,
   geminiCragSubscription,
   geminiOwnersRepo: geminiOwnersProxy,
+  geminiSlotPrefs,
+  geminiScheduler,
   handleCragShop,
   json,
   writeSSEHeaders,
@@ -2056,6 +2113,7 @@ const server = http.createServer(async (req, res) => {
           routeStream: gemGen.stream,
         })
       }
+      let preloadedGemCat = null
       if (gemGen && backend === 'all') {
         const policy = req.apiKeyKind === 'managed' ? keyTierPolicyFromRecord(req.apiKeyRecord) : null
         const gemScope = {
@@ -2070,6 +2128,7 @@ const server = http.createServer(async (req, res) => {
         let hasOwnedGemEnv = false
         try {
           const cat = await geminiScheduler.catalog(gemScope)
+          preloadedGemCat = cat
           hasOwnedGemEnv = Array.isArray(cat?.accounts) && cat.accounts.length > 0
         } catch {
           hasOwnedGemEnv = false
@@ -2084,7 +2143,7 @@ const server = http.createServer(async (req, res) => {
           })
         }
       }
-      return handleGeminiPublic(req, res)
+      return handleGeminiPublic(req, res, preloadedGemCat ? { catalogSnapshot: preloadedGemCat } : {})
     }
     if (req.method === 'POST' && (p === '/v1/chat/completions' || p === '/chat/completions')) {
       return await handleProtocol(req, res, 'openai.chat', p)
@@ -2304,16 +2363,44 @@ if (process.env.KIN_CRS_MOCK !== '1') {
   )
 }
 await bootApiKernel(cfg)
+await bootProtoFront(cfg)
 server.keepAliveTimeout = 120_000
 server.headersTimeout = 125_000
 server.timeout = 0
 
 server.listen(cfg.port, cfg.host, () => {
   runAtActivation('background', () => {
+    if (getDbEngine() === 'postgres' && process.env.VM2API_DASHBOARD_AGGREGATOR_DISABLED !== '1') {
+      startDashboardAggregator(getPgPool())
+      onLeaderStop(() => stopDashboardAggregator())
+    }
     if (process.env.KIN_CRS_MOCK !== '1') {
       void cragSubscription.recover().catch(() => {
         console.warn('[crag-subscription] startup recovery failed; use the administrator panel to retry')
       })
+      void geminiCragSubscription.recover().catch(() => {
+        console.warn('[crag-gemini-subscription] startup recovery failed; will retry in background')
+      })
+      let maintainingGeminiSub = false
+      const maintainGeminiSub = () => {
+        if (maintainingGeminiSub) return
+        maintainingGeminiSub = true
+        void (async () => {
+          if (geminiCragSubscription.hasSyncPending?.()) {
+            await geminiCragSubscription.recover().catch(() => {
+              console.warn('[crag-gemini-subscription] background sync-pending recovery deferred')
+            })
+          }
+          await geminiCragSubscription.refreshExpiredEntitlement?.().catch(() => {
+            console.warn('[crag-gemini-subscription] expired quota refresh deferred')
+          })
+        })().finally(() => {
+          maintainingGeminiSub = false
+        })
+      }
+      const geminiSubTimer = setInterval(maintainGeminiSub, 15_000).unref()
+      onLeaderStop(() => clearInterval(geminiSubTimer))
+      maintainGeminiSub()
       const refresh = () =>
         void cragSubscription.refreshExpiredEntitlement().catch(() => {
           console.warn('[crag-subscription] expired quota refresh deferred')
@@ -2342,6 +2429,15 @@ server.listen(cfg.port, cfg.host, () => {
       const timer = setInterval(expireOrders, 60_000).unref()
       onLeaderStop(() => clearInterval(timer))
       expireOrders()
+    }
+    if (process.env.KIN_CRS_MOCK !== '1' && typeof handleCragShop.warmPlans === 'function') {
+      const warmCatalog = () =>
+        void handleCragShop.warmPlans().catch(() => {
+          console.warn('[crag-shop] catalog cache warm deferred')
+        })
+      const timer = setInterval(warmCatalog, 5 * 60_000).unref()
+      onLeaderStop(() => clearInterval(timer))
+      warmCatalog()
     }
     // Installation intent is durable; reconnecting nodes must not depend on a lost HTTP callback.
     if (process.env.KIN_CRS_MOCK !== '1') {

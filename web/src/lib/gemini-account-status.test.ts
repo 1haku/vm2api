@@ -168,6 +168,32 @@ describe('Gemini account presentation', () => {
     const blocked = { ...slot(candidate), unschedulable_text: hostBlocker }
     expect(vmCredDead(blocked)).toBe(false)
     expect(credentialStatus(blocked).text).toBe('已完成官方 Google 授权')
+    expect(
+      geminiHostBlocker(candidate, {
+        available: true,
+        payload_state: 'installed',
+        oauth_runtime_issue: 'gemini_sandbox_apparmor_restricted',
+      })
+    ).toBe('宿主 AppArmor 限制了 Gemini 沙箱')
+    expect(
+      geminiHostBlocker(candidate, {
+        available: true,
+        payload_state: 'installed',
+        oauth_runtime_issue: 'gemini_sandbox_unavailable',
+      })
+    ).toBe('宿主非特权沙箱（bwrap）不可用')
+    expect(
+      geminiInferenceErrorLabel('gemini_sandbox_apparmor_restricted')
+    ).toBe('宿主 AppArmor 限制了 Gemini 沙箱')
+    expect(
+      geminiInferenceErrorAction('gemini_sandbox_apparmor_restricted')
+    ).toContain('prepare-gemini')
+    expect(geminiInferenceErrorLabel('gemini_sandbox_unavailable')).toBe(
+      '宿主非特权沙箱不可用'
+    )
+    expect(geminiInferenceErrorAction('gemini_sandbox_unavailable')).toContain(
+      'bubblewrap'
+    )
   })
 
   it.each([
@@ -435,5 +461,40 @@ describe('gemini_native_config_invalid status copy', () => {
     expect(
       geminiInferenceErrorAction('gemini_native_config_invalid')
     ).toContain('对齐宿主脚本与签名载荷版本')
+  })
+
+  it('aligns CRAGGemini license mismatch, sync pending, and invalid guidance with real UI actions', () => {
+    expect(geminiInferenceErrorLabel('license_payload_key_mismatch')).toBe(
+      'CRAGGemini 许可与当前载荷版本不匹配'
+    )
+    expect(
+      geminiInferenceErrorAction('license_payload_key_mismatch')
+    ).toContain('重新绑定 CRAG 席位')
+    expect(geminiInferenceErrorLabel('gemini_subscription_sync_pending')).toBe(
+      'CRAGGemini 宿主订阅同步中'
+    )
+    expect(
+      geminiInferenceErrorAction('gemini_subscription_sync_pending')
+    ).toContain('继续同步订阅')
+    expect(geminiInferenceErrorAction('license_invalid')).toContain(
+      '重新绑定 CRAG 席位'
+    )
+    expect(geminiInferenceErrorAction('license_invalid')).not.toContain(
+      '释放后重新绑定'
+    )
+    expect(
+      geminiAccountStatus({
+        ...candidate,
+        crag_license: {
+          product: 'craggemini',
+          status: 'invalid',
+          valid: false,
+          code: 'license_payload_key_mismatch',
+        },
+      })
+    ).toMatchObject({
+      group: 'unschedulable',
+      blocker: 'CRAGGemini 许可与当前载荷版本不匹配',
+    })
   })
 })

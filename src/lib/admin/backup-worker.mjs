@@ -54,20 +54,23 @@ async function main() {
     return
   }
 
+  let result
   try {
     openDatabase({ dataDir: workerData.dataDir })
     const rec = runBackupJob(workerData.ctx, workerData.job)
-    parentPort.postMessage({ ok: true, rec })
+    result = { ok: true, rec }
   } catch (e) {
-    parentPort.postMessage({
+    result = {
       ok: false,
       error: { message: String((e && e.message) || e), code: (e && e.code) || null },
-    })
+    }
   } finally {
     try {
       closeDatabase()
     } catch {}
   }
+  // A restore may replace the SQLite files as soon as the backup promise resolves.
+  parentPort.postMessage(result)
 }
 
 void main()

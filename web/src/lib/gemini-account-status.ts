@@ -28,11 +28,28 @@ type CragLicense = {
   seat_required?: boolean
 }
 
+type AccountRestriction = {
+  reason: string
+  text: string
+  until: number | null
+}
+
+type AccountCircuit = {
+  state: 'closed' | 'open' | 'half_open'
+  failures: number
+  threshold: number
+  open_until: number | null
+  open_ms: number
+}
+
 type Account = Authorization &
   InferenceEvidence & {
     models_discovered?: boolean
     models: readonly string[]
     proxy_ready?: boolean
+    schedulable?: boolean
+    restriction?: AccountRestriction | null
+    circuit?: AccountCircuit | null
     crag_license?: CragLicense | null
   }
 
@@ -47,6 +64,8 @@ const OAUTH_RUNTIME_LABELS: Readonly<Record<string, string>> = {
   gemini_oauth_tools_missing: '宿主缺少 Google 授权所需工具',
   gemini_egress_unavailable: '宿主缺少可用的 kin-egress',
   gemini_ipv4_forwarding_unavailable: '宿主 IPv4 转发未就绪',
+  gemini_sandbox_apparmor_restricted: '宿主 AppArmor 限制了 Gemini 沙箱',
+  gemini_sandbox_unavailable: '宿主非特权沙箱（bwrap）不可用',
 }
 
 export function geminiHostBlocker(
@@ -126,12 +145,16 @@ const INFERENCE_ERROR_LABELS: Readonly<Record<string, string>> = {
   gemini_inference_output_limit: '响应超过长度限制',
   gemini_inference_tool_blocked: '不支持工具调用',
   gemini_native_config_invalid: 'CRAGGemini 配置被载荷拒绝',
+  gemini_sandbox_apparmor_restricted: '宿主 AppArmor 限制了 Gemini 沙箱',
+  gemini_sandbox_unavailable: '宿主非特权沙箱不可用',
   license_required: '未绑定 CRAGGemini 订阅席位',
   license_expired: 'CRAGGemini 订阅许可已过期',
   license_not_yet_valid: 'CRAGGemini 许可尚未生效',
   license_invalid: 'CRAGGemini 许可无效',
   license_binding_mismatch: 'CRAGGemini 许可绑定不匹配',
+  license_payload_key_mismatch: 'CRAGGemini 许可与当前载荷版本不匹配',
   license_unconfigured: 'CRAGGemini 订阅未配置',
+  gemini_subscription_sync_pending: 'CRAGGemini 宿主订阅同步中',
 }
 
 export const DEFAULT_GEMINI_TEST_PROMPT = 'hello'
@@ -279,6 +302,10 @@ const INFERENCE_ERROR_ACTIONS: Readonly<Record<string, string>> = {
     '处理方式：本地桥接握手超时，请稍候重试或检查宿主机 vm2api-gemini 日志。',
   gemini_authorization_unavailable:
     '处理方式：宿主服务在线但未能拉起授权进程，请检查宿主机日志与绑定代理的出口连通性。',
+  gemini_sandbox_apparmor_restricted:
+    '处理方式：宿主机 AppArmor 限制了非特权 user namespace，请前往「设置 → Gemini 维护」执行「修复安装」或在宿主机运行 prepare-gemini。',
+  gemini_sandbox_unavailable:
+    '处理方式：宿主机非特权沙箱（bwrap）不可用，请前往「设置 → Gemini 维护」诊断宿主并检查 bubblewrap 与服务日志。',
   license_required:
     '处理方式：请在「账号」页为当前环境绑定可用的 CRAGGemini 订阅席位。',
   license_expired:
@@ -286,11 +313,15 @@ const INFERENCE_ERROR_ACTIONS: Readonly<Record<string, string>> = {
   license_not_yet_valid:
     '处理方式：请核对宿主机系统时间与 CRAGGemini 许可生效时间。',
   license_invalid:
-    '处理方式：请在「账号」页释放后重新绑定席位，或前往订阅页刷新宿主许可。',
+    '处理方式：请确认 CRAGGemini 宿主订阅已激活且未处于同步中，然后在「账号」页点击「重新绑定 CRAG 席位」，或前往「设置 → Gemini 维护」检查载荷与宿主订阅目录。',
   license_binding_mismatch:
-    '处理方式：许可与当前环境设备绑定不一致，请在「账号」页重新绑定席位。',
+    '处理方式：许可与当前环境设备或宿主机名单不一致，请在「账号」页点击「重新绑定 CRAG 席位」。',
+  license_payload_key_mismatch:
+    '处理方式：CRAGGemini 载荷密钥已更新，请在「账号」页点击「重新绑定 CRAG 席位」以换签当前版本许可。',
   license_unconfigured:
     '处理方式：请先在「订阅 CRAG」或「导入 → Gemini」完成 CRAGGemini 兑换与激活。',
+  gemini_subscription_sync_pending:
+    '处理方式：宿主机上次订阅变更尚未完成同步，请点击「继续同步订阅」或稍候等待自动恢复。',
 }
 
 export function geminiInferenceErrorLabel(code?: string | null): string {
@@ -347,6 +378,7 @@ export function geminiEligibilityNotice(
   label: string
   action: string
   validationUrl: string | null
+  advisory: boolean
 } | null {
   if (lastInference?.state === 'completed' && lastInference.finished_at) {
     const checked = account?.checked_at ? Date.parse(account.checked_at) : NaN
@@ -368,6 +400,7 @@ export function geminiEligibilityNotice(
         action:
           '请在对应 Google 账号浏览器打开下方验证链接完成核验，随后返回刷新账号状态即可恢复对话。',
         validationUrl: safeGoogleValidationUrl(account.validation_url),
+        advisory: false,
       }
     case 'location_unsupported':
       return {
@@ -375,15 +408,27 @@ export function geminiEligibilityNotice(
         action:
           '请在「代理」页更换至支持地区（如美国住宅）的 SOCKS5 代理后刷新账号。',
         validationUrl: null,
+        advisory: false,
       }
     case 'ineligible':
       return {
         label: 'Google 判定当前账号暂不符合 Antigravity 使用资格',
         action: '请检查该 Google 账号订阅状态与年龄限制，或更换可用个人账号。',
         validationUrl: null,
+        advisory: false,
       }
-    default:
-      return null
+    default: {
+      const validationUrl = safeGoogleValidationUrl(account?.validation_url)
+      return validationUrl
+        ? {
+            label: 'Google 返回了账号核验链接（不代表当前账号不可用）',
+            action:
+              '若对话提示需要身份核验，请在对应 Google 账号浏览器打开链接，完成核验后重试。',
+            validationUrl,
+            advisory: true,
+          }
+        : null
+    }
   }
 }
 
@@ -419,6 +464,7 @@ type GeminiGroup =
   | 'off'
   | 'none'
   | 'bad'
+  | 'restricted'
   | 'unschedulable'
   | 'pending'
   | 'host_failed'
@@ -460,6 +506,29 @@ export function geminiAccountStatus(
       if (blocker) {
         group = 'unschedulable'
         tone = { key: group, cls: 'bad', text: blocker }
+      } else if (environment.schedulable === false) {
+        group = 'off'
+        tone = { key: 'off', cls: 'off', text: '调度关' }
+      } else if (
+        environment.circuit &&
+        environment.circuit.state !== 'closed'
+      ) {
+        group = 'restricted'
+        tone =
+          environment.circuit.state === 'open'
+            ? { key: 'circuit', cls: 'bad', text: '熔断中' }
+            : { key: 'circuit', cls: 'caution', text: '熔断探测' }
+      } else if (
+        environment.restriction &&
+        (!environment.restriction.until ||
+          environment.restriction.until > Date.now())
+      ) {
+        group = 'restricted'
+        tone = {
+          key: 'cool',
+          cls: 'caution',
+          text: environment.restriction.text || '冷却中',
+        }
       } else if (inference.key === 'completed') {
         group = 'host_verified'
         tone = inference

@@ -92,6 +92,12 @@ import {
   saveGptModelPolicy,
   resetGptModelPolicy,
 } from '../protocol/gpt-model-policy.mjs'
+import {
+  getGeminiModelPolicy,
+  listGeminiPolicyModels,
+  saveGeminiModelPolicy,
+  resetGeminiModelPolicy,
+} from '../protocol/gemini-model-policy.mjs'
 import { refreshCodexAccessToken } from '../protocol/codex-models.mjs'
 import {
   defaultSeedPolicy,
@@ -102,7 +108,7 @@ import {
 
 import { runVmTestChat, resolveTestModels, syncCodexCatalog } from './vm-test-chat.mjs'
 import { VmTestScheduleError } from './vm-test-schedule.mjs'
-import { readCatalogSync, syncClaudeCatalog, syncGptCatalog } from './catalog-monitor.mjs'
+import { readCatalogSync, syncClaudeCatalog, syncGptCatalog, syncGeminiCatalog } from './catalog-monitor.mjs'
 import { setPriceOverride, listPriceOverrides, syncModelsDev } from './price-catalog.mjs'
 import { buildPricing } from './pricing-view.mjs'
 import { publicKeyView } from './api-keys.mjs'
@@ -130,7 +136,7 @@ import { publicUserView } from './panel-users.mjs'
 import { authorizePanelRoute, mePayload, panelIdentity } from './panel-acl.mjs'
 import { INTEGRATION_DELEGATED, handleIntegrationAdminRoute } from './integration-routes.mjs'
 import { IntegrationTokenStore } from './integration-tokens.mjs'
-import { createGeminiPanelHandler, isGeminiPanelPath } from '../gemini/routes.mjs'
+import { callGeminiHost, createGeminiPanelHandler, geminiProxyFor, isGeminiPanelPath } from '../gemini/routes.mjs'
 import {
   denyIfUserCannotDeleteVm,
   denyIfUserMissesKey,
@@ -152,7 +158,7 @@ import {
   vmOwnerId,
 } from './resource-owner.mjs'
 import { servePoolSeatStream } from './pool-seat-stream.mjs'
-import { logsToCsv, logsToJsonl } from './request-log.mjs'
+import { logsToCsv, logsToJsonl, validateLoggingRoutingPatch } from './request-log.mjs'
 import {
   listVms,
   getVm,
@@ -201,7 +207,10 @@ import { parseScheduleLevelInput, manualScheduleLevelOf } from '../pool/credenti
 import { parseActiveHoursInput } from '../pool/active-hours.mjs'
 import { parseVmQuotaOverride } from '../pool/vm-quota-override.mjs'
 import { validateOpenAIQuotaPatch, normalizeOpenAIQuotaPolicy } from '../pool/openai-quota-policy.mjs'
+import { validateQuotaRoutingPatch } from '../pool/pool-scheduler.mjs'
 import { validateInferenceWebsocketPatch } from '../protocol/codex-route.mjs'
+import { validateRedactionPatch } from '../redaction/policy.mjs'
+import { ensureRedaction, redactionStatus } from '../redaction/runtime.mjs'
 import {
   normalizeInferenceConfig,
   normalizeSessionSlots,
@@ -227,7 +236,7 @@ import { withVmLock, atomicWriteJson, isValidVmId, invalidateVmSlotReadCache } f
 import { snapshotDatabaseMetricsAsync } from '../db/database-metrics.mjs'
 import { queryActiveUsage } from '../oauth/active-usage-query.mjs'
 import { getUsageCache } from '../oauth/usage-cache.mjs'
-import { getDb, getDbPath, getPgPool } from '../db/database.mjs'
+import { getDb, getDbEngine, getDbPath, getPgPool } from '../db/database.mjs'
 import { usagePoolEnabled, usageRead } from '../db/sqlite-pool.mjs'
 import { getCacheRuntime } from '../cache/index.mjs'
 import {
@@ -259,7 +268,7 @@ import { withSlotMaintenance } from '../vm/slot-maintenance.mjs'
 import { clearActiveVmFromDb, removeVmFromDb } from '../vm/vm-db-sync.mjs'
 import { renameVmId } from '../vm/vm-rename.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
-import { reloadActiveVm } from '../core/config.mjs'
+import { DEFAULT_MAX_REQUEST_BYTES, reloadActiveVm } from '../core/config.mjs'
 import {
   OS_CATALOG,
   kernelForIndex,
@@ -776,9 +785,14 @@ export function createPanelHandler(ctx) {
     json,
     readBody,
     proxyPool: () => ctx.proxyPool,
+    poolScheduler: () => ctx.poolScheduler,
     terminal: ctx.geminiTerminal,
     cragSubscription: ctx.geminiCragSubscription,
     geminiOwnersRepo: ctx.geminiOwnersRepo || null,
+    geminiSlotPrefs: ctx.geminiSlotPrefs || null,
+    geminiScheduler: ctx.geminiScheduler || null,
+    panelUsers: ctx.panelUsers || null,
+    requestLog: ctx.requestLog || null,
     billingReady: Boolean(ctx.requestLog),
   })
   // A checkout can change under a live Node process; report its boot version.
@@ -1713,7 +1727,7 @@ export function createPanelHandler(ctx) {
     })
   }
 
-  function restoreRoutingRuntime(previous) {
+  async function restoreRoutingRuntime(previous) {
     ctx.routingConfig = previous
     ctx.healthMonitor?.setConfig(ctx.routingConfig.health_probe)
     ctx.usageProbeMonitor?.setConfig(ctx.routingConfig.usage_probe)
@@ -1730,6 +1744,9 @@ export function createPanelHandler(ctx) {
     stickyRouter.reloadConfig(ctx.routingConfig)
     accountQuota.reloadConfig(ctx.routingConfig)
     ctx.poolScheduler?.reloadConfig?.(poolSchedulerConfig())
+    try {
+      await ensureRedaction(ctx.routingConfig, { projectRoot: cfg.paths.project })
+    } catch {}
   }
 
   async function prepareInheritedInferenceEngine(body) {
@@ -1746,7 +1763,7 @@ export function createPanelHandler(ctx) {
         try {
           return await persistRoutingPatch(body)
         } catch (error) {
-          restoreRoutingRuntime(previousRoutingConfig)
+          await restoreRoutingRuntime(previousRoutingConfig)
           if (body.pool || body.failover) initPoolRuntime()
           throw error
         }
@@ -2360,10 +2377,12 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok(snapshot))
       }
       if (req.method === 'GET' && p === '/api/panel/version') {
+        const refresh = ['1', 'true'].includes(String(url.searchParams.get('refresh') || '').toLowerCase())
         const status = await buildUpdateStatus({
           projectRoot: cfg?.paths?.project,
           currentVersion: runningVersion,
           upgrade: await readHostUpgradeStatus(),
+          ...(refresh ? { cacheMs: 0 } : {}),
         })
         return json(res, 200, panel.ok(status))
       }
@@ -3307,6 +3326,7 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/backups') {
         return json(res, 200, {
           ok: true,
+          engine: getDbEngine(),
           items: backupService.list(),
           config: backupService.getSchedule(),
           next_auto_at: backupService.nextAutoAt(),
@@ -3347,12 +3367,14 @@ export function createPanelHandler(ctx) {
         if (!rec || !rec.file_path || !fs.existsSync(rec.file_path)) {
           return json(res, 404, { ok: false, error: { message: 'backup file not found' } })
         }
+        const downloadName = rec.file_name || path.basename(rec.file_path)
+        const contentType = downloadName.endsWith('.pgdump') ? 'application/octet-stream' : 'application/gzip'
         res.writeHead(
           200,
           corsHeadersForRequest(req, {
-            'content-type': 'application/gzip',
+            'content-type': contentType,
             'content-length': fs.statSync(rec.file_path).size,
-            'content-disposition': `attachment; filename="${rec.file_name}"`,
+            'content-disposition': `attachment; filename="${downloadName}"`,
             'x-kin-backup-sha256': rec.sha256 || '',
             'access-control-expose-headers': 'content-disposition, x-kin-backup-sha256',
           }),
@@ -3379,6 +3401,8 @@ export function createPanelHandler(ctx) {
             restore_in_progress: 409,
             backup_corrupt: 422,
             backup_not_ok: 422,
+            backup_incompatible: 422,
+            pg_restore_missing: 503,
           }
           return json(res, map[e.code] || 500, {
             ok: false,
@@ -4787,10 +4811,27 @@ export function createPanelHandler(ctx) {
       // Explicit quota refresh: no inference request or cached-success response.
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/usage\/query$/.test(p)) {
         const id = p.split('/')[4]
+        let body = {}
+        try {
+          body = (await readBody(req, 4096)) || {}
+        } catch (error) {
+          return json(res, error?.status || 400, {
+            ok: false,
+            error: { code: error?.code || 'invalid_request', message: String(error?.message || 'invalid JSON body') },
+          })
+        }
+        if (typeof body !== 'object' || Array.isArray(body)) {
+          return json(res, 400, {
+            ok: false,
+            error: { code: 'invalid_request', message: 'Request body must be a JSON object' },
+          })
+        }
+        const forceReconcile = body.force_reconcile === true || body.reconcile_headers === true
         const result = await queryActiveUsage({
           projectRoot: cfg.paths.project,
           vm: getVm(cfg.paths.project, id),
           accountQuota,
+          forceReconcile,
         })
         return json(res, result.status, result.body)
       }
@@ -5026,7 +5067,7 @@ export function createPanelHandler(ctx) {
         }
         const currentVm = getVm(cfg.paths.project, id)
         const credentialFailure =
-          /oauth_revoked|oauth_invalid_grant|invalid_grant|refresh_token_missing|token has been revoked/i.test(
+          /oauth_revoked|oauth_invalid_grant|invalid_grant|refresh_token_missing|token has been revoked|token_revoked|invalidated oauth token/i.test(
             `${currentVm?.claude?.refresh_error || ''} ${currentVm?.schedule_disabled_reason || ''}`,
           )
         if (body.schedulable && credentialFailure) {
@@ -7024,7 +7065,10 @@ export function createPanelHandler(ctx) {
         )
       }
       if (req.method === 'POST' && p === '/api/panel/health-probe') {
-        const snapshot = await ctx.healthMonitor.runRealProbe()
+        const body = await readBody(req, 4096).catch(() => ({}))
+        const platform =
+          typeof body?.platform === 'string' && body.platform.trim() ? body.platform.trim().toLowerCase() : 'all'
+        const snapshot = await ctx.healthMonitor.runRealProbe({ platform })
         return json(
           res,
           200,
@@ -7082,6 +7126,20 @@ export function createPanelHandler(ctx) {
             }),
           )
         }
+        if (platform === 'google' || platform === 'gemini') {
+          const pol = getGeminiModelPolicy()
+          const models = listGeminiPolicyModels()
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: pol,
+              models,
+              effective: models,
+              platform: 'google',
+            }),
+          )
+        }
         const pol = getModelPolicy()
         return json(
           res,
@@ -7109,6 +7167,20 @@ export function createPanelHandler(ctx) {
               effective: models,
               image_tools: listImageToolModels(),
               platform: 'openai',
+            }),
+          )
+        }
+        if (platform === 'google' || platform === 'gemini') {
+          const saved = saveGeminiModelPolicy(body.policy || body)
+          const models = listGeminiPolicyModels()
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: saved,
+              models,
+              effective: models,
+              platform: 'google',
             }),
           )
         }
@@ -7142,6 +7214,20 @@ export function createPanelHandler(ctx) {
               effective: models,
               image_tools: listImageToolModels(),
               platform: 'openai',
+            }),
+          )
+        }
+        if (platform === 'google' || platform === 'gemini') {
+          const saved = resetGeminiModelPolicy()
+          const models = listGeminiPolicyModels()
+          return json(
+            res,
+            200,
+            panel.ok({
+              policy: saved,
+              models,
+              effective: models,
+              platform: 'google',
             }),
           )
         }
@@ -7266,6 +7352,41 @@ export function createPanelHandler(ctx) {
           }),
         )
       }
+      // POST /api/panel/model-policy/sync-gemini — latest Google Gemini models from slots, Gemini API endpoints & models.dev
+      if (req.method === 'POST' && p === '/api/panel/model-policy/sync-gemini') {
+        const result = await syncGeminiCatalog({
+          callGeminiHost,
+          resolveGeminiProxy: (proxyId, envId) => {
+            const ownerUserId = ctx.geminiOwnersRepo?.getOwner?.(envId) ?? null
+            return geminiProxyFor(ctx.proxyPool, proxyId, { ownerUserId })
+          },
+          apiEndpointStore: ctx.apiEndpointStore,
+          cfg,
+          refreshModelsDev: true,
+        })
+        if (!result.ok) {
+          return json(res, result.error === 'no_google_models' ? 400 : 502, {
+            ok: false,
+            error: { code: result.error, message: result.error },
+            data: { synced: 0, catalog_sync: readCatalogSync() },
+          })
+        }
+        const models = listGeminiPolicyModels()
+        return json(
+          res,
+          200,
+          panel.ok({
+            policy: getGeminiModelPolicy(),
+            models,
+            effective: models,
+            platform: 'google',
+            synced: result.synced,
+            added: result.added || [],
+            sources: result.sources || [],
+            catalog_sync: readCatalogSync(),
+          }),
+        )
+      }
 
       // GET /api/panel/routing
       if (req.method === 'GET' && p === '/api/panel/routing') {
@@ -7273,7 +7394,12 @@ export function createPanelHandler(ctx) {
           ...ctx.routingConfig,
           compatibility: canonicalPersonaCompat(ctx.routingConfig?.compatibility),
         }
-        return json(res, 200, panel.buildRouting({ routingConfig, stickyRouter }))
+        const rawCeiling = Number(cfg?.limits?.max_body_bytes)
+        const maxBodyBytes = Number.isFinite(rawCeiling) && rawCeiling > 0 ? rawCeiling : DEFAULT_MAX_REQUEST_BYTES
+        const payload = panel.buildRouting({ routingConfig, stickyRouter })
+        payload.data.max_body_bytes = maxBodyBytes
+        payload.data.max_body_mib = Math.floor(maxBodyBytes / (1024 * 1024))
+        return json(res, 200, payload)
       }
       // GET /api/panel/outbound-profile — read-only outbound reference for the global preset
       if (req.method === 'GET' && p === '/api/panel/outbound-profile') {
@@ -7296,8 +7422,11 @@ export function createPanelHandler(ctx) {
           }
           validateInferenceWebsocketPatch(body)
           validateGeminiRoutingPatch(body)
+          validateQuotaRoutingPatch(body, ctx.routingConfig?.quota)
+          validateLoggingRoutingPatch(body, ctx.routingConfig?.logging)
+          validateRedactionPatch(body)
         } catch (error) {
-          if (error instanceof TypeError || error instanceof RangeError) {
+          if (error instanceof TypeError || error instanceof RangeError || error?.status === 400) {
             return json(res, 400, {
               ok: false,
               error: {
@@ -7350,10 +7479,16 @@ export function createPanelHandler(ctx) {
         try {
           applied = appliedDuringSwitch ?? (await persistRoutingPatch(body))
         } catch (error) {
-          restoreRoutingRuntime(previousRoutingConfig)
-          return json(res, 503, {
+          await restoreRoutingRuntime(previousRoutingConfig)
+          const status =
+            Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 ? error.status : 503
+          return json(res, status, {
             ok: false,
-            error: { code: 'routing_persist_failed', message: String(error?.message || error) },
+            error: {
+              ...(status === 400 ? { type: 'invalid_request_error' } : {}),
+              code: error?.code || (status === 400 ? 'invalid_redaction_config' : 'routing_persist_failed'),
+              message: String(error?.message || error),
+            },
           })
         }
         return json(
@@ -7361,6 +7496,7 @@ export function createPanelHandler(ctx) {
           200,
           panel.ok({
             ...publicRoutingNotify(ctx.routingConfig),
+            redaction_runtime: redactionStatus(),
             applied_concurrency: applied.concurrency,
             applied_rpm: applied.rpm,
             applied_session_slots: applied.session_slots,
