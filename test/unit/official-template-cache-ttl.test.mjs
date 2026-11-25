@@ -67,7 +67,7 @@ test('request TTL header overrides the default for both template and message anc
 })
 
 for (const ttl of [undefined, '5m', '1h']) {
-  test(`caller message marker with ${ttl} TTL stays intact`, (t) => {
+  test(`caller message marker with ${ttl} TTL follows the resolution rule`, (t) => {
     const input = fixture()
     input.messages[0].content = [
       { type: 'text', text: 'anchor', cache_control: { type: 'ephemeral', ...(ttl ? { ttl } : {}) } },
@@ -78,13 +78,13 @@ for (const ttl of [undefined, '5m', '1h']) {
       ...input.messages[0],
       content: [
         { type: 'text', text: `<system-reminder>\n${input.system}\n</system-reminder>\n` },
-        ...input.messages[0].content,
+        { ...input.messages[0].content[0], cache_control: control(ttl ?? '1h') },
       ],
     })
     assert.deepEqual(input, before)
     const messages = listCacheMarkers(out).filter((m) => m.section === 'messages')
     assert.equal(messages.length, 1)
-    assert.equal(messages[0].ttl, ttl || null)
+    assert.equal(messages[0].ttl, ttl ?? '1h')
     validateCacheBreakpoints(out)
   })
 }
