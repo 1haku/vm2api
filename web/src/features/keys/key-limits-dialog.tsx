@@ -526,7 +526,7 @@ export function KeyLimitsDialog({
                                   }))
                                 }}
                               />
-                              <span className='truncate' title={slotRawEmail(vm) || vm.name || vm.id}>
+                              <span className='truncate' title={slotRawEmail(vm) || undefined}>
                                 {slotDisplayTitle(vm)}
                               </span>
                               <span className='font-mono text-xs text-muted-foreground'>

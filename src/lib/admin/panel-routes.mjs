@@ -44,13 +44,21 @@ import {
   publicJevConfig,
   publicJevKeys,
   readJevConfig,
+  resumeJevKeys,
 } from '../protocol/jev-intercept.mjs'
 import { JevUsageRepo } from '../db/repos/jev-usage-repo.mjs'
 import { RefusalGuardsRepo } from '../db/repos/refusal-guards-repo.mjs'
 import { RefusalDeviceBlocksRepo } from '../db/repos/refusal-device-blocks-repo.mjs'
 import { RefusalSessionBlocksRepo } from '../db/repos/refusal-session-blocks-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
-import { parseCodexImportPayload, upsertCodexAccount, readCodexAccounts } from '../vm/codex-slot.mjs'
+import {
+  parseCodexImportPayload,
+  upsertCodexAccount,
+  readCodexAccounts,
+  persistCodexCredentialState,
+  markCodexGrantDead,
+} from '../vm/codex-slot.mjs'
+import { clearOpenAIAccountHold } from '../pool/openai-account-runtime.mjs'
 import { generateAuthUrl, exchangeAuthCode, normalizeOauthFlavor } from '../oauth/oauth-auth-url.mjs'
 import { panelImportErrorPayload } from '../oauth/cookie-auth.mjs'
 import { enrichOauthIdentity } from '../oauth/oauth-identity.mjs'
@@ -355,7 +363,11 @@ import {
 import { createCragSubscriptionHandler, cragSubscriptionRoute } from './crag-subscription-routes.mjs'
 import { restartRustKernel, syncClaudeKernelConfigs, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
-import { countTokensViaWorker, syncClaudeClientCredentials } from '../transport/go-worker-client.mjs'
+import {
+  countTokensViaWorker,
+  syncClaudeClientCredentials,
+  withCredentialRefreshLock,
+} from '../transport/go-worker-client.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from '../protocol/claude-code-betas.mjs'
 import { countTokensEnabled } from '../protocol/user-count-tokens.mjs'
 import { rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
@@ -567,6 +579,9 @@ async function commitImportedCodexVm({
   if (saved.access_token || saved.refresh_token) {
     const reopened = clearUnschedulable(cfg.paths.project, existing.id, { by: 'credential_import' })
     if (reopened) Object.assign(existing, getVm(cfg.paths.project, existing.id) || {})
+    // 凭证换新同时清进程内存 hold（含 grant-death 的 MAX_SAFE_INTEGER 永久占位），
+    // 否则复活号磁盘健康但调度层恒 cooldown，直到进程重启才回池。
+    clearOpenAIAccountHold(existing.id)
   }
   let catalog = null
   try {
@@ -630,7 +645,7 @@ export function syncInstalledKernels(args, operation = runKernelSync) {
   const ids = kernelSyncIds(args.project, args.body)
   const exact = { ...args, body: { ...args.body, ids } }
   const run = kernelSyncTail.then(() => withKernelVmLocks(args.project, ids, () => operation(exact)))
-  kernelSyncTail = run.catch(() => { })
+  kernelSyncTail = run.catch(() => {})
   return run
 }
 
@@ -669,7 +684,7 @@ async function forgetNodeSlot(vm, subscription, manager) {
     // Local relay sockets only; a leftover one must not block forgetting the slot.
     try {
       await manager.dropSlotRelays?.(vm.id)
-    } catch { }
+    } catch {}
     return { ok: true, action: 'skipped', teardownConfirmed: true }
   })
   return gone.ok ? { ...gone, node } : gone
@@ -913,7 +928,7 @@ export function createPanelHandler(ctx) {
       let hostUrl = ''
       try {
         hostUrl = host.localExitProxyUrl(vm) || ''
-      } catch { }
+      } catch {}
       if (hostUrl) {
         const r = await proxyPool.geoLookup(hostUrl, { timeoutMs: proxyPool.state?.config?.geo_timeout_ms })
         if (!r?.ok) return { ok: false, code: 'geo_lookup_failed', error: String(r?.error || 'geo lookup failed') }
@@ -960,10 +975,10 @@ export function createPanelHandler(ctx) {
         } else {
           vm =
             (patchVmRecord(cfg.paths.project, id, { status: 'error' }),
-              markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', {
-                message: String(startError).slice(0, 240),
-              }),
-              getVm(cfg.paths.project, id)) || vm
+            markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', {
+              message: String(startError).slice(0, 240),
+            }),
+            getVm(cfg.paths.project, id)) || vm
         }
       } else {
         vm = patchVmRecord(cfg.paths.project, id, { status: 'running' }) || vm
@@ -1268,7 +1283,7 @@ export function createPanelHandler(ctx) {
             const row = byFp.get(key.key_fingerprint)
             return {
               ...key,
-              status: key.retired ? 'paused' : row?.status || key.status,
+              status: row?.status || key.status,
               last_http_status: row?.last_http_status ?? key.last_http_status ?? null,
             }
           }),
@@ -1946,7 +1961,7 @@ export function createPanelHandler(ctx) {
       if (authed.source === 'env' && password) {
         try {
           buyerId = panelUsers.bootstrapFromEnv({ username: authed.username, password })?.id
-        } catch { }
+        } catch {}
       }
       const buyer = buyerId ? { id: buyerId } : authed.source === 'env' ? { configuredAdmin: true } : undefined
       const token = createPanelSession(authed.username, { role: authed.role, buyer })
@@ -2592,12 +2607,12 @@ export function createPanelHandler(ctx) {
             ident.role === 'admin'
               ? normalizeMultiTierKeyConfig({ ...body, user_id: input.user_id }, { partial: false })
               : {
-                permission_tier: 'platform',
-                owner_id: null,
-                category: 'oauth',
-                allowed_endpoints: [],
-                allowed_gemini_envs: [],
-              }
+                  permission_tier: 'platform',
+                  owner_id: null,
+                  category: 'oauth',
+                  allowed_endpoints: [],
+                  allowed_gemini_envs: [],
+                }
           const isApi = isApiCategory(tierCfg.category)
           const allowsEndpoint = isMixedOrApiCategory(tierCfg.category)
           const scopeInput = {
@@ -2651,8 +2666,8 @@ export function createPanelHandler(ctx) {
           }
           const defaultConc = Number(
             ctx.routingConfig?.concurrency?.default_key_concurrency ??
-            ctx.routingConfig?.concurrency?.default_max_per_account ??
-            20,
+              ctx.routingConfig?.concurrency?.default_max_per_account ??
+              20,
           )
           const rec = apiKeyStore.create({
             name: body?.name,
@@ -2728,9 +2743,9 @@ export function createPanelHandler(ctx) {
           const tierCfg =
             ident.role === 'admin'
               ? normalizeMultiTierKeyConfig(
-                { ...body, user_id: currentRec?.user_id },
-                { partial: true, current: currentRec },
-              )
+                  { ...body, user_id: currentRec?.user_id },
+                  { partial: true, current: currentRec },
+                )
               : null
           const effectiveCategory = tierCfg ? tierCfg.category : (body?.category ?? currentRec?.category)
           const isApi = isApiCategory(effectiveCategory)
@@ -3177,7 +3192,7 @@ export function createPanelHandler(ctx) {
             if (!tenant) jobs.unshift(usageRead({ kind: 'repo', method: 'totals' }))
             const out = await Promise.all(jobs)
             if (tenant) [buckets, window] = out
-            else[totals, buckets, window] = out
+            else [totals, buckets, window] = out
           } catch (err) {
             console.warn(`[sqlite-pool] repo.stats: ${err?.message || err}`)
           }
@@ -3471,12 +3486,12 @@ export function createPanelHandler(ctx) {
           visibleVmIds:
             ident.role === 'user'
               ? () =>
-                new Set(
-                  filterVmsForPanel(listVms(cfg.paths.project, ctx.routingConfig), {
-                    role: ident.role,
-                    userId: ownerUserId,
-                  }).map((vm) => vm.id),
-                )
+                  new Set(
+                    filterVmsForPanel(listVms(cfg.paths.project, ctx.routingConfig), {
+                      role: ident.role,
+                      userId: ownerUserId,
+                    }).map((vm) => vm.id),
+                  )
               : null,
         })
       }
@@ -4749,8 +4764,8 @@ export function createPanelHandler(ctx) {
                 raised.code === 'vm_not_found'
                   ? 404
                   : raised.code === 'invalid_memory' ||
-                    raised.code === 'memory_not_increased' ||
-                    raised.code === 'kvm_memory_raise_forbidden'
+                      raised.code === 'memory_not_increased' ||
+                      raised.code === 'kvm_memory_raise_forbidden'
                     ? 400
                     : 502
               return json(res, status, {
@@ -5183,31 +5198,31 @@ export function createPanelHandler(ctx) {
           // Detach this VM only — do not unbind other slots sharing the SOCKS5.
           try {
             proxyPool.unbindVm(id)
-          } catch { }
+          } catch {}
           try {
             fs.rmSync(path.join(cfg.paths.project, 'vms', id), { recursive: true, force: true })
-          } catch { }
+          } catch {}
           fs.unlinkSync(vmPath)
           invalidateVmSlotReadCache(cfg.paths.project, id)
           try {
             vmTestSchedule.remove(id)
-          } catch { }
+          } catch {}
           if (active === id) {
             clearActiveVm(cfg.paths.project)
             try {
               clearActiveVmFromDb()
-            } catch { }
+            } catch {}
             try {
               reloadActiveVm(cfg)
-            } catch { }
+            } catch {}
           }
           try {
             removeVmFromDb(id)
-          } catch { }
+          } catch {}
           try {
             const chat = path.join(cfg.paths.project, 'vms', `${id}-chat.json`)
             if (fs.existsSync(chat)) fs.unlinkSync(chat)
-          } catch { }
+          } catch {}
           return json(
             res,
             200,
@@ -5236,7 +5251,7 @@ export function createPanelHandler(ctx) {
           let { vm } = recreateVmFiles(cfg.paths.project, prev, { mode })
           try {
             invalidateLiveCredentialCache()
-          } catch { }
+          } catch {}
           if (!hasBoundExit(vm.proxy)) {
             try {
               const allocated = proxyPool.allocateForVm(id)
@@ -5244,13 +5259,13 @@ export function createPanelHandler(ctx) {
                 bindVmProxy(cfg.paths.project, id, proxyPool.getProxyForVm(id))
                 adoptVmProxyBinding(vm, getVm(cfg.paths.project, id))
               }
-            } catch { }
+            } catch {}
           }
           if (!hasBoundExit(vm.proxy)) {
             vm =
               (patchVmRecord(cfg.paths.project, id, { status: 'stopped' }),
-                markUnschedulable(cfg.paths.project, id, 'proxy_required'),
-                getVm(cfg.paths.project, id)) || vm
+              markUnschedulable(cfg.paths.project, id, 'proxy_required'),
+              getVm(cfg.paths.project, id)) || vm
             return json(res, 409, {
               ok: false,
               error: { code: 'proxy_required', message: 'No healthy SOCKS5 is available for this VM' },
@@ -5262,10 +5277,10 @@ export function createPanelHandler(ctx) {
           if (!boot.ok) {
             vm =
               (patchVmRecord(cfg.paths.project, id, { status: 'stopped' }),
-                markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', {
-                  message: String(boot.error || 'runtime start failed').slice(0, 240),
-                }),
-                getVm(cfg.paths.project, id)) || vm
+              markUnschedulable(cfg.paths.project, id, 'runtime_start_failed', {
+                message: String(boot.error || 'runtime start failed').slice(0, 240),
+              }),
+              getVm(cfg.paths.project, id)) || vm
             if (gone.action !== 'absent') {
               return json(res, 500, {
                 ok: false,
@@ -5288,8 +5303,8 @@ export function createPanelHandler(ctx) {
           }
           vm =
             (patchVmRecord(cfg.paths.project, id, { status: 'running' }),
-              mode === 'keep' ? null : markUnschedulable(cfg.paths.project, id, 'no_credential'),
-              getVm(cfg.paths.project, id)) || vm
+            mode === 'keep' ? null : markUnschedulable(cfg.paths.project, id, 'no_credential'),
+            getVm(cfg.paths.project, id)) || vm
           return json(
             res,
             200,
@@ -5334,7 +5349,7 @@ export function createPanelHandler(ctx) {
                 fs.rmSync(file, { force: true })
                 removed.push(path.relative(cfg.paths.project, file))
               }
-            } catch { }
+            } catch {}
           }
           const vm =
             patchVmRecord(cfg.paths.project, id, (record) => {
@@ -5355,7 +5370,7 @@ export function createPanelHandler(ctx) {
             }) || prev
           try {
             invalidateLiveCredentialCache()
-          } catch { }
+          } catch {}
           // The kernel still holds the old token in memory: stop it, then bring a
           // credential-less kernel back so the slot matches an empty slot.
           const kernel = { stopped: false, restarted: false, error: null }
@@ -5375,7 +5390,7 @@ export function createPanelHandler(ctx) {
             const repo = ctx.accountQuota?.repo
             const row = repo && typeof repo.get === 'function' ? repo.get(id) : null
             if (row && typeof repo.save === 'function') repo.save({ ...row, email: null, name: id })
-          } catch { }
+          } catch {}
           const saved = getVm(cfg.paths.project, id) || vm
           return json(
             res,
@@ -5407,7 +5422,7 @@ export function createPanelHandler(ctx) {
         applyOfficialFingerprintToVm(vmPath, path.join(cfg.paths.project, 'vms', id, 'cli-home'))
         try {
           vm = JSON.parse(fs.readFileSync(vmPath, 'utf8'))
-        } catch { }
+        } catch {}
         return json(res, 200, panel.ok({ id, fingerprint: vm.fingerprint }))
       }
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/reconcile-fingerprint$/.test(p)) {
@@ -5943,7 +5958,7 @@ export function createPanelHandler(ctx) {
         // No node named: auto placement may still pick one by memory/load headroom.
         // Only for admin Docker creates whose exit is not pinned to this host.
         let placement = null
-        let releasePlacement = () => { }
+        let releasePlacement = () => {}
         const placementPolicy = normalizeAutoPlacement(ctx.routingConfig?.cluster?.auto_placement)
         const wanted = requestedPlacement(body, placementPolicy)
         const exitPinsHost = typeof body.proxy_id === 'string' && isLocalEgressId(body.proxy_id.trim())
@@ -6263,7 +6278,7 @@ export function createPanelHandler(ctx) {
                 ownerUserId: vm.owner_user_id || null,
                 role: ident.role,
               })
-            } catch (e) { }
+            } catch (e) {}
           }
           if (allocated) {
             bindVmProxy(cfg.paths.project, id, proxyPool.getProxyForVm(id))
@@ -6293,7 +6308,7 @@ export function createPanelHandler(ctx) {
         if (!startError && body.activate === true) {
           try {
             activateVmSlot(id)
-          } catch (e) { }
+          } catch (e) {}
         }
         const createBindSubscription =
           !req.apiKeyKind && ident.role === 'admin' && !!ident.user && sameOriginPost(req, cfg.base_url)
@@ -6887,7 +6902,7 @@ export function createPanelHandler(ctx) {
         }
         try {
           invalidateLiveCredentialCache()
-        } catch { }
+        } catch {}
         return json(
           res,
           200,
@@ -6968,7 +6983,7 @@ export function createPanelHandler(ctx) {
         }
         try {
           invalidateLiveCredentialCache()
-        } catch { }
+        } catch {}
         return json(
           res,
           200,
@@ -6998,22 +7013,63 @@ export function createPanelHandler(ctx) {
               error: { code: 'credential_mode_unsupported', message: 'GPT 槽没有 refresh_token，请重新导入 OAuth' },
             })
           }
-          const tok = await refreshCodexAccessToken({
-            refreshToken,
-            proxyUrl: hostProxyUrlForVm(vm),
+          // 共锁（key=codex:<vmId>）且锁内重读凭证：等待期间并发方轮换出的新票
+          // 直接采用，不用锁外捕获的旧 RT 重放、也不用旧票元数据落盘。
+          const tok = await withCredentialRefreshLock(`codex:${id}`, async () => {
+            const current = readCodexAccounts(cfg.paths.project, id)[0] || {}
+            const liveRefreshToken = String(current.refresh_token || '').trim()
+            if (!liveRefreshToken) return { ok: false, error: 'credential_mode_unsupported' }
+            const result = await refreshCodexAccessToken({
+              refreshToken: liveRefreshToken,
+              proxyUrl: hostProxyUrlForVm(vm),
+            })
+            if (!result?.ok) return result
+            const latest = readCodexAccounts(cfg.paths.project, id)[0] || {}
+            if (latest.refresh_token && latest.refresh_token !== liveRefreshToken) {
+              // 并发方已轮换：直接采用其新票，本方轮换结果作废。
+              return { ok: true, adopted: true }
+            }
+            upsertCodexAccount(cfg.paths.project, id, {
+              access_token: result.access_token,
+              refresh_token: result.refresh_token,
+              id_token: result.id_token || latest.id_token,
+              expires_at: result.expires_at || latest.expires_at,
+            })
+            return result
           })
-          if (!tok.ok) {
-            return json(res, 502, {
+          if (tok?.error === 'credential_mode_unsupported') {
+            return json(res, 400, {
               ok: false,
-              error: { code: tok.error || 'refresh_failed', message: 'GPT OAuth 刷新失败，请重新导入' },
+              error: { code: 'credential_mode_unsupported', message: 'GPT 槽没有 refresh_token，请重新导入 OAuth' },
             })
           }
-          upsertCodexAccount(cfg.paths.project, id, {
-            access_token: tok.access_token,
-            refresh_token: tok.refresh_token,
-            id_token: tok.id_token || first.id_token,
-            expires_at: tok.expires_at || first.expires_at,
-          })
+          if (!tok.ok) {
+            // 操作员手动刷新=最强的死活证据源：吊销结论立即落盘摘池（面板显示
+            // 「不可调度 · 凭证吊销」），其余失败维持现状只回 502。
+            if (tok.error === 'oauth_revoked') {
+              try {
+                persistCodexCredentialState(cfg.paths.project, id, { error: 'oauth_revoked' })
+                markCodexGrantDead(cfg.paths.project, id, {
+                  description: tok.description || 'oauth_revoked',
+                  status: tok.status || null,
+                })
+              } catch {}
+            }
+            const message =
+              tok.error === 'oauth_revoked'
+                ? 'GPT OAuth 凭证已被吊销，需重新授权导入'
+                : 'GPT OAuth 刷新失败，请重新导入'
+            return json(res, 502, {
+              ok: false,
+              error: { code: tok.error || 'refresh_failed', message },
+            })
+          }
+          // upsert 已在锁内完成（并发轮换时采用对方新票）；成功=活票：
+          // 清掉 grant-death 内存 hold 与陈旧吊销标。
+          clearOpenAIAccountHold(id)
+          try {
+            persistCodexCredentialState(cfg.paths.project, id, { error: null })
+          } catch {}
           return json(res, 200, panel.ok({ ok: true, refreshed: true, platform: 'openai' }))
         }
         if (isApiKeyMode(vm?.claude?.mode)) {
@@ -7318,9 +7374,9 @@ export function createPanelHandler(ctx) {
         if (!result.ok) {
           const status =
             result.error === 'no_codex_slot' ||
-              result.error === 'proxy_required' ||
-              result.error === 'invalid_request' ||
-              result.error === 'invalid_catalog_version'
+            result.error === 'proxy_required' ||
+            result.error === 'invalid_request' ||
+            result.error === 'invalid_catalog_version'
               ? 400
               : 502
           return json(res, status, {
@@ -7716,6 +7772,23 @@ export function createPanelHandler(ctx) {
             },
           })
         }
+      }
+      if (req.method === 'POST' && p === '/api/panel/jev-intercept/resume') {
+        if (panelIdentity(req).role !== 'admin') {
+          return json(res, 403, { ok: false, error: { code: 'forbidden', message: '仅管理员可恢复审核密钥' } })
+        }
+        const body = await readBody(req, 8192).catch(() => ({}))
+        const fingerprint = body?.key_fingerprint == null ? '' : String(body.key_fingerprint).trim()
+        if (fingerprint && !/^[a-f0-9]{12}$/.test(fingerprint)) {
+          return json(res, 400, {
+            ok: false,
+            error: { type: 'invalid_request_error', code: 'invalid_key_fingerprint', message: '无效的密钥指纹' },
+          })
+        }
+        const stored = readJevConfig((key, fallback) => new SettingsRepo().get(key, fallback))
+        const resumed = resumeJevKeys(stored, fingerprint)
+        const keys = publicJevKeys(stored)
+        return json(res, 200, panel.ok({ resumed, keys }))
       }
       if (req.method === 'GET' && p === '/api/panel/notify') {
         return json(

@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { ThinkingOwnerStore } from '../../src/lib/pool/thinking-owner.mjs'
 import { activateFixture, seedEncryptedPackage } from '../fixtures/crag-license.mjs'
+import { CRS_OFFICIAL_CLI_SYSTEM } from '../../src/lib/identity/crs-persona.mjs'
 
 // Unix socket 在 Windows 上不可用，和 go-worker-client.test.mjs 的 unixTest 保持一致。
 const unixTest = process.platform === 'win32' ? test.skip : test
@@ -334,11 +335,25 @@ const ordinaryHealth = { runtime_variant: 'cli-node', capabilities: [] }
 const trustedCwd = '/synthetic/trusted-workspace'
 const publicCwd = '/synthetic/public-cwd-must-not-win'
 const cwdTag = (cwd) => `<cwd>\n${cwd}\n</cwd>`
+// The public handler relocates a non Claude Code caller's system (these
+// fixtures do not send official Claude Code headers) to the head of the first
+// user message before any hop renders (third-party-system.mjs). A valid <cwd>
+// declaration still becomes caller_cwd and is not relocated with the text.
+//
+// What is left in `system` after that relocation is only the official CLI
+// identity line the gateway itself injects. Since #1731 that placeholder is
+// dropped instead of forwarded as crag_prompt: the CRAG kernel *is* the
+// official CLI and already carries that identity, so sending it again only
+// bills Extra Usage (crag-whitelist-automode.test.mjs covers the unit side).
+// Both presets collapse to the same thing -- 'replace' would have replaced the
+// kernel identity with that very same line -- so no prompt reaches CRAG here.
+function assertIdentityPlaceholderOmitted(envelope) {
+  assert.equal(Object.hasOwn(envelope.body, 'crag_prompt'), false)
+  assert.equal(Object.hasOwn(envelope.body, 'system'), false)
+  assert.equal(JSON.stringify(envelope.body).includes(CRS_OFFICIAL_CLI_SYSTEM), false)
+}
 
-async function protocolKernelFixture(
-  t,
-  { health, staleHealth, preset = 'official_full', interceptRules, tool, diagnostic = true },
-) {
+async function protocolKernelFixture(t, { health, staleHealth, preset = 'official_full', interceptRules, tool }) {
   const kernel = await fakeKernel({ health, tool })
   const previous = process.env.KIN_KERNEL_BIN
   t.after(async () => {
@@ -360,7 +375,6 @@ async function protocolKernelFixture(
     compatibility: {
       persona_preset: preset,
       crag_persona_preset: preset,
-      claude_code_only: diagnostic,
       overlay_preset: 'off',
       persona_env_presets: { [preset]: false },
     },
@@ -380,14 +394,7 @@ async function protocolKernelFixture(
       const requestsBefore = kernel.requests.length
       const response = fakeResponse()
       const req = request(body)
-      if (diagnostic) {
-        // These assertions target slot rendering after client admission.
-        req.apiKeyKind = 'master'
-        delete req.apiKeyRecord
-        req.headers['x-kin-vm'] = kernel.selected.vmId
-      } else {
-        req.apiKeyRecord.id = keyId
-      }
+      req.apiKeyRecord.id = keyId
       Object.assign(req.headers, headers)
       if (protocol === 'openai.responses') req.url = '/v1/responses'
       if (protocol === 'openai.chat') req.url = '/v1/chat/completions'
@@ -464,12 +471,28 @@ unixTest('native CRAG receives caller tool names and structured system cache blo
   })
   assert.equal(Object.hasOwn(envelope, 'headers'), false)
   assert.equal(extra.worker_envelope_headers, null)
-  assert.deepEqual(envelope.body.tools, tools.map((tool) => ({ ...tool, eager_input_streaming: true })))
-  assert.deepEqual(envelope.body.system, system)
-  assert.equal(envelope.body.crag_prompt, undefined)
-  const expectedMessages = structuredClone(messages)
-  expectedMessages[2].content[1].cache_control = anchor
-  assert.deepEqual(envelope.body.messages, expectedMessages)
+  // failover.eager_tool_streaming defaults on, so the gateway marks every custom
+  // tool before the hop and the CRAG whitelist passes the key through
+  // (CUSTOM_TOOL_KEYS). Caller tool names and schemas are otherwise untouched.
+  assert.deepEqual(
+    envelope.body.tools,
+    tools.map((tool) => ({ ...tool, eager_input_streaming: true })),
+  )
+  // The structured caller blocks keep their cache markers at the head of the first user turn.
+  // With system_text_cache_v3 the identity line would have ridden in `system` to be
+  // cached; #1731 omits it there too, so neither channel carries it.
+  assertIdentityPlaceholderOmitted(envelope)
+  // Omitted caller TTLs are filled from the request's resolved cache TTL (1h here,
+  // taken from the caller's own system anchors) before the hop renders; explicit
+  // caller values are kept as-is.
+  const fillTtl = (block) =>
+    block.cache_control && block.cache_control.ttl === undefined
+      ? { ...block, cache_control: { ...block.cache_control, ttl: '1h' } }
+      : block
+  assert.deepEqual(envelope.body.messages, [
+    { ...messages[0], content: [...system, ...messages[0].content].map(fillTtl) },
+    ...messages.slice(1).map((message) => ({ ...message, content: message.content.map(fillTtl) })),
+  ])
   assert.deepEqual(envelope.body.tool_choice, { type: 'auto' })
   assert.equal(envelope.body.max_tokens, 32000)
 })
@@ -509,7 +532,8 @@ unixTest('zero CRAG sends mixed Responses tools and structured system to the cap
   assert.equal(Object.hasOwn(envelope, 'headers'), false)
   assert.equal(envelope.body.tools.length, 48)
   assert.deepEqual(envelope.body.tools[47], search)
-  assert.deepEqual(envelope.body.system, [{ type: 'text', text: 'Caller policy' }])
+  assert.deepEqual(envelope.body.system, [{ type: 'text', text: CRS_OFFICIAL_CLI_SYSTEM }])
+  assert.deepEqual(envelope.body.messages[0].content[0], { type: 'text', text: 'Caller policy' })
   assert.equal(envelope.body.crag_prompt, undefined)
 })
 
@@ -633,13 +657,16 @@ for (const stream of [false, true]) {
           }),
         )
         assert.equal(envelope.caller_cwd, trustedCwd)
-        assert.deepEqual(envelope.body.crag_prompt, { mode, text: 'caller guidance' })
+        assertIdentityPlaceholderOmitted(envelope)
+        assert.deepEqual(envelope.body.messages[0].content[0], { type: 'text', text: 'caller guidance' })
         assert.equal(envelope.body.crag_model.id, 'claude-haiku-4-5-20251001')
-        assert.equal(Object.hasOwn(envelope.body, 'system'), false)
         assert.equal(JSON.stringify(envelope.body).includes(trustedCwd), false)
         assert.equal(JSON.stringify(extra.outbound_body).includes(trustedCwd), false)
         assert.equal(extra.official_cc_inference, 'crag-print')
-        assert.equal(extra.crag_print.prompt_mode, mode)
+        // No prompt override leaves the gateway once the identity placeholder is
+        // dropped, so the hop log records 'default' for both presets rather than
+        // the preset's mode. `preset` still drives the test matrix above.
+        assert.equal(extra.crag_print.prompt_mode, 'default')
       },
     )
 
@@ -658,10 +685,14 @@ for (const stream of [false, true]) {
           }),
         )
         assert.equal(envelope.caller_cwd, trustedCwd)
-        assert.equal(envelope.body.crag_prompt.mode, mode)
-        assert.ok(envelope.body.crag_prompt.text.includes(history))
-        assert.equal(envelope.body.crag_prompt.text.split(trustedCwd).length - 1, 1)
-        assert.ok(extra.outbound_body.crag_prompt.text.includes(history))
+        assertIdentityPlaceholderOmitted(envelope)
+        // The declaration leaves with caller_cwd; the lifted history keeps its own copy.
+        assert.deepEqual(
+          envelope.body.messages[0].content.slice(0, 2).map((block) => block.text),
+          ['caller guidance', history],
+        )
+        assert.equal(JSON.stringify(envelope.body).split(trustedCwd).length - 1, 1)
+        assert.deepEqual(extra.outbound_body.messages[0].content[1].text, history)
         assert.equal(Object.hasOwn(envelope.body, 'system'), false)
         assert.equal(
           envelope.body.messages.some((message) => message.role === 'system'),
@@ -713,8 +744,9 @@ for (const stream of [false, true]) {
         assert.equal(Object.hasOwn(envelope.body, 'crag_model'), false)
         assert.equal(extra.official_cc_inference, 'cli-hop')
         assert.equal(Object.hasOwn(extra, 'crag_print'), false)
-        assert.ok(JSON.stringify(envelope.body.system).includes(trustedCwd))
-        assert.ok(JSON.stringify(envelope.body.system).includes('caller guidance'))
+        // cli-node does not extract the declaration: the caller system moves verbatim.
+        assert.equal(envelope.body.messages[0].content[0].text, `${cwdTag(trustedCwd)}\ncaller guidance`)
+        assert.equal(JSON.stringify(envelope.body.system).includes(trustedCwd), false)
       }
       const stableSystem = ({ envelope }) => {
         const [billing, ...system] = envelope.body.system
@@ -764,11 +796,10 @@ for (const stream of [false, true]) {
         const { envelope, extra } = await fixture.send(cwdRequest(stream, fields))
         assert.equal(extra.official_cc_inference, 'crag-print')
         assert.equal(Object.hasOwn(envelope, 'caller_cwd'), false)
+        assertIdentityPlaceholderOmitted(envelope)
+        // A preserved declaration stays as text in the relocated history either way.
         if (preserved) {
-          assert.equal(envelope.body.crag_prompt.mode, 'append')
-          assert.ok(envelope.body.crag_prompt.text.includes(preserved))
-        } else {
-          assert.equal(Object.hasOwn(envelope.body, 'crag_prompt'), false)
+          assert.ok(envelope.body.messages[0].content.some((block) => block.text?.includes(preserved)))
         }
       },
     )
@@ -791,7 +822,8 @@ for (const phase of ['before_convert', 'before_upstream']) {
     ]) {
       const { envelope } = await fixture.send(body)
       assert.equal(envelope.caller_cwd, expectedCwd)
-      assert.deepEqual(envelope.body.crag_prompt, { mode: 'append', text: replacementText })
+      assertIdentityPlaceholderOmitted(envelope)
+      assert.equal(envelope.body.messages[0].content[0].text, replacementText)
     }
   })
 }
@@ -815,7 +847,6 @@ for (const stream of [false, true]) {
         },
         staleHealth: ordinaryHealth,
         tool: stream ? tool : { ...tool, extension: { trace: 'upstream-only' } },
-        diagnostic: false,
         interceptRules: stream
           ? []
           : [
@@ -839,7 +870,11 @@ for (const stream of [false, true]) {
       assert.match(first.publicBody, /call-issued/)
       assert.match(first.publicBody, /"caller":\{"type":"direct"\}/)
       assert.equal(first.extra.official_cc_inference, 'crag-print')
-      assert.equal(first.envelope.body.metadata, undefined)
+      // metadata is in CRAG_SILENT_STRIP_TOP_KEYS since #1731, so the caller's
+      // session_id cannot reach CRAG at all -- stricter than the rewrite this
+      // used to assert. Checking the whole body keeps the leak covered.
+      assert.equal(Object.hasOwn(first.envelope.body, 'metadata'), false)
+      assert.equal(JSON.stringify(first.envelope.body).includes(session), false)
       const echo = stream
         ? { type: 'tool_use', id: 'client-id', name: 'lookup', input: { term: 'item' } }
         : { type: 'tool_use', id: tool.id, name: 'changed', input: { term: 'wrong' } }
@@ -851,8 +886,10 @@ for (const stream of [false, true]) {
       }
       const { envelope } = await fixture.send(continuation)
       const history = envelope.body.messages.flatMap((m) => m.content)
-      const { extension: _extension, ...allowedTool } = tool
-      assert.deepEqual(history.find((b) => b.type === 'tool_use'), allowedTool)
+      assert.deepEqual(
+        history.find((b) => b.type === 'tool_use'),
+        tool,
+      )
       assert.deepEqual(
         history.find((b) => b.type === 'tool_result'),
         { ...result, tool_use_id: tool.id },

@@ -2,6 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { resolveStreamIdleTimeoutMs } from '../core/config.mjs'
 import { prepareOutboundHeaders } from '../protocol/outbound-attempt.mjs'
 import { alignSamplingWithThinking, sanitizeAnthropicBodyForBetaTokens } from '../protocol/anthropic-policy.mjs'
@@ -71,7 +72,15 @@ const MAX_GATEWAY_CLOCK_MS = 86_400_000
 const CRAG_HEADER_ALLOWANCE_MS = 5_000
 const credentialRefreshTail = new Map()
 
-function withCredentialRefreshLock(key, fn) {
+/**
+ * Process-local per-key refresh serialization. Codex paths share the same lock
+ * (key = `codex:<vmId>`) so the panel refresh button, traffic-side quota
+ * rotation and the search path can never consume the same refresh token
+ * concurrently — the loser of a rotation race would otherwise replay a retired
+ * RT and clobber the winner's fresher ticket on the read-modify-write
+ * credential file.
+ */
+export function withCredentialRefreshLock(key, fn) {
   const prev = credentialRefreshTail.get(key) || Promise.resolve()
   let release
   const gate = new Promise((resolve) => {
@@ -877,6 +886,7 @@ function restoreInferenceFailure(result, requestPath = '/internal/v1/messages') 
     status: 502,
     terminalState: 'rejected',
     cragPolicyBlock: true,
+    cragCacheControlBlocked: true,
     body: {
       type: 'error',
       error: {
@@ -1536,10 +1546,11 @@ async function streamGoWorkerRaw({
       // message_stop is the protocol terminal event, but the kernel still sends
       // job_done and its trailers afterward. Keep reading until the worker
       // closes the response so a normal completion is not mistaken for cancel.
+      const decoder = new StringDecoder('utf8')
       const sseRestorer = prepared.redaction ? createSseRestorer(prepared.redaction) : null
       for await (const chunk of response) {
         receivedAt = Date.now()
-        buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+        buffer += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
         let newline
         while ((newline = buffer.indexOf('\n')) >= 0) {
           let line = buffer.slice(0, newline).replace(/\r$/, '')
@@ -1604,6 +1615,7 @@ async function streamGoWorkerRaw({
         if (sawChunk && !outboundHeadersFrame && buffer) lastChunkAt = Date.now()
       }
       stopCancel()
+      buffer += decoder.end()
       if (buffer && !outboundHeadersFrame) {
         applyClaudeSSELineToMessage(buffer, assembler)
         if (buffer.startsWith('data:')) {
