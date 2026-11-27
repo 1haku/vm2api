@@ -20,16 +20,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
-
-from gemini_agy_patch import (
-    AGY_PATCHED_SHA256 as AGY_OFFICIAL_PATCHED_BINARY_SHA256,
-    AGY_UNPATCHED_SHA256 as AGY_OFFICIAL_BINARY_SHA256,
-    patch_agy as apply_agy_eligibility_patch,
-)
-
 RELEASE_BASE = "https://github.com/dofastted/vm2api/releases/download"
 # The pinned tag is the single source of truth for which release to fetch, and the
 # version is read back out of it. A constant here was a second source that had to be
@@ -58,7 +48,6 @@ AGY_URL = (
 AGY_SIZE = 99166075
 AGY_SHA256 = "8b1f5e56779f2434a0af36f1b715a8392a084de550f8c68bc79821f95fabf3fa"
 AGY_BINARY_SHA256 = "39816d49d5ab92229952987225c23ea3fed7580699dcb4a444e0388e0ac1ce43"
-AGY_PATCHED_BINARY_SHA256 = AGY_OFFICIAL_PATCHED_BINARY_SHA256
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     {
         "github.com",
@@ -225,29 +214,6 @@ def download_bounded(opener, url, dest, max_size, expected_sha256=None):
             raise RuntimeError(f"download {dest.name} from {url}: {error}") from error
 
 
-def accepted_agy_binary_sha256s():
-    if AGY_BINARY_SHA256 == AGY_OFFICIAL_BINARY_SHA256:
-        return (AGY_BINARY_SHA256, AGY_PATCHED_BINARY_SHA256)
-    return (AGY_BINARY_SHA256,)
-
-
-def ensure_agy_patched(agy_path):
-    if AGY_BINARY_SHA256 != AGY_OFFICIAL_BINARY_SHA256:
-        return {"changed": False, "state": "skipped"}
-    result = apply_agy_eligibility_patch(
-        agy_path,
-        create_backup=False,
-        expected_unpatched_sha256=AGY_BINARY_SHA256,
-        expected_patched_sha256=AGY_PATCHED_BINARY_SHA256,
-    )
-    verb = "Applied" if result["changed"] else "Verified"
-    print(
-        f"{verb} Antigravity CLI eligibility patch: {agy_path.name} @ 0x{result['offset']:x}",
-        flush=True,
-    )
-    return result
-
-
 def reuse_verified_agy(source_path, dest):
     if source_path is None:
         return False
@@ -273,7 +239,7 @@ def reuse_verified_agy(source_path, dest):
                     raise ValueError("agy exceeds size limit")
                 digest.update(chunk)
                 output.write(chunk)
-        if digest.hexdigest() not in accepted_agy_binary_sha256s():
+        if digest.hexdigest() != AGY_BINARY_SHA256:
             dest.unlink(missing_ok=True)
             return False
         return True
@@ -354,15 +320,7 @@ def verify_signed_payload(dest, version):
         raise RuntimeError(f"signed Gemini payload verification failed: {detail}")
 
 
-def prepare(
-    dest,
-    pins,
-    *,
-    reuse_agy=None,
-    opener=None,
-    verify=verify_signed_payload,
-    patch_agy=ensure_agy_patched,
-):
+def prepare(dest, pins, *, reuse_agy=None, opener=None, verify=verify_signed_payload):
     assets = pins["assets"]
     version = pins["version"]
     if not dest.is_absolute() or not dest.name or ".." in dest.parts:
@@ -376,12 +334,10 @@ def prepare(
         if os.path.lexists(dest):
             try:
                 check_cached(dest, assets)
-                patch_agy(dest / "agy")
                 verify(dest, version)
             except (
                 OSError,
                 ValueError,
-                LookupError,
                 RuntimeError,
                 subprocess.SubprocessError,
             ) as error:
@@ -404,23 +360,13 @@ def prepare(
                 archive = stage / "cli_linux_x64.tar.gz"
                 download(active_opener, AGY_URL, archive, AGY_SIZE, AGY_SHA256)
                 extract_agy(archive, stage / "agy")
-            patch_agy(stage / "agy")
             verify(stage, version)
             stage.rename(dest)
     finally:
         os.close(parent_fd)
 
 
-def prepare_remote_tag(
-    dest,
-    tag,
-    pubkey_pin,
-    *,
-    reuse_agy=None,
-    opener=None,
-    verify=verify_signed_payload,
-    patch_agy=ensure_agy_patched,
-):
+def prepare_remote_tag(dest, tag, pubkey_pin, *, reuse_agy=None, opener=None, verify=verify_signed_payload):
     match = TAG_PATTERN.fullmatch(tag) if isinstance(tag, str) else None
     if not match:
         raise ValueError(f"unusable Gemini release tag: {tag!r}")
@@ -461,7 +407,7 @@ def prepare_remote_tag(
                 or manifest.get("software_version") != version
                 or not isinstance(sha_map, dict)
                 or sha_map.get("crag-license-public.pem") != pubkey_pin["sha256"]
-                or sha_map.get("agy") not in accepted_agy_binary_sha256s()
+                or sha_map.get("agy") != AGY_BINARY_SHA256
                 or not all(
                     isinstance(sha_map.get(name), str)
                     and re.fullmatch(r"[a-f0-9]{64}", sha_map[name])
@@ -481,7 +427,6 @@ def prepare_remote_tag(
                 archive = stage / "cli_linux_x64.tar.gz"
                 download(active_opener, AGY_URL, archive, AGY_SIZE, AGY_SHA256)
                 extract_agy(archive, stage / "agy")
-            patch_agy(stage / "agy")
             verify(stage, version)
             stage.rename(dest)
     finally:
