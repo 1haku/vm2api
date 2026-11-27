@@ -1067,6 +1067,29 @@ export function createHandleProtocol(deps) {
     return true
   }
 
+  function resolveCodexAuxiliaryScope(req, res, protocol, body, logBag) {
+    let ownerScope
+    try {
+      ownerScope = ownerScopeFromRequest(req, apiKeyStore?.users)
+    } catch (error) {
+      if (typeof error.code !== 'string' || !error.code.startsWith('subscription_')) throw error
+      logBag.error_code = error.code
+      logBag.error_message = error.message
+      json(res, error.status || 403, {
+        error: { type: 'permission_error', code: error.code, message: error.message },
+      })
+      return null
+    }
+    const access = resolveRequestPoolAccess(req, { model: body?.model || null, ownerScope })
+    if (!access.ok) {
+      rejectPoolAccess(res, access, logBag, protocol)
+      return null
+    }
+    req._poolAccess = access
+    if (access.effectivePool?.id) logBag.resolved_pool_id = access.effectivePool.id
+    return { ownerScope, access }
+  }
+
   async function handleProtocolInner(req, res, protocol, pathName, routeMeta = null, resume = null) {
     const logCtx = resume?.logCtx || requestLog.start(req, { protocol, pathName })
     res._kinRequestId = logCtx.request_id
@@ -3959,16 +3982,9 @@ export function createHandleProtocol(deps) {
     logBag.model = typeof body?.model === 'string' ? body.model : null
     logBag.inbound_summary = summarizeBody(body)
     if (rejectKeyModel(req, res, protocol, body?.model, logBag)) return
-    const searchOwnerScope = ownerScopeFromRequest(req, apiKeyStore?.users)
-    const searchPoolAccess = resolveRequestPoolAccess(req, {
-      model: body?.model || null,
-      ownerScope: searchOwnerScope,
-    })
-    if (!searchPoolAccess.ok) {
-      return rejectPoolAccess(res, searchPoolAccess, logBag, protocol)
-    }
-    req._poolAccess = searchPoolAccess
-    if (searchPoolAccess.effectivePool?.id) logBag.resolved_pool_id = searchPoolAccess.effectivePool.id
+    const scope = resolveCodexAuxiliaryScope(req, res, protocol, body, logBag)
+    if (!scope) return
+    const { ownerScope: searchOwnerScope, access: searchPoolAccess } = scope
     const searchIdentity = refusalAuditIdentity({
       inbound: body,
       body,
@@ -4234,16 +4250,9 @@ export function createHandleProtocol(deps) {
     logBag.inbound_summary = summarizeImagesBody(body)
     // Validate the client model before reserving subscription quota.
     if (rejectKeyModel(req, res, protocol, body?.model, logBag)) return
-    const imagesOwnerScope = ownerScopeFromRequest(req, apiKeyStore?.users)
-    const imagesPoolAccess = resolveRequestPoolAccess(req, {
-      model: body?.model || null,
-      ownerScope: imagesOwnerScope,
-    })
-    if (!imagesPoolAccess.ok) {
-      return rejectPoolAccess(res, imagesPoolAccess, logBag, protocol)
-    }
-    req._poolAccess = imagesPoolAccess
-    if (imagesPoolAccess.effectivePool?.id) logBag.resolved_pool_id = imagesPoolAccess.effectivePool.id
+    const scope = resolveCodexAuxiliaryScope(req, res, protocol, body, logBag)
+    if (!scope) return
+    const { ownerScope: imagesOwnerScope, access: imagesPoolAccess } = scope
     const imagesIdentity = refusalAuditIdentity({
       inbound: body,
       body,
