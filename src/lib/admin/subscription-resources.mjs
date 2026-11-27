@@ -21,6 +21,7 @@ export function subscriptionApiOptions(sub, key = null) {
     ownerScope: owner ? { type: 'user', userId: owner } : PLATFORM_SCOPE,
     groupType: sub.group.platform === 'openai' ? 'openai' : 'anthropic',
     endpointBindings: sub.apiEndpoints,
+    subscriptionGroupId: sub.group_id,
     allowedModels: JSON.parse(sub.group.resource_models || '[]'),
   }
 }

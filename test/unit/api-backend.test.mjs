@@ -6,6 +6,38 @@ import os from 'node:os'
 import path from 'node:path'
 import { createDatabase } from '../../src/lib/db/database.mjs'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
+import { createFailoverMockSchedulerRuntime, createMockSchedulerRuntime } from '../helpers/mock-scheduler-runtime.mjs'
+
+function makeMockApiScheduler(pickFn) {
+  const runtime = createMockSchedulerRuntime()
+  return {
+    pick: pickFn,
+    async acquire(requestedModel, opts = {}) {
+      const picked = pickFn(requestedModel, Date.now(), opts)
+      if (!picked?.ok) return picked
+      const epId = picked.endpoint?.id || 'ep-test'
+      const acquired = await (opts.schedulerRuntime || runtime).acquireNode({
+        ...opts,
+        nodeTypes: ['api_endpoint'],
+        allowedNodeKeys: [`api_endpoint:${epId}`],
+        model: requestedModel,
+      })
+      return {
+        ...picked,
+        leaseId: acquired.lease_id,
+        leaseTtlMs: acquired.lease_ttl_ms,
+        nodeKey: acquired.selected_node.node_key,
+        resolvedPoolId: acquired.resolved_pool_id,
+      }
+    },
+    async commitLease(leaseId, opts = {}) {
+      return (opts.schedulerRuntime || runtime).commitLease(leaseId)
+    },
+    async releaseLease(leaseId, payload = {}, opts = {}) {
+      return (opts.schedulerRuntime || runtime).releaseLease(leaseId, payload)
+    },
+  }
+}
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT, CRS_OFFICIAL_CLI_SYSTEM } from '../../src/lib/identity/crs-persona.mjs'
@@ -156,14 +188,13 @@ test('API backend applies the global official_full persona setting', async () =>
     stickyRouter: {},
     accountQuota: {},
     apiKeyStore: { acquire: () => ({ ok: true }), release() {} },
-    apiScheduler: {
-      pick: () => ({
-        ok: true,
-        endpoint: { id: 'ep-test', kind: 'claude', protocol: 'anthropic', base_url: 'https://upstream.invalid' },
-        upstream_model: 'claude-haiku-4-5',
-        key: { id: 'key-test', api_key: 'secret' },
-      }),
-    },
+    schedulerRuntime: createMockSchedulerRuntime(),
+    apiScheduler: makeMockApiScheduler(() => ({
+      ok: true,
+      endpoint: { id: 'ep-test', kind: 'claude', protocol: 'anthropic', base_url: 'https://upstream.invalid' },
+      upstream_model: 'claude-haiku-4-5',
+      key: { id: 'key-test', api_key: 'secret' },
+    })),
     apiEndpointStore: {},
     stats,
     routingConfigPath: routingFile,
@@ -272,24 +303,23 @@ async function apiBackendHop({ endpoint = {}, body, reqHeaders = {}, pick, routi
     stickyRouter: {},
     accountQuota: {},
     apiKeyStore: { acquire: () => ({ ok: true }), release() {} },
-    apiScheduler: {
-      pick: (...args) => {
-        picks.push(args)
-        const chosen = pick ? pick(picks.length) : endpoint
-        return {
-          ok: true,
-          endpoint: {
-            id: 'ep-test',
-            kind: 'claude',
-            protocol: 'anthropic',
-            base_url: 'https://upstream.invalid',
-            ...chosen,
-          },
-          upstream_model: 'claude-haiku-4-5',
-          key: { id: 'key-test', api_key: 'secret' },
-        }
-      },
-    },
+    schedulerRuntime: createMockSchedulerRuntime(),
+    apiScheduler: makeMockApiScheduler((...args) => {
+      picks.push(args)
+      const chosen = pick ? pick(picks.length) : endpoint
+      return {
+        ok: true,
+        endpoint: {
+          id: 'ep-test',
+          kind: 'claude',
+          protocol: 'anthropic',
+          base_url: 'https://upstream.invalid',
+          ...chosen,
+        },
+        upstream_model: 'claude-haiku-4-5',
+        key: { id: 'key-test', api_key: 'secret' },
+      }
+    }),
     apiEndpointStore: {},
     stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
     routingConfigPath: routingFile,
@@ -540,8 +570,10 @@ for (const previousVm of [null, 'vm-01']) {
       vm,
       exec: { vmId: vm.id, vm, homeDir: path.join(root, 'home'), oauth: { account_uuid: 'account-1' } },
     }
+    const scheduler = { selectAndReserve: async () => selected, markSuccess() {} }
     const runner = new FailoverRunner({
-      scheduler: { selectAndReserve: async () => selected, markSuccess() {} },
+      scheduler,
+      schedulerRuntime: createFailoverMockSchedulerRuntime({ scheduler }),
       stickyRouter: sticky,
     })
     let releaseFirst
@@ -1561,14 +1593,13 @@ test('API backend non-stream maps incomplete assistant hops to incomplete_respon
     stickyRouter: {},
     accountQuota: {},
     apiKeyStore: { acquire: () => ({ ok: true }), release() {} },
-    apiScheduler: {
-      pick: () => ({
-        ok: true,
-        endpoint: { id: 'ep-test', kind: 'claude', protocol: 'anthropic', base_url: 'https://upstream.invalid' },
-        upstream_model: 'claude-haiku-4-5',
-        key: { id: 'key-test', api_key: 'secret' },
-      }),
-    },
+    schedulerRuntime: createMockSchedulerRuntime(),
+    apiScheduler: makeMockApiScheduler(() => ({
+      ok: true,
+      endpoint: { id: 'ep-test', kind: 'claude', protocol: 'anthropic', base_url: 'https://upstream.invalid' },
+      upstream_model: 'claude-haiku-4-5',
+      key: { id: 'key-test', api_key: 'secret' },
+    })),
     apiEndpointStore: {},
     stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
     routingConfigPath: routingFile,

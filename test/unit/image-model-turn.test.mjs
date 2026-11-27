@@ -12,6 +12,7 @@ import { SubscriptionsRepo } from '../../src/lib/db/repos/subscriptions-repo.mjs
 import { imageCostFromUsage } from '../../src/lib/admin/pricing.mjs'
 import { loadGptModelPolicy, saveGptModelPolicy } from '../../src/lib/protocol/gpt-model-policy.mjs'
 import { resetOpenAIAccountRuntime } from '../../src/lib/pool/openai-account-runtime.mjs'
+import { createMockSchedulerRuntime } from '../helpers/mock-scheduler-runtime.mjs'
 
 const USAGE = {
   input_tokens: 300,
@@ -82,6 +83,7 @@ async function serve(upstream, { key = null, apiKeyStore = null } = {}) {
     groupsRepo: { rateMultiplier: () => 1 },
     apiKeyStore,
     routingConfig: {},
+    schedulerRuntime: createMockSchedulerRuntime({ projectRoot: root }),
     codexOps: {
       fetchImpl: async (url, init) => {
         const body = JSON.parse(init.body)

@@ -15,6 +15,7 @@ import {
 } from '../../src/lib/gemini/payload.mjs'
 import { createGeminiPanelHandler } from '../../src/lib/gemini/routes.mjs'
 import { createGeminiScheduler } from '../../src/lib/gemini/scheduler.mjs'
+import { createMockSchedulerRuntime } from '../helpers/mock-scheduler-runtime.mjs'
 import {
   createGeminiCragSubscription,
   parseCragGeminiMachineCode,
@@ -702,7 +703,11 @@ test('end-to-end Gemini CRAG subscription: redeem, bind OAuth seat, skip api_key
   })
 
   // Scheduler before binding: OAuth model blocked with 403 license_required; api_key model STILL available!
-  const scheduler = createGeminiScheduler({ callHost, cragSubscription: subscription })
+  const scheduler = createGeminiScheduler({
+    callHost,
+    cragSubscription: subscription,
+    schedulerRuntime: createMockSchedulerRuntime(),
+  })
   const initialCatalog = await scheduler.catalog()
   assert.deepEqual(
     initialCatalog.accounts.map((a) => a.id),
@@ -1014,7 +1019,11 @@ test('auto-binds CRAGGemini seats on create, panel inventory reconcile, and sche
     models_discovered: true,
     models: ['gemini-3-pro'],
   })
-  const scheduler = createGeminiScheduler({ callHost, cragSubscription: subscription })
+  const scheduler = createGeminiScheduler({
+    callHost,
+    cragSubscription: subscription,
+    schedulerRuntime: createMockSchedulerRuntime(),
+  })
   const catalog = await scheduler.catalog()
   assert.ok(catalog.accounts.some((a) => a.id === 'gemini-sched-oauth'))
   assert.equal(activePermits.get('gemini-sched-oauth'), 3)

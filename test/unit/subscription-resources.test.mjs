@@ -85,7 +85,7 @@ test('mixed resources preserve existing keys; API-only cannot borrow unrelated s
   scheduler.endpoints[0].disabled = true
   assert.equal(selectSubscriptionResource(req, db, scheduler, 'claude-sonnet-4-6').picked.endpoint.id, 'b')
   scheduler.endpoints[1].disabled = true
-  assert.throws(() => selectSubscriptionResource(req, db, scheduler, 'claude-sonnet-4-6'), /no api endpoint/)
+  assert.throws(() => selectSubscriptionResource(req, db, scheduler, 'claude-sonnet-4-6'), { code: 'model_not_found' })
 })
 
 test('endpoint binding priority, catalog and plan model allowlist fail closed', (t) => {
@@ -123,7 +123,7 @@ test('explicit API channels intersect subscription bindings and cannot widen the
   restricted.apiKeyRecord.allowed_endpoints = ['private']
   assert.throws(
     () => selectSubscriptionResource(restricted, db, scheduler, 'claude-sonnet-4-6', { forceApi: true }),
-    /no api endpoint/,
+    { code: 'model_not_found' },
   )
   assert.deepEqual(
     apiScheduleScope({ apiKeyRecord: { category: 'api', api_endpoint_id: 'standalone' } }, 'anthropic'),
