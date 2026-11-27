@@ -77,6 +77,8 @@ export function subscriptionSnapshot(db) {
             upstream_status: row.upstream_status ?? null,
             upstream_type: row.upstream_type ?? null,
             error_details: row.error_details ?? null,
+            advisor_usage: row.advisor_usage ?? null,
+            advisor_cost: row.advisor_cost ?? null,
             upstream_400_message: row.upstream_400_message ?? null,
             intercept: row.intercept ?? null,
             vm_owner_user_id: row.vm_owner_user_id ?? null,

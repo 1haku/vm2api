@@ -787,16 +787,18 @@ test('Gemini multi-attempt failover and all-429 errors populate hop_meta.attempt
   )
   assert.equal(res.statusCode, 429)
   const row = store.queryNormal({ limit: 5 }).items[0]
-  assert.equal(row.attempt_count, 2)
+  assert.equal(row.attempt_count, 4)
   const dbg = store.getDebug(row.request_id)
   assert.equal(dbg.hop_meta?.via, 'craggemini')
-  assert.equal(dbg.hop_meta?.attempts?.length, 2)
   assert.deepEqual(
-    dbg.hop_meta.attempts.map((a) => a.account_id),
-    ['env-hop-a', 'env-hop-b'],
+    dbg.hop_meta.attempts.map(({ account_id, action }) => [account_id, action]),
+    [
+      ['env-hop-a', 'retry_restart_resume'],
+      ['env-hop-a', 'failover'],
+      ['env-hop-b', 'retry_restart_resume'],
+      ['env-hop-b', 'stop'],
+    ],
   )
-  assert.equal(dbg.hop_meta.attempts[0].action, 'failover')
-  assert.equal(dbg.hop_meta.attempts[1].action, 'stop')
 })
 
 test('Gemini OAuth preserves upstream-reported modelVersion in logs, model_mismatch, and non-streaming responses (#1728)', async (t) => {

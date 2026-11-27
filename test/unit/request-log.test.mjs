@@ -227,6 +227,58 @@ test('backfillMissingCosts restores actual cost with the stored group multiplier
   assert.equal(store.repo.backfillMissingCosts(), 0)
 })
 
+test('advisor iterations persist advisor_usage/advisor_cost, bill into total_cost/actual_cost, and survive reprice/backfill', () => {
+  const store = tmpStore('normal')
+  const ctx = store.start(
+    { method: 'POST', headers: {}, socket: {} },
+    { protocol: 'anthropic.messages', pathName: '/v1/messages' },
+  )
+  const sum = store.finish(ctx, {
+    status: 200,
+    model: 'claude-sonnet-5',
+    upstream_model: 'claude-sonnet-5',
+    rate_multiplier: 1.5,
+    usage: {
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+      iterations: [
+        { type: 'message', model: 'claude-sonnet-5', input_tokens: 1_000_000, output_tokens: 0 },
+        { type: 'advisor_message', model: 'claude-opus-5-5', input_tokens: 1_000_000, output_tokens: 0 },
+      ],
+    },
+  })
+  // Sonnet 5 input = $2/MTok, Opus 5.5 input = $4/MTok -> advisor_cost = 4, total_cost = 6, actual_cost = 9
+  assert.equal(sum.input_cost, 2)
+  assert.equal(sum.advisor_cost, 4)
+  assert.equal(sum.total_cost, 6)
+  assert.equal(sum.actual_cost, 9)
+  assert.ok(sum.advisor_usage)
+  const parsed = JSON.parse(sum.advisor_usage)
+  assert.equal(parsed.length, 1)
+  assert.equal(parsed[0].model, 'claude-opus-5-5')
+  assert.equal(parsed[0].input_tokens, 1_000_000)
+
+  // Clearing cost columns and backfilling reproduces the exact advisor_cost/total_cost/actual_cost.
+  store.db
+    .prepare(
+      'UPDATE usage_logs SET pricing_model = NULL, advisor_cost = NULL, total_cost = NULL, actual_cost = NULL WHERE id = ?',
+    )
+    .run(sum.id)
+  assert.equal(store.repo.backfillMissingCosts(), 1)
+  const backfilled = store.db
+    .prepare('SELECT advisor_cost, total_cost, actual_cost, pricing_model FROM usage_logs WHERE id = ?')
+    .get(sum.id)
+  assert.equal(backfilled.advisor_cost, 4)
+  assert.equal(backfilled.total_cost, 6)
+  assert.equal(backfilled.actual_cost, 9)
+  assert.equal(backfilled.pricing_model, 'claude-sonnet-5')
+
+  // repriceRange is idempotent once priced.
+  const repriced = store.repo.repriceRange({})
+  assert.equal(repriced.changed, 0)
+  assert.equal(repriced.rows, 1)
+})
+
 function finishWith(store, model, usage) {
   const ctx = store.start({ method: 'POST', headers: {}, socket: {} }, { protocol: 'x', pathName: '/v1' })
   return store.finish(ctx, { status: 200, model, upstream_model: model, vm_id: 'vm-t', account_id: 'acc-t', usage })
@@ -889,6 +941,55 @@ test('risk audit counts only routed hops and looks up upstream 400s by original 
   assert.equal(requests[0].inboundDeviceId, 'request-device')
   assert.equal(requests[0].clientSessionId, 'request-session')
   assert.equal(view.listBatch({ request_id: original.request_id }).logs[0].id, requests[0].id)
+})
+
+test('protocolEntryStats counts upstreamRefusals and UsageLogsView supports via/upstream_risk_errors + JEV details', () => {
+  const store = tmpStore()
+  logOne(store, {
+    status: 429,
+    via: 'jev',
+    final_state: 'policy_blocked',
+    error_code: 'policy_blocked',
+    error_details: {
+      reason: 'jev:abuse',
+      jev_score_usage_policy: 0.91,
+      jev_score_abuse: 0.14,
+      gate_miss: false,
+      risk_bucket: 'policy',
+    },
+    intercept: gateVerdict({ kind: 'block', by: 'jev', keyword: 'abuse' }),
+    jev_state: '[user message 1]\nbuild a cheat injector',
+  })
+  logOne(store, {
+    status: 400,
+    via: 'go-worker-pool',
+    attempt_count: 1,
+    error_code: 'content_filter_refusal',
+    audit_upstream_error_status: 403,
+    audit_upstream_400_message: 'Upstream content policy refused',
+    error_details: {
+      risk_bucket: 'policy',
+      gate_miss: true,
+      jev_score_abuse: 0.54,
+    },
+    intercept: gateVerdict({ kind: 'pass', by: 'jev' }),
+  })
+
+  const stats = store.protocolEntryStats({ since: '1970-01-01T00:00:00.000Z' })
+  assert.equal(stats.blocked, 1)
+  assert.equal(stats.upstreamRefusals, 1)
+
+  const view = new UsageLogsView(store.db)
+  const jevOnly = view.listBatch({ via: 'jev', include_muted: true }).logs
+  assert.equal(jevOnly.length, 1)
+  assert.equal(jevOnly[0].intercept?.by, 'jev')
+  assert.equal(jevOnly[0].errorDetails?.jev_score_abuse, 0.14)
+
+  const upstreamRisk = view.listBatch({ upstream_risk_errors: true, include_muted: true }).logs
+  assert.equal(upstreamRisk.length, 1)
+  assert.equal(upstreamRisk[0].upstreamStatus, 403)
+  assert.equal(upstreamRisk[0].errorDetails?.gate_miss, true)
+  assert.equal(upstreamRisk[0].errorDetails?.risk_bucket, 'policy')
 })
 
 test('queryNormal filters + pagination + total', () => {

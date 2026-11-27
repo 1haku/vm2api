@@ -205,6 +205,42 @@ export function extraToCodexSnapshot(extra = {}) {
   }
 }
 
+/**
+ * Synthesize the claude-shaped `unified` view the usage probe monitor reasons
+ * over, from a codex slot's quota data. Codex quota lives on the slot file, not
+ * in the accounts repo, so without this the monitor is blind to codex windows:
+ * an elapsed 5h/7d reset never schedules the one /usage hop that would
+ * refresh the stale snapshot (claude slots get this via `account.unified`).
+ *
+ * Accepts either a built usage view (`vm.codex_usage`, what a summarized slot
+ * carries — summarization drops the slot-file extra) or the raw extra (what a
+ * slot-file vm carries). Only the fields the monitor reads: per-window
+ * `reset` for liveness, and the newest sample time (`codex_usage_updated_at`
+ * is stamped by both sampling paths — live `x-codex-*` headers and the usage
+ * endpoint).
+ */
+export function codexUnifiedForUsageProbe(viewOrExtra = {}) {
+  const input = viewOrExtra && typeof viewOrExtra === 'object' ? viewOrExtra : {}
+  const view = Array.isArray(input.windows)
+    ? input
+    : buildCodexUsageView(extraToCodexSnapshot(input))
+  const rows = Array.isArray(view.windows) ? view.windows : []
+  const sampled = view.snapshot?.updated_at || null
+  const byId = new Map(rows.map((w) => [String(w?.id || ''), w]))
+  const window = (id) => {
+    const reset = byId.get(id)?.reset_at
+    return reset ? { reset } : null
+  }
+  return {
+    headers: {
+      sampled_at: sampled,
+      '5h': window('5h'),
+      '7d': window('7d'),
+    },
+    last_probe: sampled ? { at: sampled } : null,
+  }
+}
+
 function emptySnapshot() {
   return {
     primary_used_percent: null,
@@ -312,14 +348,33 @@ function pctToRatio(percent) {
   return Math.max(0, Math.min(1, Number(percent) / 100))
 }
 
-export function codexLimitsToQuota(limits = {}) {
+/**
+ * A window whose reset already elapsed is a leftover reading from the window
+ * that ended — not a real sample of the new one. Scheduling already treats
+ * such caps as expired (`isLiveCap` requires `reset > now`), but the quota
+ * view still surfaced the stale percent, pinning the panel at 100%/limited
+ * until some traffic happened to refresh the headers. Drop elapsed readings
+ * to "unknown" so the view agrees with the eligibility gate; the next real
+ * sample (header or usage probe) fills the fresh window in.
+ */
+function windowReadingExpired(resetAt, now) {
+  if (resetAt == null || resetAt === '') return false
+  const ms = Number.isFinite(resetAt) ? resetAt : Date.parse(resetAt)
+  return Number.isFinite(ms) && ms <= now
+}
+
+export function codexLimitsToQuota(limits = {}, now = Date.now()) {
+  const expired5h = windowReadingExpired(limits.reset_5h_at, now)
+  const expired7d = windowReadingExpired(limits.reset_7d_at, now)
   return {
-    utilization_5h: pctToRatio(limits.used_5h_percent),
-    utilization_7d: pctToRatio(limits.used_7d_percent),
-    reset_5h: limits.reset_5h_at || null,
-    reset_7d: limits.reset_7d_at || null,
-    status_5h: statusFromPercent(limits.used_5h_percent),
-    status_7d: statusFromPercent(limits.used_7d_percent),
+    utilization_5h: expired5h ? null : pctToRatio(limits.used_5h_percent),
+    utilization_7d: expired7d ? null : pctToRatio(limits.used_7d_percent),
+    // The elapsed reset belongs to the closed window; the fresh window's
+    // reset is unknown until the next sample.
+    reset_5h: expired5h ? null : limits.reset_5h_at || null,
+    reset_7d: expired7d ? null : limits.reset_7d_at || null,
+    status_5h: expired5h ? null : statusFromPercent(limits.used_5h_percent),
+    status_7d: expired7d ? null : statusFromPercent(limits.used_7d_percent),
   }
 }
 
@@ -336,7 +391,7 @@ function isCodexSnapshot(value) {
 }
 
 /** Accepts extra, a snapshot, or a previously built view (`{ snapshot, ... }`). */
-export function buildCodexUsageView(extraOrSnapshot = {}) {
+export function buildCodexUsageView(extraOrSnapshot = {}, now = Date.now()) {
   const input = extraOrSnapshot && typeof extraOrSnapshot === 'object' ? extraOrSnapshot : {}
   const snapshot = isCodexSnapshot(input)
     ? input
@@ -345,7 +400,7 @@ export function buildCodexUsageView(extraOrSnapshot = {}) {
       : extraToCodexSnapshot(input)
   const extracted = extractCodexWindows(snapshot)
   const limits = normalizeCodexLimits(snapshot)
-  const quota = codexLimitsToQuota(limits)
+  const quota = codexLimitsToQuota(limits, now)
   const hasNonStandardWindow = extracted.some((w) => w.id !== '5h' && w.id !== '7d')
   const windows = hasNonStandardWindow
     ? extracted

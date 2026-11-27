@@ -179,6 +179,7 @@ import {
   isProxiedOfficialClaudeCode,
   officialFamilyBodyPassthrough,
   personaHidesUsageFromRoutingFile,
+  personaUsagePassthroughFromRoutingFile,
   standingUsageFromRoutingFile,
   personaModeFromRoutingFile,
 } from '../identity/crs-persona.mjs'
@@ -537,6 +538,7 @@ export function createHandleProtocol(deps) {
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
       isOfficialClaudeClient(fp.client_class) ||
       (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound, req.headers))
+    const classifier = classifyClaudeRequestPurpose(inbound, { officialTraffic: official })
     const interceptSession = interceptSessionKey ? peekInterceptSession(interceptSessionKey) : null
     const decision = await runProtocolIntercept({
       inbound,
@@ -544,6 +546,7 @@ export function createHandleProtocol(deps) {
       headers: req.headers,
       identity,
       official,
+      classifier,
       zeroInject: isZeroInjectMode(),
       distillRules: cfg.distill,
       policy: riskState.policy,
@@ -565,20 +568,29 @@ export function createHandleProtocol(deps) {
       if (!mandatoryOnly && decision?.intercept) logBag.intercept = decision.intercept
       if (decision?.route) logBag.risk_route = decision.route
       if (!mandatoryOnly) logBag.risk_wait = decision.wait === true
+      if (decision?.jevPassed) {
+        logBag._jevPassed = true
+        if (decision.jevState) logBag._jevPassState = decision.jevState
+        if (decision.jevScores) logBag._jevPassScores = decision.jevScores
+      }
       return false
     }
     stats.errors++
     logBag.via = decision.via
     logBag.attempt_count = 0
     logBag.final_state = decision.final_state
-    logBag.error_code = decision.error?.body?.error?.code || null
+    logBag.error_code = decision.logErrorCode || decision.error?.body?.error?.code || null
     logBag.error_message = decision.errorMessage || decision.error?.body?.error?.message || null
+    if (decision.errorDetails) {
+      logBag.error_details = { ...(logBag.error_details || {}), ...decision.errorDetails }
+    }
     logBag.intercept = decision.intercept || null
     logBag.jev_state = decision.jevState || null
     if (res.headersSent && logBag.protocol === 'anthropic.messages') {
       res.write(buildAnthropicSseError(decision.error.body.error))
       res.end()
     } else {
+      if (decision.error?.retryAfterSec) res.setHeader?.('retry-after', String(decision.error.retryAfterSec))
       json(res, decision.error.status, decision.error.body)
     }
     return true
@@ -2130,7 +2142,10 @@ export function createHandleProtocol(deps) {
         })
       }
       personaHideTokens =
-        requestContext || apiNonAnthropic || preserveApiCallerBody
+        requestContext ||
+        apiNonAnthropic ||
+        preserveApiCallerBody ||
+        personaUsagePassthroughFromRoutingFile(routingConfigPath, personaMode)
           ? 0
           : personaHideForUnofficial(personaIn, ctx.body, {
               officialClient: officialPassthrough,
@@ -2815,12 +2830,14 @@ export function createHandleProtocol(deps) {
             )
             hopBody = officialMessagesBody(rewritten)
             for (const policy of extra.repairs || []) hopBody = repairAnthropicRequest(hopBody, policy)
-            personaHideTokens = personaHideForUnofficial(personaIn, rewritten, {
-              officialClient: false,
-              mode: configuredMode,
-              hides: personaHidesUsageFromRoutingFile(routingConfigPath, configuredMode),
-              standing: standingUsageFromRoutingFile(routingConfigPath, configuredMode),
-            })
+            personaHideTokens = personaUsagePassthroughFromRoutingFile(routingConfigPath, configuredMode)
+              ? 0
+              : personaHideForUnofficial(personaIn, rewritten, {
+                  officialClient: false,
+                  mode: configuredMode,
+                  hides: personaHidesUsageFromRoutingFile(routingConfigPath, configuredMode),
+                  standing: standingUsageFromRoutingFile(routingConfigPath, configuredMode),
+                })
           }
           logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
           logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)

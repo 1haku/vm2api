@@ -94,6 +94,8 @@ const RUN_ERRORS = {
     429,
     '上游模型配额已用尽（429 RESOURCE_EXHAUSTED），请等待配额重置、切换其他模型或调度到其他账号',
   ],
+  gemini_pool_overloaded: [429, '号池负载过高，请稍后再试'],
+  gemini_upstream_unavailable: [503, 'Google 上游服务暂时不可用（503），已自动切换其他账号重试'],
   gemini_content_rejected: [
     429,
     '上游拒绝了当前请求提示词（429 内容触发过滤，非账号配额耗尽），请精简或调整系统提示词后重试',
@@ -105,6 +107,10 @@ const RUN_ERRORS = {
     '无法启动本地 Gemini 推理进程，请前往「设置 → Gemini 维护」检查宿主服务与载荷状态',
   ],
   gemini_inference_cancelled: [409, 'Gemini 测试已手动取消'],
+  gemini_session_conflict: [
+    409,
+    '当前出站会话发生冲突：工具调用仍在挂起等待结果，而请求又追加了新的用户输入。网关已清除该会话与工具续接绑定；请重新发起请求。在部分路由下可能在首字节输出前、同一账号内自动换会话重试一次；若仍失败，请使用新的 X-Session-Id，或先仅回传工具结果再发送后续文本。',
+  ],
   gemini_inference_output_limit: [502, '模型单次回复超过测试输出上限，请精简提示词或限制回复长度后重试'],
   gemini_inference_tool_blocked: [502, '当前测试通道限制了该工具调用，请改用纯文本提示词重试'],
   gemini_inference_failed: [
@@ -515,6 +521,15 @@ function accountView(account) {
       ? { id: entry.id, provider: entry.provider, quota_group: entry.quota_group }
       : null,
   )
+  const errorCode =
+    typeof account?.error_code === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(account.error_code)
+      ? account.error_code
+      : null
+  const errorMessage = text(account?.error_message, 240)
+  const httpStatus =
+    Number.isSafeInteger(account?.http_status) && account.http_status >= 0 && account.http_status <= 599
+      ? account.http_status
+      : null
   return {
     state: account.state,
     checked_at: text(account.checked_at),
@@ -526,6 +541,9 @@ function accountView(account) {
     expires_at: text(account.expires_at),
     ...(eligibility ? { eligibility } : {}),
     ...(validationUrl ? { validation_url: validationUrl } : {}),
+    ...(errorCode ? { error_code: errorCode } : {}),
+    ...(errorMessage ? { error_message: errorMessage } : {}),
+    ...(httpStatus != null ? { http_status: httpStatus } : {}),
     ...(modelCatalog.length ? { model_catalog: modelCatalog } : {}),
     quotas: items(account.quotas, 128, (quota) =>
       modelName(quota?.model) && isFraction(quota.remaining_fraction)
@@ -731,6 +749,18 @@ function environmentView(
     schedulable: slotPref ? slotPref.schedulable !== false : true,
     schedule_level: Number.isSafeInteger(slotPref?.schedule_level) ? slotPref.schedule_level : 5,
     schedule_level_mode: slotPref?.schedule_level_mode === 'manual' ? 'manual' : 'auto',
+    ...(slotPref?.unschedulable
+      ? {
+          unschedulable: slotPref.unschedulable,
+          unschedulable_reason: slotPref.unschedulable_reason ?? slotPref.unschedulable.reason ?? null,
+          ...(slotPref.unschedulable_detail || slotPref.unschedulable.detail
+            ? { unschedulable_detail: slotPref.unschedulable_detail ?? slotPref.unschedulable.detail }
+            : {}),
+          ...(slotPref.unschedulable_at || slotPref.unschedulable.at
+            ? { unschedulable_at: slotPref.unschedulable_at ?? slotPref.unschedulable.at }
+            : {}),
+        }
+      : {}),
     ...(restriction ? { restriction } : {}),
     ...(circuit ? { circuit } : {}),
     ...(value.oauth_imported === true && value.auth_method === 'oauth' ? { oauth_imported: true } : {}),
@@ -789,7 +819,7 @@ function authorizationInput(body) {
   }
 }
 
-function proxyFor(proxyPool, proxyId, { allowUnhealthy = false, ownerUserId = null } = {}) {
+function proxyFor(proxyPool, proxyId, { allowUnhealthy = false, forBinding = false, ownerUserId = null } = {}) {
   if (!validId(proxyId)) throw hostError('gemini_proxy_unavailable', 409)
   const targetOwner = normalizeOwnerId(ownerUserId)
   const scopedList = proxyPool?.snapshot({ ownerUserId: targetOwner || null })?.proxies || []
@@ -803,7 +833,12 @@ function proxyFor(proxyPool, proxyId, { allowUnhealthy = false, ownerUserId = nu
   const ownerAllowed = targetOwner ? !pOwner || pOwner === targetOwner : !pOwner
   if (
     !proxy?.enabled ||
-    (!allowUnhealthy && (proxy.status === 'dead' || proxy.status === 'fail')) ||
+    // Pool policy keeps enabled rows on `fail` until consecutive_failures reaches
+    // max_failures; Gemini scheduling should mirror that, not treat one timeout
+    // as unavailable while the row is still admitted for inference.
+    (!allowUnhealthy && proxy.status === 'dead') ||
+    // New binds mirror allocateForVm: a probe `fail` row is not offered for selection.
+    (forBinding && proxy.status === 'fail') ||
     !ownerAllowed ||
     proxy.blocked_reason
   ) {
@@ -936,6 +971,154 @@ export async function warmGeminiEnvironments({ callHost = callGeminiHost, proxyP
       report.skipped += 1
     }
   }
+  return report
+}
+
+const AUTO_RECOVERABLE_UNSCHEDULABLE_REASONS = new Set([
+  'reauth_required',
+  'verification_required',
+  'location_unsupported',
+  'ineligible',
+])
+
+const BLOCKING_CHECK_ELIGIBILITIES = new Set(['verification_required', 'location_unsupported', 'ineligible'])
+
+/**
+ * Sync persisted four-state `unschedulable` and quota cooldowns from a refreshed Gemini
+ * environment snapshot (used by both periodic status checks and manual operator refresh).
+ */
+export function reconcileGeminiAccountCheck(
+  envId,
+  refreshed,
+  { slotPrefs = null, geminiScheduler = null, manual = false } = {},
+) {
+  if (!envId || !refreshed || typeof refreshed !== 'object') return { changed: false }
+  const account = refreshed.account && typeof refreshed.account === 'object' ? refreshed.account : null
+  const authState = refreshed.auth_state
+  const eligibility = account?.eligibility || null
+  const prevUnsched = slotPrefs?.resolved?.(envId)?.unschedulable ?? null
+  let changed = false
+
+  if (authState === 'reauth_required' || account?.state === 'reauth_required') {
+    if (slotPrefs?.markUnschedulable) {
+      slotPrefs.markUnschedulable(
+        envId,
+        'reauth_required',
+        account?.error_message || 'Google OAuth 凭证已失效，需重新授权',
+        {
+          error_code: account?.error_code || 'gemini_oauth_required',
+          upstream_status: account?.http_status ?? 401,
+        },
+      )
+      changed = true
+    }
+  } else if (eligibility && BLOCKING_CHECK_ELIGIBILITIES.has(eligibility)) {
+    if (slotPrefs?.markUnschedulable) {
+      slotPrefs.markUnschedulable(envId, eligibility, account?.error_message || '', {
+        ...(account?.error_code ? { error_code: account.error_code } : {}),
+        ...(Number.isSafeInteger(account?.http_status) ? { upstream_status: account.http_status } : {}),
+      })
+      changed = true
+    }
+  } else if (authState === 'authorized' && (account?.state === 'ok' || account?.state === 'partial')) {
+    if (
+      prevUnsched &&
+      (manual || AUTO_RECOVERABLE_UNSCHEDULABLE_REASONS.has(prevUnsched.reason)) &&
+      slotPrefs?.clearUnschedulable
+    ) {
+      slotPrefs.clearUnschedulable(envId)
+      changed = true
+    }
+    if (geminiScheduler?.syncAccountQuotaState && account) {
+      const rep = geminiScheduler.syncAccountQuotaState(envId, account)
+      if ((rep?.clearedModels || 0) > 0 || (rep?.clearedGroups || 0) > 0) changed = true
+    }
+  }
+  if (changed) geminiScheduler?.invalidateCatalogCache?.()
+  return { changed }
+}
+
+/**
+ * Periodic Gemini account status & quota checker (modeled after Codex periodic probe +
+ * Antigravity2API Pool.Replenish). Scans authorized / reauth / error environments whose
+ * `account.checked_at` exceeds `gemini.pool.account_check_interval_secs`.
+ */
+export async function checkGeminiAccounts({
+  callHost = callGeminiHost,
+  proxyPool,
+  slotPrefs = null,
+  geminiScheduler = null,
+  geminiOwnersRepo = null,
+  getRoutingConfig = null,
+  now = () => Date.now(),
+  force = false,
+} = {}) {
+  const report = { checked: 0, ok: 0, errors: 0, skipped: 0 }
+  const routing = typeof getRoutingConfig === 'function' ? getRoutingConfig()?.gemini : null
+  const intervalSecs =
+    routing?.pool && Number.isInteger(routing.pool.account_check_interval_secs)
+      ? routing.pool.account_check_interval_secs
+      : 300
+  if (!force && intervalSecs === 0) return report
+  const intervalMs = Math.max(60, intervalSecs) * 1000
+  let view
+  try {
+    view = await callHost('list', {})
+  } catch {
+    return report
+  }
+  if (!Array.isArray(view?.environments) || view.payload_state !== 'installed') return report
+  const pool = typeof proxyPool === 'function' ? proxyPool() : proxyPool
+  if (!pool) return report
+  const ts = now()
+  let anyChanged = false
+  for (const env of view.environments) {
+    if (
+      !env ||
+      typeof env.id !== 'string' ||
+      !ID.test(env.id) ||
+      env.oauth_imported === true ||
+      !['authorized', 'reauth_required'].includes(env.auth_state)
+    ) {
+      report.skipped += 1
+      continue
+    }
+    const checkedAtMs = env.account?.checked_at ? Date.parse(env.account.checked_at) : NaN
+    if (!force && Number.isFinite(checkedAtMs) && ts - checkedAtMs < intervalMs) {
+      report.skipped += 1
+      continue
+    }
+    const ownerUserId = geminiOwnersRepo?.getOwner ? normalizeOwnerId(geminiOwnersRepo.getOwner(env.id)) : null
+    let proxyUrl
+    try {
+      proxyUrl = proxyFor(pool, env.proxy_id, { ownerUserId })
+    } catch {
+      report.skipped += 1
+      continue
+    }
+    try {
+      const refreshed = await callHost('refresh', {
+        id: env.id,
+        proxy_id: env.proxy_id,
+        proxy_url: proxyUrl,
+      })
+      report.checked += 1
+      const { changed } = reconcileGeminiAccountCheck(env.id, refreshed, {
+        slotPrefs,
+        geminiScheduler,
+        manual: false,
+      })
+      if (changed) anyChanged = true
+      if (refreshed?.account?.state === 'ok' && refreshed?.auth_state === 'authorized') {
+        report.ok += 1
+      } else {
+        report.errors += 1
+      }
+    } catch {
+      report.errors += 1
+    }
+  }
+  if (anyChanged) geminiScheduler?.invalidateCatalogCache?.()
   return report
 }
 
@@ -1163,7 +1346,7 @@ export function createGeminiPanelHandler({
           return fail(400, 'gemini_oauth_import_invalid', HOST_ERRORS.gemini_oauth_import_invalid[1])
         }
         const ownerUserId = normalizeOwnerId(body?.owner_user_id)
-        const proxyUrl = proxyFor(proxyPool(), body.proxy_id, { ownerUserId })
+        const proxyUrl = proxyFor(proxyPool(), body.proxy_id, { ownerUserId, forBinding: true })
         let created = await callHost('create', {
           name,
           proxy_id: body.proxy_id,
@@ -1172,8 +1355,13 @@ export function createGeminiPanelHandler({
           ...(method === 'api_key' ? { auth_method: method, api_key: apiKey } : {}),
           ...(normalizedImport != null && {
             oauth_account: {
-              access_token: normalizedImport.access_token,
-              expiry_timestamp: normalizedImport.expiry_timestamp,
+              ...(normalizedImport.refresh_token ? { refresh_token: normalizedImport.refresh_token } : {}),
+              ...(normalizedImport.access_token ? { access_token: normalizedImport.access_token } : {}),
+              ...(normalizedImport.expiry_timestamp != null
+                ? { expiry_timestamp: normalizedImport.expiry_timestamp }
+                : {}),
+              ...(normalizedImport.auth_method ? { auth_method: normalizedImport.auth_method } : {}),
+              ...(normalizedImport.wif_provider ? { wif_provider: normalizedImport.wif_provider } : {}),
             },
           }),
         })
@@ -1252,6 +1440,7 @@ export function createGeminiPanelHandler({
       }
       if (action === 'recover') {
         if (runId !== undefined || req.method !== 'POST') return fail(404, 'not_found')
+        slotPrefs.clearUnschedulable(id)
         geminiScheduler?.clearRestriction?.(id)
         resolvePoolScheduler()?.unitCircuit?.reset?.(`gemini:${id}`)
         return ok({ id, cleared: true })
@@ -1367,8 +1556,9 @@ export function createGeminiPanelHandler({
           id,
           previous_proxy_id: environment.proxy_id,
           proxy_id: proxyId,
-          proxy_url: proxyFor(proxyPool(), proxyId, { ownerUserId: envOwner }),
+          proxy_url: proxyFor(proxyPool(), proxyId, { ownerUserId: envOwner, forBinding: true }),
         })
+        slotPrefs.clearUnschedulable(id)
         geminiScheduler?.invalidateCatalogCache?.()
         return ok(toEnvView(result, { id, proxyId, ownerUserId: envOwner }))
       }
@@ -1446,6 +1636,11 @@ export function createGeminiPanelHandler({
             refreshed = await callHost('get', { id })
           }
         }
+        reconcileGeminiAccountCheck(id, refreshed, {
+          slotPrefs,
+          geminiScheduler,
+          manual: true,
+        })
         geminiScheduler?.invalidateCatalogCache?.()
         return ok(toEnvView(refreshed))
       }
@@ -1489,6 +1684,8 @@ export function createGeminiPanelHandler({
             completed = await callHost('get', { id })
           }
         }
+        slotPrefs.clearUnschedulable(id)
+        geminiScheduler?.clearRestriction?.(id)
         geminiScheduler?.invalidateCatalogCache?.()
         return ok(toEnvView(completed))
       }
@@ -1532,6 +1729,20 @@ function publicError(error) {
     return {
       status: 503,
       body: { error: { type: 'api_error', code: FAILURE, message: 'Gemini host is not available.' } },
+    }
+  }
+  if (code === 'gemini_pool_overloaded' || code === 'gemini_no_account') {
+    return {
+      status: 429,
+      details: error?.details,
+      retryAfter: Number.isFinite(error?.retryAfter) && error.retryAfter >= 1 ? error.retryAfter : 5,
+      body: {
+        error: {
+          type: 'rate_limit_error',
+          code: 'gemini_pool_overloaded',
+          message: error?.message || '号池负载过高，请稍后再试',
+        },
+      },
     }
   }
   const known = HOST_ERRORS[code]
@@ -1848,6 +2059,7 @@ export function createGeminiPublicHandler({
   json,
   readBody,
   scheduler,
+  stickyRouter = null,
   requestLog = null,
   groupsRepo = null,
   apiKeyStore = null,
@@ -2458,12 +2670,14 @@ export function createGeminiPublicHandler({
       }
       return ''
     }
+    const codexStyleKey = stickyRouter?.extractPoolKey?.(req, body, { platform: 'gemini' }) || null
     const stickySeed =
       stickyHeader ||
       deriveFirstUserFingerprint() ||
       (typeof body?.previous_response_id === 'string' && body.previous_response_id.trim()) ||
       ''
-    const stickyKey = stickySeed ? `${req.apiKeyRecord?.id || 'anon'}:${stickySeed.slice(0, 128)}` : null
+    const stickyKey =
+      codexStyleKey || (stickySeed ? `${req.apiKeyRecord?.id || 'anon'}:${stickySeed.slice(0, 128)}` : null)
 
     try {
       const promptPolicy = resolveCragGeminiPromptPolicy(

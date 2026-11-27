@@ -1041,6 +1041,31 @@ render_gemini_unit_apparmor() {
   mv -f "$tmp" "$unit_file" || { rm -f -- "$tmp"; return 1; }
 }
 
+gemini_bwrap_userns_mediated() {
+  local root="${1:-/}" staged profiles
+  staged="${root%/}/etc/apparmor.d/bwrap-userns-restrict"
+  [ -f "$staged" ] || return 1
+  profiles="${root%/}/sys/kernel/security/apparmor/profiles"
+  if [ -f "$profiles" ] && ! grep -Fq bwrap "$profiles" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+install_gemini_managed_bwrap() {
+  local root="${1:-/}" host_dir="${root%/}/usr/local/lib/vm2api-gemini"
+  local entry="${host_dir}/exec/bwrap" source
+  command -v install >/dev/null || { err "Gemini 沙箱需要 install(1)"; return 1; }
+  source="$(command -v bwrap)" || { err "Gemini 沙箱需要 bubblewrap（bwrap）"; return 1; }
+  install -d -m 755 "${host_dir}/exec" || return 1
+  if ! install -m 755 -- "$source" "$entry"; then
+    err "无法安装 Gemini 受管 bwrap 入口: $entry"
+    return 1
+  fi
+  ok "Gemini 受管 bwrap 入口已同步: $entry"
+  return 0
+}
+
 # Prepare a scoped, unattached AppArmor profile for vm2api-gemini.service when
 # the host restricts unprivileged user namespaces (e.g. Ubuntu 24.04).
 # Never modifies kernel sysctls or attaches globally to /usr/bin/bwrap.
@@ -1063,12 +1088,18 @@ prepare_gemini_apparmor() {
     err "拒绝覆盖非 vm2api 管理的 AppArmor profile: $profile"
     return 1
   fi
+  local bwrap_rule=""
+  if gemini_bwrap_userns_mediated "$root"; then
+    install_gemini_managed_bwrap "$root" || return 1
+    bwrap_rule='  /usr/local/lib/vm2api-gemini/exec/bwrap ix,'
+  fi
   candidate="$(mktemp "$directory/.vm2api-gemini.XXXXXX")" || return 1
   if ! printf '%s\n' \
     "$marker" \
     'abi <abi/4.0>,' \
     'profile vm2api-gemini flags=(unconfined) {' \
     '  userns,' \
+    ${bwrap_rule:+"$bwrap_rule"} \
     '}' > "$candidate" || ! chmod 644 "$candidate"; then
     rm -f -- "$candidate"
     return 1
@@ -1124,7 +1155,7 @@ PY
     return 1
   fi
   bundle="$(mktemp -d "${root}/bundles/bundle-${tag}.XXXXXX")" || return 1
-  local -a files=(scripts/gemini-maintenance.py deploy/gemini-maintenance.service.example
+  local -a files=(scripts/gemini-maintenance.py scripts/gemini_host_apparmor.py deploy/gemini-maintenance.service.example
     scripts/gemini-host.py scripts/gemini_host_account.py scripts/gemini_host_inference.py
     scripts/gemini_host_native.py scripts/gemini-host-egress.sh scripts/fetch-default-gemini.py
     scripts/install-gemini-payload.mjs src/lib/gemini/payload.mjs deploy/payload.json deploy/gemini-host.service.example)
@@ -1160,7 +1191,7 @@ if not match:
 (bundle / 'catalog.json').write_text(json.dumps([{'id': tag, 'version': match[1], 'cli_version': '1.5.9'}]) + '\n')
 (bundle / 'maintenance-config.json').write_text(json.dumps({'install_dir': str(install), 'bundle_dir': str(bundle)}) + '\n')
 PY
-  for file in "$config" "$root/scripts/gemini-maintenance.py" "$unit"; do
+  for file in "$config" "$root/scripts/gemini-maintenance.py" "$root/scripts/gemini_host_apparmor.py" "$unit"; do
     if [ -e "$file" ] || [ -L "$file" ]; then
       [ ! -L "$file" ] && [ -f "$file" ] && [ "$(stat -c '%u:%h' "$file")" = 0:1 ] || { err "拒绝覆盖不受信的维护文件"; return 1; }
       local permissions
@@ -1197,9 +1228,11 @@ PY
   systemctl is-enabled --quiet vm2api-gemini-maintenance.service && was_enabled=1
   [ ! -f "$config" ] || install -m 600 "$config" "$backup/config.json" || return 1
   [ ! -f "$root/scripts/gemini-maintenance.py" ] || install -m 644 "$root/scripts/gemini-maintenance.py" "$backup/daemon.py" || return 1
+  [ ! -f "$root/scripts/gemini_host_apparmor.py" ] || install -m 644 "$root/scripts/gemini_host_apparmor.py" "$backup/apparmor.py" || return 1
   [ ! -f "$unit" ] || install -m 644 "$unit" "$backup/service" || return 1
   if atomic_maintenance_file "$bundle/maintenance-config.json" "$config" 600 &&
     atomic_maintenance_file "$bundle/scripts/gemini-maintenance.py" "$root/scripts/gemini-maintenance.py" 644 &&
+    atomic_maintenance_file "$bundle/scripts/gemini_host_apparmor.py" "$root/scripts/gemini_host_apparmor.py" 644 &&
     atomic_maintenance_file "$bundle/deploy/gemini-maintenance.service.example" "$unit" 644 &&
     systemctl daemon-reload && systemctl enable vm2api-gemini-maintenance.service && systemctl restart vm2api-gemini-maintenance.service; then
     ok "Gemini 维护服务已就绪，可在设置 → Gemini 维护 操作"
@@ -1208,6 +1241,7 @@ PY
   systemctl stop vm2api-gemini-maintenance.service || warn "无法停止未就绪的维护服务"
   if [ -f "$backup/config.json" ]; then atomic_maintenance_file "$backup/config.json" "$config" 600 || restored=0; else rm -f -- "$config" || restored=0; fi
   if [ -f "$backup/daemon.py" ]; then atomic_maintenance_file "$backup/daemon.py" "$root/scripts/gemini-maintenance.py" 644 || restored=0; else rm -f -- "$root/scripts/gemini-maintenance.py" || restored=0; fi
+  if [ -f "$backup/apparmor.py" ]; then atomic_maintenance_file "$backup/apparmor.py" "$root/scripts/gemini_host_apparmor.py" 644 || restored=0; else rm -f -- "$root/scripts/gemini_host_apparmor.py" || restored=0; fi
   if [ -f "$backup/service" ]; then atomic_maintenance_file "$backup/service" "$unit" 644 || restored=0; else rm -f -- "$unit" || restored=0; fi
   systemctl daemon-reload || restored=0
   [ "$was_enabled" = 1 ] || systemctl disable vm2api-gemini-maintenance.service || warn "无法恢复维护服务的启用状态"
@@ -1351,8 +1385,8 @@ prepare_gemini_host() (
     use_apparmor=1
   fi
 
-  local -a files=(deploy/gemini-host.service.example scripts/gemini-host.py scripts/gemini_host_account.py
-    scripts/gemini_host_inference.py scripts/gemini_host_native.py
+  local -a files=(deploy/gemini-host.service.example scripts/gemini-host.py scripts/gemini_host_apparmor.py
+    scripts/gemini_host_account.py scripts/gemini_host_inference.py scripts/gemini_host_native.py
     scripts/gemini-host-egress.sh scripts/install-gemini-payload.mjs src/lib/gemini/payload.mjs)
   for file in "${files[@]}"; do
     if ! fetch_gemini_host_file "$tag" "$mode" "$file" "${staging}/${file}"; then

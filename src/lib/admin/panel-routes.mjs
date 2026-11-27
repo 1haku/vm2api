@@ -490,8 +490,11 @@ function usageLogFilters(req, u) {
     model: get('model'),
     endpoint: get('endpoint'),
     protocol: get('protocol'),
+    via: get('via'),
+    final_state: get('final_state'),
     status_code: get('status_code'),
     upstream_400: get('upstream_400') === '1',
+    upstream_risk_errors: get('upstream_risk_errors') === '1',
     request_id: get('request_id'),
     exclude_status_200: get('exclude_status_200') === '1',
     failed_only: get('failed_only') === '1',
@@ -1746,6 +1749,7 @@ export function createPanelHandler(ctx) {
     ctx.routingConfig = previous
     ctx.healthMonitor?.setConfig(ctx.routingConfig.health_probe)
     ctx.usageProbeMonitor?.setConfig(ctx.routingConfig.usage_probe)
+    ctx.cragZombieGuard?.setConfig(ctx.routingConfig.crag_zombie_guard)
     ctx.notifyMonitor?.setConfig(ctx.routingConfig.notify)
     if (ctx.routingConfig.logging) {
       requestLog.setConfig({
@@ -7656,13 +7660,18 @@ export function createPanelHandler(ctx) {
       if (req.method === 'DELETE' && p === '/api/panel/refusal-device-blocks') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
         const repo = new RefusalDeviceBlocksRepo()
+        const sessionsRepo = new RefusalSessionBlocksRepo()
         const deviceId = String(body?.device_id || '').trim()
         if (deviceId) {
+          const existing = repo.get(deviceId)
           if (!repo.remove(deviceId)) {
             return json(res, 404, {
               ok: false,
               error: { type: 'not_found_error', code: 'refusal_device_not_found', message: 'device 不存在' },
             })
+          }
+          if (existing?.subject_kind === 'session' && existing.session_id) {
+            sessionsRepo.remove(existing.session_id)
           }
           return json(res, 200, panel.ok(refusalGuardSnapshot()))
         }
@@ -7677,6 +7686,7 @@ export function createPanelHandler(ctx) {
           })
         }
         repo.clear()
+        sessionsRepo.clear()
         return json(res, 200, panel.ok(refusalGuardSnapshot()))
       }
       if (req.method === 'GET' && p === '/api/panel/protocol-entry') {

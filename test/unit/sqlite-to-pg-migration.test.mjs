@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { createDatabase } from '../../src/lib/db/database.mjs'
 import { UsageLogsRepo } from '../../src/lib/db/repos/usage-logs-repo.mjs'
@@ -24,18 +25,25 @@ import { seedMockSqlite } from '../../scripts/seed-mock-sqlite.mjs'
 
 const PG_URL = process.env.VM2API_TEST_PG_URL || ''
 
-test('MIGRATION_TABLES and seedMockSqlite cover every active SQLite table including gemini_environment_owners', () => {
+function copyUpstreamMigrations(tmpDir) {
+  const migrationsDir = path.join(tmpDir, 'upstream-migrations')
+  fs.cpSync(fileURLToPath(new URL('../../src/lib/db/migrations/', import.meta.url)), migrationsDir, { recursive: true })
+  return migrationsDir
+}
+
+test('MIGRATION_TABLES and seedMockSqlite cover every upstream SQLite table including gemini_environment_owners', () => {
   assert.ok(MIGRATION_TABLES.includes('gemini_environment_owners'))
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vm2api-seed-check-'))
   try {
     const outPath = path.join(tmpDir, 'mock.db')
     const seeded = seedMockSqlite({ outPath, usageCount: 20 })
-    const empty = Object.entries(seeded.tableCounts)
+    const upstreamTables = Object.entries(seeded.tableCounts).filter(([name]) => !name.startsWith('custom_'))
+    const empty = upstreamTables
       .filter(([, count]) => count === 0)
       .map(([name]) => name)
     assert.deepEqual(empty, [])
     assert.ok(seeded.tableCounts.gemini_environment_owners >= 1)
-    for (const table of Object.keys(seeded.tableCounts)) {
+    for (const [table] of upstreamTables) {
       if (table === 'schema_migrations') continue
       assert.ok(MIGRATION_TABLES.includes(table), `MIGRATION_TABLES missing active table: ${table}`)
     }
@@ -47,8 +55,9 @@ test('MIGRATION_TABLES and seedMockSqlite cover every active SQLite table includ
 test('preflightSqliteToPostgres validates clean DB and blocks unmapped tables, CI username dupes, and NULL timestamps', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vm2api-preflight-'))
   try {
+    const migrationsDir = copyUpstreamMigrations(tmpDir)
     const cleanPath = path.join(tmpDir, 'clean.db')
-    const cleanDb = createDatabase({ dbPath: cleanPath })
+    const cleanDb = createDatabase({ dbPath: cleanPath, migrationsDir })
     cleanDb.close()
 
     const okReport = await preflightSqliteToPostgres({ sqlitePath: cleanPath })
@@ -57,8 +66,14 @@ test('preflightSqliteToPostgres validates clean DB and blocks unmapped tables, C
     assert.deepEqual(okReport.unmappedTables, [])
     assert.ok(okReport.migrations.count >= 60)
 
+    const forkPath = path.join(tmpDir, 'fork.db')
+    createDatabase({ dbPath: forkPath }).close()
+    const forkReport = await preflightSqliteToPostgres({ sqlitePath: forkPath })
+    assert.equal(forkReport.ok, false)
+    assert.ok(forkReport.unmappedTables.includes('custom_subscription_plans'))
+
     const badPath = path.join(tmpDir, 'bad.db')
-    const badDb = createDatabase({ dbPath: badPath })
+    const badDb = createDatabase({ dbPath: badPath, migrationsDir })
     badDb.exec('CREATE TABLE unexpected_new_table (id TEXT PRIMARY KEY)')
     badDb.exec('DROP INDEX IF EXISTS idx_users_username_active')
     badDb
@@ -124,7 +139,7 @@ test('request_attempts.cooldown_until normalizes legacy ISO-8601 strings to inte
 })
 
 test('#1845: SQLite 069 and PostgreSQL 006 migrations add identical usage_logs and request_attempts columns', () => {
-  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..')
+  const root = fileURLToPath(new URL('../..', import.meta.url))
   const pgSql = fs.readFileSync(
     path.join(root, 'src/lib/db/pg/pg-migrations/006_log_error_details_and_hop_correlation.sql'),
     'utf8',
@@ -162,6 +177,15 @@ test('#1845: SQLite 069 and PostgreSQL 006 migrations add identical usage_logs a
       assert.ok(attemptCols.has(col), `SQLite request_attempts missing ${col}`)
       assert.match(pgSql, new RegExp(`ALTER TABLE request_attempts ADD COLUMN IF NOT EXISTS ${col}\\b`))
     }
+
+    const pgAdvisorSql = fs.readFileSync(
+      path.join(root, 'src/lib/db/pg/pg-migrations/007_usage_logs_advisor_billing.sql'),
+      'utf8',
+    )
+    for (const col of ['advisor_usage', 'advisor_cost']) {
+      assert.ok(usageCols.has(col), `SQLite usage_logs missing ${col}`)
+      assert.match(pgAdvisorSql, new RegExp(`ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS ${col}\\b`))
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
@@ -183,7 +207,7 @@ test('migrateSqliteToPostgres transfers tables, sanitizes NUL bytes, reconciles 
   const schemaUrl = u.toString()
 
   try {
-    const db = createDatabase({ dbPath: sqlitePath })
+    const db = createDatabase({ dbPath: sqlitePath, migrationsDir: copyUpstreamMigrations(tmpDir) })
     const now = new Date().toISOString()
 
     // Stamp an older historical migration 001 date and customize default groups to test seed reconciliation

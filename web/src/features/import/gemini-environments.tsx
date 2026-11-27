@@ -8,11 +8,13 @@ import { api } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import {
   type GeminiModelCatalogEntry,
+  geminiAccountErrorText,
   geminiAuthorizationLabel,
   geminiEligibilityNotice,
   geminiInferenceErrorAction,
   geminiInferenceLabel,
   geminiInferenceErrorLabel,
+  geminiUnschedulableLabel,
   groupGeminiModels,
 } from '@/lib/gemini-account-status'
 import { isGeminiHostIssue } from '@/lib/gemini-recovery'
@@ -30,6 +32,7 @@ import { resolveOwnerUsername } from '@/features/vm/vm-owner'
 import {
   GEMINI_IMPORT_FORMAT_LABELS,
   type ParsedGeminiImportResult,
+  parseGeminiAccountImportText,
   readGeminiAccountImportFile,
 } from './gemini-account-import'
 import {
@@ -118,6 +121,14 @@ export type GeminiEnvironmentRestriction = {
   until: number | null
 }
 
+export type GeminiEnvironmentUnschedulable = {
+  reason: string
+  detail?: string
+  at?: string
+  upstream_status?: number
+  error_code?: string
+}
+
 export type GeminiEnvironment = {
   id: string
   name: string
@@ -126,10 +137,14 @@ export type GeminiEnvironment = {
   schedulable?: boolean
   schedule_level?: number
   schedule_level_mode?: 'auto' | 'manual'
+  unschedulable?: GeminiEnvironmentUnschedulable | null
+  unschedulable_reason?: string | null
+  unschedulable_detail?: string | null
+  unschedulable_at?: string | null
   restriction?: GeminiEnvironmentRestriction | null
   circuit?: VmCircuit | null
   auth_state:
-  'unverified' | 'authorizing' | 'authorized' | 'reauth_required' | 'disabled'
+    'unverified' | 'authorizing' | 'authorized' | 'reauth_required' | 'disabled'
   runtime_ready: boolean
   billing_ready: boolean
   proxy_ready?: boolean
@@ -156,12 +171,15 @@ export type GeminiEnvironment = {
     plan: string | null
     expires_at: string | null
     eligibility?:
-    | 'verification_required'
-    | 'location_unsupported'
-    | 'client_unsupported'
-    | 'ineligible'
-    | null
+      | 'verification_required'
+      | 'location_unsupported'
+      | 'client_unsupported'
+      | 'ineligible'
+      | null
     validation_url?: string | null
+    error_code?: string | null
+    error_message?: string | null
+    http_status?: number | null
     model_catalog?: GeminiModelCatalogEntry[]
     quotas: (QuotaReading & { model: string })[]
     quota_groups?: {
@@ -176,12 +194,12 @@ export type GeminiInventory = {
   available: boolean
   host_message?: string
   payload_state?:
-  | 'installed'
-  | 'install_on_create'
-  | 'awaiting_redemption'
-  | 'not_configured'
-  | 'invalid'
-  | 'unknown'
+    | 'installed'
+    | 'install_on_create'
+    | 'awaiting_redemption'
+    | 'not_configured'
+    | 'invalid'
+    | 'unknown'
   payload_mode?: 'legacy_release' | 'crag_subscription'
   payload_issue?: keyof typeof PAYLOAD_ISSUES | null
   release_activated?: boolean | null
@@ -201,6 +219,11 @@ const PAYLOAD_ISSUES = {
   gemini_release_invalid: 'CRAGGemini 发行授权配置无效，请联系部署管理员。',
   gemini_release_payload_mismatch: 'CRAGGemini 发行授权配置与签名载荷不匹配。',
 }
+
+const CRAG_LICENSE_SANDBOX_CODES = new Set([
+  'gemini_sandbox_apparmor_restricted',
+  'gemini_sandbox_unavailable',
+])
 
 const OAUTH_ISSUES = {
   gemini_oauth_tools_missing: '宿主缺少 Google 授权所需工具。',
@@ -651,7 +674,7 @@ function EnvironmentData({
             {environment.last_inference.model} ·{' '}
             {localTime(
               environment.last_inference.finished_at ||
-              environment.last_inference.started_at
+                environment.last_inference.started_at
             )}
             {environment.last_inference.state === 'failed'
               ? ` · ${geminiInferenceErrorLabel(environment.last_inference.error_code)}`
@@ -659,7 +682,7 @@ function EnvironmentData({
           </dd>
         ) : null}
         {environment.last_inference?.state === 'failed' &&
-          geminiInferenceErrorAction(environment.last_inference.error_code) ? (
+        geminiInferenceErrorAction(environment.last_inference.error_code) ? (
           <dd className='mt-0.5 text-xs text-muted-foreground'>
             {geminiInferenceErrorAction(environment.last_inference.error_code)}
           </dd>
@@ -694,13 +717,13 @@ function EnvironmentData({
                 ? `已绑定席位 #${environment.crag_license.seat}`
                 : '许可有效'
               : geminiInferenceErrorLabel(
-                environment.crag_license.code ?? 'license_required'
-              )}
+                  environment.crag_license.code ?? 'license_required'
+                )}
           </dd>
           {!environment.crag_license.valid &&
-            geminiInferenceErrorAction(
-              environment.crag_license.code ?? 'license_required'
-            ) ? (
+          geminiInferenceErrorAction(
+            environment.crag_license.code ?? 'license_required'
+          ) ? (
             <dd className='mt-0.5 text-xs text-muted-foreground'>
               {geminiInferenceErrorAction(
                 environment.crag_license.code ?? 'license_required'
@@ -738,7 +761,36 @@ function EnvironmentData({
             ? `${ACCOUNT_LABELS[account.state]} · 最近检查 ${localTime(account.checked_at)}`
             : '尚未读取'}
         </dd>
+        {account &&
+        (account.state === 'error' ||
+          account.state === 'reauth_required' ||
+          account.error_message ||
+          account.error_code) ? (
+          <dd className='mt-1 text-xs text-destructive'>
+            {geminiAccountErrorText(account)}
+          </dd>
+        ) : null}
       </div>
+      {environment.unschedulable ? (
+        <div className='space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3 sm:col-span-2 lg:col-span-3'>
+          <dt className='font-medium text-destructive'>
+            不可调度 ·{' '}
+            {geminiUnschedulableLabel(
+              environment.unschedulable.reason,
+              environment.unschedulable.detail
+            )}
+          </dt>
+          {environment.unschedulable.detail ? (
+            <dd className='text-xs text-muted-foreground'>
+              {environment.unschedulable.detail}
+            </dd>
+          ) : null}
+          <dd className='text-xs text-muted-foreground'>
+            触发时间：{localTime(environment.unschedulable.at)} ·
+            可在账号操作菜单点击「恢复状态」或点击「刷新」恢复调度。
+          </dd>
+        </div>
+      ) : null}
       {(() => {
         const notice = geminiEligibilityNotice(
           account,
@@ -1066,6 +1118,7 @@ export function GeminiEnvironments({
   >('oauth')
   const [apiKey, setApiKey] = useState('')
   const [accountFile, setAccountFile] = useState<File | null>(null)
+  const [accountText, setAccountText] = useState('')
   const [accountImport, setAccountImport] =
     useState<ParsedGeminiImportResult | null>(null)
   const [accountImportIndex, setAccountImportIndex] = useState(0)
@@ -1091,6 +1144,7 @@ export function GeminiEnvironments({
   const resetAccountImport = () => {
     accountParseSeq.current += 1
     setAccountFile(null)
+    setAccountText('')
     setAccountImport(null)
     setAccountImportIndex(0)
     setAccountImportError(null)
@@ -1111,6 +1165,7 @@ export function GeminiEnvironments({
   const handleAccountFileChange = (file: File | null) => {
     const seq = ++accountParseSeq.current
     setAccountFile(file)
+    if (file) setAccountText('')
     setAccountImport(null)
     setAccountImportIndex(0)
     setAccountImportError(null)
@@ -1132,30 +1187,56 @@ export function GeminiEnvironments({
       })
   }
 
+  const handleAccountTextChange = (rawText: string) => {
+    accountParseSeq.current += 1
+    setAccountText(rawText)
+    if (rawText.trim()) setAccountFile(null)
+    setAccountImport(null)
+    setAccountImportIndex(0)
+    setAccountImportError(null)
+    setAccountImportParsedAt(0)
+    if (!rawText.trim()) return
+    try {
+      const parsed = parseGeminiAccountImportText(rawText)
+      setAccountImport(parsed)
+      setAccountImportIndex(0)
+      setAccountImportParsedAt(Date.now())
+      applySuggestedName(parsed.accounts[0]?.suggestedName)
+    } catch (error: unknown) {
+      setAccountImportError(
+        error instanceof Error ? error.message : '导入内容解析失败。'
+      )
+    }
+  }
+
   const operation = useGeminiMutation({
     mutationFn: async (action: {
       type:
-      | 'create'
-      | 'authorize'
-      | 'complete'
-      | 'disable'
-      | 'delete'
-      | 'refresh'
-      | 'bind_seat'
-      | 'release_seat'
-      | 'sync_subscription'
+        | 'create'
+        | 'authorize'
+        | 'complete'
+        | 'disable'
+        | 'delete'
+        | 'refresh'
+        | 'bind_seat'
+        | 'release_seat'
+        | 'sync_subscription'
       id?: string
     }) => {
       const resource = `${ROOT}/environments${action.id ? `/${encodeURIComponent(action.id)}` : ''}`
       if (action.type === 'create') {
         let importedAccount = selectedImportAccount
         if (authMethod === 'oauth_file' && !importedAccount) {
-          const parsed = await readGeminiAccountImportFile(accountFile)
+          const parsed = accountFile
+            ? await readGeminiAccountImportFile(accountFile)
+            : accountText.trim()
+              ? parseGeminiAccountImportText(accountText)
+              : null
           importedAccount =
-            parsed.accounts[accountImportIndex] ?? parsed.accounts[0] ?? null
+            parsed?.accounts[accountImportIndex] ?? parsed?.accounts[0] ?? null
         }
         if (authMethod === 'oauth_file' && !importedAccount) {
-          throw new Error('请选择有效的账号 JSON 文件。')
+          throw new Error('请选择有效的账号 JSON 文件或粘贴 Refresh Token。')
         }
         const effectiveMethod =
           authMethod === 'oauth_file' && importedAccount
@@ -1269,11 +1350,11 @@ export function GeminiEnvironments({
     : environment?.proxy_ready === false
       ? '绑定的 IPv4 SOCKS5 代理不可用。'
       : geminiPayloadIssue(inventory.data) ||
-      (inventory.data.oauth_runtime_issue
-        ? OAUTH_ISSUES[inventory.data.oauth_runtime_issue]
-        : awaitingRedemption
-          ? '请先兑换 CRAGGemini 内核。'
-          : null)
+        (inventory.data.oauth_runtime_issue
+          ? OAUTH_ISSUES[inventory.data.oauth_runtime_issue]
+          : awaitingRedemption
+            ? '请先兑换 CRAGGemini 内核。'
+            : null)
 
   const account = environment ? (
     <div className='space-y-4'>
@@ -1311,7 +1392,7 @@ export function GeminiEnvironments({
           </Button>
         ) : null}
         {environment.auth_state === 'authorized' ||
-          environment.auth_state === 'reauth_required' ? (
+        environment.auth_state === 'reauth_required' ? (
           <Button
             type='button'
             variant='outline'
@@ -1336,8 +1417,11 @@ export function GeminiEnvironments({
           </Button>
         ) : null}
         {isCragSubscription &&
-          environment.auth_method === 'oauth' &&
-          !environment.crag_license?.valid ? (
+        environment.auth_method === 'oauth' &&
+        !environment.crag_license?.valid &&
+        !CRAG_LICENSE_SANDBOX_CODES.has(
+          environment.crag_license?.code ?? ''
+        ) ? (
           <Button
             type='button'
             variant='outline'
@@ -1347,16 +1431,16 @@ export function GeminiEnvironments({
             }
           >
             {environment.crag_license?.code &&
-              environment.crag_license.code !== 'license_required'
+            environment.crag_license.code !== 'license_required'
               ? '重新绑定 CRAG 席位'
               : '绑定 CRAG 席位'}
           </Button>
         ) : null}
         {isCragSubscription &&
-          environment.auth_method === 'oauth' &&
-          environment.crag_license?.valid &&
-          environment.crag_license.scope === 'host' &&
-          cragSub?.reclaim_supported ? (
+        environment.auth_method === 'oauth' &&
+        environment.crag_license?.valid &&
+        environment.crag_license.scope === 'host' &&
+        cragSub?.reclaim_supported ? (
           <Button
             type='button'
             variant='outline'
@@ -1412,7 +1496,7 @@ export function GeminiEnvironments({
         )}
       </div>
       {environment.auth_method === 'oauth' &&
-        environment.auth_state === 'authorized' ? (
+      environment.auth_state === 'authorized' ? (
         terminalUnavailable ? (
           <p role='status' className='text-sm text-muted-foreground'>
             暂时无法启动 Gemini：{terminalUnavailable}
@@ -1426,8 +1510,8 @@ export function GeminiEnvironments({
         )
       ) : null}
       {payloadReady &&
-        challenge?.id === environment.id &&
-        environment.auth_state === 'authorizing' ? (
+      challenge?.id === environment.id &&
+      environment.auth_state === 'authorizing' ? (
         <GeminiAuthorizationChallenge
           key={challenge.attempt_id}
           environmentId={environment.id}
@@ -1539,7 +1623,7 @@ export function GeminiEnvironments({
                     setApiKey('')
                   }}
                 />
-                导入账号文件（Antigravity / CPA / sub2api）
+                导入账号 JSON / Refresh Token
               </label>
             </div>
           </fieldset>
@@ -1559,27 +1643,48 @@ export function GeminiEnvironments({
           </div>
           {authMethod === 'oauth_file' ? (
             <div className='space-y-2'>
-              <Label htmlFor='gemini-account-file'>账号 JSON 文件</Label>
+              <Label htmlFor='gemini-account-file'>
+                账号 JSON 文件（或 .txt）
+              </Label>
               <Input
                 id='gemini-account-file'
-                key={createdId}
+                key={`${createdId ?? ''}-${accountText.trim() ? 'pasted' : 'file'}`}
                 type='file'
-                accept='.json,application/json'
-                required
+                accept='.json,.txt,application/json,text/plain'
+                required={!accountText.trim()}
                 disabled={operation.isPending}
                 aria-describedby='gemini-account-file-help'
                 onChange={(event) =>
                   handleAccountFileChange(event.target.files?.item(0) ?? null)
                 }
               />
+              <div className='space-y-1.5'>
+                <Label htmlFor='gemini-account-paste'>
+                  或直接粘贴账号 JSON / Refresh Token（1//...）
+                </Label>
+                <textarea
+                  id='gemini-account-paste'
+                  rows={3}
+                  spellCheck={false}
+                  disabled={operation.isPending}
+                  placeholder='[{"email": "user@example.com", "refresh_token": "1//..."}] 或直接粘贴 1//...'
+                  className='block w-full rounded-md border bg-background px-3 py-2 font-mono text-xs'
+                  value={accountText}
+                  onChange={(event) =>
+                    handleAccountTextChange(event.target.value)
+                  }
+                />
+              </div>
               <p
                 id='gemini-account-file-help'
                 className='text-sm text-muted-foreground'
               >
-                支持 Antigravity Tools、CLIProxyAPI（CPA）与 sub2api 导出的账号
-                JSON（多账号文件可选择单个导入）。OAuth
-                凭据仅上传访问令牌与过期时间并经所选代理验证，过期后请重新进行
-                Google 授权。
+                支持 Antigravity Manager / Antigravity2API、Antigravity
+                Tools、CLIProxyAPI（CPA）、sub2api 等导出的账号 JSON（含仅含
+                email + refresh_token 的列表）及单独 Refresh Token（1//...）。含
+                Refresh Token
+                的凭据将经所选代理换取令牌并写入标准配置，支持自动续票与推理；仅含短期
+                access_token 的文件过期后需重新授权。
               </p>
               {accountImportError ? (
                 <p role='alert' className='text-sm text-destructive'>
@@ -1626,7 +1731,9 @@ export function GeminiEnvironments({
                     ·{' '}
                     {selectedImportAccount.kind === 'api_key'
                       ? 'Gemini API Key'
-                      : 'OAuth 凭据'}
+                      : selectedImportAccount.hasRefreshToken
+                        ? 'OAuth Refresh Token（自动换票）'
+                        : 'OAuth 短期访问令牌'}
                     {selectedImportAccount.email
                       ? ` · ${selectedImportAccount.email}`
                       : ''}
@@ -1638,12 +1745,16 @@ export function GeminiEnvironments({
                       : ''}
                   </p>
                   {selectedImportAccount.kind === 'oauth' &&
-                    accountImportParsedAt > 0 &&
-                    selectedImportAccount.oauth_account.expiry_timestamp * 1000 <=
+                  !selectedImportAccount.hasRefreshToken &&
+                  accountImportParsedAt > 0 &&
+                  selectedImportAccount.oauth_account.expiry_timestamp !=
+                    null &&
+                  selectedImportAccount.oauth_account.expiry_timestamp * 1000 <=
                     accountImportParsedAt ? (
                     <p className='text-xs text-amber-700 dark:text-amber-300'>
                       提示：文件中的访问令牌可能已过期，导入验证时可能会被
-                      Google 拒绝；请导出最新凭据或改用 Google 授权。
+                      Google 拒绝；请提供含 Refresh Token 的文件或改用 Google
+                      授权。
                     </p>
                   ) : null}
                 </div>
@@ -1694,7 +1805,7 @@ export function GeminiEnvironments({
               !name.trim() ||
               (authMethod === 'api_key' && !apiKey.trim()) ||
               (authMethod === 'oauth_file' &&
-                (!accountFile ||
+                ((!accountFile && !accountText.trim()) ||
                   Boolean(accountImportError) ||
                   !selectedImportAccount)) ||
               !exits.some((proxy) => proxy.id === proxyId)

@@ -24,7 +24,7 @@ import { SubscriptionsRepo } from '../db/repos/subscriptions-repo.mjs'
 import { enqueueWrite, writeBehindArmed } from '../db/write-behind.mjs'
 import { normalizeRequestBodyMetrics, UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
 import { classifyRequestError, resolveMutedErrorClasses } from './error-class.mjs'
-import { costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
+import { advisorUsageFromIterations, costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
 import { disjointOpenaiUsage } from '../protocol/openai-usage.mjs'
 import { REASONING_EFFORTS, modelMismatch, sessionIdForLog } from '../protocol/log-fields.mjs'
 
@@ -285,6 +285,7 @@ const PRICED_COLUMN_KEYS = [
   'cache_creation_cost',
   'web_search_cost',
   'image_cost',
+  'advisor_cost',
   'total_cost',
   'pricing_model',
   'price_source',
@@ -315,6 +316,7 @@ function costColumnsForLog(usage, model, extra = {}) {
     cache_creation_cost: priced.cache_creation_cost ?? null,
     web_search_cost: priced.web_search_cost ?? null,
     image_cost: priced.image_cost ?? null,
+    advisor_cost: priced.advisor_cost ?? null,
     total_cost: priced.total_cost ?? null,
     pricing_model: priced.pricing_model ?? null,
     price_source: priced.price_source ?? null,
@@ -791,9 +793,11 @@ export class RequestLogStore {
       status: extra.status ?? null,
       upstream_status: extra.audit_upstream_400
         ? 400
-        : Number(extra.upstream_status) === 400
-          ? null
-          : (extra.upstream_status ?? null),
+        : Number.isInteger(extra.audit_upstream_error_status) && extra.audit_upstream_error_status >= 400
+          ? extra.audit_upstream_error_status
+          : Number(extra.upstream_status) === 400
+            ? null
+            : (extra.upstream_status ?? null),
       upstream_400_message: extra.audit_upstream_400_message
         ? String(extra.audit_upstream_400_message).slice(0, 300)
         : null,
@@ -845,6 +849,12 @@ export class RequestLogStore {
       image_usage: extra.image_usage ? JSON.stringify(extra.image_usage) : null,
       image_input_tokens: imageTokenCount(extra.image_usage?.input_tokens),
       image_output_tokens: imageTokenCount(extra.image_usage?.output_tokens),
+      advisor_usage: (() => {
+        const detail = Array.isArray(extra.advisor_usage)
+          ? extra.advisor_usage
+          : advisorUsageFromIterations(billedUsage)
+        return detail?.length ? JSON.stringify(detail) : null
+      })(),
       // Ownership and billing columns
       user_id: extra.user_id ?? null,
       subscription_id: extra.subscription_id ?? null,
