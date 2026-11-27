@@ -1204,10 +1204,11 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
 
   const userId = 'pool-test-image-user'
   const now = new Date().toISOString()
-  new UsersRepo(poolsRepo.db).insert({
+  const users = new UsersRepo(poolsRepo.db)
+  users.insert({
     id: userId,
     username: userId,
-    role: 'user',
+    role: 'admin',
     password_hash: 'fixture',
     created_at: now,
     updated_at: now,
@@ -1234,7 +1235,7 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
     requestLog: { start: () => ({ request_id: 'req-codex' }), finish() {} },
     stickyRouter: { extractPoolKey: () => null, collectPoolKeys: () => [] },
     accountQuota: { ingestHeaders() {} },
-    apiKeyStore: { repo: { db: poolsRepo.db }, acquire: () => ({ ok: true }), release() {}, recordUsage() {} },
+    apiKeyStore: { repo: { db: poolsRepo.db }, users, acquire: () => ({ ok: true }), release() {}, recordUsage() {} },
     apiScheduler: {},
     apiEndpointStore: {},
     stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },

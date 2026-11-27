@@ -602,8 +602,10 @@ export function createResponsesWsHandler({
           if (req.apiKeyKind === 'managed' && typeof requireAuth === 'function') {
             const authRes = createProtocolRes()
             let authBody = ''
-            authRes.on('chunk', (chunk) => { authBody += chunk })
-            if (!requireAuth(req, authRes, { keyGate: false })) {
+            authRes.on('chunk', (chunk) => {
+              authBody += chunk
+            })
+            if (!requireAuth(req, authRes)) {
               currentReq = null
               sendFrame(ws, httpErrorToFrame(authRes.statusCode, authBody))
               continue
