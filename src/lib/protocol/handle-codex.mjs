@@ -42,8 +42,20 @@ import {
 import { isLocalEgressProxy } from '../vm/egress.mjs'
 import { vmNodeId } from '../cluster/placement.mjs'
 import { hostProxyUrlForVm } from '../vm/slot-host.mjs'
-import { openaiUsageAccountId, readCodexAccounts, upsertCodexAccount, persistCodexCredentialState, markCodexGrantDead } from '../vm/codex-slot.mjs'
-import { scopeAccountFromVm } from './jev-intercept.mjs'
+import {
+  openaiUsageAccountId,
+  readCodexAccounts,
+  upsertCodexAccount,
+  persistCodexCredentialState,
+  markCodexGrantDead,
+} from '../vm/codex-slot.mjs'
+import {
+  clientBlockErrorOf,
+  isTrustedGateDecision,
+  projectCandidateAccounts,
+  resolveRiskRepos,
+  runUnifiedPreDispatch,
+} from './unified-pre-dispatch.mjs'
 import {
   CODEX_APP_VERSION,
   CODEX_CATALOG_ORIGINATOR,
@@ -749,6 +761,11 @@ export async function handleCodexProtocol({
   accountGate = null,
   onUsage = null,
   onFallback = null,
+  preDispatchDecision = null,
+  settings = null,
+  refusalGuards = null,
+  refusalDevices = null,
+  refusalSessions = null,
   keyScope = null,
   afterHop = null,
   ownerScope = null,
@@ -955,6 +972,51 @@ export async function handleCodexProtocol({
   let switches = 0
   let counted = false
   let compatibleTools = null
+  // Enforce pre-dispatch JEV BEFORE admitCodexCandidate so blocked requests
+  // reserve zero Codex VM slots (eliminating Phase-3 slot-then-review inversion).
+  if (!isTrustedGateDecision(preDispatchDecision || req?._preDispatchDecision) && settings) {
+    const riskState = resolveRiskRepos({ settings, refusalGuards, refusalDevices, refusalSessions })
+    const candidateAccounts = projectCandidateAccounts({
+      projectRoot,
+      keyScope,
+      ownerScope,
+      platform: 'openai',
+    })
+    const decision = await runUnifiedPreDispatch({
+      req,
+      inbound: inbound || body,
+      body: body || converted.body || inbound,
+      headers: req.headers,
+      distillRules: cfg?.distill,
+      policy: riskState.policy,
+      settings,
+      repo: riskState.repo,
+      devices: riskState.devices,
+      sessions: riskState.sessions,
+      requestId: res?._kinRequestId || '',
+      candidateAccounts,
+      poolJevProfile: req?.poolJevProfile || keyScope?.jev_profile || null,
+      channel: 'openai',
+      backend: 'oauth',
+      openaiPlatform: true,
+    })
+    if (decision.action === 'block') {
+      stats.errors++
+      logBag.via = decision.via
+      logBag.attempt_count = 0
+      logBag.final_state = decision.final_state
+      logBag.error_code = decision.error_code
+      logBag.error_message = decision.message
+      if (decision.error_details) {
+        logBag.error_details = { ...(logBag.error_details || {}), ...decision.error_details }
+      }
+      logBag.intercept = decision.intercept || null
+      logBag.jev_state = decision.jev_state || null
+      if (decision.retry_after_sec) res.setHeader?.('retry-after', String(decision.retry_after_sec))
+      const clientErr = clientBlockErrorOf(decision)
+      return json(res, clientErr.status, clientErr.body)
+    }
+  }
   try {
     for (;;) {
       const admitted = await admitCodexCandidate(projectRoot, req, pickOpts, {
@@ -995,16 +1057,6 @@ export async function handleCodexProtocol({
         counted = true
         stats.requests++
         stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
-      }
-      // The slot is known here, so an account scope can be applied. `true`
-      // means the 403 is already written.
-      if (accountGate) {
-        logBag.vm_id = vm.id
-        const blocked = await accountGate(scopeAccountFromVm(vm))
-        if (blocked) {
-          lease.release()
-          return
-        }
       }
       const stickyKeys = picked.stickyKeys?.length ? picked.stickyKeys : picked.sessionKey ? [picked.sessionKey] : []
       const stickyBound = picked.sessionKey ? stickyRouter?.resolve?.(picked.sessionKey) : null
@@ -1705,6 +1757,7 @@ export async function handleCodexSearch({
   projectRoot,
   stickyRouter = null,
   ops = {},
+  keyScope = null,
   ownerScope = null,
 }) {
   logBag.via = 'codex-search'
@@ -1733,7 +1786,7 @@ export async function handleCodexSearch({
     : null
   if (redaction) Object.assign(outbound, await maskJson(outbound, redaction))
   const post = ops.postCodexSearch || postCodexSearch
-  const pickOpts = { stickyRouter, sessions: null, body: outbound, excluded: new Set(), routing, ownerScope }
+  const pickOpts = { stickyRouter, sessions: null, body: outbound, keyScope, excluded: new Set(), routing, ownerScope }
   const deadline = Date.now() + codexWaitTimeoutMs(routing)
   const gone = clientGoneSignal(req, res)
   let last = null
@@ -1854,6 +1907,7 @@ export async function handleCodexImages({
   projectRoot,
   stickyRouter = null,
   ops = {},
+  keyScope = null,
   ownerScope = null,
 }) {
   logBag.via = 'codex-images'
@@ -1881,10 +1935,13 @@ export async function handleCodexImages({
       )
     }
   }
+  const effectiveKeyScope = keyScope || keyScopeFromRequest(req)
   const excluded = new Set()
   let usable = 0
   for (const item of listVms(projectRoot)) {
     if (!isCodexVm(item)) continue
+    if (!keyAllowsVm(effectiveKeyScope, item)) continue
+    if (ownerScope && !vmMatchesOwnerScope(item, ownerScope)) continue
     if (isFreePlanSlot(projectRoot, getVm(projectRoot, item.id) || item)) excluded.add(item.id)
     else usable += 1
   }
@@ -1911,7 +1968,7 @@ export async function handleCodexImages({
   const post = ops.postCodexJson || postCodexJson
   // Selection-only body: the turn id becomes the sticky session; the upstream body is untouched.
   const pickBody = { model: model || null, ...(imageTurnId ? { session_id: `codex-image-turn:${imageTurnId}` } : {}) }
-  const pickOpts = { stickyRouter, sessions: null, body: pickBody, excluded, routing, ownerScope }
+  const pickOpts = { stickyRouter, sessions: null, body: pickBody, keyScope, excluded, routing, ownerScope }
   const deadline = Date.now() + codexWaitTimeoutMs(routing)
   const gone = clientGoneSignal(req, res)
   let last = null

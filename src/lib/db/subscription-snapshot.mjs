@@ -119,6 +119,8 @@ export function subscriptionSnapshot(db) {
             group_type: row.group_type ?? 'all',
             allowed_vms: row.allowed_vms ?? '[]',
             vm_pool_id: row.vm_pool_id ?? null,
+            default_pool_id: row.default_pool_id ?? null,
+            pool_binding_mode: row.pool_binding_mode ?? 'legacy_scope',
             // Upstream 054 leaves existing keys unrestricted; explicit lists remain hash-checked.
             allowed_models: row.allowed_models ?? '[]',
             api_endpoint_id: row.api_endpoint_id ?? null,

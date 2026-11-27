@@ -36,6 +36,8 @@ import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedUsageRecordsRouteImport } from './routes/_authenticated/usage-records'
 import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
 import { Route as AuthenticatedWrapRouteImport } from './routes/_authenticated/wrap'
+import { Route as AuthenticatedPoolsIndexRouteImport } from './routes/_authenticated/pools/index'
+import { Route as AuthenticatedPoolsPoolIdRouteImport } from './routes/_authenticated/pools/$poolId'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedSettingsTabRouteImport } from './routes/_authenticated/settings/$tab'
 import { Route as AuthenticatedVmIndexRouteImport } from './routes/_authenticated/vm/index'
@@ -178,6 +180,17 @@ const AuthenticatedWrapRoute = AuthenticatedWrapRouteImport.update({
   path: '/wrap',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedPoolsIndexRoute = AuthenticatedPoolsIndexRouteImport.update({
+  id: '/pools/',
+  path: '/pools/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPoolsPoolIdRoute =
+  AuthenticatedPoolsPoolIdRouteImport.update({
+    id: '/pools/$poolId',
+    path: '/pools/$poolId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSettingsIndexRoute =
   AuthenticatedSettingsIndexRouteImport.update({
     id: '/settings/',
@@ -228,8 +241,10 @@ export interface FileRoutesByFullPath {
   '/usage-records': typeof AuthenticatedUsageRecordsRoute
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
+  '/pools/$poolId': typeof AuthenticatedPoolsPoolIdRoute
   '/settings/$tab': typeof AuthenticatedSettingsTabRoute
   '/vm/$id': typeof AuthenticatedVmIdRoute
+  '/pools/': typeof AuthenticatedPoolsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
   '/vm/': typeof AuthenticatedVmIndexRoute
 }
@@ -260,8 +275,10 @@ export interface FileRoutesByTo {
   '/users': typeof AuthenticatedUsersRoute
   '/wrap': typeof AuthenticatedWrapRoute
   '/': typeof AuthenticatedIndexRoute
+  '/pools/$poolId': typeof AuthenticatedPoolsPoolIdRoute
   '/settings/$tab': typeof AuthenticatedSettingsTabRoute
   '/vm/$id': typeof AuthenticatedVmIdRoute
+  '/pools': typeof AuthenticatedPoolsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
   '/vm': typeof AuthenticatedVmIndexRoute
 }
@@ -294,8 +311,10 @@ export interface FileRoutesById {
   '/_authenticated/users': typeof AuthenticatedUsersRoute
   '/_authenticated/wrap': typeof AuthenticatedWrapRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/pools/$poolId': typeof AuthenticatedPoolsPoolIdRoute
   '/_authenticated/settings/$tab': typeof AuthenticatedSettingsTabRoute
   '/_authenticated/vm/$id': typeof AuthenticatedVmIdRoute
+  '/_authenticated/pools/': typeof AuthenticatedPoolsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
   '/_authenticated/vm/': typeof AuthenticatedVmIndexRoute
 }
@@ -328,8 +347,10 @@ export interface FileRouteTypes {
     | '/usage-records'
     | '/users'
     | '/wrap'
+    | '/pools/$poolId'
     | '/settings/$tab'
     | '/vm/$id'
+    | '/pools/'
     | '/settings/'
     | '/vm/'
   fileRoutesByTo: FileRoutesByTo
@@ -360,8 +381,10 @@ export interface FileRouteTypes {
     | '/users'
     | '/wrap'
     | '/'
+    | '/pools/$poolId'
     | '/settings/$tab'
     | '/vm/$id'
+    | '/pools'
     | '/settings'
     | '/vm'
   id:
@@ -393,8 +416,10 @@ export interface FileRouteTypes {
     | '/_authenticated/users'
     | '/_authenticated/wrap'
     | '/_authenticated/'
+    | '/_authenticated/pools/$poolId'
     | '/_authenticated/settings/$tab'
     | '/_authenticated/vm/$id'
+    | '/_authenticated/pools/'
     | '/_authenticated/settings/'
     | '/_authenticated/vm/'
   fileRoutesById: FileRoutesById
@@ -598,6 +623,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedWrapRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/pools/': {
+      id: '/_authenticated/pools/'
+      path: '/pools'
+      fullPath: '/pools/'
+      preLoaderRoute: typeof AuthenticatedPoolsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/pools/$poolId': {
+      id: '/_authenticated/pools/$poolId'
+      path: '/pools/$poolId'
+      fullPath: '/pools/$poolId'
+      preLoaderRoute: typeof AuthenticatedPoolsPoolIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/settings/': {
       id: '/_authenticated/settings/'
       path: '/settings'
@@ -652,8 +691,10 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsersRoute: typeof AuthenticatedUsersRoute
   AuthenticatedWrapRoute: typeof AuthenticatedWrapRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedPoolsPoolIdRoute: typeof AuthenticatedPoolsPoolIdRoute
   AuthenticatedSettingsTabRoute: typeof AuthenticatedSettingsTabRoute
   AuthenticatedVmIdRoute: typeof AuthenticatedVmIdRoute
+  AuthenticatedPoolsIndexRoute: typeof AuthenticatedPoolsIndexRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
   AuthenticatedVmIndexRoute: typeof AuthenticatedVmIndexRoute
 }
@@ -681,8 +722,10 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsersRoute: AuthenticatedUsersRoute,
   AuthenticatedWrapRoute: AuthenticatedWrapRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedPoolsPoolIdRoute: AuthenticatedPoolsPoolIdRoute,
   AuthenticatedSettingsTabRoute: AuthenticatedSettingsTabRoute,
   AuthenticatedVmIdRoute: AuthenticatedVmIdRoute,
+  AuthenticatedPoolsIndexRoute: AuthenticatedPoolsIndexRoute,
   AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
   AuthenticatedVmIndexRoute: AuthenticatedVmIndexRoute,
 }
