@@ -14,6 +14,7 @@ import {
   preflightSqliteToPostgres,
 } from '../../scripts/migrate-sqlite-to-pg.mjs'
 import { seedMockSqlite } from '../../scripts/seed-mock-sqlite.mjs'
+import { applyCustomMigrations } from '../../src/lib/db/custom-migrations.mjs'
 import { applyMigrations, createDatabase } from '../../src/lib/db/database.mjs'
 import { resolvePgConfig } from '../../src/lib/db/pg/config.mjs'
 import { applyPgMigrations } from '../../src/lib/db/pg/migrations-runner.mjs'
@@ -48,7 +49,14 @@ function makePre071Db(tmpDir, fileName = 'pre071.db') {
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA foreign_keys = ON')
   applyMigrations(db, { migrationsDir: oldDir })
+  applyCustomMigrations(db)
   return { db, dbPath }
+}
+
+function copyUpstreamMigrations(tmpDir) {
+  const migrationsDir = path.join(tmpDir, 'upstream-migrations')
+  fs.cpSync(SQLITE_MIG_DIR, migrationsDir, { recursive: true })
+  return migrationsDir
 }
 
 function tableColumns(db, table) {
@@ -275,7 +283,7 @@ test('migrate-sqlite-to-pg MIGRATION_TABLES, preflight FK checks, and seedMockSq
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }))
 
   const mockPath = path.join(tmpDir, 'mock.db')
-  const seeded = seedMockSqlite({ outPath: mockPath, usageCount: 20 })
+  const seeded = seedMockSqlite({ outPath: mockPath, usageCount: 20, migrationsDir: copyUpstreamMigrations(tmpDir) })
   for (const tbl of NEW_TABLES) {
     assert.ok(seeded.tableCounts[tbl] >= 1, `seedMockSqlite should seed ${tbl}`)
   }
@@ -679,7 +687,7 @@ test('PostgreSQL 008 migration, SchedulerPoolsRepo, bootstrapSchedulerPools, and
 
   // Seed SQLite with all tables including 071 scheduler tables and migrate with --verify
   const sqlitePath = path.join(tmpDir, 'mock.db')
-  seedMockSqlite({ outPath: sqlitePath, usageCount: 20 })
+  seedMockSqlite({ outPath: sqlitePath, usageCount: 20, migrationsDir: copyUpstreamMigrations(tmpDir) })
   const migResult = await migrateSqliteToPostgres({ sqlitePath, pgUrl: schemaUrl, verify: true })
   assert.equal(migResult.ok, true)
   assert.equal(migResult.verification.ok, true)

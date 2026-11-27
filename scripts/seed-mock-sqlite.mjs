@@ -41,7 +41,7 @@ function hmacKey(secret, token) {
  * Populate a brand-new SQLite database with full 33-table edge-case Mock data.
  * @returns {{ sqlitePath: string, tableCounts: Record<string, number>, totalRows: number, nulEmbeddedCount: number }}
  */
-export function seedMockSqlite({ outPath, usageCount = 400, hashSecret = 'mock-verify-hash-secret' } = {}) {
+export function seedMockSqlite({ outPath, usageCount = 400, hashSecret = 'mock-verify-hash-secret', migrationsDir } = {}) {
   if (!outPath) throw new Error('outPath is required')
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   for (const suffix of ['', '-wal', '-shm']) {
@@ -50,7 +50,7 @@ export function seedMockSqlite({ outPath, usageCount = 400, hashSecret = 'mock-v
     } catch {}
   }
 
-  const db = createDatabase({ dbPath: outPath })
+  const db = createDatabase({ dbPath: outPath, migrationsDir })
   let nulEmbeddedCount = 0
   const nulBlob = (str) => {
     nulEmbeddedCount += 1

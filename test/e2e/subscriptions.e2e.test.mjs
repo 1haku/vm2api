@@ -82,7 +82,7 @@ test('named pools preserve subscription admission and release reservations when 
       assert.equal((await api(gw, 'PATCH', `/api/panel/vm-pools/${poolId}`, { body: patch })).status, 200)
       const rejected = await api(gw, 'POST', '/v1/messages', { headers, body })
       assert.equal(rejected.status, 403, rejected.text)
-      assert.equal(rejected.json.error.code, 'vm_pool_unavailable')
+      assert.equal(rejected.json.error.code, 'pool_unavailable')
       const current = (await api(gw, 'GET', '/api/panel/subscriptions')).json.data.items.find((s) => s.id === sub.id)
       assert.equal(current.pending_cost, 0)
     }

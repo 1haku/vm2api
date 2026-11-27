@@ -9,6 +9,8 @@ import test from 'node:test'
 import { ApiKeyStore } from '../../src/lib/admin/api-keys.mjs'
 import { createGeminiPublicHandler } from '../../src/lib/gemini/routes.mjs'
 import { blockedRiskTool } from '../../src/lib/core/refusal-guard.mjs'
+import { ImagePermissionsRepo } from '../../src/lib/db/repos/image-permissions-repo.mjs'
+import { UsersRepo } from '../../src/lib/db/repos/users-repo.mjs'
 import { SchedulerPoolsRepo } from '../../src/lib/db/repos/scheduler-pools-repo.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 import {
@@ -1200,6 +1202,18 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
     members: [{ node_type: 'codex_vm', node_id: 'codex-free' }],
   })
 
+  const userId = 'pool-test-image-user'
+  const now = new Date().toISOString()
+  new UsersRepo(poolsRepo.db).insert({
+    id: userId,
+    username: userId,
+    role: 'user',
+    password_hash: 'fixture',
+    created_at: now,
+    updated_at: now,
+  })
+  new ImagePermissionsRepo(poolsRepo.db).save(userId, true)
+
   const searchPickedVms = []
   const imagePickedVms = []
   const handler = createHandleProtocol({
@@ -1220,7 +1234,7 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
     requestLog: { start: () => ({ request_id: 'req-codex' }), finish() {} },
     stickyRouter: { extractPoolKey: () => null, collectPoolKeys: () => [] },
     accountQuota: { ingestHeaders() {} },
-    apiKeyStore: { acquire: () => ({ ok: true }), release() {}, recordUsage() {} },
+    apiKeyStore: { repo: { db: poolsRepo.db }, acquire: () => ({ ok: true }), release() {}, recordUsage() {} },
     apiScheduler: {},
     apiEndpointStore: {},
     stats: { errors: 0, requests: 0, by_route: {}, passthrough: 0, rewrite: 0, convert: 0 },
@@ -1257,6 +1271,7 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
 
   const keyStrictA = {
     id: 'key-codex-a',
+    user_id: userId,
     group_type: 'all',
     vm_pool_id: null,
     allowed_vms: [],
@@ -1313,6 +1328,7 @@ test('PR-3 Review Blocker #1: /v1/alpha/search and /v1/images/* enforce strict_p
       {
         keyRecord: {
           id: 'key-codex-free',
+          user_id: userId,
           group_type: 'all',
           vm_pool_id: null,
           allowed_vms: [],
