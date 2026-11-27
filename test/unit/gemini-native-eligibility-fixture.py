@@ -111,6 +111,8 @@ class Fixture:
         assert body["id"] == account["id"]
         if operation == "get":
             return account
+        if operation in ("infer-target", "infer"):
+            raise host.Failure(404, "not_found")
         if operation == "test-chat":
             assert not runs
             run = host.NativeAgy.__new__(host.NativeAgy)
@@ -149,7 +151,7 @@ class Fixture:
             run.native_invocation._process.wait(timeout=5)
             assert (
                 run.native_invocation.poll()["error"]["code"]
-                == "gemini_inference_failed"
+                == "gemini_upstream_unavailable"
             )
             run.egress = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
             run.native_tui_pid = run.pid = run.terminal = run.network_lock = None
@@ -183,7 +185,7 @@ class Fixture:
             assert diagnostic.descriptor is None
             assert not diagnostic._thread.is_alive()
             return result
-        raise AssertionError("unexpected host operation")
+        raise AssertionError(f"unexpected host operation: {operation}")
 
 
 stop = False
