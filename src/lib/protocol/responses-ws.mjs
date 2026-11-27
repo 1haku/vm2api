@@ -596,6 +596,20 @@ export function createResponsesWsHandler({
           const req = createProtocolReq(upgradeReq, hopBody)
           currentReq = req
 
+          // Managed keys can be disabled or lose their subscription while this
+          // socket is open. Refresh identity before resolving frame policy scope.
+          // The protocol handler still applies the normal admission and usage gates.
+          if (req.apiKeyKind === 'managed' && typeof requireAuth === 'function') {
+            const authRes = createProtocolRes()
+            let authBody = ''
+            authRes.on('chunk', (chunk) => { authBody += chunk })
+            if (!requireAuth(req, authRes, { keyGate: false })) {
+              currentReq = null
+              sendFrame(ws, httpErrorToFrame(authRes.statusCode, authBody))
+              continue
+            }
+          }
+
           // Frame-level pre-dispatch JEV gate: every `response.create` frame
           // must clear JEV BEFORE handleProtocol/slot admission. Blocked frames
           // receive a standardized WS error frame while the socket stays alive.
