@@ -2,6 +2,7 @@ import { subscriptionApiOptions, subscriptionRoute } from '../admin/subscription
 import { OFFICIAL_CLAUDE_CLI_UA } from '../identity/vm-identity.mjs'
 import { stripIllegalCacheControlFields } from '../protocol/cache-ttl.mjs'
 import { officialMessagesBody } from '../protocol/anthropic-messages.mjs'
+import { restoreToolNames, restoreToolNamesInSSELine } from '../protocol/anthropic-policy.mjs'
 import { prepareClassifierBody } from '../protocol/request-purpose.mjs'
 import { consumeClaudeSSEData } from '../protocol/convert.mjs'
 import { isCompleteAssistantMessage, mapUpstreamError } from '../core/errors.mjs'
@@ -159,8 +160,14 @@ function joinHeaderMap(headers = {}) {
  * know yet.  Headers the operator configured on the endpoint win; anthropic-beta
  * is the union of endpoint and caller tokens so neither opt-in is dropped.
  */
-function forwardAnthropicProtocolHeaders(headers = {}, protocol = '', protocolKind = '', { passthrough = false } = {}) {
+export function forwardAnthropicProtocolHeaders(
+  headers = {},
+  protocol = '',
+  protocolKind = '',
+  { passthrough = false, officialTraffic = false } = {},
+) {
   if (protocol !== 'anthropic.messages' || protocolKind !== 'anthropic') return {}
+  if (!officialTraffic && !passthrough) return {}
   const out = {}
   for (const [rawName, rawValue] of Object.entries(headers || {})) {
     const name = String(rawName || '').toLowerCase()
@@ -334,6 +341,8 @@ export async function runApiInference({
   onPublicLine = null,
   requestContext = null,
   passthrough = false,
+  officialTraffic = false,
+  toolNames = {},
   routing = null,
   redactionPrincipal = '',
   redactionSession = '',
@@ -472,6 +481,7 @@ export async function runApiInference({
   if (redaction) body = await maskJson(body, redaction)
   const callerProtocolHeaders = forwardAnthropicProtocolHeaders(req?.headers, protocol, protocolKind, {
     passthrough,
+    officialTraffic,
   })
   const authHeaders = upstreamAuthHeaders(protocolKind, picked.key.api_key, {
     ...extraHeaders,
@@ -649,6 +659,8 @@ export async function runApiInference({
     }
   }
 
+  const hasToolNames = Boolean(toolNames && Object.keys(toolNames).length > 0)
+
   if (!clientStream) {
     const assembler = converters.createClaudeMessageAssembler()
     let committed = false
@@ -656,6 +668,7 @@ export async function runApiInference({
     let terminalError = null
     await readUpstreamLines(async (line) => {
       if (redaction) line = await restoreSseLine(line, redaction)
+      if (hasToolNames) line = restoreToolNamesInSSELine(line, toolNames)
       applyMaybeUsageHide(line, personaHideTokens, cacheTtl, converters)
       converters.applyClaudeSSELineToMessage(line, assembler)
       const raw = String(line || '')
@@ -688,7 +701,8 @@ export async function runApiInference({
         sawMessageStop,
       }
     }
-    const assembled = assembler.message
+    const assembled =
+      assembler.message && hasToolNames ? restoreToolNames(assembler.message, toolNames) : assembler.message
     if (!sawMessageStop) {
       return {
         ...resultBase,
@@ -727,6 +741,7 @@ export async function runApiInference({
   let sawStop = false
   await readUpstreamLines(async (line) => {
     if (redaction) line = await restoreSseLine(line, redaction)
+    if (hasToolNames) line = restoreToolNamesInSSELine(line, toolNames)
     if (personaHideTokens) line = converters.hidePersonaUsageInSseLine(line, personaHideTokens, cacheTtl) || line
     if (String(line).includes('message_stop')) sawStop = true
     if (!committed && String(line).startsWith('data:')) {

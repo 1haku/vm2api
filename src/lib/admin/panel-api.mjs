@@ -92,6 +92,7 @@ import { collectLivePanelCredentials } from './panel-live-credentials.mjs'
 import { officialCcHome, readOfficialCcStatus, normalizeOfficialCcConfig } from '../oauth/official-cc-bootstrap.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
+import { normalizeWarmupConfig } from '../pool/account-warmup.mjs'
 import { publicNotifyConfig, summarizePoolAvailability } from './notify.mjs'
 import { cacheHitStats } from './cache-metrics.mjs'
 import { estimateWindow, projectWindowRemaining, usedRatioOf } from './window-estimate.mjs'
@@ -362,6 +363,9 @@ export function clearVmCooldown({ cfg, accountQuota, stickyRouter = null, poolSc
     poolScheduler?.syncQuotaSchedule?.(live, acc)
   } catch {}
   try {
+    poolScheduler?.unrestVmNode?.(vm.id)
+  } catch {}
+  try {
     poolScheduler?.notifyCapacity?.(acc?.account_id || vm.claude?.account_uuid || vm.id)
   } catch {}
   const refreshed = getVm(cfg.paths.project, vm.id) || live
@@ -453,8 +457,8 @@ export function validatePersonaRoutingPatch(body = {}) {
   }
   if (compat.crag_persona_preset != null && String(compat.crag_persona_preset).trim() !== '') {
     const raw = String(compat.crag_persona_preset).trim()
-    if (raw !== 'official_full' && raw !== 'zero') {
-      problems.push(`crag_persona_preset 必须是 official_full / zero，收到 ${raw}`)
+    if (!PERSONA_PRESETS.includes(raw)) {
+      problems.push(`crag_persona_preset 必须是 ${PERSONA_PRESETS.join(' / ')}，收到 ${raw}`)
     }
   }
   if (compat.craggemini_persona_preset != null && String(compat.craggemini_persona_preset).trim() !== '') {
@@ -1703,6 +1707,7 @@ export function buildRouting({ routingConfig, stickyRouter }) {
     official_cc: normalizeOfficialCcConfig(routingConfig?.official_cc),
     health_probe: normalizeHealthProbeConfig(routingConfig?.health_probe),
     usage_probe: normalizeUsageProbeConfig(routingConfig?.usage_probe),
+    warmup: normalizeWarmupConfig(routingConfig?.warmup),
     notify: publicNotifyConfig(routingConfig?.notify),
     vm: normalizeVmConfig(routingConfig?.vm),
     telemetry: {

@@ -8,7 +8,7 @@ import {
   resolveHostSharedStoreDir,
   validateReadOnlyNoFollowPath,
 } from '../vm/custom-os-runtime.mjs'
-import { LOCAL_CRAG_CLAUDE, REMOTE_CRAG_CLAUDE } from '../vm/slot-engine.mjs'
+import { REMOTE_CRAG_CLAUDE, slotLocalCragClaude } from '../vm/slot-engine.mjs'
 import { slotExecCmd, slotExecContainer } from '../vm/slot-exec.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { flattenOauthIdentity } from './oauth-identity.mjs'
@@ -17,6 +17,7 @@ import {
   cragV2PackageRoot,
   installedCragV2Root,
   materializeCragV2,
+  resolveSharedStoreCragCurrentDir,
   verifyCragV2Tree,
 } from '../vm/wrap-cli-runtime.mjs'
 
@@ -89,9 +90,10 @@ function isUnbundledCragManifest(dir) {
 function resolveSharedCragTreeDir(projectRoot, vm, storeRoot, slotArch) {
   const installed = installedCragV2Root(projectRoot, vm)
   if (installed && fs.existsSync(path.join(installed, 'manifest.json'))) return installed
-  for (const candidate of [path.join(storeRoot, 'crag', 'current'), path.join(storeRoot, 'crag')]) {
-    if (fs.existsSync(path.join(candidate, 'manifest.json'))) return candidate
-  }
+  const storeCurrent = resolveSharedStoreCragCurrentDir(storeRoot)
+  if (storeCurrent && fs.existsSync(path.join(storeCurrent, 'manifest.json'))) return storeCurrent
+  const legacyStoreCrag = path.join(storeRoot, 'crag')
+  if (fs.existsSync(path.join(legacyStoreCrag, 'manifest.json'))) return legacyStoreCrag
   try {
     const packaged = cragV2PackageRoot(projectRoot, slotArch)
     if (packaged && isUnbundledCragManifest(packaged)) return packaged
@@ -154,7 +156,7 @@ function verifySharedStoreAuthClaude(projectRoot, vm, opts = null) {
 export function resolveAuthLoginClaude(vm, opts = null) {
   if (slotHost(vm).bakedKernel) return REMOTE_CRAG_CLAUDE
   if (usesCustomOsSharedStore(vm, opts)) return CUSTOM_OS_CLAUDE_CURRENT
-  return LOCAL_CRAG_CLAUDE
+  return slotLocalCragClaude(vm)
 }
 
 /** Stage a complete package without selecting CRAG as the slot's inference engine. */

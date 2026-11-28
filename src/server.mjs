@@ -86,6 +86,8 @@ import { slotExec } from './lib/vm/slot-runtime.mjs'
 import { fillVmTimezoneFromExit } from './lib/vm/proxy-timezone.mjs'
 import { releaseKernelInstallSafetyHold, resumePendingKernelInstalls } from './lib/vm/kernel-install.mjs'
 import { createUsageProbeMonitor, normalizeUsageProbeConfig } from './lib/oauth/usage-probe-monitor.mjs'
+import { createWarmupMonitor } from './lib/pool/warmup-monitor.mjs'
+import { normalizeWarmupConfig } from './lib/pool/account-warmup.mjs'
 import { createCatalogMonitor } from './lib/admin/catalog-monitor.mjs'
 import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs'
 import { invalidateLiveCredentialCache } from './lib/admin/panel-live-credentials.mjs'
@@ -173,7 +175,7 @@ import { ClusterError } from './lib/cluster/ssh-link.mjs'
 import { nodeEgressProxyUrl, startNodeEgressSocks } from './lib/cluster/node-egress-socks.mjs'
 import { createSlotShell } from './lib/vm/slot-shell.mjs'
 import { createSlotDesktop } from './lib/vm/slot-desktop.mjs'
-import { vmLockBusy, withVmLock } from './lib/vm/vm-file.mjs'
+import { atomicWriteJson, vmLockBusy, withVmLock } from './lib/vm/vm-file.mjs'
 import { slotImageSpec } from './lib/cluster/slot-image.mjs'
 import { OS_CATALOG } from './lib/vm/os-catalog.mjs'
 import { isKvmRuntime } from './lib/vm/runtime-kind.mjs'
@@ -215,7 +217,13 @@ import { createKeySelfHandler, KEY_SELF_PATHS } from './lib/protocol/key-self.mj
 import { createPanelHandler, syncInstalledKernels } from './lib/admin/panel-routes.mjs'
 import { IntegrationTokenStore } from './lib/admin/integration-tokens.mjs'
 import { createIntegrationHandler } from './lib/admin/integration-routes.mjs'
-import { createCragShopHandler, isCragShopPath, sessionBuyerOwner } from './lib/admin/crag-shop.mjs'
+import {
+  createCragShopHandler,
+  createGeminiCragShopHandler,
+  isCragShopPath,
+  isGeminiCragShopPath,
+  sessionBuyerOwner,
+} from './lib/admin/crag-shop.mjs'
 
 const FEATURES = [
   'passthrough',
@@ -429,6 +437,7 @@ let kernelWatchdog = null
 let cliNodeGuard = null
 let cragZombieGuard = null
 let usageProbeMonitor = null
+let warmupMonitor = null
 let catalogMonitor = null
 let notifyMonitor = null
 let weeklyQuotaNotify = null
@@ -490,6 +499,9 @@ const routingRt = createRoutingRuntime({
   get usageProbeMonitor() {
     return usageProbeMonitor
   },
+  get warmupMonitor() {
+    return warmupMonitor
+  },
   get cragZombieGuard() {
     return cragZombieGuard
   },
@@ -550,10 +562,24 @@ if (routingConfig.official_cc) {
 }
 routingConfig.health_probe = normalizeHealthProbeConfig(routingConfig.health_probe)
 routingConfig.usage_probe = normalizeUsageProbeConfig(routingConfig.usage_probe)
+routingConfig.warmup = normalizeWarmupConfig(routingConfig.warmup)
 routingConfig.crag_zombie_guard = normalizeCragZombieGuardConfig(routingConfig.crag_zombie_guard)
 routingConfig.notify = normalizeNotifyConfig(routingConfig.notify)
 routingConfig.tiers = normalizeTiers(routingConfig.tiers, routingConfig.quota, routingConfig.concurrency)
 syncTierDefaultsIntoRouting()
+warmupMonitor = createWarmupMonitor({
+  config: routingConfig.warmup,
+  projectRoot: cfg.paths.project,
+  listVms: () => listVms(cfg.paths.project),
+  getVm: (id) => getVm(cfg.paths.project, id),
+  loadVm: async (id) => getVm(cfg.paths.project, id),
+  saveVm: async (vm) => {
+    const file = path.join(cfg.paths.project, 'vms', `${vm.id}.json`)
+    atomicWriteJson(file, vm, { mode: 0o600 })
+  },
+  inheritRpm: (id) => inheritVmScheduling(id, { rpm: true }),
+  syncScheduler: (reason) => schedulerRuntime?.syncConfigNow?.(reason),
+})
 stickyRouter = new StickyRouter({ dataDir, config: routingConfig })
 accountQuota = new AccountQuota({
   dataDir,
@@ -710,17 +736,19 @@ function attachSlotRuntime(vm) {
       if (rt) {
         return {
           ...vm,
+          _account: acc || null,
           cooldown_until: rt.cooldown_until || 0,
           cooldown_reason: rt.cooldown_reason || null,
         }
       }
     } catch {}
   }
-  return vm
+  return acc ? { ...vm, _account: acc } : vm
 }
 
 healthMonitor = createHealthProbeMonitor({
   config: routingConfig.health_probe,
+  getFableRequiresMax: () => routingConfig?.pool?.fable_requires_max === true,
   listTargets: () => listVms(cfg.paths.project).map(attachSlotRuntime),
   runChat: (vm, real) =>
     runVmTestChat({
@@ -989,6 +1017,7 @@ backupService.onRestored(async (db) => {
   }
   routingConfig.health_probe = normalizeHealthProbeConfig(routingConfig.health_probe)
   routingConfig.usage_probe = normalizeUsageProbeConfig(routingConfig.usage_probe)
+  routingConfig.warmup = normalizeWarmupConfig(routingConfig.warmup)
   routingConfig.crag_zombie_guard = normalizeCragZombieGuardConfig(routingConfig.crag_zombie_guard)
   routingConfig.notify = normalizeNotifyConfig(routingConfig.notify)
   routingConfig.tiers = normalizeTiers(routingConfig.tiers, routingConfig.quota, routingConfig.concurrency)
@@ -1010,6 +1039,7 @@ backupService.onRestored(async (db) => {
   cragZombieGuard?.setConfig(routingConfig.crag_zombie_guard)
   configureSlotCapacity(routingConfig.slot_capacity)
   usageProbeMonitor?.setConfig(routingConfig.usage_probe)
+  warmupMonitor?.setConfig(routingConfig.warmup)
   notifyMonitor?.setConfig(routingConfig.notify)
 
   initPoolRuntime()
@@ -1311,6 +1341,10 @@ const importCommit = createImportCommit({
   },
   get proxyPool() {
     return proxyPool
+  },
+  getSchedulerRuntime: () => schedulerRuntime,
+  get schedulerRuntime() {
+    return schedulerRuntime
   },
   applyVmConcurrency,
 })
@@ -1621,6 +1655,16 @@ const geminiCragSubscription = createGeminiCragSubscription({
   publicKeyFile: process.env.KIN_GEMINI_PUBLIC_KEY_FILE || null,
   callHost: callGeminiHost,
 })
+const handleGeminiCragShop = createGeminiCragShopHandler({
+  getDb,
+  dataDir: cfg.paths.data,
+  publicBaseUrl: cfg.base_url,
+  json,
+  readRawBody,
+  subscription: geminiCragSubscription,
+  isCurrentAdmin: (req) => isCragShopAdmin(req.panelBuyerOwner),
+  isActivationAdmin: isCragShopAdmin,
+})
 const geminiTerminal = createGeminiTerminal({ proxyPool: () => proxyPool })
 const geminiSlotPrefs = createGeminiSlotPrefs({
   settingsRepo: {
@@ -1704,6 +1748,7 @@ const handlePanel = createPanelHandler({
   geminiSlotPrefs,
   geminiScheduler,
   handleCragShop,
+  handleGeminiCragShop,
   json,
   writeSSEHeaders,
   readBody,
@@ -1727,6 +1772,9 @@ const handlePanel = createPanelHandler({
   },
   get usageProbeMonitor() {
     return usageProbeMonitor
+  },
+  get warmupMonitor() {
+    return warmupMonitor
   },
   get cragZombieGuard() {
     return cragZombieGuard
@@ -1838,6 +1886,9 @@ function stopLeaderJobs() {
     usageProbeMonitor?.stop?.()
   } catch {}
   try {
+    warmupMonitor?.stop?.()
+  } catch {}
+  try {
     catalogMonitor?.stop?.()
   } catch {}
   try {
@@ -1946,7 +1997,9 @@ const server = http.createServer(async (req, res) => {
   try {
     res.req = req
     const url = parseRequestUrl(req)
-    if (url && isCragShopPath(url.pathname)) res.setHeader('Cache-Control', 'no-store')
+    if (url && (isCragShopPath(url.pathname) || isGeminiCragShopPath(url.pathname))) {
+      res.setHeader('Cache-Control', 'no-store')
+    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, corsHeadersForRequest(req))
       return res.end()
@@ -2679,19 +2732,27 @@ server.listen(cfg.port, cfg.host, () => {
     // lifecycle, so this runs whether or not activation polling is enabled. One order
     // per tick, so a backlog drains without bursting requests at the supplier.
     {
-      const expireOrders = () =>
+      const expireOrders = () => {
         void handleCragShop.pollOrderExpiry().catch(() => {
           console.warn('[crag-shop] order expiry deferred')
         })
+        void handleGeminiCragShop.pollOrderExpiry().catch(() => {
+          console.warn('[crag-gemini-shop] order expiry deferred')
+        })
+      }
       const timer = setInterval(expireOrders, 60_000).unref()
       onLeaderStop(() => clearInterval(timer))
       expireOrders()
     }
     if (process.env.KIN_CRS_MOCK !== '1' && typeof handleCragShop.warmPlans === 'function') {
-      const warmCatalog = () =>
+      const warmCatalog = () => {
         void handleCragShop.warmPlans().catch(() => {
           console.warn('[crag-shop] catalog cache warm deferred')
         })
+        void handleGeminiCragShop.warmPlans().catch(() => {
+          console.warn('[crag-gemini-shop] catalog cache warm deferred')
+        })
+      }
       const timer = setInterval(warmCatalog, 5 * 60_000).unref()
       onLeaderStop(() => clearInterval(timer))
       warmCatalog()
@@ -2818,6 +2879,11 @@ server.listen(cfg.port, cfg.host, () => {
       usageProbeMonitor?.start?.({ immediate: true })
     } catch (e) {
       console.warn('[usage-probe] start failed', e?.message || e)
+    }
+    try {
+      warmupMonitor?.start?.()
+    } catch (e) {
+      console.warn('[warmup] start failed', e?.message || e)
     }
     // The KIN_CRS_MOCK harness promises no outbound network; catalogs stay on builtin data there.
     if (process.env.KIN_CRS_MOCK !== '1') {
