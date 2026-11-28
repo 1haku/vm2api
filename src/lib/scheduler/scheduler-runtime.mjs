@@ -22,6 +22,7 @@
  */
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import path from 'node:path'
 import { keyAllowsModel, parseKeyAllowedModels } from '../admin/key-models.mjs'
 import {
   keyAllowsEndpoint,
@@ -40,25 +41,35 @@ import {
 } from '../admin/resource-owner.mjs'
 import { HOST_PRESSURE_CRITICAL, hostMemoryLevelForVm } from '../cluster/host-memory-pressure.mjs'
 import { getDb, isDbOpen, withTransaction } from '../db/database.mjs'
-import { SchedulerPoolsRepo } from '../db/repos/scheduler-pools-repo.mjs'
+import {
+  SchedulerPoolsRepo,
+  defaultSystemPromptModeForProvider,
+  normalizeProviderScope,
+} from '../db/repos/scheduler-pools-repo.mjs'
 import { SettingsRepo } from '../db/repos/settings-repo.mjs'
 import { resolveUpstreamModel, stripAntigravityPrefix } from '../gemini/model-catalog.mjs'
+import { OFFICIAL_303_PRESET, normalizePersonaPreset } from '../identity/persona-template.mjs'
 import { activeHoursOf, evaluateActiveHours } from '../pool/active-hours.mjs'
 import { endpointMatchesModel, stripPrefix } from '../pool/api-scheduler.mjs'
 import { isLeftoverQuotaScheduleOff } from '../pool/availability.mjs'
 import { resolveCredentialScheduleLevel } from '../pool/credential-weight.mjs'
 import { stickyTenantPrefix } from '../pool/sticky-seat-scope.mjs'
 import { modelMatchesAllowlist } from '../pool/slot-model-gate.mjs'
+import { isConcurrencyPinned } from '../pool/tier-limits.mjs'
 import { normalizeCragPersonaPreset } from '../protocol/crag-print-prompt.mjs'
 import { resolveGlobalZeroInject } from '../protocol/pool-prompt-policy.mjs'
+import { peekRustHealth } from '../transport/kernel-router.mjs'
 import {
   DEFAULT_DRAIN_INTERVAL_MS,
   SchedulerApiError,
   SchedulerUnavailableError,
   createSchedulerClient,
 } from '../transport/scheduler-client.mjs'
+import { isCragDebian13Kernel, isCustomKvmMode, isCustomOsSlot } from '../vm/custom-os-runtime.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
-import { resolveKernelDataplane } from '../vm/slot-engine.mjs'
+import { isKvmRuntime } from '../vm/runtime-kind.mjs'
+import { effectiveSlotCount, isHeadlessBridgeSlot } from '../vm/slot-capacity.mjs'
+import { activeCragManifestForSlot, resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { listVms } from '../vm/vm-registry.mjs'
 
@@ -360,9 +371,33 @@ function findAccountForVm(vm, lookup) {
   return lookup.byVmId.get(String(vm.id)) || null
 }
 
-function resolveGlobalPromptPolicy(routingConfig = {}) {
+function normalizeGlobalOfficialPreset(rawValue) {
+  const raw = String(rawValue ?? '')
+    .trim()
+    .toLowerCase()
+  if (!raw) return null
+  if (raw === OFFICIAL_303_PRESET || raw === 'official-303' || raw === '303') return OFFICIAL_303_PRESET
+  const normalized = normalizePersonaPreset(raw)
+  if (normalized === 'official') return 'official'
+  return 'official_full'
+}
+
+export function resolveGlobalPromptPolicy(routingConfig = {}) {
   const compat = routingConfig?.compatibility || {}
-  if (resolveGlobalZeroInject(routingConfig)) {
+  const rawPersonaPreset = String(compat.persona_preset ?? '')
+    .trim()
+    .toLowerCase()
+  const rawCragPreset = String(compat.crag_persona_preset ?? '')
+    .trim()
+    .toLowerCase()
+  const inject = String(compat.persona_inject || '')
+    .trim()
+    .toLowerCase()
+
+  if (
+    resolveGlobalZeroInject(routingConfig) ||
+    (!rawPersonaPreset && rawCragPreset !== '' && normalizeCragPersonaPreset(rawCragPreset) === 'zero')
+  ) {
     return {
       mode: 'zero_inject',
       preset: 'official_full',
@@ -370,10 +405,14 @@ function resolveGlobalPromptPolicy(routingConfig = {}) {
       client_system_policy: 'prepend_pool',
     }
   }
-  const inject = String(compat.persona_inject || '')
-    .trim()
-    .toLowerCase()
-  if (inject === 'none' || inject === 'off' || inject === 'passthrough') {
+  if (
+    inject === 'none' ||
+    inject === 'off' ||
+    inject === 'passthrough' ||
+    rawPersonaPreset === 'none' ||
+    rawPersonaPreset === 'off' ||
+    rawPersonaPreset === 'passthrough'
+  ) {
     return {
       mode: 'passthrough',
       preset: 'official_full',
@@ -381,10 +420,14 @@ function resolveGlobalPromptPolicy(routingConfig = {}) {
       client_system_policy: 'prepend_pool',
     }
   }
-  const preset = normalizeCragPersonaPreset(compat.crag_persona_preset) || 'official_full'
+  const preset =
+    normalizeGlobalOfficialPreset(rawPersonaPreset) ??
+    normalizeGlobalOfficialPreset(inject) ??
+    (rawCragPreset ? normalizeGlobalOfficialPreset(rawCragPreset) : null) ??
+    'official_full'
   return {
     mode: 'official',
-    preset: preset === 'official' || preset === 'official_303' ? preset : 'official_full',
+    preset,
     text: '',
     client_system_policy: 'prepend_pool',
   }
@@ -604,6 +647,93 @@ function defaultStandbyFromEnv() {
     process.env.KIN_STANDBY === '1' &&
     !(process.env.KIN_STANDBY_ACTIVE_FILE && fs.existsSync(process.env.KIN_STANDBY_ACTIVE_FILE))
   )
+}
+
+function positiveIntOrNull(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null
+}
+
+function collectVmHealthCapabilities(vm, projectRoot = '', health = null, routing = null) {
+  const homeDir = projectRoot && vm?.id ? path.join(projectRoot, 'vms', String(vm.id), 'cli-home') : ''
+  const cachedHealth = health || (homeDir ? peekRustHealth({ vmId: vm.id, vm, homeDir }, 60_000)?.health || null : null)
+  const sources = [
+    cachedHealth?.capabilities,
+    vm?.workerStatus?.capabilities,
+    vm?.worker_status?.capabilities,
+    vm?.runtime?.capabilities,
+    vm?.kernel_installation?.capabilities,
+    vm?.capabilities,
+  ]
+  const caps = new Set()
+  for (const list of sources) {
+    if (!Array.isArray(list)) continue
+    for (const entry of list) {
+      const cap = String(entry || '').trim()
+      if (cap) caps.add(cap)
+    }
+  }
+  const transport =
+    cachedHealth?.transport || vm?.workerStatus?.transport || vm?.worker_status?.transport || vm?.runtime?.transport
+  if (transport === 'headless_bridge') {
+    caps.add('headless_claude_bridge_v1')
+  }
+  // Cold-start fallback before first /internal/health: read staged/installed CRAG manifest from disk.
+  if (
+    caps.size === 0 &&
+    projectRoot &&
+    vm &&
+    !isCodexVm(vm) &&
+    (isCustomOsSlot(vm) || resolveKernelDataplane(vm, routing || {}) === 'crag')
+  ) {
+    try {
+      const manifest = activeCragManifestForSlot(projectRoot, vm, homeDir)
+      if (Array.isArray(manifest?.capabilities)) {
+        for (const entry of manifest.capabilities) {
+          const cap = String(entry || '').trim()
+          if (cap) caps.add(cap)
+        }
+      }
+    } catch {}
+  }
+  return [...caps]
+}
+
+/**
+ * Project a VM's CRAG V4 `/internal/health::capabilities` and Custom Debian 13 OS
+ * runtime capability flags into the Rust scheduler `NodeTelemetryUpdate.runtime_capabilities`
+ * map (`BTreeMap<String, bool>`), merging any explicit `vm.runtime_capabilities` on top.
+ */
+export function buildVmRuntimeCapabilities(vm, { projectRoot = '', health = null, routing = null } = {}) {
+  const caps = {}
+  const healthCaps = collectVmHealthCapabilities(vm, projectRoot, health, routing)
+  for (const cap of healthCaps) {
+    caps[cap] = true
+  }
+  if (isCragDebian13Kernel(vm?.kernel)) {
+    caps.os_crag_debian13 = true
+  }
+  if (isCustomOsSlot(vm)) {
+    caps.os_custom_store_ro = true
+  }
+  if (isKvmRuntime(vm) && isCustomKvmMode({ vm })) {
+    caps.os_custom_erofs = true
+    caps.os_kvm_native_smbios = true
+  }
+  if (
+    vm?.runtime_capabilities &&
+    typeof vm.runtime_capabilities === 'object' &&
+    !Array.isArray(vm.runtime_capabilities)
+  ) {
+    for (const [key, val] of Object.entries(vm.runtime_capabilities)) {
+      const cleanKey = String(key || '').trim()
+      if (cleanKey && typeof val === 'boolean') {
+        caps[cleanKey] = val
+      }
+    }
+  }
+  return Object.keys(caps).length > 0 ? caps : null
 }
 
 function collectFallbackChainPoolIds(startPoolId, poolsById, maxDepth = 4) {
@@ -866,23 +996,34 @@ export class SchedulerRuntime {
       })
       const owner = vmOwnerId(vm) || PLATFORM_OWNER_SENTINEL
 
-      const maxConc = clampInt(
-        vm?.policy?.max_concurrency ?? vm?.policy?.maxConcurrency ?? vm?.max_concurrency ?? acct?.max_concurrency,
-        1,
-        256,
-        defaultVmConc,
-      )
-      const maxSessions = clampInt(
-        vm?.policy?.session_slots ??
-          vm?.policy?.sessionSlots ??
-          vm?.policy?.max_sessions ??
-          vm?.policy?.maxSessions ??
-          vm?.session_slots ??
-          vm?.max_sessions,
-        1,
-        256,
-        maxConc,
-      )
+      const policyConcPinned =
+        isConcurrencyPinned(vm?.policy) ||
+        (vm?.policy?.concurrencyOverride !== false && positiveIntOrNull(vm?.policy?.max_concurrency) != null)
+      const explicitMaxConc =
+        (policyConcPinned ? positiveIntOrNull(vm?.policy?.max_concurrency ?? vm?.policy?.maxConcurrency) : null) ??
+        positiveIntOrNull(vm?.max_concurrency) ??
+        positiveIntOrNull(acct?.max_concurrency)
+      const policySessPinned = vm?.policy?.sessionsOverride !== false && vm?.policy?.sessionSlotsOverride !== false
+      const explicitMaxSessions =
+        (policySessPinned
+          ? positiveIntOrNull(
+              vm?.policy?.session_slots ??
+                vm?.policy?.sessionSlots ??
+                vm?.policy?.max_sessions ??
+                vm?.policy?.maxSessions,
+            )
+          : null) ?? positiveIntOrNull(vm?.session_slots ?? vm?.max_sessions)
+      const vmHealthCaps = !codex ? collectVmHealthCapabilities(vm, this.#cfg?.paths?.project || '', null, routing) : []
+      const useV4SlotCapacity =
+        !codex &&
+        (isHeadlessBridgeSlot(vm, { capabilities: vmHealthCaps }) ||
+          isCustomOsSlot(vm) ||
+          resolveKernelDataplane(vm, routing) === 'crag')
+      const fallbackVmConc = useV4SlotCapacity
+        ? effectiveSlotCount(vm, routing, vmHealthCaps.length ? { capabilities: vmHealthCaps } : undefined)
+        : defaultVmConc
+      const maxConc = clampInt(explicitMaxConc, 1, 256, fallbackVmConc)
+      const maxSessions = clampInt(explicitMaxSessions, 1, 256, maxConc)
       const maxPrimarySessions =
         optionalPositiveInt(
           vm?.policy?.max_primary_sessions ?? vm?.policy?.maxPrimarySessions ?? vm?.max_primary_sessions,
@@ -1062,13 +1203,14 @@ export class SchedulerRuntime {
         sub_weight_override: m.sub_weight_override != null ? clampInt(m.sub_weight_override, 1, 1000, 10) : null,
         member_order: Number.isFinite(Number(m.member_order)) ? Number(m.member_order) : idx,
       }))
+      const providerScope = normalizeProviderScope(p.provider_scope)
       const poolCfg = {
         id: String(p.id),
         slug: String(p.slug || p.id),
         name: String(p.name || p.id),
         enabled: p.enabled !== false,
         exclusive_members: Boolean(p.exclusive_members),
-        provider_scope: p.provider_scope || 'mixed',
+        provider_scope: providerScope,
         plan_tags: Array.isArray(p.plan_tags) ? p.plan_tags.map(String) : [],
         pool_role: p.pool_role || 'standard',
         sort_order: Number(p.sort_order) || 0,
@@ -1085,11 +1227,14 @@ export class SchedulerRuntime {
         session_ttl_seconds: clampInt(p.session_ttl_seconds, 60, 604_800, 86_400),
         session_busy_wait_ms: clampInt(p.session_busy_wait_ms, 0, 30_000, 0),
         session_overflow_policy: p.session_overflow_policy || 'spill_immediately',
-        system_prompt_mode: p.system_prompt_mode || 'passthrough',
+        system_prompt_mode: p.system_prompt_mode || defaultSystemPromptModeForProvider(providerScope),
         system_prompt_preset: p.system_prompt_preset || 'official_full',
         system_prompt_text: String(p.system_prompt_text || ''),
         client_system_policy: p.client_system_policy || 'prepend_pool',
         jev_profile: p.jev_profile || 'inherit_global',
+        ...(Array.isArray(p.required_runtime_capabilities)
+          ? { required_runtime_capabilities: p.required_runtime_capabilities.map(String).filter(Boolean) }
+          : {}),
         members: mappedMembers,
       }
       pools.push(poolCfg)
@@ -1263,8 +1408,9 @@ export class SchedulerRuntime {
       }
       if (u5 != null) update.quota_util_5h_pct = u5
       if (u7 != null) update.quota_util_7d_pct = u7
-      if (vm?.runtime_capabilities && typeof vm.runtime_capabilities === 'object') {
-        update.runtime_capabilities = vm.runtime_capabilities
+      const runtimeCaps = buildVmRuntimeCapabilities(vm, { projectRoot: this.#cfg?.paths?.project || '', routing })
+      if (runtimeCaps) {
+        update.runtime_capabilities = runtimeCaps
       }
       updates.push(update)
     }
