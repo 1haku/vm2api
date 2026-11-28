@@ -216,6 +216,7 @@ import {
   isClaudeDesktopConnectionProbe,
 } from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
+import { createNativeToolSessionGuard } from './native-tool-session-guard.mjs'
 import {
   startJsonKeepalive,
   stopJsonKeepalive,
@@ -399,6 +400,9 @@ export function createHandleProtocol(deps) {
   const requireAuth = (...args) => deps.requireAuth(...args)
   const cfg = deps.cfg
   const requestLog = deps.requestLog
+  const toolSessionGuard = createNativeToolSessionGuard((scope, since) =>
+    requestLog?.repo?.hasRecentUnconfirmedToolHandoff?.(scope, since),
+  )
   const stickyRouter = deps.stickyRouter
   const getBatchGroups = () =>
     (deps.batchGroups ||= new BatchGroups({
@@ -1348,6 +1352,15 @@ export function createHandleProtocol(deps) {
       auditIdentity.sessionId || extractCallerSession({ inbound, headers: req.headers }),
     )
     logBag.inbound_device_id = sessionIdForLog(auditIdentity.deviceId)
+    const toolSessionScope =
+      protocol === 'anthropic.messages' &&
+      logBag.has_tools &&
+      inbound.tool_choice?.type !== 'none' &&
+      req.apiKeyRecord?.id &&
+      logBag.session_id &&
+      typeof logBag.requested_model === 'string'
+        ? { sessionId: logBag.session_id, apiKeyId: req.apiKeyRecord.id, model: logBag.requested_model }
+        : null
     logBag.reasoning_effort = reasoningEffortOf(inbound)
     const fp = fingerprintRequest(req, inbound)
     const riskState = { policy: refusalPolicy(), repo: refusalRepo(), devices: deviceRepo(), sessions: sessionRepo() }
@@ -1584,6 +1597,21 @@ export function createHandleProtocol(deps) {
       logBag.error_message = errorResult.body?.error?.message || null
       res.statusCode = errorResult.status
       return json(res, errorResult.status, errorResult.body)
+    }
+    if (!resume && toolSessionGuard.blocks(toolSessionScope)) {
+      logBag.final_state = 'rejected'
+      logBag.attempt_count = 0
+      logBag.via = 'gateway'
+      logBag.error_code = 'native_tool_session_paused'
+      logBag.client_error_type = 'invalid_request_error'
+      logBag.error_message = '本会话上一次工具交接未确认，本次请求已在网关拦截。请先检查工具执行结果，停止该会话的工具请求 10 分钟后再继续。'
+      return json(res, 422, {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error', code: logBag.error_code, message: logBag.error_message,
+          details: { retryable: false },
+        },
+      })
     }
     try {
       if (!resume) selectSubscriptionResource(req, apiKeyStore?.repo?.db, apiScheduler, inbound.model)
@@ -4234,7 +4262,9 @@ export function createHandleProtocol(deps) {
     }
 
     if (result?.responseSent) return
-    if (!result?.ok && (await fallbackToApi(result))) return
+    if (result?.body?.error?.code === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED) {
+      toolSessionGuard.mark(toolSessionScope)
+    } else if (!result?.ok && (await fallbackToApi(result))) return
 
     result = acceptAssistantHop(result)
     if (result?.finalState === 'verified' && logBag.cache_prefix_key) {

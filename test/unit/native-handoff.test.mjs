@@ -9,6 +9,7 @@ import { createRespond, readBody } from '../../src/lib/http/respond.mjs'
 import { RequestLogStore } from '../../src/lib/admin/request-log.mjs'
 import { RequestAttemptsRepo } from '../../src/lib/db/repos/request-attempts-repo.mjs'
 import { UsageLogsView } from '../../src/lib/db/repos/usage-logs-view.mjs'
+import { flushWrites } from '../../src/lib/db/write-behind.mjs'
 import { FailoverRunner } from '../../src/lib/pool/failover-runner.mjs'
 import { classifyUpstreamResult } from '../../src/lib/pool/upstream-error-policy.mjs'
 import { RateLimitService } from '../../src/lib/pool/rate-limit-service.mjs'
@@ -16,6 +17,7 @@ import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs
 import { createFailoverMockSchedulerRuntime } from '../helpers/mock-scheduler-runtime.mjs'
 import { consumeNativeHandoffStream, createNativeHandoffState } from '../../src/lib/protocol/native-handoff.mjs'
 import { buildAnthropicSseError, createAnthropicSseErrorRemapper } from '../../src/lib/protocol/stream-truncation.mjs'
+import { createNativeToolSessionGuard } from '../../src/lib/protocol/native-tool-session-guard.mjs'
 import {
   applyClaudeSSELineToMessage,
   claudeSSELineToResponsesEvents,
@@ -1521,6 +1523,21 @@ test('realtime native handoff still fails committed tool_use on refusal stop', a
   assert.ok(eventsFrom(lines).some((event) => event.type === 'error'))
 })
 
+test('tool-session guard extends only its key, session and model and clears after ten idle minutes', () => {
+  let time = 1_000_000
+  const guard = createNativeToolSessionGuard(() => false, () => time)
+  const scope = { apiKeyId: 'key-one', sessionId: 'session-one', model: MODEL }
+  guard.mark(scope)
+  assert.equal(guard.blocks(null), false)
+  for (const field of Object.keys(scope)) assert.equal(guard.blocks({ ...scope, [field]: 'other' }), false)
+  time += 9 * 60_000
+  assert.equal(guard.blocks(scope), true)
+  time += 9 * 60_000
+  assert.equal(guard.blocks(scope), true)
+  time += 10 * 60_000 + 1
+  assert.equal(guard.blocks(scope), false)
+})
+
 test('V2 tool handoff needs an explicit confirmation even when usage and tool arguments are complete', () => {
   const state = createNativeHandoffState()
   const facts = summary({ schema_version: 2, provider_complete: true, stop_reason: 'tool_use' })
@@ -1752,7 +1769,9 @@ unixTest(
     })
 
     const gateway = http.createServer((req, res) => {
-      req.apiKeyKind = 'master'
+      const key = req.headers['x-fixture-key']
+      req.apiKeyKind = key ? 'managed' : 'master'
+      if (key) req.apiKeyRecord = { id: key, user_id: 'fixture-user', group_id: 1 }
       handler.handleProtocol(req, res, 'anthropic.messages', req.url).catch((error) => {
         if (!res.headersSent) res.writeHead(500)
         res.end(String(error.stack))
@@ -1854,11 +1873,14 @@ unixTest(
     assert.equal(row409.providerChain[0].providerRequestId, 'req_anthropic_409')
 
     mode = 'unconfirmed-tool'
-    const unconfirmed = await fetch(`${base}/v1/messages`, {
+    const session = '11111111-2222-4333-8444-555555555555'
+    const toolBody = { ...requestBody(), stream: false, tools: [{ name: 'clock', input_schema: { type: 'object' } }] }
+    const submit = (id, body, key = 'fixture-key', sessionId = session) => fetch(`${base}/v1/messages`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-request-id': 'gw-tool-unconfirmed' },
-      body: JSON.stringify({ ...requestBody(), stream: false }),
+      headers: { 'content-type': 'application/json', 'x-request-id': id, 'x-fixture-key': key, 'x-claude-code-session-id': sessionId },
+      body: JSON.stringify(body),
     })
+    const unconfirmed = await submit('gw-tool-unconfirmed', toolBody)
     assert.equal(unconfirmed.status, 422)
     assert.equal(unconfirmed.headers.get('x-should-retry'), 'false')
     assert.equal(unconfirmed.headers.get('retry-after'), null)
@@ -1866,5 +1888,38 @@ unixTest(
     assert.equal(error.code, 'native_handoff_tool_unconfirmed')
     assert.equal(error.details.retryable, false)
     assert.equal(fx.requests.length, 3)
+    const paused = await submit('gw-tool-held', {
+      ...toolBody, messages: [...toolBody.messages, { role: 'assistant', content: 'fixture' }, { role: 'user', content: 'continue' }],
+    })
+    assert.equal(paused.status, 422)
+    assert.equal(paused.headers.get('x-should-retry'), 'false')
+    assert.equal((await paused.json()).error.code, 'native_tool_session_paused')
+    assert.equal(fx.requests.length, 3)
+    await new Promise((resolve) => setImmediate(resolve))
+    flushWrites()
+    const heldId = paused.headers.get('x-request-id')
+    assert.ok(heldId)
+    const blocked = logStore.repo.getByRequestId(heldId)
+    assert.ok(blocked, 'zero-attempt rejection must be persisted')
+    assert.equal(blocked.attempt_count, 0)
+    assert.equal(blocked.actual_cost, 0)
+    assert.equal(logStore.db.prepare('SELECT COUNT(*) AS n FROM custom_subscription_ledger WHERE request_id=?').get(heldId).n, 0)
+    const scope = { sessionId: session, apiKeyId: 'fixture-key', model: MODEL }
+    const restarted = createNativeToolSessionGuard((s, since) => logStore.repo.hasRecentUnconfirmedToolHandoff(s, since))
+    assert.equal(restarted.blocks(scope), true)
+    assert.equal(restarted.blocks({ ...scope, apiKeyId: 'another-key' }), false)
+    mode = 'ok'
+    for (const [id, body, key, sid] of [
+      ['gw-text', { ...requestBody(), stream: false }],
+      ['gw-tools-off', { ...toolBody, tool_choice: { type: 'none' } }],
+      ['gw-other-key', toolBody, 'another-key'],
+      ['gw-other-session', toolBody, 'fixture-key', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'],
+      ['gw-other-model', { ...toolBody, model: 'claude-opus-5' }],
+    ]) {
+      const unaffected = await submit(id, body, key, sid)
+      assert.equal(unaffected.status, 200, id)
+      await unaffected.json()
+    }
+    assert.equal(fx.requests.length, 8)
   },
 )

@@ -443,6 +443,18 @@ export class UsageLogsRepo {
   }
 
   /** Cheap EXISTS: ≥1 2xx row visible to the caller (same ownerPred as request-log stats). */
+  hasRecentUnconfirmedToolHandoff({ sessionId, apiKeyId, model }, since) {
+    // idx_usage_logs_session_created bounds this lookup even on a large history.
+    this._recentToolHandoff ??= this.db.prepare(`
+      SELECT 1 FROM usage_logs
+      WHERE session_id = ? AND created_at >= ? AND api_key_id = ?
+        AND COALESCE(NULLIF(requested_model, ''), model) = ? AND protocol = 'anthropic.messages'
+        AND error_code IN ('native_handoff_tool_unconfirmed', 'native_tool_session_paused')
+      LIMIT 1
+    `)
+    return !!this._recentToolHandoff.get(sessionId, since, apiKeyId, model)
+  }
+
   hasSuccessfulRequest({ owner_user_id = null } = {}) {
     const own = ownerPred(owner_user_id)
     const where = own.sql ? `AND ${own.sql}` : ''
