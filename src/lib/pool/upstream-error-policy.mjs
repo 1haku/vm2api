@@ -480,8 +480,8 @@ function classifyUpstreamResultRaw(
     }
   }
   if (
-    result.nativeHandoff === true &&
-    /^native_handoff_(missing|invalid|conflict|incomplete)$/.test(handoffCode || '')
+    handoffCode === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED ||
+    (result.nativeHandoff === true && /^native_handoff_(missing|invalid|conflict|incomplete)$/.test(handoffCode || ''))
   ) {
     // The provider may already have finished. Missing terminal proof is not
     // permission to execute the same turn again or penalize another account.

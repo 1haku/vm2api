@@ -36,6 +36,10 @@ export function buildAnthropicSseError(
     message: String(error.message || 'An error occurred while processing the request'),
   }
   if (error.code) body.code = String(error.code)
+  if (error.code === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED) {
+    body.details = { retryable: false }
+    if (error.request_id) body.request_id = error.request_id
+  }
   if (error.code === ErrorCode.POOL_OVERLOADED && poolReason === 'subagent_limit') {
     body.details = { reason: poolReason }
   }
@@ -227,7 +231,8 @@ export function isRecoverableTruncation(result) {
   // Closing a failed handoff as max_tokens would manufacture a success.
   if (result?.nativeHandoff === true) return false
   const error = result?.body?.error
-  if (error?.code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED) return false
+  if (error?.code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED || error?.code === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED)
+    return false
   if (!error) return true
   return !/timeout/i.test(`${error.code || ''} ${error.type || ''} ${error.message || ''}`)
 }

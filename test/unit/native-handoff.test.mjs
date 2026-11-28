@@ -15,6 +15,7 @@ import { RateLimitService } from '../../src/lib/pool/rate-limit-service.mjs'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { createFailoverMockSchedulerRuntime } from '../helpers/mock-scheduler-runtime.mjs'
 import { consumeNativeHandoffStream, createNativeHandoffState } from '../../src/lib/protocol/native-handoff.mjs'
+import { buildAnthropicSseError, createAnthropicSseErrorRemapper } from '../../src/lib/protocol/stream-truncation.mjs'
 import {
   applyClaudeSSELineToMessage,
   claudeSSELineToResponsesEvents,
@@ -1520,6 +1521,67 @@ test('realtime native handoff still fails committed tool_use on refusal stop', a
   assert.ok(eventsFrom(lines).some((event) => event.type === 'error'))
 })
 
+test('V2 tool handoff needs an explicit confirmation even when usage and tool arguments are complete', () => {
+  const state = createNativeHandoffState()
+  const facts = summary({ schema_version: 2, provider_complete: true, stop_reason: 'tool_use' })
+  const body = message(facts, [{ type: 'tool_use', name: 'clock', id: 'toolu_clock', input: {} }])
+  state.observeResult(facts)
+  assert.throws(() => state.finish(body), { code: 'native_handoff_tool_unconfirmed' })
+  state.observeResult({ ...facts, handoff_complete: false })
+  assert.throws(() => state.finish(body), { code: 'native_handoff_tool_unconfirmed' })
+  state.observeResult({ ...facts, handoff_complete: true })
+  assert.deepEqual(state.finish(body), body)
+})
+
+unixTest('unconfirmed tools stop the attempt and reach strict and normal clients as terminal errors', async (t) => {
+  const facts = summary({
+    schema_version: 2, source: 'provider_sse', provider_complete: true, stop_reason: 'tool_use',
+    http_status: 200, public_status: 200, request_id: 'req_tool_fixture',
+  })
+  const fx = await fixture((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.end(start(facts) + toolFrames() + terminalFrames(facts) + resultFrame(facts))
+  }, { capabilities: ['native_handoff_v1', 'provider_result_v2'] })
+  t.after(() => fx.close())
+  const gateway = createHandleProtocol({ cfg: {} })
+  for (const strictPassthrough of [false, true]) {
+    for (const deliveryMode of ['realtime', 'verified']) {
+      const remap = createAnthropicSseErrorRemapper({ isStarted: () => true, strictPassthrough })
+      const lines = []
+      const result = await streamGoWorker(options(fx, {
+        deliveryMode, strictPassthrough, onEvent: (line) => lines.push(remap.remapLine(line)),
+      }))
+      assert.equal(result.ok, false)
+      assert.equal(result.terminalState, 'incomplete')
+      assert.equal(result.body.error.code, 'native_handoff_tool_unconfirmed')
+      assert.deepEqual(result.providerResult.usage, USAGE)
+      const policy = classifyUpstreamResult(result, { repaired: false })
+      assert.equal(policy.action, 'stop')
+      assert.equal(policy.retrySameAccount, false)
+      assert.equal(policy.cooldownUntil, null)
+      const mapped = gateway.mapProtocolClientError({
+        ...result, retryAfterSec: 1, headers: { 'x-should-retry': 'true', 'retry-after': '1' },
+      }, {}, null, { strictPassthrough })
+      assert.equal(mapped.status, 422)
+      assert.equal(mapped.headers['x-should-retry'], 'false')
+      assert.equal(mapped.headers['retry-after'], undefined)
+      assert.equal(mapped.retryAfterSec, undefined)
+      const frames = eventsFrom(lines)
+      assert.ok(!frames.some((event) => event.type === 'message_stop'))
+      const errors = frames.filter((event) => event.type === 'error')
+      assert.equal(errors.length, deliveryMode === 'realtime' ? 1 : 0)
+      const finalEvent = buildAnthropicSseError(mapped.body.error, null, { strictPassthrough })
+      for (const event of [...errors, JSON.parse(finalEvent.split('\n')[1].slice(5))]) {
+        assert.equal(event.error.code, 'native_handoff_tool_unconfirmed')
+        assert.equal(event.error.type, 'invalid_request_error')
+        assert.equal(event.error.details.retryable, false)
+        assert.doesNotMatch(event.error.message, /please retry/i)
+      }
+    }
+  }
+  assert.equal(fx.requests.length, 4)
+})
+
 test('multi-chunk signature_delta appends instead of overwriting', () => {
   const assembler = createClaudeMessageAssembler()
   const lines = [
@@ -1595,6 +1657,12 @@ unixTest(
             'retry-after': '20',
           })
           res.end(JSON.stringify({ type: 'error', error: provider409.error, _kin_provider_result: provider409 }))
+          return
+        }
+        if (mode === 'unconfirmed-tool') {
+          const facts = summary({ schema_version: 2, provider_complete: true, stop_reason: 'tool_use' })
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'retry-after': '1' })
+          res.end(start(facts) + toolFrames() + terminalFrames(facts) + resultFrame(facts))
           return
         }
         res.writeHead(200, {
@@ -1784,5 +1852,19 @@ unixTest(
     assert.equal(row409.providerChain[0].providerTurnId, 'turn_1845_409')
     assert.equal(row409.providerChain[0].providerAttemptId, 3)
     assert.equal(row409.providerChain[0].providerRequestId, 'req_anthropic_409')
+
+    mode = 'unconfirmed-tool'
+    const unconfirmed = await fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': 'gw-tool-unconfirmed' },
+      body: JSON.stringify({ ...requestBody(), stream: false }),
+    })
+    assert.equal(unconfirmed.status, 422)
+    assert.equal(unconfirmed.headers.get('x-should-retry'), 'false')
+    assert.equal(unconfirmed.headers.get('retry-after'), null)
+    const { error } = await unconfirmed.json()
+    assert.equal(error.code, 'native_handoff_tool_unconfirmed')
+    assert.equal(error.details.retryable, false)
+    assert.equal(fx.requests.length, 3)
   },
 )

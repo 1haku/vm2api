@@ -660,6 +660,10 @@ export function createHandleProtocol(deps) {
         retry_after: result?.body?.error?.retry_after || result?.headers?.['retry-after'] || null,
       }
     }
+    if (mappedCode === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED) {
+      logBag.client_error_type = mapped.body.error.type
+      return { ...mapped, headers: { 'x-should-retry': 'false' } }
+    }
     // Pool 529 / pool-wide 429 always carry Retry-After: the runner's wake estimate, floored at 1s.
     // A 503 carries one only when the runner knows a wake (all-rest pool).
     if (!policyRefusal && Number(result?.retryAfterSec) > 0) {
@@ -4394,7 +4398,8 @@ export function createHandleProtocol(deps) {
           return res.end()
         }
         if (
-          (logBag.error_code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED ||
+          (logBag.error_code === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED ||
+            logBag.error_code === ErrorCode.CLUSTER_DELIVERY_UNCONFIRMED ||
             logBag.error_code === ErrorCode.SLOT_OAUTH_UNAVAILABLE) &&
           !res.writableEnded
         ) {

@@ -84,6 +84,7 @@ export const ErrorCode = {
   NATIVE_HANDOFF_INVALID: 'native_handoff_invalid',
   NATIVE_HANDOFF_CONFLICT: 'native_handoff_conflict',
   NATIVE_HANDOFF_INCOMPLETE: 'native_handoff_incomplete',
+  NATIVE_HANDOFF_TOOL_UNCONFIRMED: 'native_handoff_tool_unconfirmed',
 
   INCOMPLETE_RESPONSE: 'incomplete_response',
   CLIENT_CANCELLED: 'client_cancelled',
@@ -128,6 +129,7 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
   [ErrorCode.NATIVE_HANDOFF_INVALID]: 502,
   [ErrorCode.NATIVE_HANDOFF_CONFLICT]: 502,
   [ErrorCode.NATIVE_HANDOFF_INCOMPLETE]: 502,
+  [ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED]: 422,
 })
 
 export const CLIENT_POOL_BUSY_MESSAGE = '号池负载过高，稍后再试'
@@ -202,6 +204,20 @@ export const THIRD_PARTY_CLIENT_CLIENT_MESSAGE =
   '上游将此请求识别为第三方客户端调用，不按订阅额度计费，已拒绝。这不是内容拒答；原样重试会得到同样结果。'
 
 export const IMAGE_TOO_LARGE_MESSAGE = '图片过大,调整上传图片'
+
+export function makeUnconfirmedToolHandoffError(requestId) {
+  const mapped = makeError({
+    type: ErrorType.INVALID_REQUEST,
+    code: ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED,
+    message: '工具交接未确认，工具可能已执行。请停止自动重试，先检查工具的执行结果。',
+    status: 422,
+    details: { retryable: false },
+    request_id: requestId,
+  })
+  mapped.body.type = 'error'
+  if (requestId) mapped.body.request_id = requestId
+  return mapped
+}
 
 const IMAGE_DIMENSIONS_TOO_LARGE_MESSAGE = /image dimensions? exceed max allowed size/i
 
@@ -795,6 +811,9 @@ function terminalRelayDetails(status, body) {
 export function mapUpstreamError(status, body, headers = {}) {
   const upType = upstreamErrorType(body)
   const inboundCode = body?.error?.code || null
+  if (inboundCode === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED) {
+    return makeUnconfirmedToolHandoffError(body.request_id || body.error.request_id || headers['request-id'])
+  }
   if (
     [
       'classifier_model_incompatible',
@@ -1124,6 +1143,7 @@ export function mapUpstreamError(status, body, headers = {}) {
 }
 
 const STRICT_LOCAL_GATEWAY_CODES = new Set([
+  ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED,
   ErrorCode.FABLE_REQUIRES_MAX,
   ErrorCode.QUOTA_GUARD_REQUEST_TOO_LARGE,
   ErrorCode.SLOT_OAUTH_UNAVAILABLE,

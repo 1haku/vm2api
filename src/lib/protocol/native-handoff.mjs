@@ -1,6 +1,6 @@
 import { StringDecoder } from 'node:string_decoder'
 import { isDeepStrictEqual } from 'node:util'
-import { isClaudeSlotOAuthError } from '../core/errors.mjs'
+import { ErrorCode, isClaudeSlotOAuthError, makeUnconfirmedToolHandoffError } from '../core/errors.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from './convert.mjs'
 import { mergeUsage } from './openai-usage.mjs'
 import { isRecoverableThinkingOnly } from '../transport/go-worker-client.mjs'
@@ -379,7 +379,9 @@ export function createNativeHandoffState({ nativeHandoff = true, strictPassthrou
         providerResult.stop_reason === 'tool_use' &&
         providerResult.handoff_complete !== true
       ) {
-        throw protocolError('native_handoff_incomplete', 'Native tool callback reconciliation is incomplete')
+        // The provider finished, and realtime clients may already have seen the tool.
+        // Keep this distinct from a transport truncation even before a stream commits.
+        throw protocolError(ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED, 'Native tool callback reconciliation is incomplete')
       }
       if (
         providerResult.stop_reason === 'tool_use' &&
@@ -608,13 +610,12 @@ export async function consumeNativeHandoffStream(
     body = state.finish(lastError || assembler.message, { stream: true, sawMessageStop, committed })
   } catch (error) {
     if (!committed) throw error
-    await dispatch({ type: 'error', error: { type: 'api_error', code: error.code, message: error.message } })
-    return {
-      body: { type: 'error', error: { type: 'api_error', code: error.code, message: error.message } },
-      headers,
-      sawMessageStop,
-      committed,
-    }
+    const failure =
+      error.code === ErrorCode.NATIVE_HANDOFF_TOOL_UNCONFIRMED
+        ? makeUnconfirmedToolHandoffError(state.providerResult?.request_id).body
+        : { type: 'error', error: { type: 'api_error', code: error.code, message: error.message } }
+    await dispatch(failure)
+    return { body: failure, headers, sawMessageStop, committed }
   }
   let publicBody = body
   const failed = body.type === 'error' || !!body.error
