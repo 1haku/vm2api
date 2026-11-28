@@ -3610,7 +3610,7 @@ export function createHandleProtocol(deps) {
                 preserveToolNames &&
                 isNativeCragV3Plus(caps) &&
                 !hasCragSystem &&
-                !cragRelocated &&
+                !attemptRelocated?.moved &&
                 !summarySession &&
                 !toolPruneAttempt &&
                 cragInput.thread == null &&
