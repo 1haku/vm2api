@@ -46,8 +46,6 @@ const WAIT_TIMEOUT_MAX_MS = 120000
 
 export const QUEUE_MAX_MIN = 1
 export const QUEUE_MAX_MAX = 999
-export const SEAT_GRACE_MAX_MS = 120000
-export const SEAT_BUDGET_RESERVE_MAX = 0.5
 export const CIRCUIT_THRESHOLD_MAX = 20
 export const CIRCUIT_OPEN_MIN_MS = 1000
 
@@ -57,21 +55,16 @@ export const DEFAULT_POOL_ROUTING = Object.freeze({
   max_primary_sessions: null,
   max_subagents_per_session: null,
   queue_max: 50,
-  seat_grace_ms: 30000,
-  seat_budget_reserve_pct: 0.02,
   fallback_wait_timeout_ms: 30000,
-  sticky_wait_timeout_ms: 45000,
   circuit_failure_threshold: 3,
   circuit_open_ms: 30000,
   session_affinity_first: false,
   fresh_account_isolation_ms: 0,
-  kernel_lease_queue_grace_ms: 5000,
 })
 
 const DEFAULT_CONFIG = {
   ...DEFAULT_POOL_ROUTING,
   worker_health_ttl_ms: 5000,
-  heartbeat_stale_ms: 15000,
   fable_max_per_account: 4,
   default_max_per_account: 2,
 }
@@ -115,25 +108,7 @@ export function normalizePoolRouting(pool = {}) {
   next.keep_pin_on_model_gate = next.keep_pin_on_model_gate === true
   next.reset_priority = next.reset_priority !== false
   next.kernel_lease = normalizeKernelLeaseMode(next.kernel_lease)
-  next.kernel_lease_queue_grace_ms = clampNumber(
-    next.kernel_lease_queue_grace_ms,
-    DEFAULT_POOL_ROUTING.kernel_lease_queue_grace_ms,
-    0,
-    WAIT_TIMEOUT_MAX_MS,
-  )
   next.queue_max = clampNumber(next.queue_max, DEFAULT_POOL_ROUTING.queue_max, QUEUE_MAX_MIN, QUEUE_MAX_MAX)
-  next.seat_grace_ms = clampNumber(next.seat_grace_ms, DEFAULT_POOL_ROUTING.seat_grace_ms, 0, SEAT_GRACE_MAX_MS)
-  next.seat_budget_reserve_pct = clampNumber(
-    next.seat_budget_reserve_pct,
-    DEFAULT_POOL_ROUTING.seat_budget_reserve_pct,
-    0,
-    SEAT_BUDGET_RESERVE_MAX,
-    { round: false },
-  )
-  next.sticky_wait_timeout_ms = clampWaitTimeoutMs(
-    next.sticky_wait_timeout_ms,
-    DEFAULT_POOL_ROUTING.sticky_wait_timeout_ms,
-  )
   next.fallback_wait_timeout_ms = clampWaitTimeoutMs(
     next.fallback_wait_timeout_ms,
     DEFAULT_POOL_ROUTING.fallback_wait_timeout_ms,
@@ -427,6 +402,9 @@ export class PoolScheduler extends EventEmitter {
     this.kernelLeaseStats = new KernelLeaseStats()
     this.changePending = false
     this.healthCache = new Map()
+    // 238 `node_offline`: last probe could not reach the worker. Read by the
+    // scheduler telemetry batch so the 2s push does not undo the exclusion.
+    this.workerUnreachable = new Map()
     this.healthFlights = new Map()
     this.healthWrites = new Map()
     this.maintenanceTimer = null
@@ -741,6 +719,7 @@ export class PoolScheduler extends EventEmitter {
       (dataPath === 'ssh' && value?.status === 0 && value.ok !== true)
     ) {
       if (this.healthCache.get(exec.vmId)?.dataPath === dataPath) this.healthCache.delete(exec.vmId)
+      this.workerUnreachable.set(exec.vmId, { at: Date.now(), dataPath })
       this.schedulerRuntime?.enqueueTelemetry?.([
         {
           node_key: formatNodeKey('claude_vm', exec.vmId),
@@ -791,6 +770,7 @@ export class PoolScheduler extends EventEmitter {
         }
       }
     }
+    this.workerUnreachable.delete(exec.vmId)
     this.healthCache.set(exec.vmId, {
       at: Date.now(),
       value,
